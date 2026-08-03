@@ -1,0 +1,34 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: workouts-explorer-ingress
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  commonName: {{ required "ingress.host is required" .Values.ingress.host }}
+  dnsNames:
+    - {{ .Values.ingress.host }}
+  duration: 2160h
+  isCA: false
+  issuerRef:
+    group: certmanager.step.sm
+    kind: StepClusterIssuer
+    name: step-issuer
+  privateKey:
+    algorithm: ECDSA
+    encoding: PKCS8
+    rotationPolicy: Always
+    size: 256
+  renewBefore: 168h
+  secretName: {{ .Values.ingress.certificateSecretName }}
+  subject:
+    countries: [US]
+    localities: [Home]
+    organizationalUnits: [Homelab]
+    organizations: [Fourteeners]
+    provinces: [California]
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+{{- end }}

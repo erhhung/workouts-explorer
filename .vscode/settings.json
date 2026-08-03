@@ -14,5 +14,6 @@
       "args": ["--rcfile", ".vscode/.bash_profile"],
       "icon": "terminal-bash"
     }
-  }
+  },
+  "makefile.configureOnOpen": false
 }

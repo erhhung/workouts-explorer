@@ -46,7 +46,7 @@ implementation that depends on an unresolved choice.
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
 | Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
 
-ADRs 0001 through 0003 are accepted. ADRs 0004 through 0010 remain Proposed
+ADRs 0001 through 0004 are accepted. ADRs 0005 through 0010 remain Proposed
 until their stated acceptance evidence is recorded. A proposed record's status
 must change before dependent application work begins.
 
@@ -59,7 +59,7 @@ The repository builds, tests, packages, and runs the UI, API, worker, database m
 ### Vertical slice
 
 - Establish `ui/`, `api/`, `worker/`, `helm/`, root `VERSION`, and shared contract conventions.
-- Accept ADR 0004 and add the initial OpenAPI 3.0.3 document with public config, Swagger, health, stable signin/session schemas, documented placeholder behavior, and RFC 9457 schemas.
+- Add the initial OpenAPI 3.0.3 document with public config, Swagger, health, ADR 0004 signin/session schemas, documented placeholder behavior, and RFC 9457 schemas.
 - Generate Go API interfaces and request/response types.
 - Serve the SPA and safe runtime config using ADR 0003's same-origin production and local-development topology.
 - Connect API and worker to PostgreSQL with distinct roles.

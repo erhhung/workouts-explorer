@@ -1,0 +1,43 @@
+image:
+  registry: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+  tag: "0.1.0"
+
+ui:
+  image: workouts-ui
+  replicas: 1
+  resources: {}
+
+api:
+  image: workouts-api
+  replicas: 1
+  publicUrl: http://localhost
+  databaseSecret:
+    name: workouts-explorer-database
+    key: apiDatabaseUrl
+  migrationDatabaseKey: migrationDatabaseUrl
+  publicConfig:
+    pollingIntervalSeconds: 30
+    mapFitPaddingPixels: 48
+    baseMapTileUrl: ""
+    baseMapAttribution: ""
+  resources: {}
+
+worker:
+  image: workouts-worker
+  replicas: 1
+  databaseSecret:
+    name: workouts-explorer-database
+    key: workerDatabaseUrl
+  resources: {}
+
+otel:
+  endpoint: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  certificateSecretName: workouts-explorer-ingress-tls

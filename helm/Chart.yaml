@@ -1,0 +1,6 @@
+apiVersion: v2
+name: workouts-explorer
+description: Workouts Explorer UI, API, worker, and migration job
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

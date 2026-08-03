@@ -2,8 +2,12 @@
 # shellcheck disable=SC1090 # Can't follow non-const source
 # shellcheck disable=SC1091 # Not following: not input file
 
-[ -f ~/.bash_profile ] && \
-   . ~/.bash_profile
+# load ~/.bash_profile only if not
+# done so because it takes a while
+alias omp &> /dev/null || {
+  source         /etc/profile
+  source "$HOME/.bash_profile"
+}
 
 git_root() {
   local root

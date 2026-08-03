@@ -1,0 +1,26 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "workouts.fullname" . }}
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+  annotations: {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls: [{hosts: [{{ required "ingress.host is required" .Values.ingress.host }}], secretName: workouts-explorer-ingress-tls}]
+  rules:
+    - host: {{ required "ingress.host is required" .Values.ingress.host }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: {service: {name: {{ include "workouts.fullname" . }}-api, port: {name: http}}}
+          - path: /swagger
+            pathType: Prefix
+            backend: {service: {name: {{ include "workouts.fullname" . }}-api, port: {name: http}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ include "workouts.fullname" . }}-ui, port: {name: http}}}
+{{- end }}

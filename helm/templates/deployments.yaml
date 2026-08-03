@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workouts.fullname" . }}-ui
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: ui}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: ui}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: ui
+          image: {{ include "workouts.image" (list . .Values.ui.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          ports: [{name: http, containerPort: 8080}]
+          livenessProbe: {httpGet: {path: /health/live, port: http}}
+          readinessProbe: {httpGet: {path: /health/ready, port: http}}
+          resources: {{- toYaml .Values.ui.resources | nindent 12 }}
+          volumeMounts:
+            - {name: cache, mountPath: /var/cache/nginx}
+            - {name: run, mountPath: /var/run}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: cache, emptyDir: {}}
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workouts.fullname" . }}-api
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: api
+          image: {{ include "workouts.image" (list . .Values.api.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          envFrom: [{configMapRef: {name: {{ include "workouts.fullname" . }}-api}}]
+          env:
+            - name: API_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
+          ports: [{name: http, containerPort: 8080}]
+          livenessProbe: {httpGet: {path: /health/live, port: http}}
+          readinessProbe: {httpGet: {path: /health/ready, port: http}}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workouts.fullname" . }}-worker
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: worker
+          image: {{ include "workouts.image" (list . .Values.worker.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - name: WORKER_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
+          ports: [{name: health, containerPort: 8081}]
+          livenessProbe: {httpGet: {path: /health/live, port: health}}
+          readinessProbe: {httpGet: {path: /health/ready, port: health}}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}

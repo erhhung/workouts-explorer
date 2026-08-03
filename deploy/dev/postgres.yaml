@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: postgresql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workouts-postgres-init
+  namespace: postgresql
+data:
+  001-roles.sql: |
+    CREATE ROLE workouts_api LOGIN NOBYPASSRLS;
+    CREATE ROLE workouts_worker LOGIN NOBYPASSRLS;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: postgresql
+spec:
+  selector:
+    app.kubernetes.io/name: workouts-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workouts-postgres
+  namespace: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: workouts-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: workouts-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:18-alpine
+          env:
+            - name: POSTGRES_DB
+              value: workouts
+            - name: POSTGRES_USER
+              value: workouts_migration
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, workouts_migration, -d, workouts]
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, workouts_migration, -d, workouts]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: workouts-postgres-init

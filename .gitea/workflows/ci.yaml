@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: azure/setup-helm@v4
+      - run: npm ci --prefix ui
+      - run: make verify
+      - name: Build coordinated image tags
+        run: make images
+      - name: Publish trusted main images to Harbor
+        if: ${{ gitea.event_name == 'push' && gitea.ref == 'refs/heads/main' }}
+        run: |
+          : "${CI_REGISTRY:?CI_REGISTRY is required}"
+          : "${CI_REGISTRY_PATH:?CI_REGISTRY_PATH is required}"
+          : "${CI_REGISTRY_USER:?CI_REGISTRY_USER is required}"
+          : "${CI_REGISTRY_PASSWORD:?CI_REGISTRY_PASSWORD is required}"
+          short_sha="$(git rev-parse HEAD | cut -c1-8)"
+          version="$(tr -d '\n' < VERSION)"
+          printf '%s' "$CI_REGISTRY_PASSWORD" | buildah login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+          for component in ui api worker; do
+            source_image="workouts-${component}"
+            target_image="${CI_REGISTRY_PATH}/${source_image}"
+            buildah tag "${source_image}:${short_sha}" "${target_image}:${short_sha}"
+            buildah tag "${source_image}:${version}" "${target_image}:${version}"
+            buildah push "${target_image}:${short_sha}"
+            buildah push "${target_image}:${version}"
+          done
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: workouts
+          POSTGRES_USER: workouts_migration
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workouts_migration -d workouts"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      MIGRATION_DATABASE_URL: postgresql://workouts_migration@127.0.0.1:5432/workouts
+      API_DATABASE_URL: postgresql://workouts_api@127.0.0.1:5432/workouts
+      WORKER_DATABASE_URL: postgresql://workouts_worker@127.0.0.1:5432/workouts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: psql "$MIGRATION_DATABASE_URL" -f scripts/postgres-init.sql
+      - run: make migration-test

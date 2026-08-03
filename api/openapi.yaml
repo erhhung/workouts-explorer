@@ -1,0 +1,352 @@
+openapi: 3.0.3
+info:
+  title: Workouts Explorer API
+  version: 0.1.0
+  description: Design-first contract. Session operations are documented Milestone 2 placeholders.
+servers:
+  - url: /
+paths:
+  /api/config:
+    get:
+      operationId: getPublicConfig
+      summary: Read safe browser runtime configuration
+      tags: [public]
+      responses:
+        '200':
+          description: Safe presentation settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConfig'
+        default:
+          $ref: '#/components/responses/Problem'
+  /api/openapi.yaml:
+    get:
+      operationId: getOpenAPIDocument
+      summary: Read this public OpenAPI document
+      tags: [public]
+      responses:
+        '200':
+          description: OpenAPI 3.0.3 YAML document
+          content:
+            application/yaml:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          $ref: '#/components/responses/Problem'
+  /swagger:
+    get:
+      operationId: getSwaggerUI
+      summary: Open public interactive API documentation
+      tags: [public]
+      responses:
+        '200':
+          description: Swagger UI HTML
+          content:
+            text/html:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/Problem'
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Report process liveness
+      tags: [health]
+      responses:
+        '200':
+          description: Process is live
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Report database and schema readiness
+      tags: [health]
+      responses:
+        '200':
+          description: Process is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: A required dependency is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/session:
+    post:
+      operationId: createBrowserSession
+      summary: Sign in and create a cookie-authenticated session
+      description: Documented placeholder; returns 501 until Milestone 2.
+      tags: [session]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigninRequest'
+      responses:
+        '201':
+          description: Browser session created; sets the fixed workouts_session cookie.
+          headers:
+            Set-Cookie:
+              description: Secure outside local development; HttpOnly; SameSite=Lax; Path=/; host-only.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserSession'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        default:
+          $ref: '#/components/responses/Problem'
+    get:
+      operationId: getCurrentSession
+      summary: Read the current session
+      description: Cookie authentication includes csrfToken. Documented placeholder; returns 501 until Milestone 2.
+      tags: [session]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current session
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BrowserSession'
+                  - $ref: '#/components/schemas/SessionMetadata'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: deleteCurrentSession
+      summary: Revoke the current session
+      description: Cookie authentication requires X-CSRF-Token. Bearer authentication takes precedence. Documented placeholder; returns 501 until Milestone 2.
+      tags: [session]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '204':
+          description: Session revoked
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        default:
+          $ref: '#/components/responses/Problem'
+  /api/session-tokens:
+    post:
+      operationId: createSessionToken
+      summary: Sign in and create a bearer-authenticated session
+      description: Returns a bearer token only in the creation response. Documented placeholder; returns 501 until Milestone 2.
+      tags: [session]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigninRequest'
+      responses:
+        '201':
+          description: Bearer session created; does not set a cookie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenSession'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        default:
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: workouts_session
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required for a state-changing request authenticated by the session cookie; ignored for bearer authentication.
+      schema:
+        type: string
+        minLength: 43
+        maxLength: 43
+  responses:
+    Problem:
+      description: RFC 9457 Problem Details
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotImplemented:
+      description: Operation is documented but not implemented in Milestone 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    PublicConfig:
+      type: object
+      additionalProperties: false
+      required: [productName, pollingIntervalSeconds, mapFitPaddingPixels]
+      properties:
+        productName:
+          type: string
+          example: Workouts Explorer
+        pollingIntervalSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          example: 30
+        mapFitPaddingPixels:
+          type: integer
+          minimum: 0
+          maximum: 512
+          example: 48
+        baseMapTileUrl:
+          type: string
+          format: uri-template
+          description: Optional public tile URL template.
+        baseMapAttribution:
+          type: string
+          maxLength: 1024
+          description: Optional public attribution text.
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    SigninRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          description: Username or email address.
+        password:
+          type: string
+          format: password
+          minLength: 1
+          writeOnly: true
+    IdentitySummary:
+      type: object
+      additionalProperties: false
+      required: [id, username, fullName]
+      properties:
+        id:
+          $ref: '#/components/schemas/CompactUUID'
+        username:
+          type: string
+        fullName:
+          type: string
+    SessionMetadata:
+      type: object
+      additionalProperties: false
+      required: [id, identity, expiresAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/CompactUUID'
+        identity:
+          $ref: '#/components/schemas/IdentitySummary'
+        expiresAt:
+          type: string
+          format: date-time
+    BrowserSession:
+      type: object
+      additionalProperties: false
+      required: [id, identity, expiresAt, csrfToken]
+      properties:
+        id:
+          $ref: '#/components/schemas/CompactUUID'
+        identity:
+          $ref: '#/components/schemas/IdentitySummary'
+        expiresAt:
+          type: string
+          format: date-time
+        csrfToken:
+          type: string
+          minLength: 43
+          maxLength: 43
+          writeOnly: true
+    TokenSession:
+      type: object
+      additionalProperties: false
+      required: [id, identity, expiresAt, accessToken, tokenType]
+      properties:
+        id:
+          $ref: '#/components/schemas/CompactUUID'
+        identity:
+          $ref: '#/components/schemas/IdentitySummary'
+        expiresAt:
+          type: string
+          format: date-time
+        accessToken:
+          type: string
+          minLength: 43
+          maxLength: 43
+          writeOnly: true
+        tokenType:
+          type: string
+          enum: [Bearer]
+    CompactUUID:
+      type: string
+      pattern: '^[0-9A-F]{32}$'
+      example: 018F47A2D3B77A10B4C92A8D63F15E01
+    Problem:
+      type: object
+      additionalProperties: true
+      required: [type, title, status, requestId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        requestId:
+          type: string
+          description: Safe request correlation identifier.

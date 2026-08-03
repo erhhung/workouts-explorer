@@ -1,0 +1,266 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	_ "embed"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/erhhung/workouts-explorer/internal/config"
+	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/getkin/kin-openapi/openapi3filter"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
+	"github.com/swaggest/swgui/v5emb"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
+)
+
+//go:embed openapi.yaml
+var openAPIDocument []byte
+
+type Server struct {
+	config  config.API
+	db      *pgxpool.Pool
+	swagger http.Handler
+}
+
+func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
+	spec, err := generated.GetSwagger()
+	if err != nil {
+		return nil, fmt.Errorf("load embedded OpenAPI document: %w", err)
+	}
+	spec.Servers = nil
+
+	swagger := v5emb.New("Workouts Explorer API", "/api/openapi.yaml", "/swagger")
+	server := &Server{config: cfg, db: db, swagger: swagger}
+	csp, err := swaggerContentSecurityPolicy(swagger)
+	if err != nil {
+		return nil, err
+	}
+
+	router := chi.NewRouter()
+	router.Use(requestID)
+	router.Use(func(next http.Handler) http.Handler {
+		return otelhttp.NewHandler(next, "http.request")
+	})
+	router.Use(accessLog(logger))
+	router.Use(securityHeaders(csp))
+	router.Handle("/swagger/*", swagger)
+
+	validated := chi.NewRouter()
+	validated.Use(requestBodyLimit(config.MaxRequestBodyBytes))
+	validated.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(spec, &nethttpmiddleware.Options{
+		Options: openapi3filter.Options{
+			// Session routes are placeholders; Milestone 2 replaces this with credential validation.
+			AuthenticationFunc: func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
+		},
+		ErrorHandlerWithOpts: func(_ context.Context, err error, w http.ResponseWriter, r *http.Request, options nethttpmiddleware.ErrorHandlerOpts) {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeProblem(w, r, http.StatusRequestEntityTooLarge, "Content Too Large", "request body exceeds the allowed size")
+				return
+			}
+			writeProblem(w, r, options.StatusCode, http.StatusText(options.StatusCode), "request does not match the API contract")
+		},
+	}))
+	generated.HandlerFromMux(server, validated)
+	router.Mount("/", validated)
+	return router, nil
+}
+
+func (s *Server) GetPublicConfig(w http.ResponseWriter, _ *http.Request) {
+	response := generated.PublicConfig{
+		ProductName:            "Workouts Explorer",
+		PollingIntervalSeconds: s.config.PollingIntervalSeconds,
+		MapFitPaddingPixels:    s.config.MapFitPaddingPixels,
+	}
+	if s.config.BaseMapTileURL != "" {
+		response.BaseMapTileUrl = &s.config.BaseMapTileURL
+	}
+	if s.config.BaseMapAttribution != "" {
+		response.BaseMapAttribution = &s.config.BaseMapAttribution
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (*Server) GetOpenAPIDocument(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openAPIDocument)
+}
+
+func (s *Server) GetSwaggerUI(w http.ResponseWriter, r *http.Request) {
+	s.swagger.ServeHTTP(w, r)
+}
+
+func (*Server) GetLiveness(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, generated.Health{Status: generated.Ok})
+}
+
+func (s *Server) GetReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if !database.Ready(ctx, s.db) {
+		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "database schema is unavailable or incompatible")
+		return
+	}
+	writeJSON(w, http.StatusOK, generated.Health{Status: generated.Ok})
+}
+
+func (*Server) CreateBrowserSession(w http.ResponseWriter, r *http.Request) {
+	writeNotImplemented(w, r)
+}
+
+func (*Server) CreateSessionToken(w http.ResponseWriter, r *http.Request) {
+	writeNotImplemented(w, r)
+}
+
+func (*Server) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
+	writeNotImplemented(w, r)
+}
+
+func (*Server) DeleteCurrentSession(w http.ResponseWriter, r *http.Request, _ generated.DeleteCurrentSessionParams) {
+	writeNotImplemented(w, r)
+}
+
+func writeNotImplemented(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r, http.StatusNotImplemented, "Not Implemented", "session operations are implemented in Milestone 2")
+}
+
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	writeJSON(w, status, generated.Problem{
+		Type:      "about:blank",
+		Title:     title,
+		Status:    status,
+		Detail:    &detail,
+		RequestId: requestIDFrom(r.Context()),
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+type requestIDKey struct{}
+
+func requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-ID")
+		if _, err := uuid.Parse(id); err != nil {
+			id = uuid.NewString()
+		}
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
+	})
+}
+
+func requestBodyLimit(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > limit {
+				writeProblem(w, r, http.StatusRequestEntityTooLarge, "Content Too Large", "request body exceeds the allowed size")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func securityHeaders(csp string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Security-Policy", csp)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func swaggerContentSecurityPolicy(swagger http.Handler) (string, error) {
+	response := httptest.NewRecorder()
+	swagger.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/swagger", nil))
+	if response.Code != http.StatusOK {
+		return "", fmt.Errorf("render embedded Swagger UI for CSP: status %d", response.Code)
+	}
+	scriptHashes := inlineHashes(response.Body.Bytes(), regexp.MustCompile(`(?s)<script>(.*?)</script>`))
+	styleHashes := inlineHashes(response.Body.Bytes(), regexp.MustCompile(`(?s)<style>(.*?)</style>`))
+	if len(scriptHashes) == 0 || len(styleHashes) == 0 {
+		return "", fmt.Errorf("render embedded Swagger UI for CSP: inline assets not found")
+	}
+	return "default-src 'none'; script-src 'self' " + strings.Join(scriptHashes, " ") +
+		"; style-src 'self' " + strings.Join(styleHashes, " ") +
+		"; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", nil
+}
+
+func inlineHashes(document []byte, expression *regexp.Regexp) []string {
+	matches := expression.FindAllSubmatch(document, -1)
+	hashes := make([]string, 0, len(matches))
+	for _, match := range matches {
+		sum := sha256.Sum256(bytes.Clone(match[1]))
+		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	return hashes
+}
+
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+
+func accessLog(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			started := time.Now()
+			recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(recorder, r)
+			attributes := []any{
+				"request_id", requestIDFrom(r.Context()),
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", recorder.status,
+				"duration_ms", time.Since(started).Milliseconds(),
+			}
+			spanContext := trace.SpanContextFromContext(r.Context())
+			if spanContext.IsValid() {
+				attributes = append(attributes, "trace_id", spanContext.TraceID().String(), "span_id", spanContext.SpanID().String())
+			}
+			logger.InfoContext(r.Context(), "request completed", attributes...)
+		})
+	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	if r.wroteHeader {
+		return
+	}
+	r.wroteHeader = true
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}

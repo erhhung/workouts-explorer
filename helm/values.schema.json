@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "ui", "api", "worker", "otel", "ingress"],
+  "properties": {
+    "image": {"type": "object", "additionalProperties": false, "required": ["registry", "pullPolicy", "pullSecrets", "tag"], "properties": {"registry": {"type": "string"}, "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}, "pullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}}, "tag": {"type": "string"}}},
+    "ui": {"$ref": "#/$defs/component"},
+    "api": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "publicUrl", "databaseSecret", "migrationDatabaseKey", "publicConfig", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "replicas": {"type": "integer", "minimum": 1}, "publicUrl": {"type": "string", "format": "uri"}, "databaseSecret": {"$ref": "#/$defs/secretRef"}, "migrationDatabaseKey": {"type": "string", "minLength": 1}, "publicConfig": {"type": "object", "additionalProperties": false, "required": ["pollingIntervalSeconds", "mapFitPaddingPixels", "baseMapTileUrl", "baseMapAttribution"], "properties": {"pollingIntervalSeconds": {"type": "integer", "minimum": 1}, "mapFitPaddingPixels": {"type": "integer", "minimum": 0}, "baseMapTileUrl": {"type": "string"}, "baseMapAttribution": {"type": "string"}}}, "resources": {"type": "object"}}},
+    "worker": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "databaseSecret", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "replicas": {"type": "integer", "minimum": 1}, "databaseSecret": {"$ref": "#/$defs/secretRef"}, "resources": {"type": "object"}}},
+    "otel": {"type": "object", "additionalProperties": false, "required": ["endpoint"], "properties": {"endpoint": {"type": "string"}}},
+    "ingress": {"type": "object", "additionalProperties": false, "required": ["enabled", "className", "annotations", "host", "certificateSecretName"], "properties": {"enabled": {"type": "boolean"}, "className": {"type": "string"}, "annotations": {"type": "object", "additionalProperties": {"type": "string"}}, "host": {"type": "string"}, "certificateSecretName": {"type": "string", "minLength": 1}}}
+  },
+  "$defs": {
+    "component": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "replicas": {"type": "integer", "minimum": 1}, "resources": {"type": "object"}}},
+    "secretRef": {"type": "object", "additionalProperties": false, "required": ["name", "key"], "properties": {"name": {"type": "string"}, "key": {"type": "string", "minLength": 1}}}
+  }
+}

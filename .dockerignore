@@ -1,0 +1,7 @@
+.git
+.opencode
+data
+ui/node_modules
+ui/dist
+coverage
+*.out
