@@ -12,11 +12,36 @@ ui:
 api:
   image: workouts-api
   replicas: 1
-  publicUrl: http://localhost
+  publicUrl: https://localhost
   databaseSecret:
     name: workouts-explorer-database
     key: apiDatabaseUrl
   migrationDatabaseKey: migrationDatabaseUrl
+  roleProvisioning:
+    enabled: false
+    secretName: workouts-explorer-role-provisioning
+    databaseKey: databaseUrl
+  securitySecret:
+    name: workouts-explorer-security
+    rateLimitKey: rateLimitKey
+    smtpPasswordKey: smtpPassword
+  passwordMinimumLength: 12
+  sessionLifetime: 2h
+  pageSizeMaximum: 100
+  trustedProxyCidrs: ""
+  localDevelopment: false
+  smtp:
+    address: smtp.example.invalid:587
+    username: workouts-explorer
+    fromAddress: workouts@example.invalid
+    allowInsecureLocal: false
+  bootstrap:
+    enabled: false
+    secretName: workouts-explorer-bootstrap-admin
+    usernameKey: username
+    emailKey: email
+    passwordKey: password
+    databaseKey: migrationDatabaseUrl
   publicConfig:
     pollingIntervalSeconds: 30
     mapFitPaddingPixels: 48
@@ -40,4 +65,9 @@ ingress:
   className: ""
   annotations: {}
   host: ""
+  tlsSecretName: workouts-explorer-ingress-tls
   certificateSecretName: workouts-explorer-ingress-tls
+  mailpit:
+    enabled: false
+    externalName: mailpit.mailpit.svc.cluster.local
+    port: 8025

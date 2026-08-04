@@ -38,7 +38,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
-	handler, err := apiapp.NewHandler(cfg, db, logger)
+	handler, err := apiapp.NewHandlerContext(ctx, cfg, db, logger)
 	if err != nil {
 		return err
 	}

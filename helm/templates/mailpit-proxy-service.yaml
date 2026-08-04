@@ -1,0 +1,14 @@
+{{- if .Values.ingress.mailpit.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "workouts.fullname" . }}-mailpit-proxy
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ required "ingress.mailpit.externalName is required" .Values.ingress.mailpit.externalName }}
+  ports:
+    - name: http
+      port: {{ .Values.ingress.mailpit.port }}
+      targetPort: {{ .Values.ingress.mailpit.port }}
+{{- end }}

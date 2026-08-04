@@ -30,7 +30,7 @@ test-ui:
 	npm --prefix ui test
 
 build:
-	go build ./api/cmd/api ./api/cmd/migrate ./worker/cmd/worker
+	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker
 	npm --prefix ui run build
 
 images:

@@ -3,8 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101b1a" />
+    <meta name="theme-color" content="#0b1514" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <title>Workouts Explorer</title>
+    <script>
+      (function(){var t="dark";try{var v=localStorage.getItem("workouts-explorer.theme");if(v==="light"||v==="dark")t=v}catch(e){}document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;document.querySelector('meta[name="theme-color"]').setAttribute("content",t==="light"?"#f3f0e7":"#0b1514")})();
+    </script>
   </head>
   <body>
     <div id="root"></div>

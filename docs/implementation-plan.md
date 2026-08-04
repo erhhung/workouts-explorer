@@ -46,7 +46,7 @@ implementation that depends on an unresolved choice.
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
 | Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
 
-ADRs 0001 through 0004 are accepted. ADRs 0005 through 0010 remain Proposed
+ADRs 0001 through 0006 are accepted. ADRs 0007 through 0010 remain Proposed
 until their stated acceptance evidence is recorded. A proposed record's status
 must change before dependent application work begins.
 
@@ -98,8 +98,8 @@ An administrator can invite a user, the user can register and sign in, and all l
 
 ### Vertical slice
 
-- Accept ADR 0005 before identity migrations and public authentication handlers.
-- Complete ADR 0006's focused spike before implementing public or authenticated interface components.
+- Apply ADR 0005 to identity migrations and public authentication handlers.
+- Apply ADR 0006's accepted UI foundation to public and authenticated interface components.
 - Bootstrap the separate administrator identity from Secret-backed configuration.
 - Implement invitations, SMTP delivery, signup, unique username/email, and personal account creation.
 - Implement Argon2id credentials, signin, HTTP-only cookie, bearer session token, CSRF, signout, and absolute session expiry.

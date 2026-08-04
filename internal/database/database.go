@@ -10,7 +10,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 1
+const SupportedSchemaVersion = 2
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
@@ -61,6 +61,16 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND has_table_privilege(current_user, 'app.jobs', 'INSERT')
 		   AND has_function_privilege(current_user, 'app.current_account_id()', 'EXECUTE')
 		   AND has_function_privilege(current_user, 'app.request_job_cancellation(uuid,uuid)', 'EXECUTE')
+		   AND (current_user = 'workouts_worker' OR (
+		       to_regclass('app.authentication_principals') IS NOT NULL
+		       AND to_regclass('app.sessions') IS NOT NULL
+		       AND has_column_privilege(current_user, 'app.authentication_principals', 'password_hash', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.authentication_principals', 'full_name', 'UPDATE')
+		       AND has_column_privilege(current_user, 'app.sessions', 'credential_verifier', 'INSERT')
+		       AND has_function_privilege(current_user, 'app.consume_rate_limit(text,text,bytea)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.issue_password_reset(text,boolean,bytea)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.complete_password_reset(bytea,text,uuid,text)', 'EXECUTE')
+		   ))
 		   AND EXISTS (
 		       SELECT 1 FROM pg_roles
 		       WHERE rolname = current_user AND rolcanlogin AND NOT rolsuper AND NOT rolbypassrls

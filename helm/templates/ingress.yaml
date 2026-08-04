@@ -9,11 +9,16 @@ spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
   {{- end }}
-  tls: [{hosts: [{{ required "ingress.host is required" .Values.ingress.host }}], secretName: workouts-explorer-ingress-tls}]
+  tls: [{hosts: [{{ required "ingress.host is required" .Values.ingress.host }}], secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}}]
   rules:
     - host: {{ required "ingress.host is required" .Values.ingress.host }}
       http:
         paths:
+          {{- if .Values.ingress.mailpit.enabled }}
+          - path: /mailpit
+            pathType: Prefix
+            backend: {service: {name: {{ include "workouts.fullname" . }}-mailpit-proxy, port: {name: http}}}
+          {{- end }}
           - path: /api
             pathType: Prefix
             backend: {service: {name: {{ include "workouts.fullname" . }}-api, port: {name: http}}}

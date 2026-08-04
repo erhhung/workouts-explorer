@@ -554,8 +554,6 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 
 ## Deferred Decisions
 
-- Public-authentication policy and SMTP failure handling proposed in ADR 0005
-- CSS/component styling approach and bundled default font pending the ADR 0006 spike
 - Source envelope-encryption format and key lifecycle proposed in ADR 0007
 - Exact OSM importer and segment derivation toolchain pending the ADR 0008 spike
 - Tested nearest-segment distance and route quality rules pending ADR 0009 experiments

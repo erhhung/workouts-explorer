@@ -52,6 +52,16 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      {{- if not .Values.api.smtp.allowInsecureLocal }}
+      initContainers:
+        - name: prepare-smtp-password
+          image: {{ include "workouts.image" (list . .Values.api.image) }}
+          command: [/bin/sh, -ec, "cp /secret/password /private/password && chown 65532:65532 /private/password && chmod 0400 /private/password"]
+          securityContext: {runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [CHOWN]}, readOnlyRootFilesystem: true}
+          volumeMounts:
+            - {name: smtp-source, mountPath: /secret, readOnly: true}
+            - {name: smtp-password, mountPath: /private}
+      {{- end }}
       containers:
         - name: api
           image: {{ include "workouts.image" (list . .Values.api.image) }}
@@ -61,10 +71,25 @@ spec:
           env:
             - name: API_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
+            - name: RATE_LIMIT_KEY
+              valueFrom: {secretKeyRef: {name: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}, key: {{ .Values.api.securitySecret.rateLimitKey }}}}
           ports: [{name: http, containerPort: 8080}]
           livenessProbe: {httpGet: {path: /health/live, port: http}}
           readinessProbe: {httpGet: {path: /health/ready, port: http}}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- if not .Values.api.smtp.allowInsecureLocal }}
+          volumeMounts:
+            - {name: smtp-password, mountPath: /var/run/secrets/workouts-smtp, readOnly: true}
+          {{- end }}
+      {{- if not .Values.api.smtp.allowInsecureLocal }}
+      volumes:
+        - {name: smtp-password, emptyDir: {medium: Memory}}
+        - name: smtp-source
+          secret:
+            secretName: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}
+            defaultMode: 0400
+            items: [{key: {{ .Values.api.securitySecret.smtpPasswordKey }}, path: password}]
+      {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

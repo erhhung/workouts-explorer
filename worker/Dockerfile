@@ -1,13 +1,14 @@
 FROM docker.io/library/golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN for attempt in 1 2 3; do go mod download && exit 0; sleep 5; done; exit 1
 COPY worker ./worker
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./worker/cmd/worker
 
 FROM docker.io/library/alpine:3.23
-RUN apk add --no-cache ca-certificates && \
+RUN for attempt in 1 2 3; do apk add --no-cache ca-certificates && break; sleep 5; done && \
+    test -f /etc/ssl/certs/ca-certificates.crt && \
     addgroup -g 65532 app && \
     adduser -D -H -u 65532 -G app app
 COPY --from=build /out/worker /app/worker

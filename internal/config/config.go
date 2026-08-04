@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -30,6 +32,21 @@ type API struct {
 	MapFitPaddingPixels    int
 	BaseMapTileURL         string
 	BaseMapAttribution     string
+	SessionLifetime        time.Duration
+	PasswordMinimum        int
+	PageSizeMaximum        int
+	RateLimitKey           []byte
+	TrustedProxyCIDRs      []*net.IPNet
+	LocalDevelopment       bool
+	SMTP                   SMTP
+}
+
+type SMTP struct {
+	Address            string
+	Username           string
+	PasswordFile       string
+	FromAddress        string
+	AllowInsecureLocal bool
 }
 
 func LoadAPI() (API, error) {
@@ -45,6 +62,34 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	passwordMinimum, err := integerRange("PASSWORD_MINIMUM_LENGTH", 12, 12, 64)
+	if err != nil {
+		return API{}, err
+	}
+	pageMaximum, err := integerRange("PAGE_SIZE_MAXIMUM", 100, 25, 1000)
+	if err != nil {
+		return API{}, err
+	}
+	rateKey, err := secretKey("RATE_LIMIT_KEY")
+	if err != nil {
+		return API{}, err
+	}
+	trustedProxies, err := cidrs("TRUSTED_PROXY_CIDRS")
+	if err != nil {
+		return API{}, err
+	}
+	allowInsecureSMTP, err := boolean("SMTP_ALLOW_INSECURE_LOCAL", false)
+	if err != nil {
+		return API{}, err
+	}
+	localDevelopment, err := boolean("LOCAL_DEVELOPMENT", false)
+	if err != nil {
+		return API{}, err
+	}
+	sessionLifetime, err := durationRange("SESSION_LIFETIME", 2*time.Hour, 5*time.Minute, 24*time.Hour)
+	if err != nil {
+		return API{}, err
+	}
 	result := API{
 		Common:                 c,
 		PublicURL:              env("PUBLIC_URL", "http://localhost:5173"),
@@ -52,8 +97,21 @@ func LoadAPI() (API, error) {
 		MapFitPaddingPixels:    padding,
 		BaseMapTileURL:         os.Getenv("BASE_MAP_TILE_URL"),
 		BaseMapAttribution:     os.Getenv("BASE_MAP_ATTRIBUTION"),
+		SessionLifetime:        sessionLifetime,
+		PasswordMinimum:        passwordMinimum,
+		PageSizeMaximum:        pageMaximum,
+		RateLimitKey:           rateKey,
+		TrustedProxyCIDRs:      trustedProxies,
+		LocalDevelopment:       localDevelopment,
+		SMTP: SMTP{
+			Address:            os.Getenv("SMTP_ADDRESS"),
+			Username:           os.Getenv("SMTP_USERNAME"),
+			PasswordFile:       os.Getenv("SMTP_PASSWORD_FILE"),
+			FromAddress:        os.Getenv("SMTP_FROM_ADDRESS"),
+			AllowInsecureLocal: allowInsecureSMTP,
+		},
 	}
-	if err := validateHTTPURL("PUBLIC_URL", result.PublicURL, false); err != nil {
+	if err := validatePublicOrigin(result.PublicURL, result.LocalDevelopment); err != nil {
 		return API{}, err
 	}
 	allowLocalMap, err := boolean("ALLOW_LOCAL_BASE_MAP", false)
@@ -68,7 +126,74 @@ func LoadAPI() (API, error) {
 	if len(result.BaseMapAttribution) > 1024 {
 		return API{}, fmt.Errorf("BASE_MAP_ATTRIBUTION must not exceed 1024 characters")
 	}
+	if err := validateSMTP(result.SMTP, result.LocalDevelopment); err != nil {
+		return API{}, err
+	}
 	return result, nil
+}
+
+func secretKey(name string) ([]byte, error) {
+	raw := os.Getenv(name)
+	decoded, err := base64.RawStdEncoding.DecodeString(raw)
+	if err != nil || len(decoded) < 32 {
+		return nil, fmt.Errorf("%s must be unpadded base64 encoding at least 32 random bytes", name)
+	}
+	return decoded, nil
+}
+
+func cidrs(name string) ([]*net.IPNet, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(os.Getenv(name), ",")
+	result := make([]*net.IPNet, 0, len(parts))
+	for _, raw := range parts {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, fmt.Errorf("%s must contain only CIDR prefixes", name)
+		}
+		result = append(result, network)
+	}
+	return result, nil
+}
+
+func validateSMTP(cfg SMTP, localDevelopment bool) error {
+	host, port, err := net.SplitHostPort(cfg.Address)
+	if err != nil || host == "" || port == "" {
+		return fmt.Errorf("SMTP_ADDRESS must be a host and port")
+	}
+	if cfg.FromAddress == "" {
+		return fmt.Errorf("SMTP_FROM_ADDRESS is required")
+	}
+	from, err := mail.ParseAddress(cfg.FromAddress)
+	if err != nil || from.Address != cfg.FromAddress || !strings.Contains(cfg.FromAddress, "@") {
+		return fmt.Errorf("SMTP_FROM_ADDRESS must be one addr-spec without a display name")
+	}
+	if cfg.AllowInsecureLocal {
+		mailpitHost := strings.EqualFold(host, "mailpit") || strings.HasPrefix(strings.ToLower(host), "mailpit.")
+		if !localDevelopment || port != "1025" || (!isLoopbackHost(host) && !mailpitHost) || cfg.Username != "" || cfg.PasswordFile != "" {
+			return fmt.Errorf("SMTP_ALLOW_INSECURE_LOCAL requires LOCAL_DEVELOPMENT and a loopback or Mailpit host on port 1025 without credentials")
+		}
+		return nil
+	}
+	if cfg.Username == "" || cfg.PasswordFile == "" {
+		return fmt.Errorf("SMTP_USERNAME and SMTP_PASSWORD_FILE are required")
+	}
+	return nil
+}
+
+func validatePublicOrigin(raw string, localDevelopment bool) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("PUBLIC_URL must be an origin without user information, path, query, or fragment")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme != "http" || !localDevelopment || !isLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("PUBLIC_URL must use https except for explicit loopback local development")
+	}
+	return nil
 }
 
 func LoadWorker() (Common, error) {
@@ -109,6 +234,18 @@ func integerRange(name string, fallback, minimum, maximum int) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < minimum || value > maximum {
 		return 0, fmt.Errorf("%s must be an integer between %d and %d", name, minimum, maximum)
+	}
+	return value, nil
+}
+
+func durationRange(name string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be a duration between %s and %s", name, minimum, maximum)
 	}
 	return value, nil
 }
@@ -158,4 +295,13 @@ func isInternalHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

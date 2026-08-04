@@ -25,7 +25,9 @@ func testHandler(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	handler, err := NewHandler(config.API{PollingIntervalSeconds: 30, MapFitPaddingPixels: 48}, db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	handler, err := NewHandlerContext(ctx, config.API{PollingIntervalSeconds: 30, MapFitPaddingPixels: 48}, db, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +62,18 @@ func TestPublicEndpoints(t *testing.T) {
 	}
 }
 
+func TestPublicConfigExposesEffectiveValidationPolicy(t *testing.T) {
+	response := httptest.NewRecorder()
+	testHandler(t).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var public generated.PublicConfig
+	if err := json.Unmarshal(response.Body.Bytes(), &public); err != nil {
+		t.Fatal(err)
+	}
+	if public.PasswordMinimumLength != 12 || public.PageSizeMaximum != 100 {
+		t.Fatalf("public policy passwordMinimum=%d pageMaximum=%d", public.PasswordMinimumLength, public.PageSizeMaximum)
+	}
+}
+
 func TestSwaggerAssetsAreEmbeddedWithCSP(t *testing.T) {
 	handler := testHandler(t)
 	index := httptest.NewRecorder()
@@ -78,13 +92,13 @@ func TestSwaggerAssetsAreEmbeddedWithCSP(t *testing.T) {
 	}
 }
 
-func TestSessionPlaceholderUsesProblemDetails(t *testing.T) {
+func TestUnavailableAuthenticationUsesProblemDetails(t *testing.T) {
 	handler := testHandler(t)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/session-tokens", strings.NewReader(`{"username":"someone","password":"not-a-real-password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotImplemented || response.Header().Get("Content-Type") != "application/problem+json" {
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Content-Type") != "application/problem+json" {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
 	var problem generated.Problem
@@ -144,7 +158,9 @@ func TestRequestLogsContainCorrelationButNoSensitiveInput(t *testing.T) {
 	prior := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(prior); _ = provider.Shutdown(context.Background()) })
-	handler, err := NewHandler(config.API{PollingIntervalSeconds: 30, MapFitPaddingPixels: 48}, db, logger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler, err := NewHandlerContext(ctx, config.API{PollingIntervalSeconds: 30, MapFitPaddingPixels: 48}, db, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

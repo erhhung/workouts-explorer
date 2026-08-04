@@ -2,7 +2,10 @@ package migrations_test
 
 import (
 	"context"
+	"crypto/rand"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,11 +93,11 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `GRANT SELECT ON app.schema_metadata TO workouts_api`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 2, minimum_runtime_version = 2`); err != nil {
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 3, minimum_runtime_version = 3`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 1, minimum_runtime_version = 1`)
+		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 2, minimum_runtime_version = 1`)
 	})
 	if database.Ready(db.ctx, db.api) {
 		t.Fatal("readiness ignored an incompatible minimum runtime version")
@@ -123,6 +126,135 @@ func TestTenantIsolationAndSingleConnectionReuse(t *testing.T) {
 	}
 	if _, err := db.api.Exec(db.ctx, `DELETE FROM app.jobs WHERE id = $1`, jobID); err == nil {
 		t.Fatal("direct delete unexpectedly succeeded")
+	}
+}
+
+func TestAccountLifecycleRolesAndPreferenceRLS(t *testing.T) {
+	db := openTestDatabases(t)
+	accountA, accountB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	principalA, principalB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	runSuffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	for _, fixture := range []struct {
+		account, principal uuid.UUID
+		suffix             string
+	}{{accountA, principalA, "a"}, {accountB, principalB, "b"}} {
+		tx := beginAccount(t, db.ctx, db.api, fixture.account)
+		defer tx.Rollback(db.ctx)
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.authentication_principals(id,role,username,canonical_username,email,canonical_email,canonicalization_version,password_hash,full_name) VALUES($1,'user',$2,$2,$3,$3,1,'test-hash','Test User')`, fixture.principal, "user"+fixture.suffix+runSuffix, "user"+fixture.suffix+runSuffix+"@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.accounts(id) VALUES($1)`, fixture.account); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.users(principal_id,account_id) VALUES($1,$2)`, fixture.principal, fixture.account); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.preferences(account_id) VALUES($1)`, fixture.account); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(db.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx := beginAccount(t, db.ctx, db.api, accountA)
+	var visible int
+	if err := tx.QueryRow(db.ctx, `SELECT count(*) FROM app.preferences`).Scan(&visible); err != nil {
+		t.Fatal(err)
+	}
+	if visible != 1 {
+		t.Fatalf("account A saw %d preference rows", visible)
+	}
+	if command, err := tx.Exec(db.ctx, `UPDATE app.preferences SET theme='light' WHERE account_id=$1`, accountB); err != nil || command.RowsAffected() != 0 {
+		t.Fatalf("foreign preference update affected %d: %v", command.RowsAffected(), err)
+	}
+	_ = tx.Rollback(db.ctx)
+	if _, err := db.worker.Exec(db.ctx, `SELECT id FROM app.authentication_principals LIMIT 1`); err == nil {
+		t.Fatal("worker unexpectedly read global authentication principals")
+	}
+	var ownerLogin, ownerBypass bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT rolcanlogin,rolbypassrls FROM pg_roles WHERE rolname='workouts_security_owner'`).Scan(&ownerLogin, &ownerBypass); err != nil || ownerLogin || ownerBypass {
+		t.Fatalf("unsafe security owner: login=%t bypass=%t err=%v", ownerLogin, ownerBypass, err)
+	}
+	var ownerCreate, apiAdminRead, apiResetInsert, apiPasswordUpdate, apiRoleUpdate bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT
+		has_schema_privilege('workouts_security_owner','app','CREATE'),
+		has_table_privilege('workouts_api','app.administrators','SELECT'),
+		has_table_privilege('workouts_api','app.password_resets','INSERT'),
+		has_column_privilege('workouts_api','app.authentication_principals','password_hash','UPDATE'),
+		has_column_privilege('workouts_api','app.authentication_principals','role','UPDATE')`).Scan(&ownerCreate, &apiAdminRead, &apiResetInsert, &apiPasswordUpdate, &apiRoleUpdate); err != nil {
+		t.Fatal(err)
+	}
+	if ownerCreate || apiAdminRead || apiResetInsert || !apiPasswordUpdate || apiRoleUpdate {
+		t.Fatalf("unexpected lifecycle grants: ownerCreate=%t adminRead=%t resetInsert=%t passwordUpdate=%t roleUpdate=%t", ownerCreate, apiAdminRead, apiResetInsert, apiPasswordUpdate, apiRoleUpdate)
+	}
+	for _, function := range []string{"consume_rate_limit", "issue_password_reset", "complete_password_reset", "enforce_principal_role_consistency"} {
+		var owner string
+		if err := db.migration.QueryRow(db.ctx, `SELECT pg_get_userbyid(proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='app' AND p.proname=$1`, function).Scan(&owner); err != nil || owner != "workouts_security_owner" {
+			t.Fatalf("function %s owner=%q err=%v", function, owner, err)
+		}
+	}
+	inconsistent := uuid.Must(uuid.NewV7())
+	tx = beginAccount(t, db.ctx, db.api, uuid.Must(uuid.NewV7()))
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.authentication_principals(id,role,username,canonical_username,email,canonical_email,canonicalization_version,password_hash,full_name) VALUES($1,'user',$2,$2,$3,$3,1,'test-hash','Test')`, inconsistent, "orphan"+inconsistent.String()[:8], "orphan"+inconsistent.String()[:8]+"@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err == nil {
+		t.Fatal("orphan user principal passed deferred role consistency")
+	}
+}
+
+func TestDatabaseOwnedRateLimitProfiles(t *testing.T) {
+	db := openTestDatabases(t)
+	digest := make([]byte, 32)
+	if _, err := rand.Read(digest); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= 11; attempt++ {
+		var allowed bool
+		var retry int
+		if err := db.api.QueryRow(db.ctx, `SELECT allowed,retry_after_seconds FROM app.consume_rate_limit('signin','subject',$1)`, digest).Scan(&allowed, &retry); err != nil {
+			t.Fatal(err)
+		}
+		if allowed != (attempt <= 10) || retry < 1 || retry > 600 {
+			t.Fatalf("attempt=%d allowed=%t retry=%d", attempt, allowed, retry)
+		}
+	}
+	if _, err := db.api.Exec(db.ctx, `SELECT app.consume_rate_limit('invented','subject',$1)`, digest); err == nil {
+		t.Fatal("unknown rate-limit operation was accepted")
+	}
+	var windowAligned bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT bool_and(extract(epoch FROM window_start)::bigint % 600 = 0 AND window_end-window_start=interval '10 minutes') FROM app.rate_limits WHERE operation='signin'`).Scan(&windowAligned); err != nil || !windowAligned {
+		t.Fatalf("database rate window is not aligned: %t err=%v", windowAligned, err)
+	}
+	concurrentDigest := make([]byte, 32)
+	if _, err := rand.Read(concurrentDigest); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan bool, 20)
+	var wait sync.WaitGroup
+	for range 20 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			var allowed bool
+			var retry int
+			if err := db.api.QueryRow(db.ctx, `SELECT allowed,retry_after_seconds FROM app.consume_rate_limit('signin','subject',$1)`, concurrentDigest).Scan(&allowed, &retry); err != nil {
+				t.Error(err)
+				return
+			}
+			results <- allowed
+		}()
+	}
+	wait.Wait()
+	close(results)
+	allowedCount := 0
+	for allowed := range results {
+		if allowed {
+			allowedCount++
+		}
+	}
+	if allowedCount != 10 {
+		t.Fatalf("concurrent rate-limit allowed=%d, want 10", allowedCount)
 	}
 }
 
@@ -379,12 +511,12 @@ func finishChild(t *testing.T, db testDatabases, account, jobID uuid.UUID, statu
 func assertRuntimeRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, expected string) {
 	t.Helper()
 	var role string
-	var superuser, bypass bool
-	if err := pool.QueryRow(ctx, `SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&role, &superuser, &bypass); err != nil {
+	var superuser, bypass, createRole bool
+	if err := pool.QueryRow(ctx, `SELECT current_user, rolsuper, rolbypassrls, rolcreaterole FROM pg_roles WHERE rolname = current_user`).Scan(&role, &superuser, &bypass, &createRole); err != nil {
 		t.Fatal(err)
 	}
-	if role != expected || superuser || bypass {
-		t.Fatalf("role=%q superuser=%t bypassrls=%t", role, superuser, bypass)
+	if role != expected || superuser || bypass || createRole {
+		t.Fatalf("role=%q superuser=%t bypassrls=%t createrole=%t", role, superuser, bypass, createRole)
 	}
 }
 

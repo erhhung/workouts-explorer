@@ -1,0 +1,54 @@
+{{- if .Values.api.bootstrap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "workouts.fullname" . }}-bootstrap-admin-{{ .Release.Revision }}
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: bootstrap-admin}
+    spec:
+      restartPolicy: Never
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: prepare-password
+          image: {{ include "workouts.image" (list . .Values.api.image) }}
+          command: [/bin/sh, -ec, "cp /secret/password /private/password && chmod 0400 /private/password && chown 65532:65532 /private/password"]
+          securityContext: {runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [CHOWN]}, readOnlyRootFilesystem: true}
+          volumeMounts:
+            - {name: source, mountPath: /secret, readOnly: true}
+            - {name: private, mountPath: /private}
+      containers:
+        - name: bootstrap-admin
+          image: {{ include "workouts.image" (list . .Values.api.image) }}
+          command: [/app/bootstrap-admin]
+          args: ["--username=$(BOOTSTRAP_USERNAME)", "--email=$(BOOTSTRAP_EMAIL)", "--password-file=/private/password", "--password-minimum={{ .Values.api.passwordMinimumLength }}"]
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          env:
+            - name: BOOTSTRAP_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.bootstrap.databaseKey }}}}
+            - name: BOOTSTRAP_USERNAME
+              valueFrom: {secretKeyRef: {name: {{ .Values.api.bootstrap.secretName }}, key: {{ .Values.api.bootstrap.usernameKey }}}}
+            - name: BOOTSTRAP_EMAIL
+              valueFrom: {secretKeyRef: {name: {{ .Values.api.bootstrap.secretName }}, key: {{ .Values.api.bootstrap.emailKey }}}}
+          volumeMounts: [{name: private, mountPath: /private, readOnly: true}]
+      volumes:
+        - {name: private, emptyDir: {medium: Memory}}
+        - name: source
+          secret:
+            secretName: {{ required "api.bootstrap.secretName is required" .Values.api.bootstrap.secretName }}
+            defaultMode: 0400
+            items: [{key: {{ .Values.api.bootstrap.passwordKey }}, path: password}]
+{{- end }}

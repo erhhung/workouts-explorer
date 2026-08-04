@@ -10,4 +10,14 @@ data:
   MAP_FIT_PADDING_PIXELS: {{ .Values.api.publicConfig.mapFitPaddingPixels | quote }}
   BASE_MAP_TILE_URL: {{ .Values.api.publicConfig.baseMapTileUrl | quote }}
   BASE_MAP_ATTRIBUTION: {{ .Values.api.publicConfig.baseMapAttribution | quote }}
+  PASSWORD_MINIMUM_LENGTH: {{ .Values.api.passwordMinimumLength | quote }}
+  SESSION_LIFETIME: {{ .Values.api.sessionLifetime | quote }}
+  PAGE_SIZE_MAXIMUM: {{ .Values.api.pageSizeMaximum | quote }}
+  TRUSTED_PROXY_CIDRS: {{ .Values.api.trustedProxyCidrs | quote }}
+  LOCAL_DEVELOPMENT: {{ .Values.api.localDevelopment | quote }}
+  SMTP_ADDRESS: {{ required "api.smtp.address is required" .Values.api.smtp.address | quote }}
+  SMTP_USERNAME: {{ .Values.api.smtp.username | quote }}
+  SMTP_FROM_ADDRESS: {{ required "api.smtp.fromAddress is required" .Values.api.smtp.fromAddress | quote }}
+  SMTP_ALLOW_INSECURE_LOCAL: {{ .Values.api.smtp.allowInsecureLocal | quote }}
+  SMTP_PASSWORD_FILE: {{ ternary "" "/var/run/secrets/workouts-smtp/password" .Values.api.smtp.allowInsecureLocal | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -33,12 +34,19 @@ import (
 var openAPIDocument []byte
 
 type Server struct {
-	config  config.API
-	db      *pgxpool.Pool
-	swagger http.Handler
+	config    config.API
+	db        *pgxpool.Pool
+	swagger   http.Handler
+	passwords *passwordHasher
+	delivery  *deliveryService
+	avatars   *avatarService
 }
 
 func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
+	return NewHandlerContext(context.Background(), cfg, db, logger)
+}
+
+func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
 	spec, err := generated.GetSwagger()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded OpenAPI document: %w", err)
@@ -46,7 +54,17 @@ func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Han
 	spec.Servers = nil
 
 	swagger := v5emb.New("Workouts Explorer API", "/api/openapi.yaml", "/swagger")
-	server := &Server{config: cfg, db: db, swagger: swagger}
+	sender, err := newSMTPSender(cfg.SMTP)
+	if err != nil {
+		return nil, fmt.Errorf("configure SMTP: %w", err)
+	}
+	delivery := newDeliveryService(sender)
+	go func() {
+		<-ctx.Done()
+		delivery.close()
+	}()
+	server := &Server{config: cfg, db: db, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService()}
+	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {
 		return nil, err
@@ -63,9 +81,10 @@ func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Han
 
 	validated := chi.NewRouter()
 	validated.Use(requestBodyLimit(config.MaxRequestBodyBytes))
+	validated.Use(requireJSONContentType)
 	validated.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(spec, &nethttpmiddleware.Options{
 		Options: openapi3filter.Options{
-			// Session routes are placeholders; Milestone 2 replaces this with credential validation.
+			// Handlers apply bearer precedence and role checks after contract validation.
 			AuthenticationFunc: func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
 		},
 		ErrorHandlerWithOpts: func(_ context.Context, err error, w http.ResponseWriter, r *http.Request, options nethttpmiddleware.ErrorHandlerOpts) {
@@ -82,11 +101,34 @@ func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Han
 	return router, nil
 }
 
+func requireJSONContentType(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch {
+			mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || mediaType != "application/json" {
+				writeProblem(w, r, http.StatusUnsupportedMediaType, "Unsupported Media Type", "request body must use application/json")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) GetPublicConfig(w http.ResponseWriter, _ *http.Request) {
+	passwordMinimum := s.config.PasswordMinimum
+	if passwordMinimum == 0 {
+		passwordMinimum = 12
+	}
+	pageSizeMaximum := s.config.PageSizeMaximum
+	if pageSizeMaximum == 0 {
+		pageSizeMaximum = 100
+	}
 	response := generated.PublicConfig{
 		ProductName:            "Workouts Explorer",
 		PollingIntervalSeconds: s.config.PollingIntervalSeconds,
 		MapFitPaddingPixels:    s.config.MapFitPaddingPixels,
+		PasswordMinimumLength:  passwordMinimum,
+		PageSizeMaximum:        pageSizeMaximum,
 	}
 	if s.config.BaseMapTileURL != "" {
 		response.BaseMapTileUrl = &s.config.BaseMapTileURL
@@ -121,26 +163,6 @@ func (s *Server) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, generated.Health{Status: generated.Ok})
 }
 
-func (*Server) CreateBrowserSession(w http.ResponseWriter, r *http.Request) {
-	writeNotImplemented(w, r)
-}
-
-func (*Server) CreateSessionToken(w http.ResponseWriter, r *http.Request) {
-	writeNotImplemented(w, r)
-}
-
-func (*Server) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
-	writeNotImplemented(w, r)
-}
-
-func (*Server) DeleteCurrentSession(w http.ResponseWriter, r *http.Request, _ generated.DeleteCurrentSessionParams) {
-	writeNotImplemented(w, r)
-}
-
-func writeNotImplemented(w http.ResponseWriter, r *http.Request) {
-	writeProblem(w, r, http.StatusNotImplemented, "Not Implemented", "session operations are implemented in Milestone 2")
-}
-
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	writeJSON(w, status, generated.Problem{
@@ -150,6 +172,11 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, det
 		Detail:    &detail,
 		RequestId: requestIDFrom(r.Context()),
 	})
+}
+
+func writeValidationProblem(w http.ResponseWriter, r *http.Request, status int, detail string, fields ...generated.ValidationError) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	writeJSON(w, status, generated.Problem{Type: "https://workouts-explorer.invalid/problems/validation", Title: http.StatusText(status), Status: status, Detail: &detail, RequestId: requestIDFrom(r.Context()), Errors: &fields})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

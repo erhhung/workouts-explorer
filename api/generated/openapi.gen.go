@@ -17,8 +17,24 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
 )
+
+// Defines values for AcceptedStatus.
+const (
+	AcceptedStatusAccepted AcceptedStatus = "accepted"
+)
+
+// Valid indicates whether the value is a known member of the AcceptedStatus enum.
+func (e AcceptedStatus) Valid() bool {
+	switch e {
+	case AcceptedStatusAccepted:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for HealthStatus.
 const (
@@ -29,6 +45,303 @@ const (
 func (e HealthStatus) Valid() bool {
 	switch e {
 	case Ok:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentitySummaryRole.
+const (
+	Administrator IdentitySummaryRole = "administrator"
+	User          IdentitySummaryRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the IdentitySummaryRole enum.
+func (e IdentitySummaryRole) Valid() bool {
+	switch e {
+	case Administrator:
+		return true
+	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvitationDeliveryState.
+const (
+	InvitationDeliveryStateDelivered InvitationDeliveryState = "delivered"
+	InvitationDeliveryStateFailed    InvitationDeliveryState = "failed"
+	InvitationDeliveryStatePending   InvitationDeliveryState = "pending"
+	InvitationDeliveryStateUnknown   InvitationDeliveryState = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the InvitationDeliveryState enum.
+func (e InvitationDeliveryState) Valid() bool {
+	switch e {
+	case InvitationDeliveryStateDelivered:
+		return true
+	case InvitationDeliveryStateFailed:
+		return true
+	case InvitationDeliveryStatePending:
+		return true
+	case InvitationDeliveryStateUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvitationState.
+const (
+	InvitationStateAccepted InvitationState = "accepted"
+	InvitationStateExpired  InvitationState = "expired"
+	InvitationStatePending  InvitationState = "pending"
+	InvitationStateRevoked  InvitationState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the InvitationState enum.
+func (e InvitationState) Valid() bool {
+	switch e {
+	case InvitationStateAccepted:
+		return true
+	case InvitationStateExpired:
+		return true
+	case InvitationStatePending:
+		return true
+	case InvitationStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesClockFormat.
+const (
+	PreferencesClockFormatN12h PreferencesClockFormat = "12h"
+	PreferencesClockFormatN24h PreferencesClockFormat = "24h"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesClockFormat enum.
+func (e PreferencesClockFormat) Valid() bool {
+	switch e {
+	case PreferencesClockFormatN12h:
+		return true
+	case PreferencesClockFormatN24h:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesFirstWeekday.
+const (
+	PreferencesFirstWeekdayMonday PreferencesFirstWeekday = "monday"
+	PreferencesFirstWeekdaySunday PreferencesFirstWeekday = "sunday"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesFirstWeekday enum.
+func (e PreferencesFirstWeekday) Valid() bool {
+	switch e {
+	case PreferencesFirstWeekdayMonday:
+		return true
+	case PreferencesFirstWeekdaySunday:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesTheme.
+const (
+	PreferencesThemeDark  PreferencesTheme = "dark"
+	PreferencesThemeLight PreferencesTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesTheme enum.
+func (e PreferencesTheme) Valid() bool {
+	switch e {
+	case PreferencesThemeDark:
+		return true
+	case PreferencesThemeLight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesUnits.
+const (
+	PreferencesUnitsImperial PreferencesUnits = "imperial"
+	PreferencesUnitsMetric   PreferencesUnits = "metric"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesUnits enum.
+func (e PreferencesUnits) Valid() bool {
+	switch e {
+	case PreferencesUnitsImperial:
+		return true
+	case PreferencesUnitsMetric:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesWorkoutColumns.
+const (
+	PreferencesWorkoutColumnsCalories  PreferencesWorkoutColumns = "calories"
+	PreferencesWorkoutColumnsDate      PreferencesWorkoutColumns = "date"
+	PreferencesWorkoutColumnsDistance  PreferencesWorkoutColumns = "distance"
+	PreferencesWorkoutColumnsDuration  PreferencesWorkoutColumns = "duration"
+	PreferencesWorkoutColumnsElevation PreferencesWorkoutColumns = "elevation"
+	PreferencesWorkoutColumnsHeartRate PreferencesWorkoutColumns = "heartRate"
+	PreferencesWorkoutColumnsPace      PreferencesWorkoutColumns = "pace"
+	PreferencesWorkoutColumnsType      PreferencesWorkoutColumns = "type"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesWorkoutColumns enum.
+func (e PreferencesWorkoutColumns) Valid() bool {
+	switch e {
+	case PreferencesWorkoutColumnsCalories:
+		return true
+	case PreferencesWorkoutColumnsDate:
+		return true
+	case PreferencesWorkoutColumnsDistance:
+		return true
+	case PreferencesWorkoutColumnsDuration:
+		return true
+	case PreferencesWorkoutColumnsElevation:
+		return true
+	case PreferencesWorkoutColumnsHeartRate:
+		return true
+	case PreferencesWorkoutColumnsPace:
+		return true
+	case PreferencesWorkoutColumnsType:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesPatchClockFormat.
+const (
+	PreferencesPatchClockFormatN12h PreferencesPatchClockFormat = "12h"
+	PreferencesPatchClockFormatN24h PreferencesPatchClockFormat = "24h"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesPatchClockFormat enum.
+func (e PreferencesPatchClockFormat) Valid() bool {
+	switch e {
+	case PreferencesPatchClockFormatN12h:
+		return true
+	case PreferencesPatchClockFormatN24h:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesPatchFirstWeekday.
+const (
+	PreferencesPatchFirstWeekdayMonday PreferencesPatchFirstWeekday = "monday"
+	PreferencesPatchFirstWeekdaySunday PreferencesPatchFirstWeekday = "sunday"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesPatchFirstWeekday enum.
+func (e PreferencesPatchFirstWeekday) Valid() bool {
+	switch e {
+	case PreferencesPatchFirstWeekdayMonday:
+		return true
+	case PreferencesPatchFirstWeekdaySunday:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesPatchTheme.
+const (
+	PreferencesPatchThemeDark  PreferencesPatchTheme = "dark"
+	PreferencesPatchThemeLight PreferencesPatchTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesPatchTheme enum.
+func (e PreferencesPatchTheme) Valid() bool {
+	switch e {
+	case PreferencesPatchThemeDark:
+		return true
+	case PreferencesPatchThemeLight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesPatchUnits.
+const (
+	PreferencesPatchUnitsImperial PreferencesPatchUnits = "imperial"
+	PreferencesPatchUnitsMetric   PreferencesPatchUnits = "metric"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesPatchUnits enum.
+func (e PreferencesPatchUnits) Valid() bool {
+	switch e {
+	case PreferencesPatchUnitsImperial:
+		return true
+	case PreferencesPatchUnitsMetric:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PreferencesPatchWorkoutColumns.
+const (
+	PreferencesPatchWorkoutColumnsCalories  PreferencesPatchWorkoutColumns = "calories"
+	PreferencesPatchWorkoutColumnsDate      PreferencesPatchWorkoutColumns = "date"
+	PreferencesPatchWorkoutColumnsDistance  PreferencesPatchWorkoutColumns = "distance"
+	PreferencesPatchWorkoutColumnsDuration  PreferencesPatchWorkoutColumns = "duration"
+	PreferencesPatchWorkoutColumnsElevation PreferencesPatchWorkoutColumns = "elevation"
+	PreferencesPatchWorkoutColumnsHeartRate PreferencesPatchWorkoutColumns = "heartRate"
+	PreferencesPatchWorkoutColumnsPace      PreferencesPatchWorkoutColumns = "pace"
+	PreferencesPatchWorkoutColumnsType      PreferencesPatchWorkoutColumns = "type"
+)
+
+// Valid indicates whether the value is a known member of the PreferencesPatchWorkoutColumns enum.
+func (e PreferencesPatchWorkoutColumns) Valid() bool {
+	switch e {
+	case PreferencesPatchWorkoutColumnsCalories:
+		return true
+	case PreferencesPatchWorkoutColumnsDate:
+		return true
+	case PreferencesPatchWorkoutColumnsDistance:
+		return true
+	case PreferencesPatchWorkoutColumnsDuration:
+		return true
+	case PreferencesPatchWorkoutColumnsElevation:
+		return true
+	case PreferencesPatchWorkoutColumnsHeartRate:
+		return true
+	case PreferencesPatchWorkoutColumnsPace:
+		return true
+	case PreferencesPatchWorkoutColumnsType:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProfileAvatarUrl.
+const (
+	Apimeavatar ProfileAvatarUrl = "/api/me/avatar"
+)
+
+// Valid indicates whether the value is a known member of the ProfileAvatarUrl enum.
+func (e ProfileAvatarUrl) Valid() bool {
+	switch e {
+	case Apimeavatar:
 		return true
 	default:
 		return false
@@ -50,17 +363,23 @@ func (e TokenSessionTokenType) Valid() bool {
 	}
 }
 
-// BrowserSession defines model for BrowserSession.
-type BrowserSession struct {
-	CsrfToken *string   `json:"csrfToken,omitempty"`
-	ExpiresAt time.Time `json:"expiresAt"`
-
-	// Id Example: 018F47A2D3B77A10B4C92A8D63F15E01
-	Id       CompactUUID     `json:"id"`
-	Identity IdentitySummary `json:"identity"`
+// Accepted defines model for Accepted.
+type Accepted struct {
+	Status AcceptedStatus `json:"status"`
 }
 
-// CompactUUID Example: 018F47A2D3B77A10B4C92A8D63F15E01
+// AcceptedStatus defines model for Accepted.Status.
+type AcceptedStatus string
+
+// BrowserSession defines model for BrowserSession.
+type BrowserSession struct {
+	CsrfToken OpaqueToken     `json:"csrfToken"`
+	ExpiresAt time.Time       `json:"expiresAt"`
+	Id        CompactUUID     `json:"id"`
+	Identity  IdentitySummary `json:"identity"`
+}
+
+// CompactUUID defines model for CompactUUID.
 type CompactUUID = string
 
 // Health defines model for Health.
@@ -73,19 +392,111 @@ type HealthStatus string
 
 // IdentitySummary defines model for IdentitySummary.
 type IdentitySummary struct {
-	FullName string `json:"fullName"`
-
-	// Id Example: 018F47A2D3B77A10B4C92A8D63F15E01
-	Id       CompactUUID `json:"id"`
-	Username string      `json:"username"`
+	FullName string              `json:"fullName"`
+	Id       CompactUUID         `json:"id"`
+	Role     IdentitySummaryRole `json:"role"`
+	Username string              `json:"username"`
 }
+
+// IdentitySummaryRole defines model for IdentitySummary.Role.
+type IdentitySummaryRole string
+
+// Invitation defines model for Invitation.
+type Invitation struct {
+	DeliveryState InvitationDeliveryState `json:"deliveryState"`
+	Email         string                  `json:"email"`
+	ExpiresAt     time.Time               `json:"expiresAt"`
+	Id            CompactUUID             `json:"id"`
+	IssuedAt      time.Time               `json:"issuedAt"`
+	State         InvitationState         `json:"state"`
+}
+
+// InvitationDeliveryState defines model for Invitation.DeliveryState.
+type InvitationDeliveryState string
+
+// InvitationState defines model for Invitation.State.
+type InvitationState string
+
+// InvitationCreate defines model for InvitationCreate.
+type InvitationCreate struct {
+	Email string `json:"email"`
+}
+
+// OpaqueToken defines model for OpaqueToken.
+type OpaqueToken = string
+
+// PasswordResetCreate defines model for PasswordResetCreate.
+type PasswordResetCreate struct {
+	Password             *string     `json:"password,omitempty"`
+	PasswordConfirmation *string     `json:"passwordConfirmation,omitempty"`
+	Token                OpaqueToken `json:"token"`
+}
+
+// PasswordResetRequest defines model for PasswordResetRequest.
+type PasswordResetRequest struct {
+	// Username Username or email
+	Username string `json:"username"`
+}
+
+// Preferences defines model for Preferences.
+type Preferences struct {
+	ClockFormat    PreferencesClockFormat      `json:"clockFormat"`
+	DateRange      nullable.Nullable[string]   `json:"dateRange,omitempty"`
+	FirstWeekday   PreferencesFirstWeekday     `json:"firstWeekday"`
+	PageSize       int                         `json:"pageSize"`
+	Theme          PreferencesTheme            `json:"theme"`
+	Timezone       string                      `json:"timezone"`
+	Units          PreferencesUnits            `json:"units"`
+	WorkoutColumns []PreferencesWorkoutColumns `json:"workoutColumns"`
+}
+
+// PreferencesClockFormat defines model for Preferences.ClockFormat.
+type PreferencesClockFormat string
+
+// PreferencesFirstWeekday defines model for Preferences.FirstWeekday.
+type PreferencesFirstWeekday string
+
+// PreferencesTheme defines model for Preferences.Theme.
+type PreferencesTheme string
+
+// PreferencesUnits defines model for Preferences.Units.
+type PreferencesUnits string
+
+// PreferencesWorkoutColumns defines model for Preferences.WorkoutColumns.
+type PreferencesWorkoutColumns string
+
+// PreferencesPatch defines model for PreferencesPatch.
+type PreferencesPatch struct {
+	ClockFormat    *PreferencesPatchClockFormat      `json:"clockFormat,omitempty"`
+	DateRange      nullable.Nullable[string]         `json:"dateRange,omitempty"`
+	FirstWeekday   *PreferencesPatchFirstWeekday     `json:"firstWeekday,omitempty"`
+	PageSize       *int                              `json:"pageSize,omitempty"`
+	Theme          *PreferencesPatchTheme            `json:"theme,omitempty"`
+	Timezone       *string                           `json:"timezone,omitempty"`
+	Units          *PreferencesPatchUnits            `json:"units,omitempty"`
+	WorkoutColumns *[]PreferencesPatchWorkoutColumns `json:"workoutColumns,omitempty"`
+}
+
+// PreferencesPatchClockFormat defines model for PreferencesPatch.ClockFormat.
+type PreferencesPatchClockFormat string
+
+// PreferencesPatchFirstWeekday defines model for PreferencesPatch.FirstWeekday.
+type PreferencesPatchFirstWeekday string
+
+// PreferencesPatchTheme defines model for PreferencesPatch.Theme.
+type PreferencesPatchTheme string
+
+// PreferencesPatchUnits defines model for PreferencesPatch.Units.
+type PreferencesPatchUnits string
+
+// PreferencesPatchWorkoutColumns defines model for PreferencesPatch.WorkoutColumns.
+type PreferencesPatchWorkoutColumns string
 
 // Problem defines model for Problem.
 type Problem struct {
-	Detail   *string `json:"detail,omitempty"`
-	Instance *string `json:"instance,omitempty"`
-
-	// RequestId Safe request correlation identifier.
+	Detail               *string                `json:"detail,omitempty"`
+	Errors               *[]ValidationError     `json:"errors,omitempty"`
+	Instance             *string                `json:"instance,omitempty"`
 	RequestId            string                 `json:"requestId"`
 	Status               int                    `json:"status"`
 	Title                string                 `json:"title"`
@@ -93,64 +504,110 @@ type Problem struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// Profile defines model for Profile.
+type Profile struct {
+	AvatarUrl *ProfileAvatarUrl `json:"avatarUrl,omitempty"`
+	Email     *string           `json:"email,omitempty"`
+	FullName  string            `json:"fullName"`
+	Id        CompactUUID       `json:"id"`
+	Username  *string           `json:"username,omitempty"`
+}
+
+// ProfileAvatarUrl defines model for Profile.AvatarUrl.
+type ProfileAvatarUrl string
+
+// ProfilePatch defines model for ProfilePatch.
+type ProfilePatch struct {
+	FullName *string `json:"fullName,omitempty"`
+}
+
 // PublicConfig defines model for PublicConfig.
 type PublicConfig struct {
-	// BaseMapAttribution Optional public attribution text.
-	BaseMapAttribution *string `json:"baseMapAttribution,omitempty"`
+	BaseMapAttribution     *string `json:"baseMapAttribution,omitempty"`
+	BaseMapTileUrl         *string `json:"baseMapTileUrl,omitempty"`
+	MapFitPaddingPixels    int     `json:"mapFitPaddingPixels"`
+	PageSizeMaximum        int     `json:"pageSizeMaximum"`
+	PasswordMinimumLength  int     `json:"passwordMinimumLength"`
+	PollingIntervalSeconds int     `json:"pollingIntervalSeconds"`
+	ProductName            string  `json:"productName"`
+}
 
-	// BaseMapTileUrl Optional public tile URL template.
-	BaseMapTileUrl *string `json:"baseMapTileUrl,omitempty"`
+// PublicInvitation defines model for PublicInvitation.
+type PublicInvitation struct {
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
 
-	// MapFitPaddingPixels Example: 48
-	MapFitPaddingPixels int `json:"mapFitPaddingPixels"`
-
-	// PollingIntervalSeconds Example: 30
-	PollingIntervalSeconds int `json:"pollingIntervalSeconds"`
-
-	// ProductName Example: Workouts Explorer
-	ProductName string `json:"productName"`
+// RegistrationCreate defines model for RegistrationCreate.
+type RegistrationCreate struct {
+	FullName             string      `json:"fullName"`
+	Password             *string     `json:"password,omitempty"`
+	PasswordConfirmation *string     `json:"passwordConfirmation,omitempty"`
+	Token                OpaqueToken `json:"token"`
+	Username             string      `json:"username"`
 }
 
 // SessionMetadata defines model for SessionMetadata.
 type SessionMetadata struct {
-	ExpiresAt time.Time `json:"expiresAt"`
-
-	// Id Example: 018F47A2D3B77A10B4C92A8D63F15E01
-	Id       CompactUUID     `json:"id"`
-	Identity IdentitySummary `json:"identity"`
+	ExpiresAt time.Time       `json:"expiresAt"`
+	Id        CompactUUID     `json:"id"`
+	Identity  IdentitySummary `json:"identity"`
 }
 
 // SigninRequest defines model for SigninRequest.
 type SigninRequest struct {
 	Password *string `json:"password,omitempty"`
-
-	// Username Username or email address.
-	Username string `json:"username"`
+	Username string  `json:"username"`
 }
 
 // TokenSession defines model for TokenSession.
 type TokenSession struct {
-	AccessToken *string   `json:"accessToken,omitempty"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-
-	// Id Example: 018F47A2D3B77A10B4C92A8D63F15E01
-	Id        CompactUUID           `json:"id"`
-	Identity  IdentitySummary       `json:"identity"`
-	TokenType TokenSessionTokenType `json:"tokenType"`
+	AccessToken OpaqueToken           `json:"accessToken"`
+	ExpiresAt   time.Time             `json:"expiresAt"`
+	Id          CompactUUID           `json:"id"`
+	Identity    IdentitySummary       `json:"identity"`
+	TokenType   TokenSessionTokenType `json:"tokenType"`
 }
 
 // TokenSessionTokenType defines model for TokenSession.TokenType.
 type TokenSessionTokenType string
 
+// ValidationError defines model for ValidationError.
+type ValidationError struct {
+	Code    string  `json:"code"`
+	Field   string  `json:"field"`
+	Message *string `json:"message,omitempty"`
+}
+
 // CSRFToken defines model for CSRFToken.
 type CSRFToken = string
 
-// NotImplemented defines model for NotImplemented.
-type NotImplemented = Problem
+// Token defines model for Token.
+type Token = OpaqueToken
+
+// RateLimited defines model for RateLimited.
+type RateLimited = Problem
+
+// Signin defines model for Signin.
+type Signin = SigninRequest
+
+// CreateInvitationParams defines parameters for CreateInvitation.
+type CreateInvitationParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// UpdateMeParams defines parameters for UpdateMe.
+type UpdateMeParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// UpdateMyPreferencesParams defines parameters for UpdateMyPreferences.
+type UpdateMyPreferencesParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
 
 // DeleteCurrentSessionParams defines parameters for DeleteCurrentSession.
 type DeleteCurrentSessionParams struct {
-	// XCSRFToken Required for a state-changing request authenticated by the session cookie; ignored for bearer authentication.
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
@@ -158,6 +615,24 @@ type DeleteCurrentSessionParams struct {
 type GetCurrentSession200JSONResponseBody struct {
 	union json.RawMessage
 }
+
+// CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
+type CreateInvitationJSONRequestBody = InvitationCreate
+
+// UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
+type UpdateMeJSONRequestBody = ProfilePatch
+
+// UpdateMyPreferencesJSONRequestBody defines body for UpdateMyPreferences for application/json ContentType.
+type UpdateMyPreferencesJSONRequestBody = PreferencesPatch
+
+// CreatePasswordResetRequestJSONRequestBody defines body for CreatePasswordResetRequest for application/json ContentType.
+type CreatePasswordResetRequestJSONRequestBody = PasswordResetRequest
+
+// CreatePasswordResetJSONRequestBody defines body for CreatePasswordReset for application/json ContentType.
+type CreatePasswordResetJSONRequestBody = PasswordResetCreate
+
+// CreateRegistrationJSONRequestBody defines body for CreateRegistration for application/json ContentType.
+type CreateRegistrationJSONRequestBody = RegistrationCreate
 
 // CreateBrowserSessionJSONRequestBody defines body for CreateBrowserSession for application/json ContentType.
 type CreateBrowserSessionJSONRequestBody = SigninRequest
@@ -196,6 +671,14 @@ func (a *Problem) UnmarshalJSON(b []byte) error {
 			return fmt.Errorf("error reading 'detail': %w", err)
 		}
 		delete(object, "detail")
+	}
+
+	if raw, found := object["errors"]; found {
+		err = json.Unmarshal(raw, &a.Errors)
+		if err != nil {
+			return fmt.Errorf("error reading 'errors': %w", err)
+		}
+		delete(object, "errors")
 	}
 
 	if raw, found := object["instance"]; found {
@@ -261,6 +744,13 @@ func (a Problem) MarshalJSON() ([]byte, error) {
 		object["detail"], err = json.Marshal(a.Detail)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'detail': %w", err)
+		}
+	}
+
+	if a.Errors != nil {
+		object["errors"], err = json.Marshal(a.Errors)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'errors': %w", err)
 		}
 	}
 
@@ -364,31 +854,61 @@ func (t *GetCurrentSession200JSONResponseBody) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// GetPublicConfig Read safe browser runtime configuration
+
+	// (POST /api/admin/invitations)
+	CreateInvitation(w http.ResponseWriter, r *http.Request, params CreateInvitationParams)
+
 	// (GET /api/config)
 	GetPublicConfig(w http.ResponseWriter, r *http.Request)
-	// GetOpenAPIDocument Read this public OpenAPI document
+
+	// (GET /api/invitations/{token})
+	GetInvitation(w http.ResponseWriter, r *http.Request, token Token)
+
+	// (GET /api/me)
+	GetMe(w http.ResponseWriter, r *http.Request)
+
+	// (PATCH /api/me)
+	UpdateMe(w http.ResponseWriter, r *http.Request, params UpdateMeParams)
+
+	// (GET /api/me/avatar)
+	GetMyAvatar(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/me/preferences)
+	GetMyPreferences(w http.ResponseWriter, r *http.Request)
+
+	// (PATCH /api/me/preferences)
+	UpdateMyPreferences(w http.ResponseWriter, r *http.Request, params UpdateMyPreferencesParams)
+
 	// (GET /api/openapi.yaml)
 	GetOpenAPIDocument(w http.ResponseWriter, r *http.Request)
-	// DeleteCurrentSession Revoke the current session
+
+	// (POST /api/password-reset-requests)
+	CreatePasswordResetRequest(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/password-resets)
+	CreatePasswordReset(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/registrations)
+	CreateRegistration(w http.ResponseWriter, r *http.Request)
+
 	// (DELETE /api/session)
 	DeleteCurrentSession(w http.ResponseWriter, r *http.Request, params DeleteCurrentSessionParams)
-	// GetCurrentSession Read the current session
+
 	// (GET /api/session)
 	GetCurrentSession(w http.ResponseWriter, r *http.Request)
-	// CreateBrowserSession Sign in and create a cookie-authenticated session
+
 	// (POST /api/session)
 	CreateBrowserSession(w http.ResponseWriter, r *http.Request)
-	// CreateSessionToken Sign in and create a bearer-authenticated session
+
 	// (POST /api/session-tokens)
 	CreateSessionToken(w http.ResponseWriter, r *http.Request)
-	// GetLiveness Report process liveness
+
 	// (GET /health/live)
 	GetLiveness(w http.ResponseWriter, r *http.Request)
-	// GetReadiness Report database and schema readiness
+
 	// (GET /health/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-	// GetSwaggerUI Open public interactive API documentation
+
 	// (GET /swagger)
 	GetSwaggerUI(w http.ResponseWriter, r *http.Request)
 }
@@ -397,55 +917,96 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
-// GetPublicConfig Read safe browser runtime configuration
+// (POST /api/admin/invitations)
+func (_ Unimplemented) CreateInvitation(w http.ResponseWriter, r *http.Request, params CreateInvitationParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/config)
 func (_ Unimplemented) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetOpenAPIDocument Read this public OpenAPI document
+// (GET /api/invitations/{token})
+func (_ Unimplemented) GetInvitation(w http.ResponseWriter, r *http.Request, token Token) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/me)
+func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /api/me)
+func (_ Unimplemented) UpdateMe(w http.ResponseWriter, r *http.Request, params UpdateMeParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/me/avatar)
+func (_ Unimplemented) GetMyAvatar(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/me/preferences)
+func (_ Unimplemented) GetMyPreferences(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /api/me/preferences)
+func (_ Unimplemented) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, params UpdateMyPreferencesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/openapi.yaml)
 func (_ Unimplemented) GetOpenAPIDocument(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// DeleteCurrentSession Revoke the current session
+// (POST /api/password-reset-requests)
+func (_ Unimplemented) CreatePasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/password-resets)
+func (_ Unimplemented) CreatePasswordReset(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/registrations)
+func (_ Unimplemented) CreateRegistration(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (DELETE /api/session)
 func (_ Unimplemented) DeleteCurrentSession(w http.ResponseWriter, r *http.Request, params DeleteCurrentSessionParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetCurrentSession Read the current session
 // (GET /api/session)
 func (_ Unimplemented) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// CreateBrowserSession Sign in and create a cookie-authenticated session
 // (POST /api/session)
 func (_ Unimplemented) CreateBrowserSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// CreateSessionToken Sign in and create a bearer-authenticated session
 // (POST /api/session-tokens)
 func (_ Unimplemented) CreateSessionToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetLiveness Report process liveness
 // (GET /health/live)
 func (_ Unimplemented) GetLiveness(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetReadiness Report database and schema readiness
 // (GET /health/ready)
 func (_ Unimplemented) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetSwaggerUI Open public interactive API documentation
 // (GET /swagger)
 func (_ Unimplemented) GetSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -459,6 +1020,47 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// CreateInvitation operation middleware
+func (siw *ServerInterfaceWrapper) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateInvitationParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateInvitation(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetPublicConfig operation middleware
 func (siw *ServerInterfaceWrapper) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
@@ -474,11 +1076,203 @@ func (siw *ServerInterfaceWrapper) GetPublicConfig(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetInvitation operation middleware
+func (siw *ServerInterfaceWrapper) GetInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "token" -------------
+	var token Token
+
+	err = runtime.BindStyledParameterWithOptions("simple", "token", chi.URLParam(r, "token"), &token, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetInvitation(w, r, token)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateMe operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMe(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateMeParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMe(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyAvatar operation middleware
+func (siw *ServerInterfaceWrapper) GetMyAvatar(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyAvatar(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyPreferences operation middleware
+func (siw *ServerInterfaceWrapper) GetMyPreferences(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyPreferences(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateMyPreferences operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMyPreferences(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateMyPreferencesParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMyPreferences(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOpenAPIDocument operation middleware
 func (siw *ServerInterfaceWrapper) GetOpenAPIDocument(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOpenAPIDocument(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePasswordResetRequest operation middleware
+func (siw *ServerInterfaceWrapper) CreatePasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePasswordResetRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePasswordReset operation middleware
+func (siw *ServerInterfaceWrapper) CreatePasswordReset(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePasswordReset(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRegistration operation middleware
+func (siw *ServerInterfaceWrapper) CreateRegistration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRegistration(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -753,6 +1547,36 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/session-tokens", wrapper.CreateSessionToken)
 	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/admin/invitations", wrapper.CreateInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/invitations/{token}", wrapper.GetInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/registrations", wrapper.CreateRegistration)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/password-reset-requests", wrapper.CreatePasswordResetRequest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/password-resets", wrapper.CreatePasswordReset)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/me", wrapper.GetMe)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/me", wrapper.UpdateMe)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/me/preferences", wrapper.GetMyPreferences)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/me/preferences", wrapper.UpdateMyPreferences)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/me/avatar", wrapper.GetMyAvatar)
+	})
 
 	return r
 }
@@ -762,39 +1586,49 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"iPZcE/2fAAAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

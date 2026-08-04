@@ -11,6 +11,7 @@ host="${VCLUSTER_HOST:-workouts.${context}.fourteeners.local}"
 timeout="${VCLUSTER_TIMEOUT:-12m}"
 vcluster_name="${context#x}"
 certificate_secret="workouts-explorer-ingress-tls-x-${app_namespace}-x-${vcluster_name}"
+mailpit_external_name="mailpit-x-mailpit-x-${vcluster_name}.vcluster-${vcluster_name}.svc.cluster.local"
 : "${registry:?WORKOUTS_TEST_IMAGE_REGISTRY or CI_REGISTRY_PATH is required}"
 
 if ! kubectl config get-contexts "$context" >/dev/null 2>&1; then
@@ -20,13 +21,28 @@ fi
 
 kubectl --context "$context" apply -f deploy/dev/postgres.yaml
 kubectl --context "$context" -n "$database_namespace" rollout status deployment/workouts-postgres --timeout="$timeout"
+kubectl --context "$context" -n "$database_namespace" exec deployment/workouts-postgres -- \
+  psql -U workouts_migration -d postgres -v ON_ERROR_STOP=1 -c \
+  "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='workouts_security_owner') THEN CREATE ROLE workouts_security_owner NOLOGIN NOBYPASSRLS; END IF; GRANT workouts_security_owner TO workouts_migration; END \$\$"
 
 kubectl --context "$context" create namespace "$app_namespace" --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+kubectl --context "$context" apply -f deploy/dev/mailpit.yaml
+kubectl --context "$context" -n mailpit rollout status deployment/mailpit --timeout="$timeout"
 database_host="postgres.${database_namespace}.svc.cluster.local"
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-database \
   --from-literal=migrationDatabaseUrl="postgresql://workouts_migration@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=apiDatabaseUrl="postgresql://workouts_api@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=workerDatabaseUrl="postgresql://workouts_worker@${database_host}:5432/workouts?sslmode=disable" \
+  --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+rate_limit_key="$(openssl rand -base64 32 | tr -d '=\n')"
+kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-security \
+  --from-literal=rateLimitKey="$rate_limit_key" \
+  --from-literal=smtpPassword=unused-local-development-value \
+  --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-bootstrap-admin \
+  --from-literal=username=xdev-admin \
+  --from-literal=email=xdev-admin@example.test \
+  --from-literal=password='xdev-only-password' \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
 
 # Reset stale pull backoff/progress conditions and repull mutable dev tags before
@@ -46,10 +62,18 @@ helm_args=(
   --set-string "image.tag=$tag"
   --set image.pullPolicy=Always
   --set-string "api.publicUrl=https://${host}"
+  --set api.localDevelopment=true
+  --set-string "api.smtp.address=mailpit.mailpit.svc.cluster.local:1025"
+  --set-string "api.smtp.fromAddress=workouts@example.test"
+  --set-string "api.smtp.username="
+  --set api.smtp.allowInsecureLocal=true
+  --set api.bootstrap.enabled=true
   --set ingress.enabled=true
   --set-string ingress.className=nginx
   --set-string "ingress.host=${host}"
   --set-string "ingress.certificateSecretName=${certificate_secret}"
+  --set ingress.mailpit.enabled=true
+  --set-string "ingress.mailpit.externalName=${mailpit_external_name}"
   --wait
   --wait-for-jobs
   --timeout "$timeout"
@@ -85,5 +109,6 @@ kubectl --context "$context" -n "$app_namespace" run workouts-smoke \
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/" >/dev/null
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/api/config" >/dev/null
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/swagger" >/dev/null
+curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/mailpit/" >/dev/null
 
 kubectl --context "$context" -n "$app_namespace" get pods
