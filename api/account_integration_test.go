@@ -17,6 +17,7 @@ import (
 
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/erhhung/workouts-explorer/internal/config"
+	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -235,15 +236,76 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 		t.Fatalf("contract bearer malformed CSRF status=%d body=%s", contractBearer.recorder.Code, contractBearer.recorder.Body.String())
 	}
 
-	dateRangeSet := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"last-30-days"}`, userToken, "")
+	dateRangeSet := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"last30Days"}`, userToken, "")
 	server.UpdateMyPreferences(dateRangeSet.recorder, dateRangeSet.request, generated.UpdateMyPreferencesParams{})
-	if dateRangeSet.recorder.Code != http.StatusOK || !strings.Contains(dateRangeSet.recorder.Body.String(), `"dateRange":"last-30-days"`) {
+	if dateRangeSet.recorder.Code != http.StatusOK || !strings.Contains(dateRangeSet.recorder.Body.String(), `"dateRange":"last30Days"`) {
 		t.Fatalf("date-range set: %d %s", dateRangeSet.recorder.Code, dateRangeSet.recorder.Body.String())
 	}
 	dateRangeClear := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":null}`, userToken, "")
 	server.UpdateMyPreferences(dateRangeClear.recorder, dateRangeClear.request, generated.UpdateMyPreferencesParams{})
 	if dateRangeClear.recorder.Code != http.StatusOK || !strings.Contains(dateRangeClear.recorder.Body.String(), `"dateRange":null`) {
 		t.Fatalf("date-range clear: %d %s", dateRangeClear.recorder.Code, dateRangeClear.recorder.Body.String())
+	}
+	dateRangeExplicit := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"2024-02-29/2024-03-03"}`, userToken, "")
+	server.UpdateMyPreferences(dateRangeExplicit.recorder, dateRangeExplicit.request, generated.UpdateMyPreferencesParams{})
+	if dateRangeExplicit.recorder.Code != http.StatusOK || !strings.Contains(dateRangeExplicit.recorder.Body.String(), `"dateRange":"2024-02-29/2024-03-03"`) {
+		t.Fatalf("explicit date-range set: %d %s", dateRangeExplicit.recorder.Code, dateRangeExplicit.recorder.Body.String())
+	}
+	for _, invalidRange := range []string{"last-30-days", "2023-02-29/2023-03-01", "2026-03-02/2026-03-01"} {
+		invalid := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"`+invalidRange+`"}`, userToken, "")
+		server.UpdateMyPreferences(invalid.recorder, invalid.request, generated.UpdateMyPreferencesParams{})
+		if invalid.recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid date range %q: %d %s", invalidRange, invalid.recorder.Code, invalid.recorder.Body.String())
+		}
+	}
+	var userAccountID uuid.UUID
+	if err := db.QueryRow(context.Background(), `SELECT account_id FROM app.users u JOIN app.authentication_principals p ON p.id=u.principal_id WHERE p.canonical_email=$1`, email).Scan(&userAccountID); err != nil {
+		t.Fatal(err)
+	}
+	disjoint := concurrentPreferencePatches(t, server, adminDB, userAccountID, userToken,
+		`{"dateRange":"last7Days"}`,
+		`{"theme":"light","pageSize":50,"workoutColumns":["date","duration"]}`,
+	)
+	for index, response := range disjoint {
+		if response.recorder.Code != http.StatusOK {
+			t.Fatalf("concurrent disjoint preference patch %d: %d %s", index, response.recorder.Code, response.recorder.Body.String())
+		}
+	}
+	preferences := getPreferences(t, server, userToken)
+	if preferences.DateRange.MustGet() != "last7Days" || preferences.Theme != "light" || preferences.PageSize != 50 || len(preferences.WorkoutColumns) != 2 || preferences.WorkoutColumns[0] != "date" || preferences.WorkoutColumns[1] != "duration" {
+		t.Fatalf("concurrent disjoint preference patches did not compose: %+v", preferences)
+	}
+	sameField := concurrentPreferencePatches(t, server, adminDB, userAccountID, userToken,
+		`{"theme":"dark"}`,
+		`{"theme":"light"}`,
+	)
+	for index, response := range sameField {
+		if response.recorder.Code != http.StatusOK {
+			t.Fatalf("concurrent same-field preference patch %d: %d %s", index, response.recorder.Code, response.recorder.Body.String())
+		}
+	}
+	preferences = getPreferences(t, server, userToken)
+	if preferences.Theme != "light" {
+		t.Fatalf("concurrent same-field preference patches did not preserve lock order: theme=%s", preferences.Theme)
+	}
+	corruptPreferences := integrationAccountTransaction(t, adminDB, userAccountID)
+	if _, err := corruptPreferences.Exec(context.Background(), `UPDATE app.preferences SET date_range='legacy-range' WHERE account_id=$1`, userAccountID); err != nil {
+		t.Fatal(err)
+	}
+	if err := corruptPreferences.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	invalidRead := callEndpoint(http.MethodGet, "/api/me/preferences", "", userToken, "")
+	server.GetMyPreferences(invalidRead.recorder, invalidRead.request)
+	if invalidRead.recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("invalid stored date range read: %d %s", invalidRead.recorder.Code, invalidRead.recorder.Body.String())
+	}
+	repairPreferences := integrationAccountTransaction(t, adminDB, userAccountID)
+	if _, err := repairPreferences.Exec(context.Background(), `UPDATE app.preferences SET date_range=NULL WHERE account_id=$1`, userAccountID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repairPreferences.Commit(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	beforeMissing := sender.count()
@@ -433,7 +495,15 @@ func integrationServer(t *testing.T, db *pgxpool.Pool, sender mailSender) *Serve
 	t.Helper()
 	delivery := newDeliveryService(sender)
 	t.Cleanup(delivery.close)
-	return &Server{config: config.API{PublicURL: "https://workouts.example.test", PasswordMinimum: 12, PageSizeMaximum: 100, SessionLifetime: 2 * time.Hour, RateLimitKey: []byte("0123456789abcdef0123456789abcdef")}, db: db, passwords: newPasswordHasher(12), delivery: delivery, avatars: newAvatarService()}
+	keyringFile := t.TempDir() + "/source-keyring.json"
+	if err := os.WriteFile(keyringFile, []byte(`{"activeKeyId":"test","keys":{"test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := sourcecrypto.LoadKeyring(keyringFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{config: config.API{Common: config.Common{SourceKeyringFile: keyringFile, LocalSourceRoots: []string{"/data/workouts"}}, PublicURL: "https://workouts.example.test", PasswordMinimum: 12, PageSizeMaximum: 100, SessionLifetime: 2 * time.Hour, RateLimitKey: []byte("0123456789abcdef0123456789abcdef")}, db: db, passwords: newPasswordHasher(12), delivery: delivery, avatars: newAvatarService(), sourceKeys: keyring}
 }
 
 func insertTestSession(t *testing.T, db *pgxpool.Pool, principalID uuid.UUID, kind, csrf string) string {
@@ -476,6 +546,73 @@ func callCookieEndpoint(method, path, body, cookie string) endpointCall {
 	call := callEndpoint(method, path, body, "", "")
 	call.request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
 	return call
+}
+
+func concurrentPreferencePatches(t *testing.T, server *Server, db *pgxpool.Pool, accountID uuid.UUID, token string, bodies ...string) []endpointCall {
+	t.Helper()
+	blocker := integrationAccountTransaction(t, db, accountID)
+	defer blocker.Rollback(context.Background())
+	if _, err := blocker.Exec(context.Background(), `SELECT true FROM app.preferences WHERE account_id=$1 FOR UPDATE`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	baseline := lockWaiterCount(t, db)
+
+	responses := make([]endpointCall, len(bodies))
+	done := make(chan int, len(bodies))
+	for index, body := range bodies {
+		responses[index] = callEndpoint(http.MethodPatch, "/api/me/preferences", body, token, "")
+		go func(index int) {
+			server.UpdateMyPreferences(responses[index].recorder, responses[index].request, generated.UpdateMyPreferencesParams{})
+			done <- index
+		}(index)
+		waitForLockWaiters(t, db, baseline+index+1)
+	}
+	if err := blocker.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range bodies {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent preference patch did not complete")
+		}
+	}
+	return responses
+}
+
+func waitForLockWaiters(t *testing.T, db *pgxpool.Pool, minimum int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if lockWaiterCount(t, db) >= minimum {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d blocked preference patches", minimum)
+}
+
+func lockWaiterCount(t *testing.T, db *pgxpool.Pool) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(context.Background(), `SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func getPreferences(t *testing.T, server *Server, token string) generated.Preferences {
+	t.Helper()
+	response := callEndpoint(http.MethodGet, "/api/me/preferences", "", token, "")
+	server.GetMyPreferences(response.recorder, response.request)
+	if response.recorder.Code != http.StatusOK {
+		t.Fatalf("get preferences: %d %s", response.recorder.Code, response.recorder.Body.String())
+	}
+	var preferences generated.Preferences
+	if err := json.Unmarshal(response.recorder.Body.Bytes(), &preferences); err != nil {
+		t.Fatal(err)
+	}
+	return preferences
 }
 
 func messageToken(t *testing.T, body string) string {

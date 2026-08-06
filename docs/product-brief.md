@@ -76,7 +76,7 @@ Each user owns one personal workout account. Users cannot access another account
 - Revocable two-hour sessions by default
 - Secure browser cookies, bearer session tokens for API clients, and CSRF protection
 - Account isolation for all fitness, source, job, notification, and route data
-- Envelope encryption of source credentials using a Kubernetes-provided master key
+- Envelope encryption of complete source adapter configuration using a Kubernetes-provided master key
 
 ### Data sources and ingestion
 

@@ -2,7 +2,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { ApiError, type Preferences, type Profile, type PublicConfig, type Session, api } from "./api";
+import { ApiError, SESSION_EXPIRED_EVENT, type Preferences, type Profile, type PublicConfig, type Session, api } from "./api";
+import { Summary } from "./Summary";
 import { applyTheme } from "./theme";
 
 const SAFE_ERRORS = {
@@ -82,8 +83,8 @@ function usePathname() {
   return pathname;
 }
 
-function navigate(to: string) {
-  history.pushState({}, "", to);
+function navigate(to: string, replace = false) {
+  history[replace ? "replaceState" : "pushState"]({}, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -396,7 +397,7 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
     try {
       const preferences = await api<Preferences>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ theme }) }, session.csrfToken);
       applyTheme(preferences.theme);
-      setData((current) => current ? { ...current, preferences } : current);
+      setData((current) => current ? { ...current, preferences: { ...current.preferences, theme: preferences.theme } } : current);
     } catch {
       applyTheme(previous);
       setData((current) => current ? { ...current, preferences: { ...current.preferences, theme: previous } } : current);
@@ -408,7 +409,7 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
     <div className="shell">
       <header className="app-header">
         <a href="/" className="wordmark" aria-label="Workouts Explorer home" onClick={(event) => event.preventDefault()}><Mark compact /><span>Workouts Explorer</span></a>
-        <nav aria-label="Primary"><a href="/" aria-current="page">Explore</a><span aria-disabled="true">Workouts</span><span aria-disabled="true">Coverage</span></nav>
+        <nav aria-label="Primary"><a href="/" aria-current="page">Summary</a><span aria-disabled="true">Map</span></nav>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span aria-hidden="true">&#8964;</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
@@ -423,19 +424,11 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
         </DropdownMenu.Root>
       </header>
       {menuError && <div className="shell-alert" role="alert">{menuError}<button aria-label="Dismiss message" onClick={() => setMenuError("")}>&times;</button></div>}
-      <PreferencesDialog open={dialog === "preferences"} onOpenChange={(open) => setDialog(open ? "preferences" : null)} returnFocus={avatarTriggerRef} profile={data.profile} preferences={data.preferences} csrfToken={session.csrfToken} pageSizeMaximum={pageSizeMaximum} onSaved={(profile, preferences) => setData({ profile, preferences })} />
+      <PreferencesDialog open={dialog === "preferences"} onOpenChange={(open) => setDialog(open ? "preferences" : null)} returnFocus={avatarTriggerRef} profile={data.profile} preferences={data.preferences} csrfToken={session.csrfToken} pageSizeMaximum={pageSizeMaximum} onSaved={(profile, preferences) => setData((current) => current ? { profile, preferences: { ...preferences, dateRange: current.preferences.dateRange } } : { profile, preferences })} />
       <Modal open={dialog === "about"} onOpenChange={(open) => setDialog(open ? "about" : null)} returnFocus={avatarTriggerRef} title="About Workouts Explorer" description="A private atlas for a lifetime of movement.">
-        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 2 &middot; Secure account lifecycle</p></div>
+        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 3 &middot; Workout summary</p></div>
       </Modal>
-      <main className="explorer-empty">
-        <div className="route-field" aria-hidden="true"><span className="route-line" /><i className="route-point p1" /><i className="route-point p2" /><i className="route-point p3" /></div>
-        <section className="empty-copy">
-          <p className="eyebrow">Your route archive</p>
-          <h1>The map begins<br />with your first source.</h1>
-          <p>Your secure account is ready. Workout imports and route exploration arrive in the next milestone.</p>
-          <div className="empty-meta"><span><b>01</b> Account secured</span><span><b>02</b> Preferences restored</span><span className="muted"><b>03</b> Connect a source next</span></div>
-        </section>
-      </main>
+      <Summary preferences={data.preferences} csrfToken={session.csrfToken} onDateRangeSaved={(dateRange) => setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current)} />
     </div>
   );
 }
@@ -447,8 +440,31 @@ function isPublicPath(path: string) {
 
 export function App() {
   const path = usePathname();
+  const queryClient = useQueryClient();
+  const expirationHandled = useRef(false);
   const session = useQuery({ queryKey: ["session"], queryFn: () => api<Session>("/api/session"), retry: false });
   const publicConfig = useQuery({ queryKey: ["public-config"], queryFn: loadPublicConfig, retry: false });
+  useEffect(() => {
+    if (session.data) expirationHandled.current = false;
+  }, [session.data]);
+  useEffect(() => {
+    let active = true;
+    const expireSession = () => {
+      if (expirationHandled.current) return;
+      expirationHandled.current = true;
+      const sessionQuery = (query: { queryKey: readonly unknown[] }) => query.queryKey[0] !== "public-config";
+      const authenticatedQuery = (query: { queryKey: readonly unknown[] }) => sessionQuery(query) && query.queryKey[0] !== "session";
+      void (async () => {
+        await queryClient.cancelQueries({ predicate: sessionQuery });
+        if (!active) return;
+        queryClient.removeQueries({ predicate: authenticatedQuery });
+        queryClient.setQueryData(["session"], null);
+        navigate("/login", true);
+      })();
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, expireSession);
+    return () => { active = false; window.removeEventListener(SESSION_EXPIRED_EVENT, expireSession); };
+  }, [queryClient]);
   const config = publicConfig.data ?? LOADING_CONFIG;
   if (publicConfig.isPending) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Loading application settings...</p></main>;
   if (publicConfig.isError) return <main className="center-state"><Mark /><h1>Workouts Explorer is unavailable.</h1><p role="alert">Application settings could not be loaded. Please try again later.</p></main>;

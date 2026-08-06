@@ -240,11 +240,15 @@ Each slot owns one file through discovery selection, optional download, parse, t
 
 ### Source snapshot lifecycle
 
-1. API copies current encrypted source parameters into the child job.
+1. API locks the current source revision and independently encrypts its canonical
+   configuration for the connection-check or source-child job in the same
+   transaction as job creation.
 2. Worker decrypts the snapshot only when executing the job.
 3. Source updates do not alter active snapshots.
-4. Source deletion cancels jobs using its snapshots.
-5. Terminal success, failure, or cancellation clears the encrypted snapshot.
+4. Source deletion cancels jobs using its snapshots. Queued snapshots are deleted
+   immediately; running snapshots remain until cooperative terminal cleanup.
+5. Terminal success, failure, or cancellation deletes the complete encrypted
+   snapshot row in the same transaction as the terminal transition.
 6. Retry uses current validated source parameters.
 7. Stale-job maintenance clears snapshots left by abnormal termination after reaching a terminal state.
 
@@ -479,7 +483,8 @@ Minimum metrics include:
 
 - Source check failure blocks future ingest and creates an owner notification.
 - Active jobs continue with their immutable snapshot when a source is updated.
-- Source deletion cancels jobs and clears snapshots.
+- Source deletion cancels queued jobs and clears their snapshots immediately;
+  running lease holders clear snapshots at their safe cancellation boundary.
 - Stale-source reminders reappear at next signin only if persisted source state still fails.
 
 ### Ingest failure
@@ -554,7 +559,6 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 
 ## Deferred Decisions
 
-- Source envelope-encryption format and key lifecycle proposed in ADR 0007
 - Exact OSM importer and segment derivation toolchain pending the ADR 0008 spike
 - Tested nearest-segment distance and route quality rules pending ADR 0009 experiments
 - Coverage bucket boundaries pending ADR 0010 historical-data analysis

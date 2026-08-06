@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Workouts Explorer API
-  version: 0.2.0
-  description: Design-first API for the secure account lifecycle.
+  version: 0.3.0
+  description: Design-first API for account lifecycle, sources, ingest, and workouts.
 servers:
   - url: /
 paths:
@@ -213,6 +213,138 @@ paths:
         '304': {description: Not modified}
         '401': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
+  /api/sources:
+    get:
+      operationId: listSources
+      tags: [sources]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Current data sources, content: {application/json: {schema: {$ref: '#/components/schemas/SourceList'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createSource
+      tags: [sources]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SourceCreate'}}}
+      responses:
+        '201': {description: Source created and connection check queued, headers: {Location: {schema: {type: string, format: uri-reference}}}, content: {application/json: {schema: {$ref: '#/components/schemas/Source'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/sources/{sourceId}:
+    parameters: [{$ref: '#/components/parameters/SourceID'}]
+    get:
+      operationId: getSource
+      tags: [sources]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Current data source, content: {application/json: {schema: {$ref: '#/components/schemas/Source'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: updateSource
+      tags: [sources]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SourcePatch'}}}
+      responses:
+        '200': {description: Source updated, content: {application/json: {schema: {$ref: '#/components/schemas/Source'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteSource
+      tags: [sources]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Source deleted}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/ingest:
+    post:
+      operationId: createIngest
+      tags: [ingest]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/IngestCreate'}}}
+      responses:
+        '202': {description: Manual ingest queued, headers: {Location: {required: true, schema: {type: string, pattern: '^/api/jobs/[0-9A-F]{32}$'}}}, content: {application/json: {schema: {$ref: '#/components/schemas/IngestAccepted'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts:
+    get:
+      operationId: listWorkouts
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/StartDate'}
+        - {$ref: '#/components/parameters/EndDate'}
+        - {$ref: '#/components/parameters/DateRangeEnum'}
+        - {$ref: '#/components/parameters/Timezone'}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1}}
+        - {name: sort, in: query, style: form, explode: true, schema: {type: array, maxItems: 8, items: {type: string, pattern: '^(date|type|duration|distance|pace|calories|heartRate|elevation):(asc|desc)$'}}}
+      responses:
+        '200': {description: Account workouts in the resolved date range, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workout-types:
+    get:
+      operationId: listWorkoutTypes
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Current account workout types, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutTypeList'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/summary:
+    get:
+      operationId: getWorkoutSummary
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/StartDate'}
+        - {$ref: '#/components/parameters/EndDate'}
+        - {$ref: '#/components/parameters/DateRangeEnum'}
+        - {$ref: '#/components/parameters/Timezone'}
+      responses:
+        '200': {description: Account workout totals in the resolved date range, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutSummary'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: opaque}
@@ -228,6 +360,27 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/OpaqueToken'}
+    SourceID:
+      name: sourceId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/CompactUUID'}
+    StartDate:
+      name: startDate
+      in: query
+      schema: {type: string, format: date}
+    EndDate:
+      name: endDate
+      in: query
+      schema: {type: string, format: date}
+    DateRangeEnum:
+      name: dateRangeEnum
+      in: query
+      schema: {$ref: '#/components/schemas/DateRangeEnum'}
+    Timezone:
+      name: tz
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 255}
   requestBodies:
     Signin:
       required: true
@@ -378,7 +531,7 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevation]}}
         pageSize: {type: integer, minimum: 10}
-        dateRange: {type: string, maxLength: 64, nullable: true}
+        dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     PreferencesPatch:
       type: object
       additionalProperties: false
@@ -391,7 +544,177 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevation]}}
         pageSize: {type: integer, minimum: 10}
-        dateRange: {type: string, maxLength: 64, nullable: true}
+        dateRange: {$ref: '#/components/schemas/DateRangePreference'}
+    HealthAutoExportLocalConfig:
+      type: object
+      additionalProperties: false
+      required: [version, path]
+      properties:
+        version: {type: integer, enum: [1]}
+        path: {type: string, minLength: 1, maxLength: 4096}
+    SourceCreate:
+      oneOf:
+        - {$ref: '#/components/schemas/HealthAutoExportLocalSourceCreate'}
+      discriminator:
+        propertyName: type
+        mapping:
+          health-auto-export-local: '#/components/schemas/HealthAutoExportLocalSourceCreate'
+    HealthAutoExportLocalSourceCreate:
+      type: object
+      additionalProperties: false
+      required: [displayName, type, autoSyncEnabled, config]
+      properties:
+        displayName: {type: string, minLength: 1, maxLength: 200}
+        type: {type: string, enum: [health-auto-export-local]}
+        autoSyncEnabled: {type: boolean}
+        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+    SourcePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        displayName: {type: string, minLength: 1, maxLength: 200}
+        autoSyncEnabled: {type: boolean}
+        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+    Source:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, type, autoSyncEnabled, status, generation, config, createdAt, updatedAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        displayName: {type: string}
+        type: {type: string, enum: [health-auto-export-local]}
+        autoSyncEnabled: {type: boolean}
+        status: {type: string, enum: [checking-connection, connected, connection-failed]}
+        generation: {type: integer, format: int64, minimum: 1}
+        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+        statusCode: {type: string, maxLength: 64}
+        statusSummary: {type: string, maxLength: 512}
+        checkedAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    SourceList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Source'}}
+    IngestCreate:
+      type: object
+      additionalProperties: false
+      required: [sourceId]
+      properties:
+        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+    IngestAccepted:
+      type: object
+      additionalProperties: false
+      required: [jobId, status]
+      properties:
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        status: {type: string, enum: [queued]}
+    DateRangeEnum:
+      type: string
+      enum: [thisWeek, lastWeek, last7Days, last30Days, thisMonth, lastMonth, thisYear, lastYear]
+    DateRangePreference:
+      type: string
+      nullable: true
+      maxLength: 64
+      pattern: '^(thisWeek|lastWeek|last7Days|last30Days|thisMonth|lastMonth|thisYear|lastYear|[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9]{4}-[0-9]{2}-[0-9]{2})$'
+    ResolvedDateRange:
+      type: object
+      additionalProperties: false
+      required: [startDate, endDate, timezone]
+      properties:
+        startDate: {type: string, format: date}
+        endDate: {type: string, format: date}
+        timezone: {type: string}
+    WorkoutType:
+      type: object
+      additionalProperties: false
+      required: [id, key, displayName]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        key: {type: string}
+        displayName: {type: string}
+    WorkoutTypeList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/WorkoutType'}}
+    ExactMetric:
+      type: object
+      additionalProperties: false
+      required: [value, unit]
+      properties:
+        value: {type: string, pattern: '^-?[0-9]+(?:\.[0-9]+)?$'}
+        unit: {type: string}
+    Workout:
+      type: object
+      additionalProperties: false
+      required: [id, sourceId, type, startedAt, endedAt, duration, localStartDate, displayTimezone, originalStartOffsetMinutes, originalEndOffsetMinutes, timezone, indoor, location, distance, pace, calories, heartRate, elevation, routePointCount, routeAvailable]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+        type: {$ref: '#/components/schemas/WorkoutType'}
+        startedAt: {type: string, format: date-time}
+        endedAt: {type: string, format: date-time}
+        duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$', description: Exact provider duration in seconds}
+        localStartDate: {type: string, format: date, nullable: true}
+        displayTimezone: {type: string, nullable: true}
+        originalStartOffsetMinutes: {type: integer, minimum: -1080, maximum: 1080, nullable: true}
+        originalEndOffsetMinutes: {type: integer, minimum: -1080, maximum: 1080, nullable: true}
+        timezone: {type: string, nullable: true}
+        indoor: {type: boolean, nullable: true}
+        location: {type: string, nullable: true}
+        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        elevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        routePointCount: {type: integer, minimum: 0}
+        routeAvailable: {type: boolean}
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [page, pageSize, totalItems, totalPages]
+      properties:
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1}
+        totalItems: {type: integer, format: int64, minimum: 0}
+        totalPages: {type: integer, format: int64, minimum: 0}
+    WorkoutList:
+      type: object
+      additionalProperties: false
+      required: [range, pagination, items]
+      properties:
+        range: {$ref: '#/components/schemas/ResolvedDateRange'}
+        pagination: {$ref: '#/components/schemas/Pagination'}
+        items: {type: array, items: {$ref: '#/components/schemas/Workout'}}
+    SummaryTotals:
+      type: object
+      additionalProperties: false
+      required: [count, duration, distance, energy]
+      properties:
+        count: {type: integer, format: int64, minimum: 0}
+        duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
+        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        energy: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+    WorkoutTypeSummary:
+      type: object
+      additionalProperties: false
+      required: [type, totals]
+      properties:
+        type: {$ref: '#/components/schemas/WorkoutType'}
+        totals: {$ref: '#/components/schemas/SummaryTotals'}
+    WorkoutSummary:
+      type: object
+      additionalProperties: false
+      required: [range, totals, byType]
+      properties:
+        range: {$ref: '#/components/schemas/ResolvedDateRange'}
+        totals: {$ref: '#/components/schemas/SummaryTotals'}
+        byType: {type: array, items: {$ref: '#/components/schemas/WorkoutTypeSummary'}}
     ValidationError:
       type: object
       additionalProperties: false
@@ -402,7 +725,7 @@ components:
         message: {type: string}
     Problem:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required: [type, title, status, requestId]
       properties:
         type: {type: string, format: uri-reference}

@@ -21,3 +21,5 @@ data:
   SMTP_ALLOW_INSECURE_LOCAL: {{ .Values.api.smtp.allowInsecureLocal | quote }}
   SMTP_PASSWORD_FILE: {{ ternary "" "/var/run/secrets/workouts-smtp/password" .Values.api.smtp.allowInsecureLocal | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
+  SOURCE_KEYRING_FILE: /var/run/secrets/workouts-source/keyring.json
+  LOCAL_SOURCE_ROOTS: {{ join "," .Values.sources.localRoots | quote }}

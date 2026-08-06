@@ -10,11 +10,18 @@ import (
 
 func setAccountLifecycleConfig(t *testing.T) {
 	t.Helper()
+	setSourceConfig(t)
 	t.Setenv("RATE_LIMIT_KEY", base64.RawStdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
 	t.Setenv("SMTP_ADDRESS", "127.0.0.1:1025")
 	t.Setenv("SMTP_FROM_ADDRESS", "workouts@localhost")
 	t.Setenv("SMTP_ALLOW_INSECURE_LOCAL", "true")
 	t.Setenv("LOCAL_DEVELOPMENT", "true")
+}
+
+func setSourceConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("SOURCE_KEYRING_FILE", "/var/run/secrets/workouts/keyring.json")
+	t.Setenv("LOCAL_SOURCE_ROOTS", "/data/workouts")
 }
 
 func TestLoadAPIValidatesPublicConfig(t *testing.T) {
@@ -96,6 +103,7 @@ func TestLoadAPIAcceptsSafePublicTemplate(t *testing.T) {
 
 func TestLoadAPIProductionTransportAndSessionLifetime(t *testing.T) {
 	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
+	setSourceConfig(t)
 	t.Setenv("RATE_LIMIT_KEY", base64.RawStdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
 	t.Setenv("PUBLIC_URL", "https://workouts.example.com")
 	t.Setenv("SESSION_LIFETIME", "90m")
@@ -114,6 +122,31 @@ func TestLoadAPIProductionTransportAndSessionLifetime(t *testing.T) {
 	t.Setenv("SMTP_ALLOW_INSECURE_LOCAL", "true")
 	if _, err := LoadAPI(); err == nil {
 		t.Fatal("production accepted plaintext SMTP")
+	}
+}
+
+func TestLoadCommonValidatesSourceConfiguration(t *testing.T) {
+	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
+	setAccountLifecycleConfig(t)
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"missing keyring", "SOURCE_KEYRING_FILE", ""},
+		{"relative keyring", "SOURCE_KEYRING_FILE", "keyring.json"},
+		{"missing roots", "LOCAL_SOURCE_ROOTS", ""},
+		{"relative root", "LOCAL_SOURCE_ROOTS", "data/workouts"},
+		{"filesystem root", "LOCAL_SOURCE_ROOTS", "/"},
+		{"duplicate roots", "LOCAL_SOURCE_ROOTS", "/data/workouts,/data/workouts"},
+		{"overlapping roots", "LOCAL_SOURCE_ROOTS", "/data,/data/workouts"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(test.key, test.value)
+			if _, err := LoadAPI(); err == nil {
+				t.Fatal("invalid source runtime configuration accepted")
+			}
+		})
 	}
 }
 

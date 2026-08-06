@@ -22,7 +22,7 @@ func TestOpenAPIContract(t *testing.T) {
 	if err := document.Validate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar"} {
+	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/workouts", "/api/workout-types", "/api/summary"} {
 		if document.Paths.Find(path) == nil {
 			t.Errorf("missing path %s", path)
 		}
@@ -40,7 +40,7 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Fatalf("%s is not a concrete response schema", name)
 		}
 	}
-	for _, route := range []string{"/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences"} {
+	for _, route := range []string{"/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/sources", "/api/sources/{sourceId}", "/api/ingest"} {
 		item := document.Paths.Find(route)
 		operation := item.Post
 		if operation == nil {
@@ -50,12 +50,55 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Errorf("request-body route %s lacks 413/415 responses", route)
 		}
 	}
+	ingestAccepted := document.Components.Schemas["IngestAccepted"].Value
+	if ingestAccepted.AdditionalProperties.Has == nil || *ingestAccepted.AdditionalProperties.Has || len(ingestAccepted.Required) != 2 {
+		t.Fatal("ingest accepted response is not closed and fully required")
+	}
+	ingest := document.Paths.Find("/api/ingest").Post
+	if ingest.OperationID != "createIngest" || ingest.Security == nil || len(*ingest.Security) != 2 {
+		t.Fatal("manual ingest operation lacks its operation ID or owner security alternatives")
+	}
+	for _, status := range []string{"202", "400", "401", "403", "404", "409", "413", "415", "503"} {
+		if ingest.Responses.Value(status) == nil {
+			t.Errorf("manual ingest operation lacks %s response", status)
+		}
+	}
+	if ingest.Responses.Value("202").Value.Headers["Location"] == nil {
+		t.Fatal("manual ingest accepted response lacks Location")
+	}
+	for _, route := range []string{"/api/workouts", "/api/workout-types", "/api/summary"} {
+		operation := document.Paths.Find(route).Get
+		if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
+			t.Errorf("owner read route %s lacks GET or security alternatives", route)
+		}
+	}
+	for _, name := range []string{"ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "ExactMetric", "Workout", "Pagination", "WorkoutList", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "Problem"} {
+		schema := document.Components.Schemas[name].Value
+		if schema.AdditionalProperties.Has == nil || *schema.AdditionalProperties.Has {
+			t.Errorf("owner response schema %s is not closed", name)
+		}
+	}
+	dateRangePreference := document.Components.Schemas["DateRangePreference"].Value
+	if dateRangePreference.Type == nil || !dateRangePreference.Type.Includes("string") || !dateRangePreference.Nullable || dateRangePreference.Pattern == "" || len(dateRangePreference.OneOf) != 0 || len(dateRangePreference.AnyOf) != 0 {
+		t.Fatal("date range preference must remain one nullable constrained string schema")
+	}
+	source := document.Components.Schemas["Source"].Value
+	for _, required := range []string{"id", "displayName", "type", "autoSyncEnabled", "status", "generation", "config", "createdAt", "updatedAt"} {
+		if _, ok := source.Properties[required]; !ok {
+			t.Errorf("source response lacks %s", required)
+		}
+	}
+	for _, forbidden := range []string{"accountId", "configEnvelope", "keyId", "deletedAt"} {
+		if _, ok := source.Properties[forbidden]; ok {
+			t.Errorf("source response exposes %s", forbidden)
+		}
+	}
 	rateResponse := document.Components.Responses["RateLimited"].Value
 	if rateResponse.Headers["Retry-After"] == nil {
 		t.Fatal("rate-limited response lacks Retry-After")
 	}
 	lower := strings.ToLower(string(openAPIDocument))
-	for _, forbidden := range []string{"database_url", "authorization: bearer", "set-cookie: workouts_session="} {
+	for _, forbidden := range []string{"database_url", "authorization: bearer", "set-cookie: workouts_session=", "configenvelope", "wrappedkeynonce", "payloadnonce"} {
 		if strings.Contains(lower, forbidden) {
 			t.Errorf("public contract contains sensitive example marker %q", forbidden)
 		}

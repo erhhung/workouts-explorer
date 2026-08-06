@@ -1,4 +1,4 @@
-.PHONY: all generate check-generated check-ui-artifacts check-version fmt vet test test-ui build images publish-dev-images verify helm migration-test vcluster-test compose-up compose-down
+.PHONY: all generate check-generated check-ui-artifacts check-version check-dev-postgres fmt vet test test-ui build images publish-dev-images verify helm migration-test vcluster-test compose-up compose-down
 
 SHORT_SHA ?= $(shell git rev-parse HEAD | cut -c1-8)
 APP_VERSION := $(shell tr -d '\n' < VERSION)
@@ -16,6 +16,9 @@ check-ui-artifacts:
 
 check-version:
 	./scripts/check-version.sh
+
+check-dev-postgres:
+	./scripts/check-dev-postgres.sh
 
 fmt:
 	test -z "$$(gofmt -l api internal worker)"
@@ -46,7 +49,7 @@ publish-dev-images:
 helm:
 	./scripts/check-helm.sh
 
-verify: check-generated check-ui-artifacts check-version fmt vet test test-ui build helm
+verify: check-generated check-ui-artifacts check-version check-dev-postgres fmt vet test test-ui build helm
 
 migration-test:
 	./scripts/test-migrations.sh

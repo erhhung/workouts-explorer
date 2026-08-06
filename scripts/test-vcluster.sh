@@ -20,15 +20,46 @@ if ! kubectl config get-contexts "$context" >/dev/null 2>&1; then
 fi
 
 kubectl --context "$context" apply -f deploy/dev/postgres.yaml
-kubectl --context "$context" -n "$database_namespace" rollout status deployment/workouts-postgres --timeout="$timeout"
-kubectl --context "$context" -n "$database_namespace" exec deployment/workouts-postgres -- \
-  psql -U workouts_migration -d postgres -v ON_ERROR_STOP=1 -c \
-  "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='workouts_security_owner') THEN CREATE ROLE workouts_security_owner NOLOGIN NOBYPASSRLS; END IF; GRANT workouts_security_owner TO workouts_migration; END \$\$"
+kubectl --context "$context" -n "$database_namespace" rollout status statefulset/postgresql --timeout="$timeout"
+# PVCs initialized by the former custom bootstrap user may not have a postgres role.
+if ! kubectl --context "$context" -n "$database_namespace" exec statefulset/postgresql -- \
+  psql -U postgres -d workouts -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+  kubectl --context "$context" -n "$database_namespace" exec statefulset/postgresql -- \
+    psql -U workouts_migration -d workouts -v ON_ERROR_STOP=1 -c \
+    'CREATE ROLE postgres LOGIN SUPERUSER CREATEDB CREATEROLE;'
+fi
+kubectl --context "$context" -n "$database_namespace" exec -i statefulset/postgresql -- \
+  psql -U postgres -d workouts -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_migration') THEN
+    CREATE ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_api') THEN
+    CREATE ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_worker') THEN
+    CREATE ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_security_owner') THEN
+    CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+  END IF;
+END
+$$;
+ALTER ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER DATABASE workouts OWNER TO workouts_migration;
+GRANT CONNECT, TEMPORARY ON DATABASE workouts TO workouts_migration;
+GRANT USAGE, CREATE ON SCHEMA public TO workouts_migration;
+GRANT workouts_security_owner TO workouts_migration WITH ADMIN OPTION;
+SQL
 
 kubectl --context "$context" create namespace "$app_namespace" --dry-run=client -o yaml | kubectl --context "$context" apply -f -
 kubectl --context "$context" apply -f deploy/dev/mailpit.yaml
 kubectl --context "$context" -n mailpit rollout status deployment/mailpit --timeout="$timeout"
-database_host="postgres.${database_namespace}.svc.cluster.local"
+database_host="postgresql.${database_namespace}.svc.cluster.local"
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-database \
   --from-literal=migrationDatabaseUrl="postgresql://workouts_migration@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=apiDatabaseUrl="postgresql://workouts_api@${database_host}:5432/workouts?sslmode=disable" \
@@ -39,6 +70,13 @@ kubectl --context "$context" -n "$app_namespace" create secret generic workouts-
   --from-literal=rateLimitKey="$rate_limit_key" \
   --from-literal=smtpPassword=unused-local-development-value \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+if ! kubectl --context "$context" -n "$app_namespace" get secret workouts-explorer-source-encryption >/dev/null 2>&1; then
+  source_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+  source_keyring="{\"activeKeyId\":\"xdev-primary-v1\",\"keys\":{\"xdev-primary-v1\":\"${source_key}\"}}"
+  kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-source-encryption \
+    --from-literal=keyring.json="$source_keyring"
+  unset source_key source_keyring
+fi
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-bootstrap-admin \
   --from-literal=username=xdev-admin \
   --from-literal=email=xdev-admin@example.test \
@@ -74,6 +112,12 @@ helm_args=(
   --set-string "ingress.certificateSecretName=${certificate_secret}"
   --set ingress.mailpit.enabled=true
   --set-string "ingress.mailpit.externalName=${mailpit_external_name}"
+  --set sources.nfs.enabled=true
+  --set-string sources.nfs.server=qnap.fourteeners.local
+  --set-string sources.nfs.path=/k8s_data/datasets/workouts
+  --set-string sources.nfs.mountPath=/data/workouts
+  --set-string sources.localRoots[0]=/data/workouts
+  --set sources.nfs.supplementalGroup=1000
   --wait
   --wait-for-jobs
   --timeout "$timeout"
@@ -111,4 +155,6 @@ curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/swagger" >/dev/null
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/mailpit/" >/dev/null
 
+kubectl --context "$context" -n "$database_namespace" delete \
+  deployment/workouts-postgres service/postgres --ignore-not-found
 kubectl --context "$context" -n "$app_namespace" get pods

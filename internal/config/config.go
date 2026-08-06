@@ -7,9 +7,12 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 )
 
 const (
@@ -20,9 +23,11 @@ const (
 )
 
 type Common struct {
-	DatabaseURL   string
-	ListenAddress string
-	OTLPEndpoint  string
+	DatabaseURL       string
+	ListenAddress     string
+	OTLPEndpoint      string
+	SourceKeyringFile string
+	LocalSourceRoots  []string
 }
 
 type API struct {
@@ -205,10 +210,20 @@ func loadCommon(databaseVariable, listenVariable, defaultListen string) (Common,
 	if databaseURL == "" {
 		return Common{}, fmt.Errorf("%s is required", databaseVariable)
 	}
+	keyringFile := os.Getenv("SOURCE_KEYRING_FILE")
+	if keyringFile == "" || !filepath.IsAbs(keyringFile) {
+		return Common{}, fmt.Errorf("SOURCE_KEYRING_FILE must be an absolute path")
+	}
+	roots, err := sourceconfig.ParseRoots(os.Getenv("LOCAL_SOURCE_ROOTS"))
+	if err != nil {
+		return Common{}, err
+	}
 	return Common{
-		DatabaseURL:   databaseURL,
-		ListenAddress: env(listenVariable, defaultListen),
-		OTLPEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		DatabaseURL:       databaseURL,
+		ListenAddress:     env(listenVariable, defaultListen),
+		OTLPEndpoint:      os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		SourceKeyringFile: keyringFile,
+		LocalSourceRoots:  roots,
 	}, nil
 }
 

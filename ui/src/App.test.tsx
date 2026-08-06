@@ -5,6 +5,7 @@ import { type ReactNode } from "react";
 import { describe, expect, test, vi } from "vitest";
 import indexHtml from "../index.html?raw";
 import { App } from "./App";
+import { SESSION_EXPIRED_EVENT, api } from "./api";
 import { applyTheme } from "./theme";
 
 const session = {
@@ -28,7 +29,10 @@ const preferences = {
   clockFormat: "12h",
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
+  dateRange: "last30Days",
 };
+const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" } }, byType: [] };
+const emptyWorkouts = { range: emptySummary.range, pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] };
 const publicConfig = {
   productName: "Workouts Explorer",
   pollingIntervalSeconds: 30,
@@ -50,6 +54,8 @@ function routeFetch(handler?: (path: string, method: string, init?: RequestInit)
       if (response) return Promise.resolve(response);
     }
     if (path === "/api/config" && method === "GET") return Promise.resolve(json(publicConfig));
+    if (path.startsWith("/api/summary?") && method === "GET") return Promise.resolve(json(emptySummary));
+    if (path.startsWith("/api/workouts?") && method === "GET") return Promise.resolve(json(emptyWorkouts));
     if (path === "/api/session" && method === "GET") return Promise.resolve(json({ type: "about:blank", title: "Unauthorized", status: 401, requestId: "test" }, 401));
     throw new Error(`Unhandled fetch: ${method} ${path}`);
   });
@@ -65,6 +71,8 @@ function authenticatedFetch(handler?: (path: string, method: string, init?: Requ
     if (path === "/api/session" && method === "GET") return json(session);
     if (path === "/api/me" && method === "GET") return json(profile);
     if (path === "/api/me/preferences" && method === "GET") return json(preferences);
+    if (path.startsWith("/api/summary?") && method === "GET") return json(emptySummary);
+    if (path.startsWith("/api/workouts?") && method === "GET") return json(emptyWorkouts);
     throw new Error(`Unhandled authenticated fetch: ${method} ${path}`);
   });
 }
@@ -72,7 +80,7 @@ function authenticatedFetch(handler?: (path: string, method: string, init?: Requ
 function renderApp(path = "/") {
   history.replaceState({}, "", path);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+  return { ...render(<QueryClientProvider client={client}><App /></QueryClientProvider>), client };
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -80,6 +88,25 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("public authentication", () => {
+  test("does not expire a session for normalized public endpoint 401s", async () => {
+    const expired = vi.fn();
+    window.addEventListener(SESSION_EXPIRED_EVENT, expired);
+    routeFetch(() => json({ title: "Unauthorized" }, 401));
+    const requests: Array<[string, RequestInit?]> = [
+      ["/api/config?fresh=1"],
+      ["/api/session?fresh=1"],
+      ["/api/session", { method: "post" }],
+      ["/api/session-tokens?source=cli", { method: "post" }],
+      ["/api/invitations/token-value?fresh=1"],
+      ["/api/registrations", { method: "POST" }],
+      ["/api/password-reset-requests", { method: "POST" }],
+      ["/api/password-resets", { method: "POST" }],
+    ];
+    await Promise.all(requests.map(([path, init]) => api(path, init).catch(() => undefined)));
+    expect(expired).not.toHaveBeenCalled();
+    window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
+  });
+
   test("renders the exact unauthenticated login labels and placeholder", async () => {
     const fetchMock = routeFetch();
     renderApp("/login");
@@ -101,12 +128,14 @@ describe("public authentication", () => {
     await user.type(await screen.findByLabelText("Username"), "avery@example.test");
     await user.type(screen.getByLabelText("Password"), "correct horse battery");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByRole("heading", { name: /The map begins/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
     expect(location.pathname).toBe("/");
     expect(posted).toEqual({ username: "avery@example.test", password: "correct horse battery" });
   });
 
   test("failed login stays public, uses safe copy, and focuses the summary", async () => {
+    const expired = vi.fn();
+    window.addEventListener(SESSION_EXPIRED_EVENT, expired);
     routeFetch((path, method) => path === "/api/session" && method === "POST" ? json({ type: "about:blank", title: "Unauthorized", detail: "secret backend detail", status: 401, requestId: "test" }, 401) : undefined as never);
     renderApp("/login");
     const user = userEvent.setup();
@@ -118,6 +147,8 @@ describe("public authentication", () => {
     expect(alert).toHaveTextContent("We couldn't sign you in");
     expect(alert).not.toHaveTextContent("secret backend detail");
     expect(location.pathname).toBe("/login");
+    expect(expired).not.toHaveBeenCalled();
+    window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
   });
 
   test("forgot recovery sends username and always presents generic accepted copy", async () => {
@@ -254,11 +285,11 @@ describe("authenticated shell", () => {
   test("an active session visiting login returns to the authenticated shell", async () => {
     authenticatedFetch();
     renderApp("/login");
-    expect(await screen.findByRole("heading", { name: /The map begins/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   });
 
-  test("loads session first, restores server theme, and renders the intentional empty shell", async () => {
+  test("loads session first, restores server theme, and renders Summary", async () => {
     let resolveSession!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveSession = resolve; });
     routeFetch((path) => {
@@ -270,10 +301,80 @@ describe("authenticated shell", () => {
     renderApp("/");
     expect(await screen.findByText("Opening your explorer...")).toBeInTheDocument();
     resolveSession(json(session));
-    expect(await screen.findByRole("heading", { name: /The map begins/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open account menu/ })).toBeInTheDocument();
+  });
+
+  test("coalesces simultaneous protected 401s into one clean login transition", async () => {
+    let resolveSummary!: (response: Response) => void;
+    let resolveWorkouts!: (response: Response) => void;
+    const summaryResponse = new Promise<Response>((resolve) => { resolveSummary = resolve; });
+    const workoutsResponse = new Promise<Response>((resolve) => { resolveWorkouts = resolve; });
+    authenticatedFetch((path) => {
+      if (path.startsWith("/api/summary?")) return summaryResponse;
+      if (path.startsWith("/api/workouts?")) return workoutsResponse;
+      return undefined as never;
+    });
+    renderApp();
+    await screen.findByRole("button", { name: "Select date range" });
+    const replace = vi.spyOn(history, "replaceState");
+    const unauthorized = json({ title: "Unauthorized", detail: "private expiry detail", status: 401 }, 401);
+    resolveSummary(unauthorized);
+    resolveWorkouts(json({ title: "Unauthorized", detail: "different private detail", status: 401 }, 401));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/login");
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Retry")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("private expiry detail");
+  });
+
+  test("cancels a deferred session refetch before a protected 401 can clear the shell", async () => {
+    let sessionRequests = 0;
+    let resolveRefetch!: (response: Response) => void;
+    const deferredSession = new Promise<Response>((resolve) => { resolveRefetch = resolve; });
+    authenticatedFetch((path, method) => {
+      if (path === "/api/session" && method === "GET") {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? json(session) : deferredSession;
+      }
+      if (path === "/api/me?expired=1") return json({ title: "Unauthorized" }, 401);
+      return undefined as never;
+    });
+    const { client } = renderApp();
+    await screen.findByRole("button", { name: "Select date range" });
+    const refetch = client.refetchQueries({ queryKey: ["session"] });
+    await waitFor(() => expect(sessionRequests).toBe(2));
+    await expect(api("/api/me?expired=1")).rejects.toMatchObject({ status: 401 });
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    resolveRefetch(json(session));
+    await refetch;
+    await Promise.resolve();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select date range" })).not.toBeInTheDocument();
+  });
+
+  test("re-arms expiration after login and handles a second protected 401", async () => {
+    let loginPosted = false;
+    let protectedFailures = 0;
+    authenticatedFetch((path, method) => {
+      if (path === "/api/session" && method === "POST") { loginPosted = true; return json(session, 201); }
+      if (path.startsWith("/api/protected-expiry")) { protectedFailures += 1; return json({ title: "Unauthorized" }, 401); }
+      return undefined as never;
+    });
+    renderApp();
+    await screen.findByRole("button", { name: "Select date range" });
+    await expect(api("/api/protected-expiry/one")).rejects.toMatchObject({ status: 401 });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Username"), "trailrunner");
+    await user.type(screen.getByLabelText("Password"), "correct horse battery");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("button", { name: "Select date range" });
+    await expect(api("/api/protected-expiry/two")).rejects.toMatchObject({ status: 401 });
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(loginPosted).toBe(true);
+    expect(protectedFailures).toBe(2);
   });
 
   test("saves profile and every preference with the session CSRF token", async () => {
@@ -403,6 +504,19 @@ describe("authenticated shell", () => {
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
     await waitFor(() => expect(location.pathname).toBe("/login"));
     expect(deleteHeaders?.get("X-CSRF-Token")).toBe(session.csrfToken);
+  });
+
+  test("treats a signout DELETE 401 as session expiration", async () => {
+    authenticatedFetch((path, method) => path === "/api/session" && method === "DELETE"
+      ? json({ title: "Unauthorized", detail: "expired signout detail" }, 401)
+      : undefined as never);
+    renderApp();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/login");
+    expect(document.body).not.toHaveTextContent("expired signout detail");
   });
 
   test("menu keyboard navigation opens About and Escape returns focus", async () => {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -34,12 +36,13 @@ import (
 var openAPIDocument []byte
 
 type Server struct {
-	config    config.API
-	db        *pgxpool.Pool
-	swagger   http.Handler
-	passwords *passwordHasher
-	delivery  *deliveryService
-	avatars   *avatarService
+	config     config.API
+	db         *pgxpool.Pool
+	swagger    http.Handler
+	passwords  *passwordHasher
+	delivery   *deliveryService
+	avatars    *avatarService
+	sourceKeys *sourcecrypto.Keyring
 }
 
 func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
@@ -63,7 +66,12 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 		<-ctx.Done()
 		delivery.close()
 	}()
-	server := &Server{config: cfg, db: db, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService()}
+	sourceKeys, err := sourcecrypto.LoadKeyring(cfg.SourceKeyringFile)
+	if err != nil {
+		delivery.close()
+		return nil, fmt.Errorf("configure source encryption: %w", err)
+	}
+	server := &Server{config: cfg, db: db, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys}
 	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {
@@ -82,6 +90,7 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 	validated := chi.NewRouter()
 	validated.Use(requestBodyLimit(config.MaxRequestBodyBytes))
 	validated.Use(requireJSONContentType)
+	validated.Use(requireValidJSONSyntax)
 	validated.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(spec, &nethttpmiddleware.Options{
 		Options: openapi3filter.Options{
 			// Handlers apply bearer precedence and role checks after contract validation.
@@ -99,6 +108,31 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 	generated.HandlerFromMux(server, validated)
 	router.Mount("/", validated)
 	return router, nil
+}
+
+func requireValidJSONSyntax(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeProblem(w, r, http.StatusRequestEntityTooLarge, "Content Too Large", "request body exceeds the allowed size")
+				return
+			}
+			writeProblem(w, r, http.StatusBadRequest, "Bad Request", "request does not match the API contract")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if !json.Valid(body) {
+			writeProblem(w, r, http.StatusBadRequest, "Bad Request", "request does not match the API contract")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requireJSONContentType(next http.Handler) http.Handler {
@@ -261,6 +295,10 @@ func accessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			started := time.Now()
 			recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(recorder, r)
+			if recorder.status >= http.StatusOK && recorder.status < http.StatusMultipleChoices &&
+				(r.URL.Path == "/health/live" || r.URL.Path == "/health/ready") {
+				return
+			}
 			attributes := []any{
 				"request_id", requestIDFrom(r.Context()),
 				"method", r.Method,
@@ -283,6 +321,13 @@ type statusRecorder struct {
 	wroteHeader bool
 }
 
+func (r *statusRecorder) Write(body []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+	return r.ResponseWriter.Write(body)
+}
+
 func (r *statusRecorder) WriteHeader(status int) {
 	if r.wroteHeader {
 		return
@@ -290,4 +335,8 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.wroteHeader = true
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }

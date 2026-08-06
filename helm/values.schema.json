@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "ui", "api", "worker", "otel", "ingress"],
+  "required": ["image", "ui", "api", "worker", "sources", "otel", "ingress"],
   "properties": {
     "image": {"type": "object", "additionalProperties": false, "required": ["registry", "pullPolicy", "pullSecrets", "tag"], "properties": {"registry": {"type": "string"}, "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}, "pullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}}, "tag": {"type": "string"}}},
     "ui": {"$ref": "#/$defs/component"},
@@ -22,6 +22,7 @@
       }
     },
     "worker": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "databaseSecret", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "replicas": {"type": "integer", "minimum": 1}, "databaseSecret": {"$ref": "#/$defs/secretRef"}, "resources": {"type": "object"}}},
+    "sources": {"type": "object", "additionalProperties": false, "required": ["keyringSecret", "localRoots", "nfs"], "properties": {"keyringSecret": {"$ref": "#/$defs/secretRef"}, "localRoots": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^/[^,]+$"}}, "nfs": {"type": "object", "additionalProperties": false, "required": ["enabled", "server", "path", "mountPath", "supplementalGroup"], "properties": {"enabled": {"type": "boolean"}, "server": {"type": "string"}, "path": {"type": "string"}, "mountPath": {"type": "string", "pattern": "^/"}, "supplementalGroup": {"type": "integer", "minimum": 1}}}}},
     "otel": {"type": "object", "additionalProperties": false, "required": ["endpoint"], "properties": {"endpoint": {"type": "string"}}},
     "ingress": {"type": "object", "additionalProperties": false, "required": ["enabled", "className", "annotations", "host", "tlsSecretName", "certificateSecretName", "mailpit"], "properties": {"enabled": {"type": "boolean"}, "className": {"type": "string"}, "annotations": {"type": "object", "additionalProperties": {"type": "string"}}, "host": {"type": "string"}, "tlsSecretName": {"type": "string", "minLength": 1}, "certificateSecretName": {"type": "string", "minLength": 1}, "mailpit": {"type": "object", "additionalProperties": false, "required": ["enabled", "externalName", "port"], "properties": {"enabled": {"type": "boolean"}, "externalName": {"type": "string", "minLength": 1}, "port": {"type": "integer", "minimum": 1, "maximum": 65535}}}}}
   },

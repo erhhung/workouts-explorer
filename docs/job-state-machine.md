@@ -153,8 +153,11 @@ The foundational job record supports:
 - a bounded safe failure code and summary.
 
 Detailed safe events and owner-authorized diagnostic logs are separate append-only
-records. Encrypted source snapshots are separate records introduced with source
-ingest and are cleared at every terminal outcome.
+records. Encrypted source snapshots are separate records for connection checks
+and source ingest. Source generation capture, independent snapshot encryption,
+and job creation are one transaction. A snapshot is immutable and can be read
+only by the matching running lease holder in an account-scoped transaction. Its
+complete row is deleted in the same transaction as every terminal outcome.
 
 ## Invariants And Verification
 
@@ -165,6 +168,7 @@ ingest and are cleared at every terminal outcome.
 - Terminal jobs have no live lease and cannot transition again.
 - Running claimed work has complete lease fields.
 - A stale lease token cannot heartbeat, commit domain work, or finish a job.
+- A terminal connection-check or source-child job retains no config snapshot.
 - Account-private parameters, events, and logs follow ADR 0002 tenant scope.
 - Administrative job responses never expose private account diagnostics.
 - Coalescing remains correct under concurrent transactions.

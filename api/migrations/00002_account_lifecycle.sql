@@ -52,9 +52,9 @@ DECLARE
     user_exists boolean;
 BEGIN
     IF TG_TABLE_NAME = 'authentication_principals' THEN
-        target_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
+        IF TG_OP = 'DELETE' THEN target_id := OLD.id; ELSE target_id := NEW.id; END IF;
     ELSE
-        target_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.principal_id ELSE NEW.principal_id END;
+        IF TG_OP = 'DELETE' THEN target_id := OLD.principal_id; ELSE target_id := NEW.principal_id; END IF;
     END IF;
     SELECT role INTO target_role FROM app.authentication_principals WHERE id = target_id;
     IF NOT FOUND THEN RETURN NULL; END IF;

@@ -480,7 +480,13 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 	if !decodeJSON(w, r, &patch) {
 		return
 	}
-	current, err := s.readPreferences(r.Context(), *session.accountID)
+	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	if err != nil {
+		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "preferences are unavailable")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	current, err := readPreferencesTx(r.Context(), tx, *session.accountID, true)
 	if err != nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "preferences are unavailable")
 		return
@@ -490,17 +496,13 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 		writeFieldError(w, r, field, "invalid", message)
 		return
 	}
-	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	columns := make([]string, len(current.WorkoutColumns))
+	for index := range current.WorkoutColumns {
+		columns[index] = string(current.WorkoutColumns[index])
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,updated_at=transaction_timestamp() WHERE account_id=$9`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), *session.accountID)
 	if err == nil {
-		defer tx.Rollback(r.Context())
-		columns := make([]string, len(current.WorkoutColumns))
-		for index := range current.WorkoutColumns {
-			columns[index] = string(current.WorkoutColumns[index])
-		}
-		_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,updated_at=transaction_timestamp() WHERE account_id=$9`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), *session.accountID)
-		if err == nil {
-			err = tx.Commit(r.Context())
-		}
+		err = tx.Commit(r.Context())
 	}
 	if err != nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "preferences could not be updated")
@@ -684,7 +686,11 @@ func clientIP(r *http.Request, trusted []*net.IPNet) (net.IP, error) {
 }
 
 func (s *Server) accountTransaction(ctx context.Context, accountID uuid.UUID) (pgx.Tx, error) {
-	tx, err := s.db.Begin(ctx)
+	return s.accountTransactionWithOptions(ctx, accountID, pgx.TxOptions{})
+}
+
+func (s *Server) accountTransactionWithOptions(ctx context.Context, accountID uuid.UUID, options pgx.TxOptions) (pgx.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, options)
 	if err != nil {
 		return nil, err
 	}
@@ -701,19 +707,33 @@ func (s *Server) readPreferences(ctx context.Context, accountID uuid.UUID) (gene
 		return generated.Preferences{}, err
 	}
 	defer tx.Rollback(ctx)
+	return readPreferencesTx(ctx, tx, accountID, false)
+}
+
+func readPreferencesTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, forUpdate bool) (generated.Preferences, error) {
 	var result generated.Preferences
 	var columns []string
 	var dateRange *string
-	err = tx.QueryRow(ctx, `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range FROM app.preferences WHERE account_id=$1`, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange)
+	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range FROM app.preferences WHERE account_id=$1`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange)
+	if err != nil {
+		return generated.Preferences{}, err
+	}
 	if dateRange == nil {
 		result.DateRange.SetNull()
 	} else {
+		if !validDateRangePreference(*dateRange) {
+			return generated.Preferences{}, errors.New("stored date range preference is invalid")
+		}
 		result.DateRange.Set(*dateRange)
 	}
 	for _, column := range columns {
 		result.WorkoutColumns = append(result.WorkoutColumns, generated.PreferencesWorkoutColumns(column))
 	}
-	return result, err
+	return result, nil
 }
 
 func applyPreferencesPatch(value *generated.Preferences, patch generated.PreferencesPatch) {
@@ -772,6 +792,9 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 	if value.PageSize < 10 || value.PageSize > maximum {
 		return "pageSize", fmt.Sprintf("page size must be between 10 and %d", maximum)
 	}
+	if value.DateRange.IsSpecified() && !value.DateRange.IsNull() && !validDateRangePreference(value.DateRange.MustGet()) {
+		return "dateRange", "date range must be a supported shortcut or an inclusive YYYY-MM-DD/YYYY-MM-DD range"
+	}
 	allowed := map[string]bool{"date": true, "type": true, "duration": true, "distance": true, "pace": true, "calories": true, "heartRate": true, "elevation": true}
 	seen := map[string]bool{}
 	for _, column := range value.WorkoutColumns {
@@ -781,6 +804,20 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 		seen[string(column)] = true
 	}
 	return "", ""
+}
+
+func validDateRangePreference(value string) bool {
+	switch value {
+	case "thisWeek", "lastWeek", "last7Days", "last30Days", "thisMonth", "lastMonth", "thisYear", "lastYear":
+		return true
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 || len(parts[0]) != 10 || len(parts[1]) != 10 {
+		return false
+	}
+	start, startErr := time.Parse("2006-01-02", parts[0])
+	end, endErr := time.Parse("2006-01-02", parts[1])
+	return startErr == nil && endErr == nil && !start.After(end)
 }
 
 func (s *Server) validBrowserSigninOrigin(r *http.Request) bool {

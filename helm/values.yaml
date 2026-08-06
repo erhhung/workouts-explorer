@@ -57,6 +57,19 @@ worker:
     key: workerDatabaseUrl
   resources: {}
 
+sources:
+  keyringSecret:
+    name: workouts-explorer-source-encryption
+    key: keyring.json
+  localRoots:
+    - /data/workouts
+  nfs:
+    enabled: false
+    server: ""
+    path: ""
+    mountPath: /data/workouts
+    supplementalGroup: 1000
+
 otel:
   endpoint: ""
 

@@ -14,6 +14,24 @@ if grep -q '/mailpit' "$rendered" || grep -q 'kind: ExternalName' "$rendered"; t
   printf '%s\n' 'Default production rendering unexpectedly exposes Mailpit' >&2
   exit 1
 fi
+if [ "$(grep -c 'mountPath: /var/run/secrets/workouts-source' "$rendered")" -ne 2 ] ||
+   ! grep -q 'SOURCE_KEYRING_FILE:' "$rendered" ||
+   ! grep -q 'LOCAL_SOURCE_ROOTS:' "$rendered"; then
+  printf '%s\n' 'API and worker source encryption configuration is incomplete' >&2
+  exit 1
+fi
+helm template workouts-explorer helm \
+  --set sources.nfs.enabled=true \
+  --set-string sources.nfs.server=qnap.fourteeners.local \
+  --set-string sources.nfs.path=/k8s_data/datasets/workouts/samples \
+  --set-string sources.nfs.mountPath=/data/workouts/samples >"$changed"
+if ! grep -q 'supplementalGroups: \[1000\]' "$changed" ||
+   ! grep -q 'server: qnap.fourteeners.local' "$changed" ||
+   ! grep -q 'path: /k8s_data/datasets/workouts/samples' "$changed" ||
+   ! grep -q 'mountPath: /data/workouts/samples' "$changed"; then
+  printf '%s\n' 'Read-only worker NFS source mount is incomplete' >&2
+  exit 1
+fi
 helm template workouts-explorer helm --set api.publicConfig.pollingIntervalSeconds=31 >"$changed"
 checksum="$(awk '$1 == "checksum/config:" {print $2}' "$rendered")"
 changed_checksum="$(awk '$1 == "checksum/config:" {print $2}' "$changed")"

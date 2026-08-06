@@ -46,7 +46,7 @@ implementation that depends on an unresolved choice.
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
 | Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
 
-ADRs 0001 through 0006 are accepted. ADRs 0007 through 0010 remain Proposed
+ADRs 0001 through 0007 are accepted. ADRs 0008 through 0010 remain Proposed
 until their stated acceptance evidence is recorded. A proposed record's status
 must change before dependent application work begins.
 
@@ -137,11 +137,14 @@ An owner configures a local/NFS Health Auto Export source through Swagger, impor
 
 - Accept ADR 0007 before source configuration is persisted.
 - Implement envelope encryption and source type-agnostic CRUD.
-- Add discriminated OpenAPI config schemas for the two initial source types.
+- Add the discriminated OpenAPI config schema for the initial
+  `health-auto-export-local` type; add iCloud to the union in Milestone 8.
 - Implement local/NFS source path validation and high-priority connection check.
 - Implement source statuses, source update generation, tombstone deletion, and current-config replacement.
 - Implement the PostgreSQL worker claim, lease, heartbeat, and terminal-cleanup lifecycle.
 - Implement parent ingest and source-child jobs for a selected local source.
+- Create independent encrypted snapshots for connection checks and source-child
+  jobs, then clear them atomically on every terminal outcome.
 - Implement discovery records and file-at-a-time processing.
 - Parse the supplied workout fixtures into normalized workout, type, aggregate, route-point, file, and provenance records.
 - Implement source/provider ID upsert and created/updated/matched_unchanged events.
@@ -157,6 +160,7 @@ An owner configures a local/NFS Health Auto Export source through Swagger, impor
 - Provider aggregates win over incomplete sample sums.
 - Mobile rows show date/timezone, type, duration, and expandable details.
 - Cross-account workout and source access is denied.
+- Source updates do not alter active snapshots, and no terminal job retains one.
 
 ### Verification focus
 
@@ -167,6 +171,14 @@ An owner configures a local/NFS Health Auto Export source through Swagger, impor
 - Source secret encryption and response redaction
 - ADR 0007 envelope tampering, key-version, rotation, and source-generation race tests
 - Account-scoped SQL tests
+
+### Completion evidence (2026-08-05)
+
+- Schema 1-to-6 migration, upgrade, RLS, API, worker, parser, and UI suites pass against PostgreSQL 18.
+- The `xdev` deployment imported all three supplied NFS fixtures into five workouts, three workout types, and 788 route points.
+- An unchanged deployed reimport produced five `matched_unchanged` events and retained five workouts.
+- Encrypted source configuration contains no plaintext path, and terminal jobs retain neither snapshots nor leases.
+- Responsive Summary behavior is covered by desktop table, mobile expansion, date-range, sorting, pagination, empty, and error-state tests.
 
 ## Milestone 4: Durable Data Sync Workflow
 
@@ -180,7 +192,8 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 - Implement incremental and bounded reprocessing semantics.
 - Coalesce equivalent active jobs by normalized parameters.
 - Implement per-account, per-worker, and PostgreSQL-coordinated global file limits.
-- Add job-scoped encrypted source snapshots and terminal clearing.
+- Expand snapshot cancellation, lease-recovery, and startup-scavenging behavior
+  for multi-source workflows.
 - Add staging paths, partial download handling, cleanup, and startup scavenging.
 - Add scheduled all-account ingest for auto-sync sources.
 - Add source freshness and three-day no-data warning behavior.

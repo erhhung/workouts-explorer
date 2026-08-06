@@ -45,6 +45,29 @@ func TestPreferencesUseEmbeddedIANAData(t *testing.T) {
 	}
 }
 
+func TestDateRangePreferenceValidation(t *testing.T) {
+	for _, value := range []string{"thisWeek", "last30Days", "lastYear", "2024-02-29/2024-03-01", "2026-01-01/2026-01-01"} {
+		if !validDateRangePreference(value) {
+			t.Errorf("valid date range rejected: %q", value)
+		}
+	}
+	for _, value := range []string{"last-30-days", "last30days", "2023-02-29/2023-03-01", "2026-03-02/2026-03-01", "2026-1-01/2026-01-02", "2026-01-01", ""} {
+		if validDateRangePreference(value) {
+			t.Errorf("invalid date range accepted: %q", value)
+		}
+	}
+}
+
+func TestDateRangePreferenceContractRejectsLegacyValue(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPatch, "/api/me/preferences", strings.NewReader(`{"dateRange":"last-30-days"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	testHandler(t).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || response.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("legacy date range contract response=%d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestBearerPrecedenceAndCSRFMatrix(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPatch, "/api/me", nil)
 	request.Header.Set("Authorization", "Bearer malformed")

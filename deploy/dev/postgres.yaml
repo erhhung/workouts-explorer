@@ -10,47 +10,58 @@ metadata:
   namespace: postgresql
 data:
   001-roles.sql: |
-    CREATE ROLE workouts_api LOGIN NOBYPASSRLS;
-    CREATE ROLE workouts_worker LOGIN NOBYPASSRLS;
-    CREATE ROLE workouts_security_owner NOLOGIN NOBYPASSRLS;
-    GRANT workouts_security_owner TO workouts_migration;
+    CREATE ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    CREATE ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    CREATE ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    ALTER DATABASE workouts OWNER TO workouts_migration;
+    GRANT CONNECT, TEMPORARY ON DATABASE workouts TO workouts_migration;
+    GRANT USAGE, CREATE ON SCHEMA public TO workouts_migration;
+    GRANT workouts_security_owner TO workouts_migration WITH ADMIN OPTION;
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: postgresql
   namespace: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
 spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
   selector:
-    app.kubernetes.io/name: workouts-postgres
+    app.kubernetes.io/name: postgresql
   ports:
     - name: postgres
       port: 5432
       targetPort: postgres
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: workouts-postgres
+  name: postgresql
   namespace: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
 spec:
   replicas: 1
+  serviceName: postgresql
   selector:
     matchLabels:
-      app.kubernetes.io/name: workouts-postgres
+      app.kubernetes.io/name: postgresql
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: workouts-postgres
+        app.kubernetes.io/name: postgresql
     spec:
       containers:
         - name: postgres
-          image: docker.io/library/postgres:18-alpine
+          image: postgres:18-alpine
           env:
             - name: POSTGRES_DB
               value: workouts
             - name: POSTGRES_USER
-              value: workouts_migration
+              value: postgres
             - name: POSTGRES_HOST_AUTH_METHOD
               value: trust
           ports:
@@ -58,12 +69,12 @@ spec:
               containerPort: 5432
           readinessProbe:
             exec:
-              command: [pg_isready, -U, workouts_migration, -d, workouts]
+              command: [pg_isready, -U, postgres, -d, workouts]
             initialDelaySeconds: 2
             periodSeconds: 2
           livenessProbe:
             exec:
-              command: [pg_isready, -U, workouts_migration, -d, workouts]
+              command: [pg_isready, -U, postgres, -d, workouts]
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:
@@ -79,8 +90,16 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
       volumes:
-        - name: data
-          emptyDir: {}
         - name: init
           configMap:
             name: workouts-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 5Gi

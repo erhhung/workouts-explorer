@@ -8,6 +8,7 @@ import (
 	"compress/flate"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AcceptedStatus.
@@ -30,6 +32,42 @@ const (
 func (e AcceptedStatus) Valid() bool {
 	switch e {
 	case AcceptedStatusAccepted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DateRangeEnum.
+const (
+	Last30Days DateRangeEnum = "last30Days"
+	Last7Days  DateRangeEnum = "last7Days"
+	LastMonth  DateRangeEnum = "lastMonth"
+	LastWeek   DateRangeEnum = "lastWeek"
+	LastYear   DateRangeEnum = "lastYear"
+	ThisMonth  DateRangeEnum = "thisMonth"
+	ThisWeek   DateRangeEnum = "thisWeek"
+	ThisYear   DateRangeEnum = "thisYear"
+)
+
+// Valid indicates whether the value is a known member of the DateRangeEnum enum.
+func (e DateRangeEnum) Valid() bool {
+	switch e {
+	case Last30Days:
+		return true
+	case Last7Days:
+		return true
+	case LastMonth:
+		return true
+	case LastWeek:
+		return true
+	case LastYear:
+		return true
+	case ThisMonth:
+		return true
+	case ThisWeek:
+		return true
+	case ThisYear:
 		return true
 	default:
 		return false
@@ -51,6 +89,36 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for HealthAutoExportLocalConfigVersion.
+const (
+	N1 HealthAutoExportLocalConfigVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the HealthAutoExportLocalConfigVersion enum.
+func (e HealthAutoExportLocalConfigVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthAutoExportLocalSourceCreateType.
+const (
+	HealthAutoExportLocalSourceCreateTypeHealthAutoExportLocal HealthAutoExportLocalSourceCreateType = "health-auto-export-local"
+)
+
+// Valid indicates whether the value is a known member of the HealthAutoExportLocalSourceCreateType enum.
+func (e HealthAutoExportLocalSourceCreateType) Valid() bool {
+	switch e {
+	case HealthAutoExportLocalSourceCreateTypeHealthAutoExportLocal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IdentitySummaryRole.
 const (
 	Administrator IdentitySummaryRole = "administrator"
@@ -63,6 +131,21 @@ func (e IdentitySummaryRole) Valid() bool {
 	case Administrator:
 		return true
 	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IngestAcceptedStatus.
+const (
+	Queued IngestAcceptedStatus = "queued"
+)
+
+// Valid indicates whether the value is a known member of the IngestAcceptedStatus enum.
+func (e IngestAcceptedStatus) Valid() bool {
+	switch e {
+	case Queued:
 		return true
 	default:
 		return false
@@ -348,6 +431,42 @@ func (e ProfileAvatarUrl) Valid() bool {
 	}
 }
 
+// Defines values for SourceStatus.
+const (
+	CheckingConnection SourceStatus = "checking-connection"
+	Connected          SourceStatus = "connected"
+	ConnectionFailed   SourceStatus = "connection-failed"
+)
+
+// Valid indicates whether the value is a known member of the SourceStatus enum.
+func (e SourceStatus) Valid() bool {
+	switch e {
+	case CheckingConnection:
+		return true
+	case Connected:
+		return true
+	case ConnectionFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SourceType.
+const (
+	SourceTypeHealthAutoExportLocal SourceType = "health-auto-export-local"
+)
+
+// Valid indicates whether the value is a known member of the SourceType enum.
+func (e SourceType) Valid() bool {
+	switch e {
+	case SourceTypeHealthAutoExportLocal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TokenSessionTokenType.
 const (
 	Bearer TokenSessionTokenType = "Bearer"
@@ -382,6 +501,18 @@ type BrowserSession struct {
 // CompactUUID defines model for CompactUUID.
 type CompactUUID = string
 
+// DateRangeEnum defines model for DateRangeEnum.
+type DateRangeEnum string
+
+// DateRangePreference defines model for DateRangePreference.
+type DateRangePreference = string
+
+// ExactMetric defines model for ExactMetric.
+type ExactMetric struct {
+	Unit  string `json:"unit"`
+	Value string `json:"value"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -389,6 +520,26 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// HealthAutoExportLocalConfig defines model for HealthAutoExportLocalConfig.
+type HealthAutoExportLocalConfig struct {
+	Path    string                             `json:"path"`
+	Version HealthAutoExportLocalConfigVersion `json:"version"`
+}
+
+// HealthAutoExportLocalConfigVersion defines model for HealthAutoExportLocalConfig.Version.
+type HealthAutoExportLocalConfigVersion int
+
+// HealthAutoExportLocalSourceCreate defines model for HealthAutoExportLocalSourceCreate.
+type HealthAutoExportLocalSourceCreate struct {
+	AutoSyncEnabled bool                                  `json:"autoSyncEnabled"`
+	Config          HealthAutoExportLocalConfig           `json:"config"`
+	DisplayName     string                                `json:"displayName"`
+	Type            HealthAutoExportLocalSourceCreateType `json:"type"`
+}
+
+// HealthAutoExportLocalSourceCreateType defines model for HealthAutoExportLocalSourceCreate.Type.
+type HealthAutoExportLocalSourceCreateType string
 
 // IdentitySummary defines model for IdentitySummary.
 type IdentitySummary struct {
@@ -400,6 +551,20 @@ type IdentitySummary struct {
 
 // IdentitySummaryRole defines model for IdentitySummary.Role.
 type IdentitySummaryRole string
+
+// IngestAccepted defines model for IngestAccepted.
+type IngestAccepted struct {
+	JobId  CompactUUID          `json:"jobId"`
+	Status IngestAcceptedStatus `json:"status"`
+}
+
+// IngestAcceptedStatus defines model for IngestAccepted.Status.
+type IngestAcceptedStatus string
+
+// IngestCreate defines model for IngestCreate.
+type IngestCreate struct {
+	SourceId CompactUUID `json:"sourceId"`
+}
 
 // Invitation defines model for Invitation.
 type Invitation struct {
@@ -425,6 +590,14 @@ type InvitationCreate struct {
 // OpaqueToken defines model for OpaqueToken.
 type OpaqueToken = string
 
+// Pagination defines model for Pagination.
+type Pagination struct {
+	Page       int   `json:"page"`
+	PageSize   int   `json:"pageSize"`
+	TotalItems int64 `json:"totalItems"`
+	TotalPages int64 `json:"totalPages"`
+}
+
 // PasswordResetCreate defines model for PasswordResetCreate.
 type PasswordResetCreate struct {
 	Password             *string     `json:"password,omitempty"`
@@ -440,14 +613,14 @@ type PasswordResetRequest struct {
 
 // Preferences defines model for Preferences.
 type Preferences struct {
-	ClockFormat    PreferencesClockFormat      `json:"clockFormat"`
-	DateRange      nullable.Nullable[string]   `json:"dateRange,omitempty"`
-	FirstWeekday   PreferencesFirstWeekday     `json:"firstWeekday"`
-	PageSize       int                         `json:"pageSize"`
-	Theme          PreferencesTheme            `json:"theme"`
-	Timezone       string                      `json:"timezone"`
-	Units          PreferencesUnits            `json:"units"`
-	WorkoutColumns []PreferencesWorkoutColumns `json:"workoutColumns"`
+	ClockFormat    PreferencesClockFormat                 `json:"clockFormat"`
+	DateRange      nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
+	FirstWeekday   PreferencesFirstWeekday                `json:"firstWeekday"`
+	PageSize       int                                    `json:"pageSize"`
+	Theme          PreferencesTheme                       `json:"theme"`
+	Timezone       string                                 `json:"timezone"`
+	Units          PreferencesUnits                       `json:"units"`
+	WorkoutColumns []PreferencesWorkoutColumns            `json:"workoutColumns"`
 }
 
 // PreferencesClockFormat defines model for Preferences.ClockFormat.
@@ -467,14 +640,14 @@ type PreferencesWorkoutColumns string
 
 // PreferencesPatch defines model for PreferencesPatch.
 type PreferencesPatch struct {
-	ClockFormat    *PreferencesPatchClockFormat      `json:"clockFormat,omitempty"`
-	DateRange      nullable.Nullable[string]         `json:"dateRange,omitempty"`
-	FirstWeekday   *PreferencesPatchFirstWeekday     `json:"firstWeekday,omitempty"`
-	PageSize       *int                              `json:"pageSize,omitempty"`
-	Theme          *PreferencesPatchTheme            `json:"theme,omitempty"`
-	Timezone       *string                           `json:"timezone,omitempty"`
-	Units          *PreferencesPatchUnits            `json:"units,omitempty"`
-	WorkoutColumns *[]PreferencesPatchWorkoutColumns `json:"workoutColumns,omitempty"`
+	ClockFormat    *PreferencesPatchClockFormat           `json:"clockFormat,omitempty"`
+	DateRange      nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
+	FirstWeekday   *PreferencesPatchFirstWeekday          `json:"firstWeekday,omitempty"`
+	PageSize       *int                                   `json:"pageSize,omitempty"`
+	Theme          *PreferencesPatchTheme                 `json:"theme,omitempty"`
+	Timezone       *string                                `json:"timezone,omitempty"`
+	Units          *PreferencesPatchUnits                 `json:"units,omitempty"`
+	WorkoutColumns *[]PreferencesPatchWorkoutColumns      `json:"workoutColumns,omitempty"`
 }
 
 // PreferencesPatchClockFormat defines model for PreferencesPatch.ClockFormat.
@@ -494,14 +667,13 @@ type PreferencesPatchWorkoutColumns string
 
 // Problem defines model for Problem.
 type Problem struct {
-	Detail               *string                `json:"detail,omitempty"`
-	Errors               *[]ValidationError     `json:"errors,omitempty"`
-	Instance             *string                `json:"instance,omitempty"`
-	RequestId            string                 `json:"requestId"`
-	Status               int                    `json:"status"`
-	Title                string                 `json:"title"`
-	Type                 string                 `json:"type"`
-	AdditionalProperties map[string]interface{} `json:"-"`
+	Detail    *string            `json:"detail,omitempty"`
+	Errors    *[]ValidationError `json:"errors,omitempty"`
+	Instance  *string            `json:"instance,omitempty"`
+	RequestId string             `json:"requestId"`
+	Status    int                `json:"status"`
+	Title     string             `json:"title"`
+	Type      string             `json:"type"`
 }
 
 // Profile defines model for Profile.
@@ -547,6 +719,13 @@ type RegistrationCreate struct {
 	Username             string      `json:"username"`
 }
 
+// ResolvedDateRange defines model for ResolvedDateRange.
+type ResolvedDateRange struct {
+	EndDate   openapi_types.Date `json:"endDate"`
+	StartDate openapi_types.Date `json:"startDate"`
+	Timezone  string             `json:"timezone"`
+}
+
 // SessionMetadata defines model for SessionMetadata.
 type SessionMetadata struct {
 	ExpiresAt time.Time       `json:"expiresAt"`
@@ -558,6 +737,53 @@ type SessionMetadata struct {
 type SigninRequest struct {
 	Password *string `json:"password,omitempty"`
 	Username string  `json:"username"`
+}
+
+// Source defines model for Source.
+type Source struct {
+	AutoSyncEnabled bool                        `json:"autoSyncEnabled"`
+	CheckedAt       *time.Time                  `json:"checkedAt,omitempty"`
+	Config          HealthAutoExportLocalConfig `json:"config"`
+	CreatedAt       time.Time                   `json:"createdAt"`
+	DisplayName     string                      `json:"displayName"`
+	Generation      int64                       `json:"generation"`
+	Id              CompactUUID                 `json:"id"`
+	Status          SourceStatus                `json:"status"`
+	StatusCode      *string                     `json:"statusCode,omitempty"`
+	StatusSummary   *string                     `json:"statusSummary,omitempty"`
+	Type            SourceType                  `json:"type"`
+	UpdatedAt       time.Time                   `json:"updatedAt"`
+}
+
+// SourceStatus defines model for Source.Status.
+type SourceStatus string
+
+// SourceType defines model for Source.Type.
+type SourceType string
+
+// SourceCreate defines model for SourceCreate.
+type SourceCreate struct {
+	union json.RawMessage
+}
+
+// SourceList defines model for SourceList.
+type SourceList struct {
+	Items []Source `json:"items"`
+}
+
+// SourcePatch defines model for SourcePatch.
+type SourcePatch struct {
+	AutoSyncEnabled *bool                        `json:"autoSyncEnabled,omitempty"`
+	Config          *HealthAutoExportLocalConfig `json:"config,omitempty"`
+	DisplayName     *string                      `json:"displayName,omitempty"`
+}
+
+// SummaryTotals defines model for SummaryTotals.
+type SummaryTotals struct {
+	Count    int64                          `json:"count"`
+	Distance nullable.Nullable[ExactMetric] `json:"distance"`
+	Duration string                         `json:"duration"`
+	Energy   nullable.Nullable[ExactMetric] `json:"energy"`
 }
 
 // TokenSession defines model for TokenSession.
@@ -579,8 +805,78 @@ type ValidationError struct {
 	Message *string `json:"message,omitempty"`
 }
 
+// Workout defines model for Workout.
+type Workout struct {
+	Calories        nullable.Nullable[ExactMetric] `json:"calories"`
+	DisplayTimezone nullable.Nullable[string]      `json:"displayTimezone"`
+	Distance        nullable.Nullable[ExactMetric] `json:"distance"`
+
+	// Duration Exact provider duration in seconds
+	Duration                   string                                `json:"duration"`
+	Elevation                  nullable.Nullable[ExactMetric]        `json:"elevation"`
+	EndedAt                    time.Time                             `json:"endedAt"`
+	HeartRate                  nullable.Nullable[ExactMetric]        `json:"heartRate"`
+	Id                         CompactUUID                           `json:"id"`
+	Indoor                     nullable.Nullable[bool]               `json:"indoor"`
+	LocalStartDate             nullable.Nullable[openapi_types.Date] `json:"localStartDate"`
+	Location                   nullable.Nullable[string]             `json:"location"`
+	OriginalEndOffsetMinutes   nullable.Nullable[int]                `json:"originalEndOffsetMinutes"`
+	OriginalStartOffsetMinutes nullable.Nullable[int]                `json:"originalStartOffsetMinutes"`
+	Pace                       nullable.Nullable[ExactMetric]        `json:"pace"`
+	RouteAvailable             bool                                  `json:"routeAvailable"`
+	RoutePointCount            int                                   `json:"routePointCount"`
+	SourceId                   CompactUUID                           `json:"sourceId"`
+	StartedAt                  time.Time                             `json:"startedAt"`
+	Timezone                   nullable.Nullable[string]             `json:"timezone"`
+	Type                       WorkoutType                           `json:"type"`
+}
+
+// WorkoutList defines model for WorkoutList.
+type WorkoutList struct {
+	Items      []Workout         `json:"items"`
+	Pagination Pagination        `json:"pagination"`
+	Range      ResolvedDateRange `json:"range"`
+}
+
+// WorkoutSummary defines model for WorkoutSummary.
+type WorkoutSummary struct {
+	ByType []WorkoutTypeSummary `json:"byType"`
+	Range  ResolvedDateRange    `json:"range"`
+	Totals SummaryTotals        `json:"totals"`
+}
+
+// WorkoutType defines model for WorkoutType.
+type WorkoutType struct {
+	DisplayName string      `json:"displayName"`
+	Id          CompactUUID `json:"id"`
+	Key         string      `json:"key"`
+}
+
+// WorkoutTypeList defines model for WorkoutTypeList.
+type WorkoutTypeList struct {
+	Items []WorkoutType `json:"items"`
+}
+
+// WorkoutTypeSummary defines model for WorkoutTypeSummary.
+type WorkoutTypeSummary struct {
+	Totals SummaryTotals `json:"totals"`
+	Type   WorkoutType   `json:"type"`
+}
+
 // CSRFToken defines model for CSRFToken.
 type CSRFToken = string
+
+// EndDate defines model for EndDate.
+type EndDate = openapi_types.Date
+
+// SourceID defines model for SourceID.
+type SourceID = CompactUUID
+
+// StartDate defines model for StartDate.
+type StartDate = openapi_types.Date
+
+// Timezone defines model for Timezone.
+type Timezone = string
 
 // Token defines model for Token.
 type Token = OpaqueToken
@@ -593,6 +889,11 @@ type Signin = SigninRequest
 
 // CreateInvitationParams defines parameters for CreateInvitation.
 type CreateInvitationParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// CreateIngestParams defines parameters for CreateIngest.
+type CreateIngestParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
@@ -616,8 +917,45 @@ type GetCurrentSession200JSONResponseBody struct {
 	union json.RawMessage
 }
 
+// CreateSourceParams defines parameters for CreateSource.
+type CreateSourceParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// DeleteSourceParams defines parameters for DeleteSource.
+type DeleteSourceParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// UpdateSourceParams defines parameters for UpdateSource.
+type UpdateSourceParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// GetWorkoutSummaryParams defines parameters for GetWorkoutSummary.
+type GetWorkoutSummaryParams struct {
+	StartDate     *StartDate     `form:"startDate,omitempty" json:"startDate,omitempty"`
+	EndDate       *EndDate       `form:"endDate,omitempty" json:"endDate,omitempty"`
+	DateRangeEnum *DateRangeEnum `form:"dateRangeEnum,omitempty" json:"dateRangeEnum,omitempty"`
+	Tz            *Timezone      `form:"tz,omitempty" json:"tz,omitempty"`
+}
+
+// ListWorkoutsParams defines parameters for ListWorkouts.
+type ListWorkoutsParams struct {
+	StartDate     *StartDate     `form:"startDate,omitempty" json:"startDate,omitempty"`
+	EndDate       *EndDate       `form:"endDate,omitempty" json:"endDate,omitempty"`
+	DateRangeEnum *DateRangeEnum `form:"dateRangeEnum,omitempty" json:"dateRangeEnum,omitempty"`
+	Tz            *Timezone      `form:"tz,omitempty" json:"tz,omitempty"`
+	Page          *int           `form:"page,omitempty" json:"page,omitempty"`
+	PageSize      *int           `form:"pageSize,omitempty" json:"pageSize,omitempty"`
+	Sort          *[]string      `form:"sort,omitempty" json:"sort,omitempty"`
+}
+
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
 type CreateInvitationJSONRequestBody = InvitationCreate
+
+// CreateIngestJSONRequestBody defines body for CreateIngest for application/json ContentType.
+type CreateIngestJSONRequestBody = IngestCreate
 
 // UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
 type UpdateMeJSONRequestBody = ProfilePatch
@@ -640,154 +978,75 @@ type CreateBrowserSessionJSONRequestBody = SigninRequest
 // CreateSessionTokenJSONRequestBody defines body for CreateSessionToken for application/json ContentType.
 type CreateSessionTokenJSONRequestBody = SigninRequest
 
-// Getter for additional properties for Problem. Returns the specified
-// element and whether it was found
-func (a Problem) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
+// CreateSourceJSONRequestBody defines body for CreateSource for application/json ContentType.
+type CreateSourceJSONRequestBody = SourceCreate
+
+// UpdateSourceJSONRequestBody defines body for UpdateSource for application/json ContentType.
+type UpdateSourceJSONRequestBody = SourcePatch
+
+// AsHealthAutoExportLocalSourceCreate returns the union data inside the SourceCreate as a HealthAutoExportLocalSourceCreate
+func (t SourceCreate) AsHealthAutoExportLocalSourceCreate() (HealthAutoExportLocalSourceCreate, error) {
+	var body HealthAutoExportLocalSourceCreate
+	err := json.Unmarshal(t.union, &body)
+	return body, err
 }
 
-// Setter for additional properties for Problem
-func (a *Problem) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
+// FromHealthAutoExportLocalSourceCreate overwrites any union data inside the SourceCreate as the provided HealthAutoExportLocalSourceCreate
+func (t *SourceCreate) FromHealthAutoExportLocalSourceCreate(v HealthAutoExportLocalSourceCreate) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
-	a.AdditionalProperties[fieldName] = value
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"health-auto-export-local"}`))
+	t.union = b
+	return err
 }
 
-// Override default JSON handling for Problem to handle AdditionalProperties
-func (a *Problem) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
+// MergeHealthAutoExportLocalSourceCreate performs a merge with any union data inside the SourceCreate, using the provided HealthAutoExportLocalSourceCreate
+func (t *SourceCreate) MergeHealthAutoExportLocalSourceCreate(v HealthAutoExportLocalSourceCreate) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"health-auto-export-local"}`))
 	if err != nil {
 		return err
 	}
 
-	if raw, found := object["detail"]; found {
-		err = json.Unmarshal(raw, &a.Detail)
-		if err != nil {
-			return fmt.Errorf("error reading 'detail': %w", err)
-		}
-		delete(object, "detail")
-	}
-
-	if raw, found := object["errors"]; found {
-		err = json.Unmarshal(raw, &a.Errors)
-		if err != nil {
-			return fmt.Errorf("error reading 'errors': %w", err)
-		}
-		delete(object, "errors")
-	}
-
-	if raw, found := object["instance"]; found {
-		err = json.Unmarshal(raw, &a.Instance)
-		if err != nil {
-			return fmt.Errorf("error reading 'instance': %w", err)
-		}
-		delete(object, "instance")
-	}
-
-	if raw, found := object["requestId"]; found {
-		err = json.Unmarshal(raw, &a.RequestId)
-		if err != nil {
-			return fmt.Errorf("error reading 'requestId': %w", err)
-		}
-		delete(object, "requestId")
-	}
-
-	if raw, found := object["status"]; found {
-		err = json.Unmarshal(raw, &a.Status)
-		if err != nil {
-			return fmt.Errorf("error reading 'status': %w", err)
-		}
-		delete(object, "status")
-	}
-
-	if raw, found := object["title"]; found {
-		err = json.Unmarshal(raw, &a.Title)
-		if err != nil {
-			return fmt.Errorf("error reading 'title': %w", err)
-		}
-		delete(object, "title")
-	}
-
-	if raw, found := object["type"]; found {
-		err = json.Unmarshal(raw, &a.Type)
-		if err != nil {
-			return fmt.Errorf("error reading 'type': %w", err)
-		}
-		delete(object, "type")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
 }
 
-// Override default JSON handling for Problem to handle AdditionalProperties
-func (a Problem) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Detail != nil {
-		object["detail"], err = json.Marshal(a.Detail)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'detail': %w", err)
-		}
+func (t SourceCreate) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
 	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
 
-	if a.Errors != nil {
-		object["errors"], err = json.Marshal(a.Errors)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'errors': %w", err)
-		}
-	}
-
-	if a.Instance != nil {
-		object["instance"], err = json.Marshal(a.Instance)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'instance': %w", err)
-		}
-	}
-
-	object["requestId"], err = json.Marshal(a.RequestId)
+func (t SourceCreate) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'requestId': %w", err)
+		return nil, err
 	}
+	switch discriminator {
+	case "health-auto-export-local":
+		return t.AsHealthAutoExportLocalSourceCreate()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
 
-	object["status"], err = json.Marshal(a.Status)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'status': %w", err)
-	}
+func (t SourceCreate) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
 
-	object["title"], err = json.Marshal(a.Title)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'title': %w", err)
-	}
-
-	object["type"], err = json.Marshal(a.Type)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'type': %w", err)
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
+func (t *SourceCreate) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
 }
 
 // AsBrowserSession returns the union data inside the GetCurrentSession200JSONResponseBody as a BrowserSession
@@ -861,6 +1120,9 @@ type ServerInterface interface {
 	// (GET /api/config)
 	GetPublicConfig(w http.ResponseWriter, r *http.Request)
 
+	// (POST /api/ingest)
+	CreateIngest(w http.ResponseWriter, r *http.Request, params CreateIngestParams)
+
 	// (GET /api/invitations/{token})
 	GetInvitation(w http.ResponseWriter, r *http.Request, token Token)
 
@@ -903,6 +1165,30 @@ type ServerInterface interface {
 	// (POST /api/session-tokens)
 	CreateSessionToken(w http.ResponseWriter, r *http.Request)
 
+	// (GET /api/sources)
+	ListSources(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/sources)
+	CreateSource(w http.ResponseWriter, r *http.Request, params CreateSourceParams)
+
+	// (DELETE /api/sources/{sourceId})
+	DeleteSource(w http.ResponseWriter, r *http.Request, sourceId SourceID, params DeleteSourceParams)
+
+	// (GET /api/sources/{sourceId})
+	GetSource(w http.ResponseWriter, r *http.Request, sourceId SourceID)
+
+	// (PATCH /api/sources/{sourceId})
+	UpdateSource(w http.ResponseWriter, r *http.Request, sourceId SourceID, params UpdateSourceParams)
+
+	// (GET /api/summary)
+	GetWorkoutSummary(w http.ResponseWriter, r *http.Request, params GetWorkoutSummaryParams)
+
+	// (GET /api/workout-types)
+	ListWorkoutTypes(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/workouts)
+	ListWorkouts(w http.ResponseWriter, r *http.Request, params ListWorkoutsParams)
+
 	// (GET /health/live)
 	GetLiveness(w http.ResponseWriter, r *http.Request)
 
@@ -924,6 +1210,11 @@ func (_ Unimplemented) CreateInvitation(w http.ResponseWriter, r *http.Request, 
 
 // (GET /api/config)
 func (_ Unimplemented) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/ingest)
+func (_ Unimplemented) CreateIngest(w http.ResponseWriter, r *http.Request, params CreateIngestParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -997,6 +1288,46 @@ func (_ Unimplemented) CreateSessionToken(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /api/sources)
+func (_ Unimplemented) ListSources(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/sources)
+func (_ Unimplemented) CreateSource(w http.ResponseWriter, r *http.Request, params CreateSourceParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /api/sources/{sourceId})
+func (_ Unimplemented) DeleteSource(w http.ResponseWriter, r *http.Request, sourceId SourceID, params DeleteSourceParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/sources/{sourceId})
+func (_ Unimplemented) GetSource(w http.ResponseWriter, r *http.Request, sourceId SourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /api/sources/{sourceId})
+func (_ Unimplemented) UpdateSource(w http.ResponseWriter, r *http.Request, sourceId SourceID, params UpdateSourceParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/summary)
+func (_ Unimplemented) GetWorkoutSummary(w http.ResponseWriter, r *http.Request, params GetWorkoutSummaryParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/workout-types)
+func (_ Unimplemented) ListWorkoutTypes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/workouts)
+func (_ Unimplemented) ListWorkouts(w http.ResponseWriter, r *http.Request, params ListWorkoutsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /health/live)
 func (_ Unimplemented) GetLiveness(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1067,6 +1398,47 @@ func (siw *ServerInterfaceWrapper) GetPublicConfig(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPublicConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateIngest operation middleware
+func (siw *ServerInterfaceWrapper) CreateIngest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateIngestParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateIngest(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1365,6 +1737,384 @@ func (siw *ServerInterfaceWrapper) CreateSessionToken(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// ListSources operation middleware
+func (siw *ServerInterfaceWrapper) ListSources(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSources(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSource operation middleware
+func (siw *ServerInterfaceWrapper) CreateSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateSourceParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSource(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSource operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sourceId" -------------
+	var sourceId SourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sourceId", chi.URLParam(r, "sourceId"), &sourceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sourceId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteSourceParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSource(w, r, sourceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSource operation middleware
+func (siw *ServerInterfaceWrapper) GetSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sourceId" -------------
+	var sourceId SourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sourceId", chi.URLParam(r, "sourceId"), &sourceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sourceId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSource(w, r, sourceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSource operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sourceId" -------------
+	var sourceId SourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sourceId", chi.URLParam(r, "sourceId"), &sourceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sourceId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateSourceParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSource(w, r, sourceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWorkoutSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetWorkoutSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetWorkoutSummaryParams
+
+	// ------------- Optional query parameter "startDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "startDate", r.URL.Query(), &params.StartDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "startDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "startDate", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "endDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "endDate", r.URL.Query(), &params.EndDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "endDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endDate", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "dateRangeEnum" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "dateRangeEnum", r.URL.Query(), &params.DateRangeEnum, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "dateRangeEnum"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dateRangeEnum", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWorkoutSummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWorkoutTypes operation middleware
+func (siw *ServerInterfaceWrapper) ListWorkoutTypes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWorkoutTypes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWorkouts operation middleware
+func (siw *ServerInterfaceWrapper) ListWorkouts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWorkoutsParams
+
+	// ------------- Optional query parameter "startDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "startDate", r.URL.Query(), &params.StartDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "startDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "startDate", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "endDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "endDate", r.URL.Query(), &params.EndDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "endDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endDate", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "dateRangeEnum" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "dateRangeEnum", r.URL.Query(), &params.DateRangeEnum, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "dateRangeEnum"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "dateRangeEnum", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "pageSize" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "pageSize", r.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "pageSize"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pageSize", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sort", r.URL.Query(), &params.Sort, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "sort"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWorkouts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLiveness operation middleware
 func (siw *ServerInterfaceWrapper) GetLiveness(w http.ResponseWriter, r *http.Request) {
 
@@ -1577,6 +2327,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/me/avatar", wrapper.GetMyAvatar)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/sources", wrapper.ListSources)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/sources", wrapper.CreateSource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/sources/{sourceId}", wrapper.DeleteSource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/sources/{sourceId}", wrapper.GetSource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/sources/{sourceId}", wrapper.UpdateSource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/ingest", wrapper.CreateIngest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/workouts", wrapper.ListWorkouts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/workout-types", wrapper.ListWorkoutTypes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/summary", wrapper.GetWorkoutSummary)
+	})
 
 	return r
 }
@@ -1586,49 +2363,75 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7FtbU+M49v8qLv3nbRxyAea/8Jamu3epbbqpADu7S7FTwj5J1MiSW5IDaYrvviXJF9lREhwSlurpJ4gt",
-	"H53L7xydi/2IIp6knAFTEh0/ohQLnIACYX6dXIw+XvI7YPoHYegYTQHHIFCIGE4AHaN/dvSajl0UIhlN",
-	"IcF6tZqn+r5UgrAJenoKUZ1QitW0IqPy5wV8y4iAGB0rkYFL7xcBY3SM/q9b8du1d2X3S4q/ZWDpP+mt",
-	"NBmQ6h2PCRhBLsiEEbN5xJkCpvS/OE0pibAinHW/Sm5uP29DS25kd6m2rDi3V2TKmbQMnAt+SyFZwUFq",
-	"V/zajpOCruEhBhkJkmpy6BiNPp4ERweH/x/ka4L3oDChEj2FaIQVfCIJUZrh12PpcgqBnGIBcYAzNQWm",
-	"8q0CgRUEVHMU3GMZwEMEEEOMwhxxRokjUGLeGY4VCP1zOVgSwkiSJei4HxZAJEzBBITmSvOVM6sXD6MI",
-	"0lwROI6J5gfTc8FTEMrgZ4yphBClzqVHJBVWmfkPmN7qGuGC0E3ogX/F7XXxbLWO336FSGnLvBP8XoK4",
-	"ACmJ1XoLniIpxqWbPdtjQgQPKREghwYBYy4SrNAxirGCjiIJoAV5QkTidXuc8CTFkbq6On1vH9DmVvN1",
-	"j53m6y6yJMFivqA7okFREnN5Dx35fap1GTKhTikQGpb/ue51joadjzeP+4OnX3zS/g0wVdMXI4TfvQgb",
-	"TdW0Y2ecUfrZhNvHLZhTcAo18Mfa6aQSWHF9PmQShEdYe4P52fBZulweVgLku3tVxGZEYdXedWKgZAZi",
-	"fqGwqgmWAos1d2GxxESlMSbU/JOxO8bvmVdUSDChXnW/isNJmUHcZgu5XPYytmkTzfid+c9K8Yx4Zyxp",
-	"tVHsEjY07vDrqme1jU8E5By3sHRplQQ/fAI20X49ODwI9alR/N5fJ5El4uPODa2NKDPs/Bt3vvc6R390",
-	"bh4P9v2h5hxLec9FPAIJaiMB05xCzfDlxdCV+7A/qMndbzIUontBFHxhdJ5nNmFJ6oSzMdHkc2/bxV6q",
-	"9WnWMFSRWTo8efn3mbJmiiLba2cLN9rVc6Gr/E7ARVC4xgpE9tchstzJK4mAMQhgkeWqTUpBeXT3Mbds",
-	"FRn6A529Dw6m3sCno8wIswk03Oy3gxCxjFJ8qw8Pm7UtPDwmQqrfAe5iPHe3TDjTV0IkM/OPb+MUT+CC",
-	"fId6EthbzAJDpKaQ1IJdjMUdChElk6nyEtdh8ztnPqFWGkofEkTVEgGSpCAINjYHJUjk3fCeizueqRNO",
-	"s4SZ54mCRNaZVmUoD1GcCYvmEMVEKswiMHg3fyJMudBWNTm1UCP7KFCYNV2gYiHBD6d2T+29+W0shDFE",
-	"xsi3DPL7VdnjOJ/RcSG/o8GGlcMazBYEd+y6BtznWEXr07SEMPdq/yfmf2L+RZj3QLIs9/1ItDhopqBq",
-	"ab4oBBd1baw6EP+BKYmNgB/0g+ipIYbODlmuK/fgzgTplM7kS07yxspp7OWyKngS/GBxeHh0FFaoPOj5",
-	"YUkU9Zcl9sLzOWzGHwsRS7/kzxXDH0/4mNC2WReeYYXFlaAuVLs4Jd0Euvam3k0AjqsMZ1XRsHbldgs6",
-	"N1NZs/WaOq3IZkr+Vih5OwHb1YSbQ2m4rcuhFjnLbimJTHI4aYmBWyzhDKdDpQS5zYq82OGo3xsceCyZ",
-	"P3dJKOQAqgFeQZJSJ+jVg1X6kahzzSSbnJMHoA0HzLNu+8vrfsUBclY84zze7+U6tD8Hh34CNk8+s8sK",
-	"YR0y+XmR0xx4iXBKCZucMgVihukFRJzFdVn2f6sx0/eSETzOIvX5WR0Gd/FSDvw6Xib1ojpvlmJs42bF",
-	"FhsL3rp2XQU+golt9Wxag2/ssOGfvLqtx2k3sgz+0q5eLApjf4Ntk3I571mfgcIxVrgtpn+IHrRXL7Vp",
-	"0dvq5SxB0+bdBwc6Pl0YGG823MBRBFL+cOONPApc5plukTm+Ayy8HfQW4xBXY+42PsM0S4aWXSIe+9PQ",
-	"MQHqLxYSkBJPnnFIWxKh3WORdV13QJQJrVOt4zwTM+obZjYPsb+Kih5xA49iXK2J2QUVEKZKpZrJiPM7",
-	"AgUZM7i2l6rRdV6wyj9kjuqq1krJ32Fu56CEjfliD/A9SDJhHVP9B8Pz02DMRaCmEBiJIMBRxDOmAkrG",
-	"EM0jCntlNXOMfs83Dj48pJQLEJoCCtEMhPUu1Nsb7PW0GDwFhlOCjtH+Xm9v3zipmhpFmQrFDG+6pExH",
-	"bOjhNlppO5uruupD9rh3Mpew9s7AtR/91ZJu9U7B0407qZ9vbTq/MB/wDegb8/lBr7+D/X0z8OpuUA2U",
-	"nkJ00OstI1xyWs3W9fp+y/X7LdcftVvfb0m/f9hq/WEr/p2oYEDpxoPrm6fwseba1zcaiwpPZGOUaVId",
-	"Tcy4SVTWhBPwuMZfQdVqxwWI9bYGsdo+HpBd4DEEt/ZVgsCyXbTJzNoxzqhqp85CO6nZ2tGKEza6j+aQ",
-	"eVqloheEDjds7FSxqz3YHJUBcdZobznYkjptLrZMe2ewU1jlnS+P0OcgpE4FgrRYs+sQ9CIXtgcnujEF",
-	"Xd5iqivzKtUJ4Bm8wQOs1ht71uH1KhCwGovrCHhjh9aPcwiVCK4CQ9FGXhUf5kO7Zi1ESIIn0P2awqQO",
-	"jrI+uiVMFyi+AsQ+m7KNH5Wzya8PCd308Xu4Tds+uxjRBJnhaN5JBX8gEAdWuQEXwQSYVivEwRhTeouj",
-	"u/p7iCc4mkLnhDMleEOGRY4/XOLJ6jV61b49P+ocfuYqSHhMxqRIEd9+vHXQmtZfOlgOWffthJ2Gtmob",
-	"Lx6c2z/G4dbQ7Ns75xqD+1c/61YCojrvGsD4eea9VhTJGxd7c2wPi2Ux5EsKbHh++p5HWaJh0Qo0BfEK",
-	"NKtm9s320wJscl6Cfw3PPm2/2iq6qx0BElQnd8u1DRvvq2w78mrfVs/y7MHWeCjf6fd9F2FZCspXWjfx",
-	"6R373MHgGc0X9yOOTfz0mRhrh63XAFWbtp4nrSpoBQJSiiOd+rE4yNu3Mijeb/4JiwYshDP1XQsKd0S8",
-	"I0x4ptCv3OldUSwP89Z9ZBjbsMN79BN9JfpkNTSMgYJ95aCOvPfm+kkmBDB1UY5jXpb2rosmIzdc7DbT",
-	"e71MrFC2LjGW5VwLen5Rns4ZfBkvtU/hcI2v47QQK7/TbLyR8HTj8dRcjuIAaG/IbSl6VThtCL4QUP2s",
-	"Ol/B5t+sol2Gw6Z1PLo2iihUXQbHWnflAlTHrlvfNvmz1WKvGoIrbDZicMdMedamADkOLp1vu98aYmuv",
-	"o3jwat/CWMDrayDvx0XS1HxM26VktnLU9YnMgIHcaUsw/67XY3m9e00Gy3VdBAHYgnmZDCPAMfnfCTEy",
-	"/L3EcjWp5T2eTGDl/OHCLrk6XS+wggfVnapkTQd9cbZttwiuTrfYXTFnuJgVOWImKDpGXZ0w/DcAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

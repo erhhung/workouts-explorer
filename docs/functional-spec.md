@@ -190,9 +190,11 @@ As a data owner, I want to configure source adapters through Swagger or REST so 
 ### Behavior
 
 1. The owner creates a source with a unique display name, immutable type, `autoSyncEnabled`, and adapter-specific `config`.
-2. Supported MVP types are `health-auto-export-local` and `health-auto-export-icloud`.
+2. Supported MVP types are `health-auto-export-local` and
+   `health-auto-export-icloud`; Milestone 3 introduces local/NFS and Milestone 8
+   adds iCloud to the discriminated API union.
 3. OpenAPI selects and validates the correct config schema from `type`.
-4. Creation or update stores encrypted secrets, sets `checking-connection`, and enqueues a high-priority connection check.
+4. Creation or update encrypts the complete adapter config, sets `checking-connection`, and enqueues a high-priority connection check.
 5. A successful check sets `connected`.
 6. A failed check sets `connection-failed` and creates an error notification.
 7. A failed source cannot be selected for ingest until its config passes a later check.

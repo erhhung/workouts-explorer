@@ -19,6 +19,7 @@ admin_password="$(
     -o jsonpath='{.data.password}' | base64 -d
 )"
 
+[ -t 1 ] && echo >&2
 curl --fail --silent \
     -H 'Content-Type: application/json' \
     --data "$(jq -n \

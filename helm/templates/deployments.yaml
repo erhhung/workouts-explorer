@@ -51,7 +51,7 @@ spec:
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       {{- if not .Values.api.smtp.allowInsecureLocal }}
       initContainers:
         - name: prepare-smtp-password
@@ -77,12 +77,18 @@ spec:
           livenessProbe: {httpGet: {path: /health/live, port: http}}
           readinessProbe: {httpGet: {path: /health/ready, port: http}}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
-          {{- if not .Values.api.smtp.allowInsecureLocal }}
           volumeMounts:
+            - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
+          {{- if not .Values.api.smtp.allowInsecureLocal }}
             - {name: smtp-password, mountPath: /var/run/secrets/workouts-smtp, readOnly: true}
           {{- end }}
-      {{- if not .Values.api.smtp.allowInsecureLocal }}
       volumes:
+        - name: source-keyring
+          secret:
+            secretName: {{ required "sources.keyringSecret.name is required" .Values.sources.keyringSecret.name }}
+            defaultMode: 0440
+            items: [{key: {{ required "sources.keyringSecret.key is required" .Values.sources.keyringSecret.key }}, path: keyring.json}]
+      {{- if not .Values.api.smtp.allowInsecureLocal }}
         - {name: smtp-password, emptyDir: {medium: Memory}}
         - name: smtp-source
           secret:
@@ -107,7 +113,15 @@ spec:
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        {{- if .Values.sources.nfs.enabled }}
+        supplementalGroups: [{{ .Values.sources.nfs.supplementalGroup }}]
+        {{- end }}
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: worker
           image: {{ include "workouts.image" (list . .Values.worker.image) }}
@@ -115,9 +129,29 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - {name: SOURCE_KEYRING_FILE, value: /var/run/secrets/workouts-source/keyring.json}
+            - {name: LOCAL_SOURCE_ROOTS, value: {{ join "," .Values.sources.localRoots | quote }}}
             - name: WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
           ports: [{name: health, containerPort: 8081}]
           livenessProbe: {httpGet: {path: /health/live, port: health}}
           readinessProbe: {httpGet: {path: /health/ready, port: health}}
           resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
+            {{- if .Values.sources.nfs.enabled }}
+            - {name: local-sources, mountPath: {{ .Values.sources.nfs.mountPath }}, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: source-keyring
+          secret:
+            secretName: {{ required "sources.keyringSecret.name is required" .Values.sources.keyringSecret.name }}
+            defaultMode: 0440
+            items: [{key: {{ required "sources.keyringSecret.key is required" .Values.sources.keyringSecret.key }}, path: keyring.json}]
+        {{- if .Values.sources.nfs.enabled }}
+        - name: local-sources
+          nfs:
+            server: {{ required "sources.nfs.server is required when NFS is enabled" .Values.sources.nfs.server }}
+            path: {{ required "sources.nfs.path is required when NFS is enabled" .Values.sources.nfs.path }}
+            readOnly: true
+        {{- end }}
