@@ -33,6 +33,15 @@ spec:
         - {name: run, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
 ---
+{{- if gt (int .Values.worker.accountFileConcurrency) (int .Values.worker.globalFileConcurrency) }}
+{{- fail "worker.accountFileConcurrency must not exceed worker.globalFileConcurrency" }}
+{{- end }}
+{{- $syncClock := now }}
+{{- $syncPollDeadline := mustDateModify .Values.worker.autoSyncPollInterval $syncClock }}
+{{- $schedulerLeaseDeadline := mustDateModify .Values.worker.schedulerLeaseDuration $syncClock }}
+{{- if not ($schedulerLeaseDeadline.After $syncPollDeadline) }}
+{{- fail "worker.schedulerLeaseDuration must exceed worker.autoSyncPollInterval" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -131,6 +140,14 @@ spec:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
             - {name: SOURCE_KEYRING_FILE, value: /var/run/secrets/workouts-source/keyring.json}
             - {name: LOCAL_SOURCE_ROOTS, value: {{ join "," .Values.sources.localRoots | quote }}}
+            - {name: WORKER_FILE_CONCURRENCY, value: {{ .Values.worker.fileConcurrency | quote }}}
+            - {name: ACCOUNT_FILE_CONCURRENCY, value: {{ .Values.worker.accountFileConcurrency | quote }}}
+            - {name: GLOBAL_FILE_CONCURRENCY, value: {{ .Values.worker.globalFileConcurrency | quote }}}
+            - {name: AUTO_SYNC_INTERVAL, value: {{ .Values.worker.autoSyncInterval | quote }}}
+            - {name: AUTO_SYNC_POLL_INTERVAL, value: {{ .Values.worker.autoSyncPollInterval | quote }}}
+            - {name: AUTO_SYNC_STALE_DAYS, value: {{ .Values.worker.autoSyncStaleDays | quote }}}
+            - {name: SCHEDULER_LEASE_DURATION, value: {{ .Values.worker.schedulerLeaseDuration | quote }}}
+            - {name: WORKER_STAGING_ROOT, value: {{ .Values.worker.staging.root | quote }}}
             - name: WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
           ports: [{name: health, containerPort: 8081}]
@@ -139,10 +156,14 @@ spec:
           resources: {{- toYaml .Values.worker.resources | nindent 12 }}
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
+            - {name: staging, mountPath: {{ .Values.worker.staging.root }}}
             {{- if .Values.sources.nfs.enabled }}
             - {name: local-sources, mountPath: {{ .Values.sources.nfs.mountPath }}, readOnly: true}
             {{- end }}
       volumes:
+        - name: staging
+          emptyDir:
+            sizeLimit: {{ .Values.worker.staging.sizeLimit }}
         - name: source-keyring
           secret:
             secretName: {{ required "sources.keyringSecret.name is required" .Values.sources.keyringSecret.name }}

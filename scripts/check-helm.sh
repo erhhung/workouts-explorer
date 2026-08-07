@@ -20,6 +20,19 @@ if [ "$(grep -c 'mountPath: /var/run/secrets/workouts-source' "$rendered")" -ne 
   printf '%s\n' 'API and worker source encryption configuration is incomplete' >&2
   exit 1
 fi
+if ! grep -q 'name: WORKER_FILE_CONCURRENCY' "$rendered" ||
+   ! grep -q 'name: ACCOUNT_FILE_CONCURRENCY' "$rendered" ||
+   ! grep -q 'name: GLOBAL_FILE_CONCURRENCY' "$rendered" ||
+   ! grep -q 'name: AUTO_SYNC_INTERVAL' "$rendered" ||
+   ! grep -q 'name: AUTO_SYNC_POLL_INTERVAL' "$rendered" ||
+   ! grep -q 'name: AUTO_SYNC_STALE_DAYS' "$rendered" ||
+   ! grep -q 'name: SCHEDULER_LEASE_DURATION' "$rendered" ||
+   ! grep -q 'name: WORKER_STAGING_ROOT' "$rendered" ||
+   ! grep -q 'mountPath: /var/lib/workouts/staging' "$rendered" ||
+   ! grep -q 'sizeLimit: 2Gi' "$rendered"; then
+  printf '%s\n' 'Worker concurrency or bounded staging configuration is incomplete' >&2
+  exit 1
+fi
 helm template workouts-explorer helm \
   --set sources.nfs.enabled=true \
   --set-string sources.nfs.server=qnap.fourteeners.local \
@@ -39,6 +52,22 @@ if [ -z "$checksum" ] || [ "$checksum" = "$changed_checksum" ]; then
   printf '%s\n' 'API ConfigMap changes do not alter the Deployment rollout checksum' >&2
   exit 1
 fi
+if helm template workouts-explorer helm --set-string worker.schedulerLeaseDuration=30s >/dev/null 2>&1; then
+  printf '%s\n' 'Worker scheduler lease coherence check accepted a lease equal to the poll interval' >&2
+  exit 1
+fi
+for duration in 901s 999s 3600s 16m 1h; do
+  if helm template workouts-explorer helm --set-string worker.schedulerLeaseDuration="$duration" >/dev/null 2>&1; then
+    printf '%s\n' "Worker scheduler lease bound accepted $duration over 15 minutes" >&2
+    exit 1
+  fi
+done
+for duration in 900s 15m; do
+  if ! helm template workouts-explorer helm --set-string worker.schedulerLeaseDuration="$duration" >/dev/null 2>&1; then
+    printf '%s\n' "Worker scheduler lease bound rejected valid duration $duration" >&2
+    exit 1
+  fi
+done
 
 helm template workouts-explorer helm \
   --set ingress.enabled=true \

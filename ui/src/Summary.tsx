@@ -15,6 +15,7 @@ import {
   type WorkoutSortDirection,
   type WorkoutSummary,
 } from "./api";
+import { instantZone, offsetLabel, Tooltip, zoneAbbreviation, zoneOffsetAt, ZoneBadge } from "./Tooltip";
 
 const DATE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
   ["thisWeek", "This week"],
@@ -83,19 +84,30 @@ export function formatDuration(value: string) {
   return hours ? `${hours}h ${String(minutes).padStart(2, "0")}m` : `${totalMinutes}m`;
 }
 
-function durationTooltip(value: string) {
+export function formatAggregateDuration(value: string) {
+  const totalMinutes = Math.round(Number(value) / 60);
+  const days = Math.floor(totalMinutes / 1440);
+  if (!days) return formatDuration(value);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return `${days}d ${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function durationTooltip(value: string, aggregate = false) {
   const totalSeconds = Math.round(Number(value));
-  const hours = Math.floor(totalSeconds / 3600);
+  const days = aggregate ? Math.floor(totalSeconds / 86400) : 0;
+  const hours = Math.floor((totalSeconds % (days ? 86400 : Number.POSITIVE_INFINITY)) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
+  if (days) return `${days}d ${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
   if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
   if (minutes) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   return `${seconds}s`;
 }
 
-function DurationValue({ value, focusable = true }: { value: string; focusable?: boolean }) {
-  const display = formatDuration(value);
-  const exact = durationTooltip(value);
+function DurationValue({ value, focusable = true, aggregate = false }: { value: string; focusable?: boolean; aggregate?: boolean }) {
+  const display = aggregate ? formatAggregateDuration(value) : formatDuration(value);
+  const exact = durationTooltip(value, aggregate);
   if (!focusable) return <span className="duration-value" title={exact} aria-label={`Duration ${display}; rounded to nearest second ${exact}`}>{display}</span>;
   return <Tooltip content={exact} className="duration-value" focusable={focusable} label={`Duration ${display}; rounded to nearest second ${exact}`}>{display}</Tooltip>;
 }
@@ -104,17 +116,7 @@ function Unavailable({ children = "Unavailable" }: { children?: ReactNode }) {
   return <span className="unavailable">{children}</span>;
 }
 
-function Tooltip({ content, children, className = "", focusable = true, label }: {
-  content: string; children: ReactNode; className?: string; focusable?: boolean; label?: string;
-}) {
-  const tooltipId = useId();
-  return <span className={`tooltip ${className}`.trim()}>
-    <span className="tooltip-trigger" tabIndex={focusable ? 0 : undefined} aria-describedby={tooltipId} aria-label={label}>{children}</span>
-    <span className="tooltip-content" id={tooltipId} role="tooltip">{content}</span>
-  </span>;
-}
-
-function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "calories" | "heartRate" | "elevation", units: Preferences["units"], includeUnit = true) {
+function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "calories" | "heartRate" | "elevation", units: Preferences["units"], includeUnit = true, aggregate = false) {
   if (!metricValue) return null;
   let value = Number(metricValue.value);
   let unit = metricValue.unit;
@@ -126,30 +128,9 @@ function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "ca
     return `${Math.floor(roundedSeconds / 60)}:${String(roundedSeconds % 60).padStart(2, "0")} ${unit}`;
   }
   const label = kind === "heartRate" && unit === "count/min" ? "bpm" : unit;
-  const display = new Intl.NumberFormat(undefined, { maximumFractionDigits: kind === "calories" ? 0 : 2 }).format(value);
+  const maximumFractionDigits = kind === "calories" || (aggregate && kind === "distance" && value >= 100) ? 0 : 2;
+  const display = new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value);
   return includeUnit ? `${display} ${label}` : display;
-}
-
-function offsetLabel(offset: number, compact = false) {
-  const sign = offset < 0 ? "-" : "+";
-  const absolute = Math.abs(offset);
-  const hours = Math.floor(absolute / 60);
-  const minutes = absolute % 60;
-  return `UTC${sign}${hours}${compact && minutes === 0 ? "" : `:${String(minutes).padStart(2, "0")}`}`;
-}
-
-function zoneOffsetAt(timeZone: string, instant: Date) {
-  try {
-    const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
-      .formatToParts(instant).find((part) => part.type === "timeZoneName")?.value;
-    const match = /^(?:GMT|UTC)(?:([+-])(\d{1,2})(?::?(\d{2}))?)?$/.exec(name ?? "");
-    if (!match) return null;
-    if (!match[1]) return 0;
-    const minutes = Number(match[2]) * 60 + Number(match[3] ?? 0);
-    return match[1] === "-" ? -minutes : minutes;
-  } catch {
-    return null;
-  }
 }
 
 function resolveZone(workoutZone: string | null, offset: number | null, instant: Date) {
@@ -160,15 +141,6 @@ function resolveZone(workoutZone: string | null, offset: number | null, instant:
   return null;
 }
 
-function zoneAbbreviation(timeZone: string, instant: Date) {
-  return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
-    .formatToParts(instant).find((part) => part.type === "timeZoneName")?.value ?? timeZone;
-}
-
-function ZoneBadge({ label, title, focusable = true }: { label: string; title: string; focusable?: boolean }) {
-  return <Tooltip content={title} className="timezone-badge" focusable={focusable} label={title}>{label}</Tooltip>;
-}
-
 function rangeDate(value: string) {
   if (!validDate(value)) return value;
   const [year, month, day] = value.split("-").map(Number);
@@ -177,10 +149,8 @@ function rangeDate(value: string) {
 }
 
 function currentZone(timeZone: string) {
-  const instant = new Date();
-  const offset = zoneOffsetAt(timeZone, instant);
-  if (offset == null) return { label: "TZ unavailable", title: `${timeZone} (current offset unavailable)` };
-  return { label: zoneAbbreviation(timeZone, instant), title: `${timeZone} (${offsetLabel(offset)})` };
+  const zone = instantZone(timeZone, new Date());
+  return zone.label === "TZ unavailable" ? { ...zone, title: `${timeZone} (current offset unavailable)` } : zone;
 }
 
 interface LocalInstant {
@@ -488,8 +458,8 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
         {summaryQuery.isError && <QueryError message="Range totals are unavailable." retry={() => void summaryQuery.refetch()} />}
         {summary && <div className={`aggregate-grid${summaryQuery.isFetching ? " is-refetching" : ""}`} aria-busy={summaryQuery.isFetching}>
           <AggregateCard label="Workouts" value={decimal(String(summary.totals.count), 0)} summary={summary} format={(totals) => decimal(String(totals.count), 0)} />
-          <AggregateCard label="Duration" value={<DurationValue value={summary.totals.duration} focusable={false} />} valueTitle={durationTooltip(summary.totals.duration)} summary={summary} format={(totals) => <DurationValue value={totals.duration} />} />
-          <AggregateCard label="Distance" value={metric(summary.totals.distance, "distance", preferences.units) ?? <Unavailable />} summary={summary} format={(totals) => metric(totals.distance, "distance", preferences.units) ?? <Unavailable />} />
+          <AggregateCard label="Duration" value={<DurationValue value={summary.totals.duration} focusable={false} aggregate />} valueTitle={durationTooltip(summary.totals.duration, true)} summary={summary} format={(totals) => <DurationValue value={totals.duration} aggregate />} />
+          <AggregateCard label="Distance" value={metric(summary.totals.distance, "distance", preferences.units, true, true) ?? <Unavailable />} summary={summary} format={(totals) => metric(totals.distance, "distance", preferences.units, true, true) ?? <Unavailable />} />
           <AggregateCard label="Energy" value={metric(summary.totals.energy, "calories", preferences.units) ?? <Unavailable />} summary={summary} format={(totals) => metric(totals.energy, "calories", preferences.units) ?? <Unavailable />} />
         </div>}
       </section>

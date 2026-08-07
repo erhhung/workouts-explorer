@@ -46,6 +46,18 @@ type API struct {
 	SMTP                   SMTP
 }
 
+type Worker struct {
+	Common
+	FileConcurrency      int
+	AccountConcurrency   int
+	GlobalConcurrency    int
+	StagingRoot          string
+	AutoSyncInterval     time.Duration
+	AutoSyncPollInterval time.Duration
+	AutoSyncStaleDays    int
+	SchedulerLease       time.Duration
+}
+
 type SMTP struct {
 	Address            string
 	Username           string
@@ -201,8 +213,54 @@ func validatePublicOrigin(raw string, localDevelopment bool) error {
 	return nil
 }
 
-func LoadWorker() (Common, error) {
-	return loadCommon("WORKER_DATABASE_URL", "WORKER_LISTEN_ADDRESS", ":8081")
+func LoadWorker() (Worker, error) {
+	common, err := loadCommon("WORKER_DATABASE_URL", "WORKER_LISTEN_ADDRESS", ":8081")
+	if err != nil {
+		return Worker{}, err
+	}
+	fileConcurrency, err := integerRange("WORKER_FILE_CONCURRENCY", 2, 1, 16)
+	if err != nil {
+		return Worker{}, err
+	}
+	accountConcurrency, err := integerRange("ACCOUNT_FILE_CONCURRENCY", 2, 1, 16)
+	if err != nil {
+		return Worker{}, err
+	}
+	globalConcurrency, err := integerRange("GLOBAL_FILE_CONCURRENCY", 4, 1, 16)
+	if err != nil {
+		return Worker{}, err
+	}
+	if accountConcurrency > globalConcurrency {
+		return Worker{}, fmt.Errorf("ACCOUNT_FILE_CONCURRENCY must not exceed GLOBAL_FILE_CONCURRENCY")
+	}
+	autoSyncInterval, err := durationRange("AUTO_SYNC_INTERVAL", 24*time.Hour, 5*time.Minute, 168*time.Hour)
+	if err != nil {
+		return Worker{}, err
+	}
+	autoSyncPollInterval, err := durationRange("AUTO_SYNC_POLL_INTERVAL", 30*time.Second, time.Second, 5*time.Minute)
+	if err != nil {
+		return Worker{}, err
+	}
+	autoSyncStaleDays, err := integerRange("AUTO_SYNC_STALE_DAYS", 3, 1, 30)
+	if err != nil {
+		return Worker{}, err
+	}
+	schedulerLease, err := durationRange("SCHEDULER_LEASE_DURATION", 2*time.Minute, time.Second, 15*time.Minute)
+	if err != nil {
+		return Worker{}, err
+	}
+	if schedulerLease <= autoSyncPollInterval {
+		return Worker{}, fmt.Errorf("SCHEDULER_LEASE_DURATION must exceed AUTO_SYNC_POLL_INTERVAL")
+	}
+	stagingRoot := env("WORKER_STAGING_ROOT", "/var/lib/workouts/staging")
+	if !filepath.IsAbs(stagingRoot) || filepath.Clean(stagingRoot) != stagingRoot || stagingRoot == string(filepath.Separator) {
+		return Worker{}, fmt.Errorf("WORKER_STAGING_ROOT must be a clean absolute path other than the filesystem root")
+	}
+	return Worker{
+		Common: common, FileConcurrency: fileConcurrency, AccountConcurrency: accountConcurrency,
+		GlobalConcurrency: globalConcurrency, StagingRoot: stagingRoot, AutoSyncInterval: autoSyncInterval,
+		AutoSyncPollInterval: autoSyncPollInterval, AutoSyncStaleDays: autoSyncStaleDays, SchedulerLease: schedulerLease,
+	}, nil
 }
 
 func loadCommon(databaseVariable, listenVariable, defaultListen string) (Common, error) {

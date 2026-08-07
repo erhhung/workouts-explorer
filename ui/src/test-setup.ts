@@ -9,6 +9,7 @@ Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true,
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   history.replaceState({}, "", "/");
   localStorage.clear();

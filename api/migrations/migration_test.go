@@ -29,7 +29,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_worker_job_log_owner_username.sql"} {
+	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_worker_job_log_owner_username.sql", "00007_durable_data_sync.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -40,6 +40,159 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 		ends := strings.Count(text, "-- +goose StatementEnd")
 		if starts != proceduralStatements || ends != proceduralStatements {
 			t.Fatalf("%s: procedural statements = %d, StatementBegin = %d, StatementEnd = %d", name, proceduralStatements, starts, ends)
+		}
+	}
+}
+
+func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
+	source, err := Files.ReadFile("00007_durable_data_sync.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.job_source_contexts", "CREATE TABLE app.job_progress", "CREATE TABLE app.source_objects",
+		"CREATE TABLE app.job_events", "CREATE TABLE app.job_logs", "CREATE TABLE app.notifications",
+		"CREATE TABLE app.source_sync_state", "CREATE FUNCTION app.notify_terminal_ingest_parent",
+		"CREATE FUNCTION app.evaluate_source_staleness", "CREATE FUNCTION app.dismiss_owned_notification",
+		"CREATE FUNCTION app.read_owned_job_files", "CREATE FUNCTION app.read_owned_job_logs",
+		"jobs_terminal_notification_after_update", "state IN ('unresolved','remind')",
+		"FORCE ROW LEVEL SECURITY", "job_source_contexts_immutable", "job_events_append_only", "job_logs_append_only",
+		"CREATE FUNCTION app.record_ingest_progress", "lease_expires_at >= clock_timestamp()",
+		"new_files_skipped+new_files_succeeded+new_files_failed", "progress_total=new_files_discovered", "child.parent_job_id=target_parent",
+		"CREATE FUNCTION app.valid_job_safe_fields", "CREATE FUNCTION app.record_job_event", "CREATE FUNCTION app.record_job_log",
+		"CREATE FUNCTION app.request_owned_job_cancellation", "jobs_ingest_child_coalescing_before_insert",
+		"CREATE FUNCTION app.create_legacy_ingest_read_models", "job_config_snapshots_ingest_compatibility_after_insert",
+		"'legacySchema6',true", "child_row.parameters->'legacySchema6' IS DISTINCT FROM 'true'::jsonb",
+		"REVOKE EXECUTE ON FUNCTION app.request_job_cancellation(uuid,uuid) FROM workouts_worker",
+		"GRANT EXECUTE ON FUNCTION app.request_owned_job_cancellation(uuid,uuid) TO workouts_api",
+		">= 1000", ">= 2000", "octet_length(value::text) <= 2048",
+		"ALTER FUNCTION app.record_ingest_progress", "OWNER TO workouts_security_owner", "TO workouts_worker",
+		"CREATE TABLE app.ingest_file_slots", "CREATE TABLE app.ingest_file_slot_guard",
+		"CREATE FUNCTION app.acquire_ingest_file_slot", "CREATE FUNCTION app.release_ingest_file_slot",
+		"CREATE FUNCTION app.record_successful_source_object", "valid_ingest_child_parameters",
+		"requested_account_limit NOT BETWEEN 1 AND 16", "cannot downgrade while ingest file slots are active",
+		"minimum_runtime_version=1", "cannot downgrade while durable ingest jobs are active", "schema_version=7", "schema_version=6",
+		"worker runtime version 7 or newer is required", "claim_next_worker_job(text,uuid,interval,integer)",
+		"CREATE TABLE app.job_file_candidates", "CREATE FUNCTION app.record_ingest_file_manifest",
+		"CREATE TABLE app.ingest_file_slot_limits", "CREATE FUNCTION app.configure_ingest_file_slot_limits",
+		"GRANT SELECT(job_id,account_id,files_discovered,files_skipped,files_succeeded,files_failed",
+		"REVOKE SELECT(job_id,account_id,files_discovered,files_skipped,files_succeeded,files_failed",
+		"CREATE TABLE app.auto_sync_policy", "CREATE TABLE app.account_sync_schedules",
+		"CREATE FUNCTION app.claim_due_sync_account", "FOR UPDATE OF schedule SKIP LOCKED",
+		"CREATE FUNCTION app.read_leased_sync_sources", "CREATE FUNCTION app.enqueue_leased_scheduled_ingest",
+		"CREATE FUNCTION app.finish_sync_account", "CREATE FUNCTION app.release_sync_account",
+		"CREATE FUNCTION app.read_owned_sync_schedule", "scheduled-ingest/v1",
+		"cannot downgrade while scheduler leases are active", "consecutive_failures",
+		"power(2::numeric", "Source configuration could not be read.",
+		"GRANT UPDATE(state) ON app.accounts TO workouts_security_owner",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("durable data sync migration is missing %q", required)
+		}
+	}
+	configurePolicy := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.configure_auto_sync_policy")
+	if strings.Contains(configurePolicy, "lease_expires_at") {
+		t.Fatal("policy configuration still rejects updates while scheduler leases are active")
+	}
+	for _, declaration := range []string{"CREATE FUNCTION app.read_owned_job_files", "CREATE FUNCTION app.read_owned_job_logs"} {
+		body := functionBody(t, strings.Split(text, "-- +goose Down")[0], declaration)
+		if strings.Contains(body, "FROM app.jobs WHERE id=") || !strings.Contains(body, "FROM app.jobs owned_job WHERE owned_job.id=") {
+			t.Fatalf("%s has an output-column/ownership-query ambiguity", declaration)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT UPDATE ON app.jobs TO workouts_worker", "GRANT INSERT ON app.job_events TO workouts_worker",
+		"GRANT INSERT ON app.job_logs TO workouts_worker", "GRANT UPDATE ON app.job_progress TO workouts_worker",
+		"GRANT SELECT ON app.ingest_file_slots TO workouts_worker", "GRANT INSERT ON app.ingest_file_slots TO workouts_worker",
+		"GRANT SELECT ON app.job_progress TO workouts_worker",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("durable data sync migration contains unsafe grant %q", forbidden)
+		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	for _, declaration := range []string{"CREATE FUNCTION app.record_ingest_progress", "CREATE FUNCTION app.record_job_event", "CREATE FUNCTION app.record_job_log"} {
+		body := functionBody(t, up, declaration)
+		sourceLock := strings.Index(body, "FROM app.sources source")
+		parentLock := strings.Index(body, "FROM app.jobs parent")
+		childLock := strings.Index(body, "FROM app.jobs job WHERE job.id=target_job_id")
+		if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
+			t.Fatalf("%s does not lock source, parent, then child", declaration)
+		}
+	}
+	for _, declaration := range []string{"CREATE FUNCTION app.acquire_ingest_file_slot", "CREATE FUNCTION app.record_ingest_file_manifest"} {
+		body := functionBody(t, up, declaration)
+		sourceLock := strings.Index(body, "FROM app.sources source")
+		parentLock := strings.Index(body, "FROM app.jobs parent")
+		childLock := strings.Index(body, "FROM app.jobs job WHERE job.id=target_job_id")
+		if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
+			t.Fatalf("%s does not lock source, parent, then child", declaration)
+		}
+	}
+	compatibility := functionBody(t, up, "CREATE FUNCTION app.create_legacy_ingest_read_models")
+	sourceLock := strings.Index(compatibility, "FROM app.sources source")
+	parentLock := strings.Index(compatibility, "FROM app.jobs parent")
+	childLock := strings.Index(compatibility, "PERFORM 1 FROM app.jobs job WHERE job.id=NEW.job_id")
+	if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
+		t.Fatal("legacy snapshot compatibility trigger does not lock source, parent, then child")
+	}
+	acquire := functionBody(t, up, "CREATE FUNCTION app.acquire_ingest_file_slot")
+	cleanupStart := strings.Index(acquire, "DELETE FROM app.ingest_file_slots")
+	if cleanupStart < 0 || strings.Contains(acquire[cleanupStart:], "lease_expires_at") ||
+		strings.Contains(acquire[cleanupStart:], "cancel_requested_at") {
+		t.Fatal("slot stale cleanup treats expiry or cancellation as abandoned ownership")
+	}
+	claimSchedule := functionBody(t, up, "CREATE FUNCTION app.claim_due_sync_account")
+	if strings.Count(claimSchedule, "account.state='active'") < 2 {
+		t.Fatal("scheduler seeding and claiming do not both require an active account")
+	}
+	for _, required := range []string{
+		"ON CONFLICT ON CONSTRAINT account_sync_schedules_pkey",
+		"WHERE schedule.lease_expires_at<clock_timestamp()",
+		"RETURNING schedule.account_id,schedule.lease_token,schedule.next_run_at",
+	} {
+		if !strings.Contains(claimSchedule, required) {
+			t.Fatalf("scheduler claim does not qualify an output-column collision: missing %q", required)
+		}
+	}
+	readSchedule := functionBody(t, up, "CREATE FUNCTION app.read_leased_sync_sources")
+	if !strings.Contains(readSchedule, "account.state='active'") {
+		t.Fatal("scheduler source reads do not require an active account")
+	}
+	enqueueSchedule := functionBody(t, up, "CREATE FUNCTION app.enqueue_leased_scheduled_ingest")
+	if !strings.Contains(enqueueSchedule, "parent_id uuid,input_coalescing_key bytea,children jsonb") ||
+		strings.Contains(enqueueSchedule, "parent_id uuid,coalescing_key bytea,children jsonb") ||
+		strings.Contains(enqueueSchedule, "enqueue_leased_scheduled_ingest.coalescing_key") {
+		t.Fatal("scheduled enqueue retains an ambiguous coalescing key parameter")
+	}
+	if !strings.Contains(enqueueSchedule, "FROM app.accounts account WHERE account.id=target_account_id AND account.state='active' FOR UPDATE") {
+		t.Fatal("scheduled enqueue does not recheck active account state under lock")
+	}
+	if strings.Contains(up, "jobs_account_cleanup_fk") {
+		t.Fatal("migration 7 still couples account deletion to job cleanup")
+	}
+	for _, compatibilityRevoke := range []string{
+		"REVOKE SELECT ON app.source_files FROM workouts_api",
+		"REVOKE EXECUTE ON FUNCTION app.request_job_cancellation(uuid,uuid) FROM workouts_api",
+	} {
+		if strings.Contains(up, compatibilityRevoke) {
+			t.Fatalf("migration 7 breaks schema-6 API readiness with %q", compatibilityRevoke)
+		}
+	}
+	down := strings.Split(text, "-- +goose Down")[1]
+	for _, required := range []string{
+		"REVOKE UPDATE(state) ON app.accounts FROM workouts_security_owner",
+		"DROP FUNCTION app.claim_next_worker_job(text,uuid,interval,integer)",
+		"CREATE OR REPLACE FUNCTION app.claim_next_worker_job(claiming_worker text, new_lease_token uuid, lease_duration interval)",
+		"FROM app.claim_next_worker_job_internal(claiming_worker, new_lease_token, lease_duration, true)",
+		"GRANT EXECUTE ON FUNCTION app.claim_next_worker_job(text,uuid,interval) TO workouts_worker",
+		"DROP TRIGGER job_config_snapshots_ingest_compatibility_after_insert ON app.job_config_snapshots",
+		"DROP FUNCTION app.create_legacy_ingest_read_models()",
+		"parameters=parameters-'legacySchema6'-'mode'-'startDate'-'endDate'",
+	} {
+		if !strings.Contains(down, required) {
+			t.Fatalf("migration 7 down does not restore schema-6 claim contract %q", required)
 		}
 	}
 }

@@ -7,9 +7,10 @@
     "build": "npm run typecheck && vite build",
     "dev": "vite",
     "check:csp": "node scripts/check-theme-csp.mjs",
+    "check:data-sync-css": "node scripts/check-data-sync-css.mjs",
     "check:favicon": "node scripts/generate-favicon.mjs --check",
     "generate:favicon": "node scripts/generate-favicon.mjs",
-    "test": "npm run check:csp && npm run check:favicon && vitest run",
+    "test": "npm run check:csp && npm run check:favicon && npm run check:data-sync-css && vitest run",
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.app.json && tsc --noEmit --pretty false -p tsconfig.node.json"
   },
   "dependencies": {

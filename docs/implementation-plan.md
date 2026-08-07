@@ -221,6 +221,15 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 - Notification remind state across sessions
 - Diagnostic redaction tests using deliberately hostile upstream errors
 
+### Completion evidence (2026-08-06)
+
+- Schema 1-to-7 migration, upgrade, tenant isolation, job-state, scheduler, file-slot, recovery, API, worker, and UI suites pass against PostgreSQL 18.
+- The `xdev` deployment completed a two-source parent sync, reused an equivalent active request, and persisted independent source-child progress and diagnostics.
+- A repeat incremental sync skipped all 34 unchanged files, while a bounded one-day sync deliberately reprocessed its matching export.
+- A database-leased scheduled sync created one parent with two source children, completed as a silent no-data success, and advanced the next cadence boundary.
+- Queued cancellation cleared its child work, and retry created linked parent and child jobs using current source configuration.
+- Owner Data Sync APIs and UI expose safe history, progress, files, events, logs, freshness, notifications, cancellation, and retry without source configuration or lease data.
+
 ## Milestone 5: Workout Detail, Provenance, Export, And Deletion
 
 ### Outcome

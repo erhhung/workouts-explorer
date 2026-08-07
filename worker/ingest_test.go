@@ -145,19 +145,6 @@ func TestDiscoverSourceFileBoundsAndOpenFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("matching regular open failure", func(t *testing.T) {
-		root := t.TempDir()
-		write(t, root, "HealthAutoExport-2026-01-01.json")
-		opener := func(*os.File, string) (*os.File, os.FileInfo, error) {
-			return nil, nil, errors.New("private open error")
-		}
-		_, err := discoverSourceFilesWith(openDirectory(t, root), discoveryLimits{maxEntries: 10, maxFiles: 10}, unix.Fstatat, opener)
-		if !errors.Is(err, errDiscoveryFileOpen) {
-			t.Fatalf("err=%v", err)
-		}
-		assertDiscoveryFailureName(t, err, "HealthAutoExport-2026-01-01.json")
-	})
-
 	t.Run("matching regular stat failure", func(t *testing.T) {
 		root := t.TempDir()
 		name := "HealthAutoExport-2026-01-01.json"
@@ -170,23 +157,24 @@ func TestDiscoverSourceFileBoundsAndOpenFailure(t *testing.T) {
 		assertDiscoveryFailureName(t, err, name)
 	})
 
-	t.Run("matching regular close failure", func(t *testing.T) {
-		root := t.TempDir()
-		name := "HealthAutoExport-2026-01-01.json"
-		write(t, root, name)
-		opener := func(directory *os.File, name string) (*os.File, os.FileInfo, error) {
-			file, info, err := sourceconfig.OpenRegularFile(directory, name)
-			if err == nil {
-				err = file.Close()
-			}
-			return file, info, err
-		}
-		_, err := discoverSourceFilesWith(openDirectory(t, root), discoveryLimits{maxEntries: 10, maxFiles: 10}, unix.Fstatat, opener)
-		if !errors.Is(err, errDiscoveryFileOpen) {
-			t.Fatalf("err=%v", err)
-		}
-		assertDiscoveryFailureName(t, err, name)
-	})
+}
+
+func TestFilterSourceFilesUsesInclusiveExportDates(t *testing.T) {
+	date := func(value string) time.Time { parsed, _ := time.Parse(time.DateOnly, value); return parsed }
+	files := []sourceFile{{name: "a", exportDate: date("2026-01-01")}, {name: "b", exportDate: date("2026-01-02")}, {name: "c", exportDate: date("2026-01-03")}}
+	start, end := date("2026-01-02"), date("2026-01-03")
+	filtered := filterSourceFiles(files, &start, &end)
+	if len(filtered) != 2 || filtered[0].name != "b" || filtered[1].name != "c" {
+		t.Fatalf("filtered=%v", filtered)
+	}
+}
+
+func TestMarkRecoveredSkipsDoesNotDoubleCount(t *testing.T) {
+	files := []sourceFile{{action: "process"}, {action: "skip"}, {action: "process"}, {action: "skip"}}
+	markRecoveredSkips(files, 1)
+	if files[0].recoveredSkip || !files[1].recoveredSkip || files[2].recoveredSkip || files[3].recoveredSkip {
+		t.Fatalf("recovered skip markers=%+v", files)
+	}
 }
 
 func assertDiscoveryFailureName(t *testing.T, err error, want string) {

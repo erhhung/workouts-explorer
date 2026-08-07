@@ -162,3 +162,43 @@ func TestLoadAPIRestrictsPlaintextSMTPToMailpit(t *testing.T) {
 		t.Fatalf("validated development Mailpit failed: %v", err)
 	}
 }
+
+func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
+	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
+	setSourceConfig(t)
+	cfg, err := LoadWorker()
+	if err != nil || cfg.FileConcurrency != 2 || cfg.AccountConcurrency != 2 || cfg.GlobalConcurrency != 4 || cfg.StagingRoot != "/var/lib/workouts/staging" ||
+		cfg.AutoSyncInterval != 24*time.Hour || cfg.AutoSyncPollInterval != 30*time.Second || cfg.AutoSyncStaleDays != 3 || cfg.SchedulerLease != 2*time.Minute {
+		t.Fatalf("defaults=%+v err=%v", cfg, err)
+	}
+	for _, test := range []struct{ key, value string }{
+		{"WORKER_FILE_CONCURRENCY", "0"}, {"WORKER_FILE_CONCURRENCY", "17"},
+		{"ACCOUNT_FILE_CONCURRENCY", "5"}, {"GLOBAL_FILE_CONCURRENCY", "17"},
+		{"WORKER_STAGING_ROOT", "relative"}, {"WORKER_STAGING_ROOT", "/"},
+		{"AUTO_SYNC_INTERVAL", "4m"}, {"AUTO_SYNC_INTERVAL", "169h"},
+		{"AUTO_SYNC_POLL_INTERVAL", "500ms"}, {"AUTO_SYNC_POLL_INTERVAL", "6m"},
+		{"AUTO_SYNC_STALE_DAYS", "0"}, {"AUTO_SYNC_STALE_DAYS", "31"},
+		{"SCHEDULER_LEASE_DURATION", "30s"},
+		{"SCHEDULER_LEASE_DURATION", "901s"}, {"SCHEDULER_LEASE_DURATION", "999s"},
+		{"SCHEDULER_LEASE_DURATION", "3600s"}, {"SCHEDULER_LEASE_DURATION", "16m"},
+		{"SCHEDULER_LEASE_DURATION", "1h"},
+	} {
+		t.Run(test.key+test.value, func(t *testing.T) {
+			t.Setenv(test.key, test.value)
+			if test.key == "ACCOUNT_FILE_CONCURRENCY" {
+				t.Setenv("GLOBAL_FILE_CONCURRENCY", "4")
+			}
+			if _, err := LoadWorker(); err == nil {
+				t.Fatal("invalid worker configuration accepted")
+			}
+		})
+	}
+	for _, lease := range []string{"900s", "15m"} {
+		t.Run("valid lease "+lease, func(t *testing.T) {
+			t.Setenv("SCHEDULER_LEASE_DURATION", lease)
+			if _, err := LoadWorker(); err != nil {
+				t.Fatalf("valid scheduler lease %s rejected: %v", lease, err)
+			}
+		})
+	}
+}

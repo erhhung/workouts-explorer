@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"os"
@@ -47,6 +48,13 @@ type ingestResults struct {
 	WorkoutsProcessed int      `json:"workouts_processed"`
 	WorkoutsIngested  int      `json:"workouts_ingested"`
 	FailedProcessing  []string `json:"failed_processing"`
+	filesDiscovered   int
+	filesSkipped      int
+	filesSucceeded    int
+	filesFailed       int
+	workoutsCreated   int
+	workoutsUpdated   int
+	workoutsUnchanged int
 }
 
 func newIngestResults() ingestResults {
@@ -54,10 +62,17 @@ func newIngestResults() ingestResults {
 }
 
 func (r *ingestResults) recordFailedFile(name string) {
-	r.FilesProcessed++
+	r.filesFailed++
+	r.syncTotals()
 	if len(r.FailedProcessing) < maxFailedProcessing {
 		r.FailedProcessing = append(r.FailedProcessing, filepath.Base(name))
 	}
+}
+
+func (r *ingestResults) syncTotals() {
+	r.FilesProcessed = r.filesSucceeded + r.filesFailed
+	r.WorkoutsProcessed = r.workoutsCreated + r.workoutsUpdated + r.workoutsUnchanged
+	r.WorkoutsIngested = r.workoutsCreated + r.workoutsUpdated
 }
 
 func (r ingestResults) hasPartialData() bool {
@@ -65,8 +80,9 @@ func (r ingestResults) hasPartialData() bool {
 }
 
 type persistedFileResult struct {
-	workoutsProcessed int
-	workoutsIngested  int
+	created   int
+	updated   int
+	unchanged int
 }
 
 type sourceFile struct {
@@ -78,6 +94,9 @@ type sourceFile struct {
 	inode            uint64
 	ctimeSec         int64
 	ctimeNS          int64
+	exportDate       time.Time
+	action           string
+	recoveredSkip    bool
 }
 
 type fileCheckpoint struct {
@@ -129,16 +148,37 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 	cancelOperation()
 	heartbeatErr := <-heartbeatDone
 	if errors.Is(err, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
-		return execution, nil
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+		defer cancel()
+		finished, finishErr := r.finishCancellationPending(cleanupCtx, job)
+		if finishErr != nil {
+			return execution, finishErr
+		}
+		if finished {
+			return execution, nil
+		}
+		return execution, errJobInterrupted
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
 		return execution, heartbeatErr
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		if cause := context.Cause(ctx); cause != nil {
+			return execution, cause
+		}
+		return execution, errJobInterrupted
+	}
+	if errors.Is(err, errCancellationRequested) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
-		_, finishErr := r.finishCancelled(cleanupCtx, job)
-		return execution, finishErr
+		finished, finishErr := r.finishCancellationPending(cleanupCtx, job)
+		if finishErr != nil {
+			return execution, finishErr
+		}
+		if !finished {
+			return execution, errJobInterrupted
+		}
+		return execution, nil
 	}
 	if err != nil {
 		return execution, err
@@ -146,8 +186,37 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 	return execution, nil
 }
 
+func (r *Runner) finishCancellationPending(ctx context.Context, job claimedJob) (bool, error) {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return false, err
+	}
+	var pending bool
+	err = tx.QueryRow(ctx, `SELECT cancel_requested_at IS NOT NULL FROM app.jobs
+		WHERE id=$1 AND status='running' AND worker_id=$2 AND lease_token=$3 AND lease_expires_at >= clock_timestamp()`,
+		job.id, r.workerID, job.lease).Scan(&pending)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		return false, nil
+	}
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	if !pending {
+		return false, nil
+	}
+	return r.finishCancelled(ctx, job)
+}
+
 func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResults) error {
-	_, envelope, cancellationPending, err := r.readSnapshot(ctx, job)
+	if job.paramsErr != nil {
+		return r.failIngest(ctx, job, ingestFailure{"ingest-parameters-invalid", "Ingest parameters were invalid."})
+	}
+	sourceID, envelope, cancellationPending, err := r.readSnapshot(ctx, job)
 	if err != nil {
 		return err
 	}
@@ -155,6 +224,7 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		_, err = r.finishCancelled(ctx, job)
 		return err
 	}
+	r.recordDiagnosticsBestEffort(ctx, job, "ingest-started", map[string]any{"operation": "discover"})
 	plaintext, err := r.keys.Decrypt(sourcecrypto.Context{
 		Purpose: sourcecrypto.JobConfigSnapshot, AccountID: job.accountID, RecordID: job.id,
 	}, envelope)
@@ -169,8 +239,8 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 	if err != nil {
 		return r.failIngest(ctx, job, ingestFailure{"source-unavailable", "Source directory is not accessible."})
 	}
-	defer directory.Close()
 	files, err := discoverSourceFiles(directory)
+	_ = directory.Close()
 	if err != nil {
 		recordDiscoveryFailure(results, err)
 		failure := ingestFailure{"source-unavailable", "Source directory could not be read."}
@@ -179,59 +249,59 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		}
 		return r.failIngest(ctx, job, failure)
 	}
+	files = filterSourceFiles(files, job.startDate, job.endDate)
+	if err := r.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
+		return err
+	}
+	manifestState, err := r.recordFileManifest(ctx, job, files)
+	if err != nil {
+		return err
+	}
+	if manifestState == "mismatch" {
+		return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
+	}
+	if err := r.loadIngestProgress(ctx, job, results); err != nil {
+		return err
+	}
+	if manifestState == "created" {
+		if results.filesDiscovered != 0 || results.filesSkipped != 0 || results.filesSucceeded != 0 || results.filesFailed != 0 {
+			return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
+		}
+		results.filesDiscovered = len(files)
+	}
+	markRecoveredSkips(files, results.filesSkipped)
+	if results.filesDiscovered != len(files) {
+		return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
+	}
+	if err := r.recordIngestProgress(ctx, job, *results); err != nil {
+		return err
+	}
+	r.recordDiagnosticsBestEffort(ctx, job, "ingest-progress", map[string]any{"current": 0, "total": len(files)})
 
 	for _, file := range files {
-		cancelled, err := r.observeIngest(ctx, job)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if cancelled {
-			_, err = r.finishCancelled(ctx, job)
-			return err
+		outcome := r.processSourceFile(ctx, job, sourceID, config.Path, file)
+		if outcome.fatal != nil {
+			return outcome.fatal
 		}
-		checkpoint, skip, checkpointFailure, err := r.checkpointSourceFile(ctx, job, file)
-		if err != nil {
-			results.recordFailedFile(file.name)
-			return err
-		}
-		if checkpointFailure != nil {
-			results.recordFailedFile(file.name)
-			if checkpoint.id != uuid.Nil && (checkpoint.state == "discovered" || checkpoint.state == "processing") {
-				if err := r.persistFailedFile(ctx, job, checkpoint, *checkpointFailure); err != nil {
-					return err
-				}
-			}
-			return r.failIngest(ctx, job, *checkpointFailure)
-		}
-		if skip {
+		if outcome.alreadyCounted {
 			continue
 		}
-		parsed, failure := readSourceFile(ctx, directory, file)
-		cancelled, err = r.observeIngest(ctx, job)
-		if err != nil {
+		results.applyFileOutcome(file.name, outcome)
+		if err := r.recordIngestProgress(ctx, job, *results); err != nil {
 			return err
 		}
-		if cancelled {
-			_, err = r.finishCancelled(ctx, job)
-			return err
-		}
-		if failure != nil {
-			results.recordFailedFile(file.name)
-			if err := r.persistFailedFile(ctx, job, checkpoint, *failure); err != nil {
-				return err
-			}
-			return r.failIngest(ctx, job, *failure)
-		}
-		fileResult, err := r.persistSourceFile(ctx, job, checkpoint, parsed)
-		if err != nil {
-			results.recordFailedFile(file.name)
-			return err
-		}
-		results.FilesProcessed++
-		results.WorkoutsProcessed += fileResult.workoutsProcessed
-		results.WorkoutsIngested += fileResult.workoutsIngested
 	}
-	finished, err := r.finishJob(ctx, job, "succeeded", nil)
+	status := "succeeded"
+	var finalFailure *ingestFailure
+	if results.filesFailed > 0 {
+		status = "failed"
+		failure := ingestFailure{"source-file-invalid", "One or more source files could not be processed."}
+		finalFailure = &failure
+	}
+	finished, err := r.finishJob(ctx, job, status, finalFailure)
 	if err != nil {
 		return err
 	}
@@ -244,6 +314,321 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		return errLeaseLost
 	}
 	return nil
+}
+
+type fileOutcome struct {
+	skipped, succeeded, failed, alreadyCounted bool
+	workouts                                   persistedFileResult
+	fatal                                      error
+}
+
+func (r *ingestResults) applyFileOutcome(name string, outcome fileOutcome) {
+	if outcome.skipped {
+		r.filesSkipped++
+	}
+	if outcome.succeeded {
+		r.filesSucceeded++
+	}
+	if outcome.failed {
+		r.filesFailed++
+		if len(r.FailedProcessing) < maxFailedProcessing {
+			r.FailedProcessing = append(r.FailedProcessing, filepath.Base(name))
+		}
+	}
+	r.workoutsCreated += outcome.workouts.created
+	r.workoutsUpdated += outcome.workouts.updated
+	r.workoutsUnchanged += outcome.workouts.unchanged
+	r.syncTotals()
+}
+
+func filterSourceFiles(files []sourceFile, start, end *time.Time) []sourceFile {
+	if start == nil || end == nil {
+		return files
+	}
+	return slices.DeleteFunc(files, func(file sourceFile) bool { return file.exportDate.Before(*start) || file.exportDate.After(*end) })
+}
+
+func (r *Runner) processSourceFile(ctx context.Context, job claimedJob, sourceID uuid.UUID, sourcePath string, file sourceFile) fileOutcome {
+	if file.action == "skip" {
+		if file.recoveredSkip {
+			return fileOutcome{alreadyCounted: true}
+		}
+		return fileOutcome{skipped: true}
+	}
+	if r.beforeProcessFile != nil {
+		r.beforeProcessFile(file)
+	}
+	checkpoint, skip, checkpointFailure, err := r.checkpointSourceFile(ctx, job, file)
+	if err != nil {
+		return fileOutcome{fatal: err}
+	}
+	if skip {
+		return fileOutcome{alreadyCounted: true}
+	}
+	if checkpoint.state == "failed" {
+		return fileOutcome{alreadyCounted: true}
+	}
+	if checkpointFailure != nil {
+		if checkpoint.id != uuid.Nil && (checkpoint.state == "discovered" || checkpoint.state == "processing") {
+			if err := r.persistFailedFile(ctx, job, checkpoint, *checkpointFailure); err != nil {
+				return fileOutcome{fatal: err}
+			}
+		}
+		return fileOutcome{failed: true}
+	}
+	select {
+	case r.fileSlots <- struct{}{}:
+	case <-ctx.Done():
+		return fileOutcome{fatal: ctx.Err()}
+	}
+	defer func() { <-r.fileSlots }()
+	slot, err := r.acquireFileSlot(ctx, job)
+	if err != nil {
+		return fileOutcome{fatal: err}
+	}
+	defer r.releaseFileSlot(job, slot)
+	directory, err := sourceconfig.OpenDirectory(sourcePath, r.localRoots)
+	if err != nil {
+		failure := ingestFailure{"source-unavailable", "Source directory is not accessible."}
+		if persistErr := r.persistFailedFile(ctx, job, checkpoint, failure); persistErr != nil {
+			return fileOutcome{fatal: persistErr}
+		}
+		return fileOutcome{failed: true}
+	}
+	parsed, failure := readSourceFile(ctx, directory, file)
+	_ = directory.Close()
+	if failure != nil {
+		if err := r.persistFailedFile(ctx, job, checkpoint, *failure); err != nil {
+			return fileOutcome{fatal: err}
+		}
+		return fileOutcome{failed: true}
+	}
+	result, err := r.persistSourceFile(ctx, job, checkpoint, parsed)
+	if err != nil {
+		return fileOutcome{fatal: err}
+	}
+	return fileOutcome{succeeded: true, workouts: result}
+}
+
+func markRecoveredSkips(files []sourceFile, recorded int) {
+	for index := range files {
+		if recorded == 0 {
+			return
+		}
+		if files[index].action == "skip" {
+			files[index].recoveredSkip = true
+			recorded--
+		}
+	}
+}
+
+func (r *Runner) resolveCandidateActions(ctx context.Context, job claimedJob, sourceID uuid.UUID, files []sourceFile) error {
+	for index := range files {
+		files[index].action = "process"
+		if job.mode != ingestIncremental {
+			continue
+		}
+		tx, err := beginAccount(ctx, r.db, job.accountID)
+		if err != nil {
+			return err
+		}
+		var state string
+		err = tx.QueryRow(ctx, `SELECT state FROM app.source_files WHERE job_id=$1 AND relative_name=$2`,
+			job.id, files[index].name).Scan(&state)
+		if err == nil && (state == "succeeded" || state == "failed") {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		var identity string
+		err = tx.QueryRow(ctx, `SELECT observed_identity FROM app.source_objects
+			WHERE source_id=$1 AND relative_name=$2 AND successful_checksum IS NOT NULL`, sourceID, files[index].name).Scan(&identity)
+		if err == nil && identity == sourceIdentity(files[index]) {
+			files[index].action = "skip"
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type manifestCandidate struct {
+	Name        string `json:"name"`
+	ExportDate  string `json:"export_date"`
+	Size        int64  `json:"size"`
+	ModifiedSec int64  `json:"modified_sec"`
+	ModifiedNS  int64  `json:"modified_ns"`
+	Device      uint64 `json:"device"`
+	Inode       uint64 `json:"inode"`
+	CTimeSec    int64  `json:"ctime_sec"`
+	CTimeNS     int64  `json:"ctime_ns"`
+	Action      string `json:"action"`
+}
+
+func (r *Runner) recordFileManifest(ctx context.Context, job claimedJob, files []sourceFile) (string, error) {
+	manifest := make([]manifestCandidate, len(files))
+	for index, file := range files {
+		manifest[index] = manifestCandidate{
+			Name: file.name, ExportDate: file.exportDate.Format(time.DateOnly), Size: file.size,
+			ModifiedSec: file.observedModified.Unix(), ModifiedNS: int64(file.observedModified.Nanosecond()),
+			Device: file.device, Inode: file.inode, CTimeSec: file.ctimeSec, CTimeNS: file.ctimeNS, Action: file.action,
+		}
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return "", err
+	}
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var state *string
+	if err := tx.QueryRow(ctx, `SELECT app.record_ingest_file_manifest($1,$2,$3,$4)`,
+		job.id, r.workerID, job.lease, string(encoded)).Scan(&state); err != nil {
+		return "", err
+	}
+	if state == nil {
+		return "", errLeaseLost
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return *state, nil
+}
+
+func sourceIdentity(file sourceFile) string {
+	return fmt.Sprintf("v1:%d:%d:%d:%d:%d:%d:%d", file.size, file.observedModified.Unix(), file.observedModified.Nanosecond(), file.device, file.inode, file.ctimeSec, file.ctimeNS)
+}
+
+func (r *Runner) acquireFileSlot(ctx context.Context, job claimedJob) (uuid.UUID, error) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		tx, err := beginAccount(ctx, r.db, job.accountID)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		var token *uuid.UUID
+		err = tx.QueryRow(ctx, `SELECT app.acquire_ingest_file_slot($1,$2,$3)`, job.id, r.workerID, job.lease).Scan(&token)
+		if err == nil {
+			err = tx.Commit(ctx)
+		} else {
+			_ = tx.Rollback(ctx)
+		}
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if token != nil {
+			return *token, nil
+		}
+		cancelled, err := r.observeIngest(ctx, job)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if cancelled {
+			return uuid.Nil, errCancellationRequested
+		}
+		select {
+		case <-ctx.Done():
+			return uuid.Nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (r *Runner) releaseFileSlot(job claimedJob, token uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `SELECT app.release_ingest_file_slot($1,$2,$3,$4)`, job.id, r.workerID, job.lease, token); err == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
+func (r *Runner) loadIngestProgress(ctx context.Context, job claimedJob, results *ingestResults) error {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT files_discovered,files_skipped,files_succeeded,files_failed,
+		workouts_created,workouts_updated,workouts_unchanged FROM app.job_progress WHERE job_id=$1`, job.id).Scan(
+		&results.filesDiscovered, &results.filesSkipped, &results.filesSucceeded, &results.filesFailed,
+		&results.workoutsCreated, &results.workoutsUpdated, &results.workoutsUnchanged)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	var succeeded, failed, created, updated, unchanged int
+	if err := tx.QueryRow(ctx, `SELECT
+		count(DISTINCT file.id) FILTER (WHERE file.state='succeeded'),
+		count(DISTINCT file.id) FILTER (WHERE file.state='failed'),
+		count(event.id) FILTER (WHERE event.kind='created'),
+		count(event.id) FILTER (WHERE event.kind='updated'),
+		count(event.id) FILTER (WHERE event.kind='matched_unchanged')
+		FROM app.source_files file LEFT JOIN app.workout_import_events event ON event.source_file_id=file.id
+		WHERE file.job_id=$1`, job.id).Scan(&succeeded, &failed, &created, &updated, &unchanged); err != nil {
+		return err
+	}
+	results.filesSucceeded = max(results.filesSucceeded, succeeded)
+	results.filesFailed = max(results.filesFailed, failed)
+	results.workoutsCreated = max(results.workoutsCreated, created)
+	results.workoutsUpdated = max(results.workoutsUpdated, updated)
+	results.workoutsUnchanged = max(results.workoutsUnchanged, unchanged)
+	if results.filesFailed > 0 && len(results.FailedProcessing) == 0 {
+		rows, err := tx.Query(ctx, `SELECT relative_name FROM app.source_files
+			WHERE job_id=$1 AND state='failed' ORDER BY relative_name LIMIT $2`, job.id, maxFailedProcessing)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return err
+			}
+			results.FailedProcessing = append(results.FailedProcessing, filepath.Base(name))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	results.syncTotals()
+	return tx.Commit(ctx)
+}
+
+func (r *Runner) recordIngestProgress(ctx context.Context, job claimedJob, results ingestResults) error {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var recorded bool
+	err = tx.QueryRow(ctx, `SELECT app.record_ingest_progress($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0)`,
+		job.id, r.workerID, job.lease, results.filesDiscovered, results.filesSkipped, results.filesSucceeded,
+		results.filesFailed, results.workoutsCreated, results.workoutsUpdated, results.workoutsUnchanged).Scan(&recorded)
+	if err != nil {
+		return err
+	}
+	if !recorded {
+		return errLeaseLost
+	}
+	return tx.Commit(ctx)
 }
 
 func recordDiscoveryFailure(results *ingestResults, err error) {
@@ -261,6 +646,7 @@ func discoverSourceFiles(directory *os.File) ([]sourceFile, error) {
 }
 
 func discoverSourceFilesWith(directory *os.File, limits discoveryLimits, statFile sourceFileStat, openRegularFile regularFileOpener) ([]sourceFile, error) {
+	_ = openRegularFile
 	files := make([]sourceFile, 0)
 	entryCount := 0
 	for {
@@ -276,6 +662,10 @@ func discoverSourceFilesWith(directory *os.File, limits discoveryLimits, statFil
 			if !exportNamePattern.MatchString(entry.Name()) {
 				continue
 			}
+			exportDate, err := time.Parse(time.DateOnly, entry.Name()[len("HealthAutoExport-"):len("HealthAutoExport-YYYY-MM-DD")])
+			if err != nil {
+				continue
+			}
 			var stat unix.Stat_t
 			if err := statFile(int(directory.Fd()), entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 				return nil, &discoveryFileError{name: entry.Name()}
@@ -287,17 +677,10 @@ func discoverSourceFilesWith(directory *os.File, limits discoveryLimits, statFil
 			default:
 				continue
 			}
-			file, info, err := openRegularFile(directory, entry.Name())
-			if err != nil {
-				return nil, &discoveryFileError{name: entry.Name()}
-			}
-			if err := file.Close(); err != nil {
-				return nil, &discoveryFileError{name: entry.Name()}
-			}
-			device, inode, ctimeSec, ctimeNS := fileIdentity(info)
+			modified := time.Unix(stat.Mtim.Sec, stat.Mtim.Nsec)
 			files = append(files, sourceFile{
-				name: entry.Name(), size: info.Size(), modified: databaseTimestamp(info.ModTime()), observedModified: info.ModTime(),
-				device: device, inode: inode, ctimeSec: ctimeSec, ctimeNS: ctimeNS,
+				name: entry.Name(), size: stat.Size, modified: databaseTimestamp(modified), observedModified: modified,
+				device: uint64(stat.Dev), inode: stat.Ino, ctimeSec: stat.Ctim.Sec, ctimeNS: stat.Ctim.Nsec, exportDate: exportDate,
 			})
 			if len(files) > limits.maxFiles {
 				return nil, errDiscoveryLimit
@@ -307,7 +690,12 @@ func discoverSourceFilesWith(directory *os.File, limits discoveryLimits, statFil
 			break
 		}
 	}
-	slices.SortFunc(files, func(left, right sourceFile) int { return bytes.Compare([]byte(left.name), []byte(right.name)) })
+	slices.SortFunc(files, func(left, right sourceFile) int {
+		if order := left.exportDate.Compare(right.exportDate); order != 0 {
+			return order
+		}
+		return bytes.Compare([]byte(left.name), []byte(right.name))
+	})
 	return files, nil
 }
 
@@ -446,19 +834,33 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 	if command.RowsAffected() != 1 {
 		return persistedFileResult{}, errLeaseLost
 	}
-	result := persistedFileResult{workoutsProcessed: len(file.document.Workouts)}
+	result := persistedFileResult{}
 	for _, workout := range file.document.Workouts {
 		kind, err := persistWorkout(ctx, tx, job, sourceID, checkpoint.id, workout)
 		if err != nil {
 			return persistedFileResult{}, err
 		}
-		if kind == "created" || kind == "updated" {
-			result.workoutsIngested++
+		switch kind {
+		case "created":
+			result.created++
+		case "updated":
+			result.updated++
+		case "matched_unchanged":
+			result.unchanged++
 		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE app.source_files SET state='succeeded',checksum_sha256=$2,
 		processed_at=transaction_timestamp() WHERE id=$1 AND state='processing'`, checkpoint.id, file.checksum[:]); err != nil {
 		return persistedFileResult{}, err
+	}
+	var inventoryRecorded bool
+	if err = tx.QueryRow(ctx, `SELECT app.record_successful_source_object($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		job.id, r.workerID, job.lease, file.name, file.exportDate, file.size, file.modified,
+		sourceIdentity(file.sourceFile), file.checksum[:]).Scan(&inventoryRecorded); err != nil {
+		return persistedFileResult{}, err
+	}
+	if !inventoryRecorded {
+		return persistedFileResult{}, errLeaseLost
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return persistedFileResult{}, ingestCommitError(err)
@@ -628,6 +1030,13 @@ func (r *Runner) failIngest(ctx context.Context, job claimedJob, failure ingestF
 }
 
 func (r *Runner) finishJob(ctx context.Context, job claimedJob, status string, failure *ingestFailure) (bool, error) {
+	if status == "failed" {
+		r.recordDiagnosticsBestEffort(ctx, job, "ingest-failed", map[string]any{
+			"operation": "finalize", "reason": safeDiagnosticReason(failure),
+		})
+	} else if err := r.recordJobLog(ctx, job, "ingest-completed", map[string]any{"operation": "finalize"}); err != nil {
+		r.logger.WarnContext(ctx, "durable ingest diagnostic unavailable", "job_id", job.id, "code", "ingest-completed", "error", err)
+	}
 	tx, err := beginAccount(ctx, r.db, job.accountID)
 	if err != nil {
 		return false, err
@@ -643,6 +1052,55 @@ func (r *Runner) finishJob(ctx context.Context, job claimedJob, status string, f
 		return false, err
 	}
 	return finished, tx.Commit(ctx)
+}
+
+func (r *Runner) recordDiagnostics(ctx context.Context, job claimedJob, code string, fields map[string]any) error {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var eventRecorded, logRecorded bool
+	if err = tx.QueryRow(ctx, `SELECT app.record_job_event($1,$2,$3,$4,$5)`, job.id, r.workerID, job.lease, code, fields).Scan(&eventRecorded); err != nil {
+		return err
+	}
+	if err = tx.QueryRow(ctx, `SELECT app.record_job_log($1,$2,$3,$4,$5)`, job.id, r.workerID, job.lease, code, fields).Scan(&logRecorded); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Runner) recordDiagnosticsBestEffort(ctx context.Context, job claimedJob, code string, fields map[string]any) {
+	if err := r.recordDiagnostics(ctx, job, code, fields); err != nil {
+		r.logger.WarnContext(ctx, "durable ingest diagnostic unavailable", "job_id", job.id, "code", code, "error", err)
+	}
+}
+
+func (r *Runner) recordJobLog(ctx context.Context, job claimedJob, code string, fields map[string]any) error {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var recorded bool
+	if err = tx.QueryRow(ctx, `SELECT app.record_job_log($1,$2,$3,$4,$5)`, job.id, r.workerID, job.lease, code, fields).Scan(&recorded); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func safeDiagnosticReason(failure *ingestFailure) string {
+	if failure == nil {
+		return "write-failed"
+	}
+	switch failure.code {
+	case "source-unavailable", "source-config-invalid":
+		return "source-unavailable"
+	case "source-directory-limit", "source-files-changed":
+		return "read-failed"
+	default:
+		return "invalid-data"
+	}
 }
 
 func ingestCommitError(err error) error {

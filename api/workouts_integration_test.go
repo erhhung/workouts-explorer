@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -110,6 +111,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatalf("page max status=%d body=%s", tooLarge.Code, tooLarge.Body.String())
 	}
 	prefTx := integrationAccountTransaction(t, adminDB, accountID)
+	defer prefTx.Rollback(ctx)
 	if _, err := prefTx.Exec(ctx, `UPDATE app.preferences SET page_size=250 WHERE account_id=$1`, accountID); err != nil {
 		t.Fatal(err)
 	}
@@ -201,13 +203,16 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 	ctx := context.Background()
 	sourceID, parentID, jobID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	tx := integrationAccountTransaction(t, adminDB, accountID)
+	defer tx.Rollback(ctx)
 	_, err := tx.Exec(ctx, `INSERT INTO app.sources(id,account_id,display_name,canonical_display_name,type,config_envelope,status)
 	 VALUES($1,$2,$3,$3,'health-auto-export-local',$4,'connected')`, sourceID, accountID, "read-fixture-"+sourceID.String(), []byte("fixture"))
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.jobs(id,account_id,kind,priority,status) VALUES($1,$2,'manual_ingest',80,'queued')`, parentID, accountID)
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority,status) VALUES($1,$2,$3,'manual_ingest_source',80,'queued')`, jobID, parentID, accountID)
+		parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1,"mode":"incremental"}`, compactUUID(sourceID))
+		_, err = tx.Exec(ctx, `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority,status,parameters)
+			VALUES($1,$2,$3,'manual_ingest_source',80,'queued',$4)`, jobID, parentID, accountID, parameters)
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, jobID, accountID, sourceID, []byte("fixture"))

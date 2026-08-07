@@ -54,7 +54,7 @@ func TestSourceLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sourceID, ok := parseCompactUUID(source.Id)
-	if !ok || source.DisplayName != "Foo" || source.Generation != 1 || source.Status != generated.CheckingConnection {
+	if !ok || source.DisplayName != "Foo" || source.Generation != 1 || source.Status != generated.SourceStatusCheckingConnection {
 		t.Fatalf("unexpected source: %#v", source)
 	}
 	if create.recorder.Header().Get("Location") != "/api/sources/"+source.Id {
@@ -274,7 +274,7 @@ func TestSourceConcurrentMutationsAndRollbackIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = cancel.Exec(ctx, `SELECT app.request_job_cancellation($1,$2)`, blockerID, principalID); err == nil {
+	if _, err = cancel.Exec(ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, blockerID, principalID); err == nil {
 		err = cancel.Commit(ctx)
 	} else {
 		_ = cancel.Rollback(ctx)
@@ -413,6 +413,9 @@ func insertSourceTestUser(t *testing.T, db *pgxpool.Pool) (uuid.UUID, uuid.UUID)
 		}
 		if err == nil {
 			_, err = tx.Exec(context.Background(), `INSERT INTO app.users(principal_id,account_id) VALUES($1,$2)`, principalID, accountID)
+		}
+		if err == nil {
+			_, err = tx.Exec(context.Background(), `SELECT set_config('app.account_id',$1,true)`, accountID.String())
 		}
 		if err == nil {
 			_, err = tx.Exec(context.Background(), `INSERT INTO app.preferences(account_id) VALUES($1)`, accountID)

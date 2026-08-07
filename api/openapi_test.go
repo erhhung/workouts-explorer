@@ -22,7 +22,7 @@ func TestOpenAPIContract(t *testing.T) {
 	if err := document.Validate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/workouts", "/api/workout-types", "/api/summary"} {
+	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation", "/api/jobs/{jobId}/retry", "/api/jobs/{jobId}/files", "/api/jobs/{jobId}/events", "/api/jobs/{jobId}/logs", "/api/data-sync", "/api/notifications", "/api/notifications/{notificationId}/dismissal", "/api/workouts", "/api/workout-types", "/api/summary"} {
 		if document.Paths.Find(path) == nil {
 			t.Errorf("missing path %s", path)
 		}
@@ -51,8 +51,14 @@ func TestOpenAPIContract(t *testing.T) {
 		}
 	}
 	ingestAccepted := document.Components.Schemas["IngestAccepted"].Value
-	if ingestAccepted.AdditionalProperties.Has == nil || *ingestAccepted.AdditionalProperties.Has || len(ingestAccepted.Required) != 2 {
+	if ingestAccepted.AdditionalProperties.Has == nil || *ingestAccepted.AdditionalProperties.Has || len(ingestAccepted.Required) != 3 {
 		t.Fatal("ingest accepted response is not closed and fully required")
+	}
+	ingestCreate := document.Components.Schemas["IngestCreate"].Value
+	sourceIDs := ingestCreate.Properties["sourceIds"].Value
+	if ingestCreate.AdditionalProperties.Has == nil || *ingestCreate.AdditionalProperties.Has || len(ingestCreate.Required) != 1 ||
+		sourceIDs.MinItems != 1 || sourceIDs.MaxItems == nil || *sourceIDs.MaxItems != 100 || !sourceIDs.UniqueItems {
+		t.Fatal("ingest create contract is not closed with a bounded unique source set")
 	}
 	ingest := document.Paths.Find("/api/ingest").Post
 	if ingest.OperationID != "createIngest" || ingest.Security == nil || len(*ingest.Security) != 2 {
@@ -66,16 +72,40 @@ func TestOpenAPIContract(t *testing.T) {
 	if ingest.Responses.Value("202").Value.Headers["Location"] == nil {
 		t.Fatal("manual ingest accepted response lacks Location")
 	}
+	for _, route := range []string{"/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation"} {
+		item := document.Paths.Find(route)
+		operation := item.Get
+		if operation == nil {
+			operation = item.Post
+		}
+		if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
+			t.Errorf("job owner route %s lacks operation or security alternatives", route)
+		}
+	}
 	for _, route := range []string{"/api/workouts", "/api/workout-types", "/api/summary"} {
 		operation := document.Paths.Find(route).Get
 		if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
 			t.Errorf("owner read route %s lacks GET or security alternatives", route)
 		}
 	}
-	for _, name := range []string{"ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "ExactMetric", "Workout", "Pagination", "WorkoutList", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "Problem"} {
+	for _, name := range []string{"ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "ExactMetric", "Workout", "Pagination", "WorkoutList", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
 		schema := document.Components.Schemas[name].Value
 		if schema.AdditionalProperties.Has == nil || *schema.AdditionalProperties.Has {
 			t.Errorf("owner response schema %s is not closed", name)
+		}
+	}
+	jobDetail := document.Components.Schemas["JobDetail"].Value
+	for _, name := range []string{"retryRootJobId", "retryOrdinal"} {
+		if _, exists := jobDetail.Properties[name]; !exists {
+			t.Errorf("job detail lacks %s", name)
+		}
+	}
+	if ordinal := jobDetail.Properties["retryOrdinal"].Value; ordinal == nil || ordinal.Min == nil || *ordinal.Min != 1 {
+		t.Error("job detail retry ordinal must have minimum 1")
+	}
+	for _, forbidden := range []string{"parameters", "configEnvelope", "workerId", "leaseToken", "originatingRequestId"} {
+		if _, exists := jobDetail.Properties[forbidden]; exists {
+			t.Errorf("job detail exposes %s", forbidden)
 		}
 	}
 	dateRangePreference := document.Components.Schemas["DateRangePreference"].Value

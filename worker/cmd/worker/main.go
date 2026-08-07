@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,54 @@ func main() {
 	}
 }
 
+type supervisedComponent struct {
+	name string
+	run  func(context.Context) error
+}
+
+type componentResult struct {
+	name string
+	err  error
+}
+
+func supervise(ctx context.Context, shutdownTimeout time.Duration, components ...supervisedComponent) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan componentResult, len(components))
+	for _, component := range components {
+		component := component
+		go func() { results <- componentResult{name: component.name, err: component.run(runCtx)} }()
+	}
+
+	remaining := len(components)
+	var resultErr error
+	select {
+	case result := <-results:
+		remaining--
+		if ctx.Err() == nil {
+			if result.err == nil {
+				resultErr = fmt.Errorf("%s stopped unexpectedly", result.name)
+			} else {
+				resultErr = fmt.Errorf("%s stopped: %w", result.name, result.err)
+			}
+		}
+	case <-ctx.Done():
+	}
+	cancel()
+
+	timer := time.NewTimer(shutdownTimeout)
+	defer timer.Stop()
+	for remaining > 0 {
+		select {
+		case <-results:
+			remaining--
+		case <-timer.C:
+			return errors.New("worker shutdown timed out")
+		}
+	}
+	return resultErr
+}
+
 func run(ctx context.Context, logger *slog.Logger) error {
 	workerCtx, stopWorker := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stopWorker()
@@ -42,12 +91,21 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := workerapp.ScavengeStaging(cfg.StagingRoot); err != nil {
+		return errors.New("prepare worker staging")
+	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
 	db, err := database.Open(workerCtx, cfg.DatabaseURL, "workouts-worker")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	if err := workerapp.ConfigureFileSlotLimits(workerCtx, db, cfg.AccountConcurrency, cfg.GlobalConcurrency); err != nil {
+		return err
+	}
+	if err := workerapp.ConfigureAutoSyncPolicy(workerCtx, db, cfg.AutoSyncInterval, cfg.AutoSyncStaleDays); err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
 		Handler:           workerapp.NewHandler(db, logger),
@@ -56,20 +114,22 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		WriteTimeout:      config.WriteTimeout(),
 		IdleTimeout:       config.IdleTimeout(),
 	}
-	workerDone := make(chan error, 1)
-	go func() {
-		workerDone <- workerapp.NewRunner(db, logger, keys, cfg.LocalSourceRoots).Run(workerCtx)
-	}()
-	serverErr := httpserver.Run(workerCtx, logger, server, config.ShutdownTimeout())
-	stopWorker()
-	var workerErr error
-	select {
-	case workerErr = <-workerDone:
-	case <-time.After(config.ShutdownTimeout()):
-		return errors.New("worker shutdown timed out")
-	}
-	if serverErr != nil {
-		return serverErr
-	}
-	return workerErr
+	runner := workerapp.NewRunnerWithOptions(db, logger, keys, cfg.LocalSourceRoots, workerapp.RunnerOptions{
+		FileConcurrency: cfg.FileConcurrency,
+	})
+	scheduler := workerapp.NewScheduler(db, logger, keys, cfg.LocalSourceRoots, workerapp.SchedulerOptions{
+		PollInterval: cfg.AutoSyncPollInterval,
+		Lease:        cfg.SchedulerLease,
+	})
+	return supervise(workerCtx, config.ShutdownTimeout(),
+		supervisedComponent{name: "health server", run: func(ctx context.Context) error {
+			return httpserver.Run(ctx, logger, server, config.ShutdownTimeout())
+		}},
+		supervisedComponent{name: "job runner", run: func(ctx context.Context) error {
+			return runner.Run(ctx)
+		}},
+		supervisedComponent{name: "sync scheduler", run: func(ctx context.Context) error {
+			return scheduler.Run(ctx)
+		}},
+	)
 }

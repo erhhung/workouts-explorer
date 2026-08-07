@@ -3,6 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ApiError, SESSION_EXPIRED_EVENT, type Preferences, type Profile, type PublicConfig, type Session, api } from "./api";
+import { DataSync } from "./DataSync";
 import { Summary } from "./Summary";
 import { applyTheme } from "./theme";
 
@@ -88,8 +89,8 @@ function navigate(to: string, replace = false) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function AppLink({ to, children, className }: { to: string; children: ReactNode; className?: string }) {
-  return <a className={className} href={to} onClick={(event) => { event.preventDefault(); navigate(to); }}>{children}</a>;
+function AppLink({ to, children, className, current }: { to: string; children: ReactNode; className?: string; current?: boolean }) {
+  return <a className={className} href={to} aria-current={current ? "page" : undefined} onClick={(event) => { event.preventDefault(); navigate(to); }}>{children}</a>;
 }
 
 function Mark({ compact = false }: { compact?: boolean }) {
@@ -365,7 +366,7 @@ function SelectField({ label, name, id, value, options }: { label: string; name:
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} name={name} defaultValue={value}>{options.map((option) => <option key={option} value={option}>{option === "12h" ? "12-hour" : option === "24h" ? "24-hour" : option[0].toUpperCase() + option.slice(1)}</option>)}</select></div>;
 }
 
-function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum: number }) {
+function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { session: Session; pageSizeMaximum: number; pollingIntervalSeconds: number; path: string }) {
   const queryClient = useQueryClient();
   const [data, setData] = useState<{ profile: Profile; preferences: Preferences }>();
   const [loadError, setLoadError] = useState(false);
@@ -386,6 +387,13 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
     onSuccess: () => { queryClient.setQueryData(["session"], null); queryClient.removeQueries(); navigate("/login"); },
     onError: () => setMenuError("Sign out failed. Your session is still active."),
   });
+  const pathname = path.split("?")[0];
+  const jobMatch = /^\/data-sync\/jobs\/([0-9A-Fa-f]{32})$/.exec(pathname);
+  const canonicalJobId = jobMatch ? jobMatch[1].toUpperCase() : undefined;
+  const dataSyncRoute = pathname === "/data-sync" || Boolean(jobMatch);
+  useEffect(() => {
+    if (jobMatch && jobMatch[1] !== canonicalJobId) navigate(`/data-sync/jobs/${canonicalJobId}`, true);
+  }, [canonicalJobId, jobMatch?.[1]]);
   if (loadError) return <main className="center-state"><Mark /><h1>We couldn't load your explorer.</h1><p role="alert">Your session is active, but profile preferences are unavailable.</p><button className="secondary" onClick={() => location.reload()}>Try again</button></main>;
   if (!data) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Restoring your route preferences...</p></main>;
   const initials = data.profile.fullName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || data.profile.username.slice(0, 2).toUpperCase();
@@ -408,13 +416,14 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
   return (
     <div className="shell">
       <header className="app-header">
-        <a href="/" className="wordmark" aria-label="Workouts Explorer home" onClick={(event) => event.preventDefault()}><Mark compact /><span>Workouts Explorer</span></a>
-        <nav aria-label="Primary"><a href="/" aria-current="page">Summary</a><span aria-disabled="true">Map</span></nav>
+        <AppLink to="/" className="wordmark"><Mark compact /><span>Workouts Explorer</span></AppLink>
+        <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute}>Summary</AppLink><span aria-disabled="true">Map</span><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span aria-hidden="true">&#8964;</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
             <DropdownMenu.Label><strong>{data.profile.fullName}</strong><span>@{data.profile.username}</span></DropdownMenu.Label>
             <DropdownMenu.Separator />
+            <DropdownMenu.Item onSelect={() => navigate("/data-sync")}>Data Sync</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setDialog("preferences")}>Preferences</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => void switchTheme()}>Switch to {data.preferences.theme === "dark" ? "light" : "dark"} theme</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setDialog("about")}>About Workouts Explorer</DropdownMenu.Item>
@@ -426,9 +435,10 @@ function Shell({ session, pageSizeMaximum }: { session: Session; pageSizeMaximum
       {menuError && <div className="shell-alert" role="alert">{menuError}<button aria-label="Dismiss message" onClick={() => setMenuError("")}>&times;</button></div>}
       <PreferencesDialog open={dialog === "preferences"} onOpenChange={(open) => setDialog(open ? "preferences" : null)} returnFocus={avatarTriggerRef} profile={data.profile} preferences={data.preferences} csrfToken={session.csrfToken} pageSizeMaximum={pageSizeMaximum} onSaved={(profile, preferences) => setData((current) => current ? { profile, preferences: { ...preferences, dateRange: current.preferences.dateRange } } : { profile, preferences })} />
       <Modal open={dialog === "about"} onOpenChange={(open) => setDialog(open ? "about" : null)} returnFocus={avatarTriggerRef} title="About Workouts Explorer" description="A private atlas for a lifetime of movement.">
-        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 3 &middot; Workout summary</p></div>
+        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 4 &middot; Data Sync</p></div>
       </Modal>
-      <Summary preferences={data.preferences} csrfToken={session.csrfToken} onDateRangeSaved={(dateRange) => setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current)} />
+      {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> :
+        <Summary preferences={data.preferences} csrfToken={session.csrfToken} onDateRangeSaved={(dateRange) => setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current)} />}
     </div>
   );
 }
@@ -477,6 +487,6 @@ export function App() {
     return <Login />;
   }
   if (session.isPending) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your explorer...</p></main>;
-  if (session.data) return <Shell session={session.data} pageSizeMaximum={config.pageSizeMaximum} />;
+  if (session.data) return <Shell session={session.data} pageSizeMaximum={config.pageSizeMaximum} pollingIntervalSeconds={config.pollingIntervalSeconds} path={path} />;
   return <Login />;
 }

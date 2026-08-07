@@ -300,6 +300,160 @@ paths:
         '413': {$ref: '#/components/responses/Problem'}
         '415': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/JobStatus'}}
+        - {name: trigger, in: query, schema: {$ref: '#/components/schemas/JobTrigger'}}
+      responses:
+        '200': {description: Parent ingest history, content: {application/json: {schema: {$ref: '#/components/schemas/JobList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    get:
+      operationId: getJob
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Safe owner job detail, content: {application/json: {schema: {$ref: '#/components/schemas/JobDetail'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}/cancellation:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    post:
+      operationId: createJobCancellation
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/JobCancellationCreate'}}}
+      responses:
+        '200': {description: Cancellation requested, content: {application/json: {schema: {$ref: '#/components/schemas/JobDetail'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}/retry:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    post:
+      operationId: createJobRetry
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/EmptyCreate'}}}
+      responses:
+        '202': {description: Retry queued, headers: {Location: {required: true, schema: {type: string, pattern: '^/api/jobs/[0-9A-F]{32}$'}}}, content: {application/json: {schema: {$ref: '#/components/schemas/IngestAccepted'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}/files:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    get:
+      operationId: listJobFiles
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
+      responses:
+        '200': {description: Safe ingest file results, content: {application/json: {schema: {$ref: '#/components/schemas/JobFileList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}/events:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    get:
+      operationId: listJobEvents
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
+      responses:
+        '200': {description: Safe job events, content: {application/json: {schema: {$ref: '#/components/schemas/JobEventList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/jobs/{jobId}/logs:
+    parameters: [{$ref: '#/components/parameters/JobID'}]
+    get:
+      operationId: listJobLogs
+      tags: [jobs]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
+      responses:
+        '200': {description: Redacted job diagnostics, content: {application/json: {schema: {$ref: '#/components/schemas/JobLogList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/data-sync:
+    get:
+      operationId: getDataSync
+      tags: [data-sync]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Owner data synchronization snapshot, content: {application/json: {schema: {$ref: '#/components/schemas/DataSync'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/PageSize'}
+        - {name: state, in: query, schema: {$ref: '#/components/schemas/NotificationState'}}
+      responses:
+        '200': {description: Owner notifications, content: {application/json: {schema: {$ref: '#/components/schemas/NotificationList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/notifications/{notificationId}/dismissal:
+    parameters: [{$ref: '#/components/parameters/NotificationID'}]
+    post:
+      operationId: createNotificationDismissal
+      tags: [notifications]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/EmptyCreate'}}}
+      responses:
+        '200': {description: Notification state updated, content: {application/json: {schema: {$ref: '#/components/schemas/Notification'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/workouts:
     get:
       operationId: listWorkouts
@@ -365,6 +519,24 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/CompactUUID'}
+    JobID:
+      name: jobId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/CompactUUID'}
+    NotificationID:
+      name: notificationId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/CompactUUID'}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+    PageSize:
+      name: pageSize
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 25}
     StartDate:
       name: startDate
       in: query
@@ -585,7 +757,7 @@ components:
         displayName: {type: string}
         type: {type: string, enum: [health-auto-export-local]}
         autoSyncEnabled: {type: boolean}
-        status: {type: string, enum: [checking-connection, connected, connection-failed]}
+        status: {type: string, enum: [checking-connection, connected, connection-failed], x-enum-varnames: [CheckingConnection, Connected, ConnectionFailed]}
         generation: {type: integer, format: int64, minimum: 1}
         config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
         statusCode: {type: string, maxLength: 64}
@@ -602,16 +774,235 @@ components:
     IngestCreate:
       type: object
       additionalProperties: false
-      required: [sourceId]
+      required: [sourceIds]
       properties:
-        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+        sourceIds: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {$ref: '#/components/schemas/CompactUUID'}}
+        startDate: {type: string, format: date}
+        endDate: {type: string, format: date}
     IngestAccepted:
       type: object
       additionalProperties: false
-      required: [jobId, status]
+      required: [jobId, status, reused]
       properties:
         jobId: {$ref: '#/components/schemas/CompactUUID'}
-        status: {type: string, enum: [queued]}
+        status: {type: string, enum: [queued, running]}
+        reused: {type: boolean}
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, partially_succeeded, failed, cancelled]
+    JobTrigger:
+      type: string
+      enum: [manual, scheduled]
+    JobProgress:
+      type: object
+      additionalProperties: false
+      required: [current, total, filesDiscovered, filesSkipped, filesSucceeded, filesFailed, workoutsCreated, workoutsUpdated, workoutsUnchanged, workoutsRejected]
+      properties:
+        current: {type: integer, format: int64, minimum: 0}
+        total: {type: integer, format: int64, minimum: 0}
+        filesDiscovered: {type: integer, format: int64, minimum: 0}
+        filesSkipped: {type: integer, format: int64, minimum: 0}
+        filesSucceeded: {type: integer, format: int64, minimum: 0}
+        filesFailed: {type: integer, format: int64, minimum: 0}
+        workoutsCreated: {type: integer, format: int64, minimum: 0}
+        workoutsUpdated: {type: integer, format: int64, minimum: 0}
+        workoutsUnchanged: {type: integer, format: int64, minimum: 0}
+        workoutsRejected: {type: integer, format: int64, minimum: 0}
+    JobSourceContext:
+      type: object
+      additionalProperties: false
+      required: [sourceId, generation, displayName, sourceType]
+      properties:
+        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+        generation: {type: integer, format: int64, minimum: 1}
+        displayName: {type: string, minLength: 1, maxLength: 200}
+        sourceType: {type: string, minLength: 1, maxLength: 64}
+    JobSummary:
+      type: object
+      additionalProperties: false
+      required: [id, trigger, status, progress, createdAt, updatedAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        trigger: {$ref: '#/components/schemas/JobTrigger'}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        progress: {$ref: '#/components/schemas/JobProgress'}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time}
+        terminalAt: {type: string, format: date-time}
+    JobDetail:
+      type: object
+      additionalProperties: false
+      required: [id, trigger, status, attempt, progress, children, retriedByJobIds, createdAt, updatedAt, cancelRequested]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        parentJobId: {$ref: '#/components/schemas/CompactUUID'}
+        trigger: {$ref: '#/components/schemas/JobTrigger'}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        attempt: {type: integer, minimum: 0}
+        progress: {$ref: '#/components/schemas/JobProgress'}
+        source: {$ref: '#/components/schemas/JobSourceContext'}
+        children: {type: array, items: {$ref: '#/components/schemas/JobDetail'}}
+        results: {type: object, additionalProperties: false, properties: {filesSucceeded: {type: integer, format: int64, minimum: 0}, filesFailed: {type: integer, format: int64, minimum: 0}, workoutsCreated: {type: integer, format: int64, minimum: 0}, workoutsUpdated: {type: integer, format: int64, minimum: 0}, workoutsUnchanged: {type: integer, format: int64, minimum: 0}, workoutsRejected: {type: integer, format: int64, minimum: 0}}}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time}
+        terminalAt: {type: string, format: date-time}
+        failureCode: {type: string, maxLength: 64}
+        failureSummary: {type: string, maxLength: 512}
+        cancelRequested: {type: boolean}
+        cancelRequestedAt: {type: string, format: date-time}
+        retryOfJobId: {$ref: '#/components/schemas/CompactUUID'}
+        retryRootJobId: {$ref: '#/components/schemas/CompactUUID'}
+        retryOrdinal: {type: integer, minimum: 1}
+        retriedByJobIds: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/CompactUUID'}}
+    JobList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties:
+        pagination: {$ref: '#/components/schemas/Pagination'}
+        items: {type: array, items: {$ref: '#/components/schemas/JobSummary'}}
+    JobCancellationCreate:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+    EmptyCreate:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+    SafeFields:
+      type: object
+      additionalProperties: {oneOf: [{type: string}, {type: integer, format: int64, minimum: 0}]}
+      maxProperties: 8
+    JobFile:
+      type: object
+      additionalProperties: false
+      required: [id, jobId, source, basename, state, sizeBytes, createdAt, updatedAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        source: {$ref: '#/components/schemas/JobSourceContext'}
+        basename: {type: string, minLength: 1, maxLength: 4096}
+        state: {type: string, enum: [discovered, processing, succeeded, failed]}
+        sizeBytes: {type: integer, format: int64, minimum: 0}
+        processingStartedAt: {type: string, format: date-time}
+        processedAt: {type: string, format: date-time}
+        failureCode: {type: string, maxLength: 64}
+        failureSummary: {type: string, maxLength: 512}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    JobFileList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties: {pagination: {$ref: '#/components/schemas/Pagination'}, items: {type: array, items: {$ref: '#/components/schemas/JobFile'}}}
+    JobEvent:
+      type: object
+      additionalProperties: false
+      required: [id, jobId, severity, code, message, fields, createdAt]
+      properties:
+        id: {type: integer, format: int64, minimum: 1}
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        severity: {type: string, enum: [info, warning, error]}
+        code: {type: string, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        message: {type: string, maxLength: 512}
+        fields: {$ref: '#/components/schemas/SafeFields'}
+        createdAt: {type: string, format: date-time}
+    JobEventList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties: {pagination: {$ref: '#/components/schemas/Pagination'}, items: {type: array, items: {$ref: '#/components/schemas/JobEvent'}}}
+    JobLog:
+      type: object
+      additionalProperties: false
+      required: [id, jobId, severity, code, message, fields, createdAt]
+      properties:
+        id: {type: integer, format: int64, minimum: 1}
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        severity: {type: string, enum: [debug, info, warning, error]}
+        code: {type: string, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        message: {type: string, maxLength: 1024}
+        fields: {$ref: '#/components/schemas/SafeFields'}
+        createdAt: {type: string, format: date-time}
+    JobLogList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties: {pagination: {$ref: '#/components/schemas/Pagination'}, items: {type: array, items: {$ref: '#/components/schemas/JobLog'}}}
+    NotificationState:
+      type: string
+      enum: [unresolved, remind, resolved, dismissed]
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, type, severity, state, subjectType, title, message, createdAt, updatedAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        type: {type: string, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        severity: {type: string, enum: [info, warning, error]}
+        state: {$ref: '#/components/schemas/NotificationState'}
+        subjectType: {type: string, enum: [account, job, source]}
+        subjectId: {$ref: '#/components/schemas/CompactUUID'}
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+        title: {type: string, maxLength: 200}
+        message: {type: string, maxLength: 512}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        resolvedAt: {type: string, format: date-time}
+        remindAt: {type: string, format: date-time}
+    NotificationList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties: {pagination: {$ref: '#/components/schemas/Pagination'}, items: {type: array, items: {$ref: '#/components/schemas/Notification'}}}
+    SourceFreshness:
+      type: object
+      additionalProperties: false
+      properties:
+        lastSyncStartedAt: {type: string, format: date-time}
+        lastSyncSucceededAt: {type: string, format: date-time}
+        lastNewExportDiscoveredAt: {type: string, format: date-time}
+        lastNewExportDate: {type: string, format: date}
+        staleSince: {type: string, format: date}
+    DataSyncSource:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, type, status, autoSyncEnabled, freshness]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        displayName: {type: string, maxLength: 200}
+        type: {type: string, maxLength: 64}
+        status: {type: string, enum: [checking-connection, connected, connection-failed]}
+        autoSyncEnabled: {type: boolean}
+        checkedAt: {type: string, format: date-time}
+        freshness: {$ref: '#/components/schemas/SourceFreshness'}
+    DataSyncSchedule:
+      type: object
+      additionalProperties: false
+      required: [enabled, sourceCount, cadenceSeconds, staleDays]
+      properties:
+        enabled: {type: boolean}
+        sourceCount: {type: integer, minimum: 0}
+        cadence: {type: string, nullable: true}
+        cadenceSeconds: {type: integer, minimum: 300, maximum: 604800}
+        staleDays: {type: integer, minimum: 1, maximum: 30}
+        nextRunAt: {type: string, format: date-time}
+        lastEnqueuedAt: {type: string, format: date-time}
+        lastJobId: {$ref: '#/components/schemas/CompactUUID'}
+    DataSync:
+      type: object
+      additionalProperties: false
+      required: [schedule, sources, notifications, notificationsTruncated]
+      properties:
+        schedule: {$ref: '#/components/schemas/DataSyncSchedule'}
+        sources: {type: array, items: {$ref: '#/components/schemas/DataSyncSource'}}
+        activeJob: {$ref: '#/components/schemas/JobSummary'}
+        latestJob: {$ref: '#/components/schemas/JobSummary'}
+        notifications: {type: array, items: {$ref: '#/components/schemas/Notification'}}
+        notificationsTruncated: {type: boolean}
     DateRangeEnum:
       type: string
       enum: [thisWeek, lastWeek, last7Days, last30Days, thisMonth, lastMonth, thisYear, lastYear]

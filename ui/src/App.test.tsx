@@ -40,6 +40,11 @@ const publicConfig = {
   passwordMinimumLength: 12,
   pageSizeMaximum: 100,
 };
+const dataSync = {
+  schedule: { enabled: true, sourceCount: 0, cadence: null, cadenceSeconds: 86400, staleDays: 3 },
+  sources: [], notifications: [], notificationsTruncated: false,
+};
+const emptyJobs = { pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" } });
@@ -73,6 +78,8 @@ function authenticatedFetch(handler?: (path: string, method: string, init?: Requ
     if (path === "/api/me/preferences" && method === "GET") return json(preferences);
     if (path.startsWith("/api/summary?") && method === "GET") return json(emptySummary);
     if (path.startsWith("/api/workouts?") && method === "GET") return json(emptyWorkouts);
+    if (path === "/api/data-sync" && method === "GET") return json(dataSync);
+    if (path.startsWith("/api/jobs?") && method === "GET") return json(emptyJobs);
     throw new Error(`Unhandled authenticated fetch: ${method} ${path}`);
   });
 }
@@ -305,6 +312,56 @@ describe("authenticated shell", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open account menu/ })).toBeInTheDocument();
+  });
+
+  test("keeps Summary route-aware without fetching Data Sync and navigates from desktop and account menus", async () => {
+    const fetchMock = authenticatedFetch();
+    renderApp("/");
+    const summaryLink = await screen.findByRole("link", { name: "Summary" });
+    expect(summaryLink).toHaveAttribute("aria-current", "page");
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/data-sync")).toBe(false);
+    await userEvent.click(screen.getByRole("link", { name: "Data Sync" }));
+    expect(await screen.findByRole("heading", { name: "Start a sync" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Data Sync" })).not.toBeInTheDocument();
+    expect(location.pathname).toBe("/data-sync");
+    expect(screen.getByRole("link", { name: "Data Sync" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(screen.getByRole("button", { name: /Open account menu/ }));
+    const menuItems = screen.getAllByRole("menuitem");
+    expect(menuItems[0]).toHaveTextContent("Data Sync");
+    expect(menuItems[1]).toHaveTextContent("Preferences");
+  });
+
+  test("loads a Data Sync deep link and the wordmark returns to Summary", async () => {
+    const jobId = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+    authenticatedFetch((path) => path === `/api/jobs/${jobId}` ? json({
+      id: jobId, trigger: "manual", status: "succeeded", attempt: 0,
+      progress: { current: 0, total: 0, filesDiscovered: 0, filesSkipped: 0, filesSucceeded: 0, filesFailed: 0, workoutsCreated: 0, workoutsUpdated: 0, workoutsUnchanged: 0, workoutsRejected: 0 },
+      children: [], retriedByJobIds: [], cancelRequested: false,
+      createdAt: "2026-08-06T12:00:00Z", updatedAt: "2026-08-06T12:00:00Z", terminalAt: "2026-08-06T12:00:00Z",
+    }) : undefined as never);
+    renderApp(`/data-sync/jobs/${jobId}`);
+    expect(await screen.findByText("Run detail")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Workouts Explorer" }));
+    expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/");
+  });
+
+  test("canonicalizes lowercase compact job IDs before API use", async () => {
+    const upper = "ABCDEFABCDEFABCDEFABCDEFABCDEFAB";
+    const lower = upper.toLowerCase();
+    const paths: string[] = [];
+    authenticatedFetch((path) => {
+      if (path === `/api/jobs/${upper}`) {
+        paths.push(path);
+        return json({ id: upper, trigger: "manual", status: "succeeded", attempt: 0, progress: { current: 0, total: 0, filesDiscovered: 0, filesSkipped: 0, filesSucceeded: 0, filesFailed: 0, workoutsCreated: 0, workoutsUpdated: 0, workoutsUnchanged: 0, workoutsRejected: 0 }, children: [], retriedByJobIds: [], cancelRequested: false, createdAt: "2026-08-06T12:00:00Z", updatedAt: "2026-08-06T12:00:00Z" });
+      }
+      return undefined as never;
+    });
+    renderApp(`/data-sync/jobs/${lower}`);
+    expect(await screen.findByText("Run detail")).toBeInTheDocument();
+    expect(location.pathname).toBe(`/data-sync/jobs/${upper}`);
+    expect(paths).toEqual([`/api/jobs/${upper}`]);
   });
 
   test("coalesces simultaneous protected 401s into one clean login transition", async () => {

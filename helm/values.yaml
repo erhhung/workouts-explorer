@@ -55,6 +55,16 @@ worker:
   databaseSecret:
     name: workouts-explorer-database
     key: workerDatabaseUrl
+  fileConcurrency: 2
+  accountFileConcurrency: 2
+  globalFileConcurrency: 4
+  autoSyncInterval: 24h
+  autoSyncPollInterval: 30s
+  autoSyncStaleDays: 3
+  schedulerLeaseDuration: 2m
+  staging:
+    root: /var/lib/workouts/staging
+    sizeLimit: 2Gi
   resources: {}
 
 sources:

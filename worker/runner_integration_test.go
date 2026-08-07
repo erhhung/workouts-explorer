@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -159,8 +160,8 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		if err != nil || replacementJob.id != fixture.jobID {
 			t.Fatalf("expired lease was not reclaimed: job=%s err=%v", replacementJob.id, err)
 		}
-		if err := runner.executeLogged(ctx, job, runner.execute); err != nil {
-			t.Fatal(err)
+		if err := runner.executeLogged(ctx, job, runner.execute); !errors.Is(err, errJobInterrupted) {
+			t.Fatalf("lease loss error=%v", err)
 		}
 		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "running", 1)
 		if !strings.Contains(logs.String(), `"msg":"job processing outcome unavailable"`) ||
@@ -183,7 +184,7 @@ func TestRunnerPostgreSQL(t *testing.T) {
 			t.Fatal(err)
 		}
 		runner.loadJobLogContext(ctx, &job)
-		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.request_job_cancellation($1,$2)`, fixture.jobID, uuid.New()) {
+		if !workerCallBool(t, setupDB, fixture.accountID, `SELECT app.request_job_cancellation($1,$2)`, fixture.jobID, uuid.New()) {
 			t.Fatal("cancellation request failed")
 		}
 		if err := runner.executeLogged(ctx, job, runner.execute); err != nil {
@@ -197,19 +198,30 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		}
 	})
 
-	t.Run("context cancellation cleans snapshot", func(t *testing.T) {
+	t.Run("context cancellation leaves lease recoverable", func(t *testing.T) {
 		fixture := insertConnectionFixture(t, setupDB, keys, root, validPath)
 		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.leaseDuration = 5 * time.Millisecond
 		job, err := runner.claimNext(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
-		if _, err := runner.execute(cancelled, job); err != nil {
+		if _, err := runner.execute(cancelled, job); !errors.Is(err, context.Canceled) {
+			t.Fatalf("shutdown interruption error=%v", err)
+		}
+		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "running", 1)
+		time.Sleep(runner.leaseDuration + 10*time.Millisecond)
+		replacement := testRunner(workerDB, keys, root, io.Discard)
+		replacementJob, err := replacement.claimNext(ctx)
+		if err != nil || replacementJob.id != fixture.jobID {
+			t.Fatalf("shutdown job was not recoverable: job=%s err=%v", replacementJob.id, err)
+		}
+		if _, err := replacement.execute(ctx, replacementJob); err != nil {
 			t.Fatal(err)
 		}
-		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "cancelled", 0)
+		assertWorkerState(t, setupDB, fixture, "connected", 1, "succeeded", 0)
 	})
 
 	t.Run("cross-account completion is fenced", func(t *testing.T) {

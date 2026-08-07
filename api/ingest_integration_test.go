@@ -50,27 +50,47 @@ func TestManualIngestIntegration(t *testing.T) {
 	sourceID, _ := parseCompactUUID(source.Id)
 	setIntegrationSourceStatus(t, adminDB, accountID, sourceID, "connected")
 
-	unauthenticated := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, "", "", false)
+	unauthenticated := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, "", "", false)
 	if unauthenticated.recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status=%d", unauthenticated.recorder.Code)
 	}
 	adminID := insertIngestTestAdministrator(t, adminDB)
 	adminBearer := insertTestSession(t, db, adminID, "bearer", "")
-	admin := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, adminBearer, "", false)
+	admin := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, adminBearer, "", false)
 	if admin.recorder.Code != http.StatusForbidden {
 		t.Fatalf("administrator status=%d body=%s", admin.recorder.Code, admin.recorder.Body.String())
 	}
 	cookie := insertTestSession(t, db, principalID, "cookie", "ingest-csrf")
-	missingCSRF := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, cookie, "", true)
+	missingCSRF := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, cookie, "", true)
 	if missingCSRF.recorder.Code != http.StatusForbidden {
 		t.Fatalf("missing CSRF status=%d", missingCSRF.recorder.Code)
 	}
-	badCSRF := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, cookie, "wrong", true)
+	badCSRF := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, cookie, "wrong", true)
 	if badCSRF.recorder.Code != http.StatusForbidden {
 		t.Fatalf("invalid CSRF status=%d", badCSRF.recorder.Code)
 	}
+	legacyParent, legacyChild := insertLegacyActiveIngest(t, adminDB, accountID, sourceID)
+	legacyConflict := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, bearer, "", false)
+	if legacyConflict.recorder.Code != http.StatusConflict || !strings.Contains(legacyConflict.recorder.Body.String(), "an earlier ingest is still active") {
+		t.Fatalf("legacy conflict status=%d body=%s", legacyConflict.recorder.Code, legacyConflict.recorder.Body.String())
+	}
+	legacyCleanup := integrationAccountTransaction(t, adminDB, accountID)
+	defer legacyCleanup.Rollback(ctx)
+	var legacyCancelled bool
+	if err := legacyCleanup.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, legacyParent, principalID).Scan(&legacyCancelled); err != nil || !legacyCancelled {
+		t.Fatalf("legacy cleanup parent=%s child=%s cancelled=%t err=%v", legacyParent, legacyChild, legacyCancelled, err)
+	}
+	if _, err := legacyCleanup.Exec(ctx, `DELETE FROM app.jobs WHERE id=$1`, legacyChild); err != nil {
+		t.Fatalf("delete terminal legacy fixture child=%s: %v", legacyChild, err)
+	}
+	if _, err := legacyCleanup.Exec(ctx, `DELETE FROM app.jobs WHERE id=$1`, legacyParent); err != nil {
+		t.Fatalf("delete terminal legacy fixture parent=%s: %v", legacyParent, err)
+	}
+	if err := legacyCleanup.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 
-	accepted := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, cookie, "ingest-csrf", true)
+	accepted := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, cookie, "ingest-csrf", true)
 	if accepted.recorder.Code != http.StatusAccepted {
 		t.Fatalf("accepted status=%d body=%s", accepted.recorder.Code, accepted.recorder.Body.String())
 	}
@@ -99,13 +119,12 @@ func TestManualIngestIntegration(t *testing.T) {
 		t.Fatalf("snapshot accepted source AAD: %v", err)
 	}
 
-	conflict := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, bearer, "", false)
-	if conflict.recorder.Code != http.StatusConflict || strings.Contains(conflict.recorder.Body.String(), sourcePath) {
+	conflict := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, bearer, "", false)
+	if conflict.recorder.Code != http.StatusAccepted || strings.Contains(conflict.recorder.Body.String(), sourcePath) {
 		t.Fatalf("coalescing status=%d body=%s", conflict.recorder.Code, conflict.recorder.Body.String())
 	}
 	validateRecordedResponse(t, http.MethodPost, "/api/ingest", conflict.recorder)
-	assertManualIngestJobCount(t, server, accountID, sourceID, 2)
-
+	assertManualIngestJobCount(t, server, accountID, sourceID, 1)
 	metadata := callEndpoint(http.MethodPatch, "/api/sources/"+source.Id, `{"displayName":"Renamed after ingest"}`, bearer, "")
 	server.UpdateSource(metadata.recorder, metadata.request, source.Id, generated.UpdateSourceParams{})
 	if metadata.recorder.Code != http.StatusOK {
@@ -125,13 +144,13 @@ func TestManualIngestIntegration(t *testing.T) {
 
 	foreignPrincipal, _ := insertSourceTestUser(t, adminDB)
 	foreignBearer := insertTestSession(t, db, foreignPrincipal, "bearer", "")
-	foreign := routeIngest(handler, `{"sourceId":"`+source.Id+`"}`, foreignBearer, "", false)
+	foreign := routeIngest(handler, `{"sourceIds":["`+source.Id+`"]}`, foreignBearer, "", false)
 	if foreign.recorder.Code != http.StatusNotFound || strings.Contains(foreign.recorder.Body.String(), sourcePath) {
 		t.Fatalf("foreign status=%d body=%s", foreign.recorder.Code, foreign.recorder.Body.String())
 	}
 
 	notConnected := createIntegrationSource(t, server, bearer, "Not connected ingest", "/data/workouts/not-connected-ingest")
-	notConnectedCall := routeIngest(handler, `{"sourceId":"`+notConnected.Id+`"}`, bearer, "", false)
+	notConnectedCall := routeIngest(handler, `{"sourceIds":["`+notConnected.Id+`"]}`, bearer, "", false)
 	if notConnectedCall.recorder.Code != http.StatusConflict {
 		t.Fatalf("not-connected status=%d body=%s", notConnectedCall.recorder.Code, notConnectedCall.recorder.Body.String())
 	}
@@ -141,7 +160,7 @@ func TestManualIngestIntegration(t *testing.T) {
 	if deleteCall.recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete status=%d", deleteCall.recorder.Code)
 	}
-	deletedCall := routeIngest(handler, `{"sourceId":"`+deleted.Id+`"}`, bearer, "", false)
+	deletedCall := routeIngest(handler, `{"sourceIds":["`+deleted.Id+`"]}`, bearer, "", false)
 	if deletedCall.recorder.Code != http.StatusNotFound {
 		t.Fatalf("deleted status=%d body=%s", deletedCall.recorder.Code, deletedCall.recorder.Body.String())
 	}
@@ -155,7 +174,7 @@ func TestManualIngestIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	updateIntegrationSourceEnvelope(t, adminDB, accountID, faultID, faultEnvelope)
-	faultCall := routeIngest(handler, `{"sourceId":"`+fault.Id+`"}`, bearer, "", false)
+	faultCall := routeIngest(handler, `{"sourceIds":["`+fault.Id+`"]}`, bearer, "", false)
 	if faultCall.recorder.Code != http.StatusServiceUnavailable || strings.Contains(faultCall.recorder.Body.String(), "canonical-fault") {
 		t.Fatalf("canonical fault status=%d body=%s", faultCall.recorder.Code, faultCall.recorder.Body.String())
 	}
@@ -181,16 +200,16 @@ func assertManualIngestArtifacts(t *testing.T, server *Server, adminDB *pgxpool.
 	var childParameters map[string]any
 	var key []byte
 	var generation int64
-	if err := tx.QueryRow(context.Background(), `SELECT j.id,j.kind,j.status,j.priority,j.parameters,j.coalescing_version,j.coalescing_scope,j.coalescing_key,s.source_generation FROM app.jobs j JOIN app.job_config_snapshots s ON s.job_id=j.id WHERE j.parent_job_id=$1`, parentID).Scan(&childID, &childKind, &childStatus, &childPriority, &childParameters, &coalescingVersion, &scope, &key, &generation); err != nil {
+	if err := tx.QueryRow(context.Background(), `SELECT j.id,j.kind,j.status,j.priority,j.parameters,COALESCE(j.coalescing_version,0),COALESCE(j.coalescing_scope,''),COALESCE(j.coalescing_key,''::bytea),s.source_generation FROM app.jobs j JOIN app.job_config_snapshots s ON s.job_id=j.id WHERE j.parent_job_id=$1`, parentID).Scan(&childID, &childKind, &childStatus, &childPriority, &childParameters, &coalescingVersion, &scope, &key, &generation); err != nil {
 		t.Fatal(err)
 	}
-	expectedKey := manualIngestSourceKey(sourceID)
-	for name, parameters := range map[string]map[string]any{"parent": parentParameters, "child": childParameters} {
-		if len(parameters) != 2 || parameters["sourceId"] != compactUUID(sourceID) || parameters["generation"] != float64(1) {
-			t.Fatalf("%s unsafe parameters=%#v", name, parameters)
-		}
+	if len(parentParameters) != 2 || parentParameters["mode"] != "incremental" {
+		t.Fatalf("parent unsafe parameters=%#v", parentParameters)
 	}
-	if parentKind != "manual_ingest" || parentStatus != "queued" || parentPriority != 80 || parentSnapshots != 0 || childKind != "manual_ingest_source" || childStatus != "queued" || childPriority != 80 || generation != 1 || coalescingVersion != 1 || scope != manualIngestSourceScope || !bytes.Equal(key, expectedKey[:]) {
+	if len(childParameters) != 3 || childParameters["sourceId"] != compactUUID(sourceID) || childParameters["generation"] != float64(1) || childParameters["mode"] != "incremental" {
+		t.Fatalf("child unsafe parameters=%#v", childParameters)
+	}
+	if parentKind != "manual_ingest" || parentStatus != "queued" || parentPriority != 80 || parentSnapshots != 0 || childKind != "manual_ingest_source" || childStatus != "queued" || childPriority != 80 || generation != 1 || coalescingVersion != 0 || scope != "" || len(key) != 0 {
 		t.Fatalf("invalid artifacts parent=%s/%s/%d snapshots=%d child=%s/%s/%d generation=%d coalescing=%d/%s", parentKind, parentStatus, parentPriority, parentSnapshots, childKind, childStatus, childPriority, generation, coalescingVersion, scope)
 	}
 	_ = tx.Rollback(context.Background())
@@ -261,7 +280,7 @@ func assertManualIngestJobCount(t *testing.T, server *Server, accountID, sourceI
 	}
 	defer tx.Rollback(context.Background())
 	var count int
-	if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM app.jobs WHERE kind IN ('manual_ingest','manual_ingest_source') AND parameters->>'sourceId'=$1`, compactUUID(sourceID)).Scan(&count); err != nil {
+	if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM app.jobs WHERE kind='manual_ingest_source' AND parameters->>'sourceId'=$1`, compactUUID(sourceID)).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != want {
@@ -281,6 +300,7 @@ func integrationAccountTransaction(t *testing.T, db *pgxpool.Pool, accountID uui
 		}
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
 	return tx
 }
 
@@ -303,4 +323,45 @@ func insertIngestTestAdministrator(t *testing.T, db *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func insertLegacyActiveIngest(t *testing.T, db *pgxpool.Pool, accountID, sourceID uuid.UUID) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	parentID, childID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	key := make([]byte, 32)
+	key[0] = 1
+	tx := integrationAccountTransaction(t, db, accountID)
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,account_id,kind,priority) VALUES($1,$2,'manual_ingest',80)`, parentID, accountID); err != nil {
+		t.Fatal(err)
+	}
+	parameters := `{"sourceId":"` + compactUUID(sourceID) + `","generation":1}`
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs
+		(id,parent_job_id,account_id,kind,priority,parameters,coalescing_version,coalescing_scope,coalescing_key)
+		VALUES($1,$2,$3,'manual_ingest_source',80,$4,1,'manual-ingest-source',$5)`, childID, parentID, accountID, parameters, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.job_config_snapshots
+		(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, childID, accountID, sourceID, []byte("legacy-snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	var legacySchema6 bool
+	var contexts, progress int
+	if err := tx.QueryRow(context.Background(), `SELECT child.parameters->>'mode',child.parameters->'legacySchema6'='true'::jsonb,
+		(SELECT count(*) FROM app.job_source_contexts WHERE job_id=$1),
+		(SELECT count(*) FROM app.job_progress WHERE job_id IN ($1,$2))
+		FROM app.jobs child WHERE child.id=$1`, childID, parentID).Scan(&mode, &legacySchema6, &contexts, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "bounded" || !legacySchema6 || contexts != 1 || progress != 2 {
+		t.Fatalf("legacy ingest compatibility mode/marker/context/progress=%s/%t/%d/%d", mode, legacySchema6, contexts, progress)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return parentID, childID
 }

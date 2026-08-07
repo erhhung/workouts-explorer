@@ -133,7 +133,7 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 		return
 	}
 	w.Header().Set("Location", "/api/sources/"+compactUUID(sourceID))
-	writeJSON(w, http.StatusCreated, generated.Source{Id: compactUUID(sourceID), DisplayName: display, Type: generated.SourceType(sourceconfig.LocalType), AutoSyncEnabled: input.AutoSyncEnabled, Status: generated.CheckingConnection, Generation: 1, Config: generated.HealthAutoExportLocalConfig{Version: generated.HealthAutoExportLocalConfigVersion(local.Version), Path: local.Path}, CreatedAt: createdAt, UpdatedAt: updatedAt})
+	writeJSON(w, http.StatusCreated, generated.Source{Id: compactUUID(sourceID), DisplayName: display, Type: generated.SourceType(sourceconfig.LocalType), AutoSyncEnabled: input.AutoSyncEnabled, Status: generated.SourceStatusCheckingConnection, Generation: 1, Config: generated.HealthAutoExportLocalConfig{Version: generated.HealthAutoExportLocalConfigVersion(local.Version), Path: local.Path}, CreatedAt: createdAt, UpdatedAt: updatedAt})
 }
 
 func (s *Server) GetSource(w http.ResponseWriter, r *http.Request, sourceID generated.SourceID) {

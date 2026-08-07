@@ -289,6 +289,7 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 		t.Fatalf("concurrent same-field preference patches did not preserve lock order: theme=%s", preferences.Theme)
 	}
 	corruptPreferences := integrationAccountTransaction(t, adminDB, userAccountID)
+	defer corruptPreferences.Rollback(context.Background())
 	if _, err := corruptPreferences.Exec(context.Background(), `UPDATE app.preferences SET date_range='legacy-range' WHERE account_id=$1`, userAccountID); err != nil {
 		t.Fatal(err)
 	}
@@ -301,6 +302,7 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 		t.Fatalf("invalid stored date range read: %d %s", invalidRead.recorder.Code, invalidRead.recorder.Body.String())
 	}
 	repairPreferences := integrationAccountTransaction(t, adminDB, userAccountID)
+	defer repairPreferences.Rollback(context.Background())
 	if _, err := repairPreferences.Exec(context.Background(), `UPDATE app.preferences SET date_range=NULL WHERE account_id=$1`, userAccountID); err != nil {
 		t.Fatal(err)
 	}

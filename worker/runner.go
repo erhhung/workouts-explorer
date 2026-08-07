@@ -1,12 +1,16 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/google/uuid"
@@ -21,7 +25,11 @@ const (
 	cleanupTimeout      = 5 * time.Second
 )
 
-var errLeaseLost = errors.New("job lease lost")
+var (
+	errLeaseLost             = errors.New("job lease lost")
+	errJobInterrupted        = errors.New("job execution interrupted")
+	errCancellationRequested = errors.New("job cancellation requested")
+)
 
 type loggedExecutionError struct {
 	err error
@@ -40,6 +48,8 @@ type Runner struct {
 	leaseDuration     time.Duration
 	heartbeatInterval time.Duration
 	outcomeReader     func(context.Context, claimedJob) (jobOutcome, error)
+	beforeProcessFile func(sourceFile)
+	fileSlots         chan struct{}
 }
 
 type claimedJob struct {
@@ -50,7 +60,22 @@ type claimedJob struct {
 	owner      string
 	sourceName string
 	sourceType string
+	mode       ingestMode
+	startDate  *time.Time
+	endDate    *time.Time
+	paramsErr  error
 }
+
+type RunnerOptions struct {
+	FileConcurrency int
+}
+
+type ingestMode string
+
+const (
+	ingestIncremental ingestMode = "incremental"
+	ingestBounded     ingestMode = "bounded"
+)
 
 type executionResult struct {
 	ingest *ingestResults
@@ -63,6 +88,13 @@ type connectionResult struct {
 }
 
 func NewRunner(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecrypto.Keyring, localRoots []string) *Runner {
+	return NewRunnerWithOptions(db, logger, keys, localRoots, RunnerOptions{})
+}
+
+func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecrypto.Keyring, localRoots []string, options RunnerOptions) *Runner {
+	if options.FileConcurrency == 0 {
+		options.FileConcurrency = 2
+	}
 	return &Runner{
 		db:                db,
 		logger:            logger,
@@ -72,7 +104,19 @@ func NewRunner(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecrypto.Keyring
 		pollInterval:      defaultPollInterval,
 		leaseDuration:     defaultLease,
 		heartbeatInterval: defaultHeartbeat,
+		fileSlots:         make(chan struct{}, options.FileConcurrency),
 	}
+}
+
+func ConfigureFileSlotLimits(ctx context.Context, db *pgxpool.Pool, accountLimit, globalLimit int) error {
+	var configured bool
+	if err := db.QueryRow(ctx, `SELECT app.configure_ingest_file_slot_limits($1,$2)`, accountLimit, globalLimit).Scan(&configured); err != nil {
+		return fmt.Errorf("configure ingest file slot limits: %w", err)
+	}
+	if !configured {
+		return errors.New("configure ingest file slot limits: active slots use different limits")
+	}
+	return nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -240,15 +284,58 @@ func (r *Runner) claimNext(ctx context.Context) (claimedJob, error) {
 	defer tx.Rollback(ctx)
 	var job claimedJob
 	err = tx.QueryRow(ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job($1,$2,$3)`, r.workerID, lease, r.leaseDuration).Scan(&job.id, &job.accountID, &job.kind)
+		FROM app.claim_next_worker_job($1,$2,$3,$4)`, r.workerID, lease, r.leaseDuration,
+		database.SupportedSchemaVersion).Scan(&job.id, &job.accountID, &job.kind)
 	if err != nil {
 		return claimedJob{}, err
 	}
 	job.lease = lease
+	if job.kind == "manual_ingest_source" || job.kind == "scheduled_ingest_source" {
+		var parameters []byte
+		if err := tx.QueryRow(ctx, `SELECT parameters FROM app.jobs WHERE id=$1 AND account_id=$2`, job.id, job.accountID).Scan(&parameters); err != nil {
+			return claimedJob{}, err
+		}
+		job.mode, job.startDate, job.endDate, job.paramsErr = decodeIngestParameters(parameters)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return claimedJob{}, err
 	}
 	return job, nil
+}
+
+func decodeIngestParameters(raw []byte) (ingestMode, *time.Time, *time.Time, error) {
+	var value struct {
+		SourceID      string  `json:"sourceId"`
+		Generation    int64   `json:"generation"`
+		Mode          string  `json:"mode"`
+		StartDate     *string `json:"startDate"`
+		EndDate       *string `json:"endDate"`
+		LegacySchema6 *bool   `json:"legacySchema6"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		len(value.SourceID) != 32 || value.Generation < 1 {
+		return "", nil, nil, errors.New("invalid ingest parameters")
+	}
+	for _, character := range value.SourceID {
+		if !(character >= '0' && character <= '9') && !(character >= 'A' && character <= 'F') {
+			return "", nil, nil, errors.New("invalid ingest parameters")
+		}
+	}
+	if value.Mode == string(ingestIncremental) && value.StartDate == nil && value.EndDate == nil && value.LegacySchema6 == nil {
+		return ingestIncremental, nil, nil, nil
+	}
+	if value.Mode != string(ingestBounded) || value.StartDate == nil || value.EndDate == nil ||
+		(value.LegacySchema6 != nil && (!*value.LegacySchema6 || *value.StartDate != "0001-01-01" || *value.EndDate != "9999-12-31")) {
+		return "", nil, nil, errors.New("invalid ingest parameters")
+	}
+	start, startErr := time.Parse(time.DateOnly, *value.StartDate)
+	end, endErr := time.Parse(time.DateOnly, *value.EndDate)
+	if startErr != nil || endErr != nil || end.Before(start) {
+		return "", nil, nil, errors.New("invalid ingest parameters")
+	}
+	return ingestBounded, &start, &end, nil
 }
 
 func (r *Runner) execute(ctx context.Context, job claimedJob) (executionResult, error) {
@@ -272,7 +359,7 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 	heartbeatErr := <-heartbeatDone
 
 	if errors.Is(err, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
-		return nil
+		return errJobInterrupted
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
 		return heartbeatErr
@@ -281,10 +368,10 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 		return err
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-		defer cancel()
-		_, finishErr := r.finishCancelled(cleanupCtx, job)
-		return finishErr
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return errJobInterrupted
 	}
 	if cancellationPending {
 		result = connectedResult()

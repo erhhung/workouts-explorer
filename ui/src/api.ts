@@ -105,6 +105,187 @@ export interface PublicConfig {
   pageSizeMaximum: number;
 }
 
+export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
+export type JobStatus = "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
+export type JobTrigger = "manual" | "scheduled";
+export type NotificationState = "unresolved" | "remind" | "resolved" | "dismissed";
+export type NotificationSeverity = "info" | "warning" | "error";
+
+export interface Pagination {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+export interface JobProgress {
+  current: number;
+  total: number;
+  filesDiscovered: number;
+  filesSkipped: number;
+  filesSucceeded: number;
+  filesFailed: number;
+  workoutsCreated: number;
+  workoutsUpdated: number;
+  workoutsUnchanged: number;
+  workoutsRejected: number;
+}
+
+export interface JobSourceContext {
+  sourceId: string;
+  generation: number;
+  displayName: string;
+  sourceType: string;
+}
+
+export interface JobSummary {
+  id: string;
+  trigger: JobTrigger;
+  status: JobStatus;
+  progress: JobProgress;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  terminalAt?: string;
+}
+
+export interface JobResults {
+  filesSucceeded?: number;
+  filesFailed?: number;
+  workoutsCreated?: number;
+  workoutsUpdated?: number;
+  workoutsUnchanged?: number;
+  workoutsRejected?: number;
+}
+
+export interface JobDetail extends JobSummary {
+  parentJobId?: string;
+  retryRootJobId?: string;
+  retryOrdinal?: number;
+  attempt: number;
+  source?: JobSourceContext;
+  children: JobDetail[];
+  results?: JobResults;
+  failureCode?: string;
+  failureSummary?: string;
+  cancelRequested: boolean;
+  cancelRequestedAt?: string;
+  retryOfJobId?: string;
+  retriedByJobIds: string[];
+}
+
+export interface JobList {
+  pagination: Pagination;
+  items: JobSummary[];
+}
+
+export interface SourceFreshness {
+  lastSyncStartedAt?: string;
+  lastSyncSucceededAt?: string;
+  lastNewExportDiscoveredAt?: string;
+  lastNewExportDate?: string;
+  staleSince?: string;
+}
+
+export interface DataSyncSource {
+  id: string;
+  displayName: string;
+  type: string;
+  status: SourceStatus;
+  autoSyncEnabled: boolean;
+  checkedAt?: string;
+  freshness: SourceFreshness;
+}
+
+export interface DataSyncSchedule {
+  enabled: boolean;
+  sourceCount: number;
+  cadence: string | null;
+  cadenceSeconds: number;
+  staleDays: number;
+  nextRunAt?: string;
+  lastEnqueuedAt?: string;
+  lastJobId?: string;
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  severity: NotificationSeverity;
+  state: NotificationState;
+  subjectType: "account" | "job" | "source";
+  subjectId?: string;
+  jobId?: string;
+  sourceId?: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  remindAt?: string;
+}
+
+export interface NotificationList {
+  pagination: Pagination;
+  items: Notification[];
+}
+
+export interface DataSync {
+  schedule: DataSyncSchedule;
+  sources: DataSyncSource[];
+  activeJob?: JobSummary;
+  latestJob?: JobSummary;
+  notifications: Notification[];
+  notificationsTruncated: boolean;
+}
+
+export interface IngestCreate {
+  sourceIds: string[];
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface IngestAccepted {
+  jobId: string;
+  status: "queued" | "running";
+  reused: boolean;
+}
+
+export interface SafeFields { [key: string]: string | number }
+
+export interface JobFile {
+  id: string;
+  jobId: string;
+  source: JobSourceContext;
+  basename: string;
+  state: "discovered" | "processing" | "succeeded" | "failed";
+  sizeBytes: number;
+  processingStartedAt?: string;
+  processedAt?: string;
+  failureCode?: string;
+  failureSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobEvent {
+  id: number;
+  jobId: string;
+  severity: NotificationSeverity;
+  code: string;
+  message: string;
+  fields: SafeFields;
+  createdAt: string;
+}
+
+export interface JobLog extends Omit<JobEvent, "severity"> {
+  severity: "debug" | NotificationSeverity;
+}
+
+export interface JobFileList { pagination: Pagination; items: JobFile[] }
+export interface JobEventList { pagination: Pagination; items: JobEvent[] }
+export interface JobLogList { pagination: Pagination; items: JobLog[] }
+
 export interface ApiProblem {
   title?: string;
   detail?: string;

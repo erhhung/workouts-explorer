@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { type Preferences, type Workout } from "./api";
-import { Summary, formatDuration } from "./Summary";
+import { Summary, formatAggregateDuration, formatDuration } from "./Summary";
 
 const preferences: Preferences = {
   theme: "dark",
@@ -112,6 +112,24 @@ describe("Summary", () => {
     expect(formatDuration("65.25")).toBe("1m");
     expect(formatDuration("3599.9")).toBe("1h 00m");
     expect(formatDuration("3900.5")).toBe("1h 05m");
+  });
+
+  test("rolls aggregate duration into unbounded days", () => {
+    expect(formatAggregateDuration("86399")).toBe("1d 0h 00m");
+    expect(formatAggregateDuration("405780")).toBe("4d 16h 43m");
+    expect(formatAggregateDuration(String((123 * 86400) + (7 * 3600) + (5 * 60)))).toBe("123d 7h 05m");
+  });
+
+  test("rounds aggregate distance at 100 displayed units without changing workout rows", async () => {
+    const longTotals = { ...totals, distance: { value: "442.232", unit: "km" } };
+    const longSummary = { ...summary, totals: longTotals, byType: [{ type: running, totals: longTotals }] };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(longSummary)) : Promise.resolve(json(workoutPage())));
+    renderSummary();
+    const distanceCard = await screen.findByRole("button", { name: /Distance.*By workout type/ });
+    expect(distanceCard).toHaveTextContent("275 mi");
+    await userEvent.click(distanceCard);
+    expect(document.getElementById(distanceCard.getAttribute("aria-controls")!)).toHaveTextContent("275 mi");
+    expect(await within(screen.getByRole("table")).findByText("6.52 mi")).toBeInTheDocument();
   });
 
   test("queries both resources with the stored shortcut, timezone, paging, sort, and AbortSignals", async () => {

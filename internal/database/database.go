@@ -10,7 +10,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 6
+const SupportedSchemaVersion = 7
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
@@ -50,6 +50,8 @@ func newTracer(options ...otelpgx.Option) *otelpgx.Tracer {
 }
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
+	// Metadata permits compatible older runtimes during a rolling upgrade; the explicit object and privilege
+	// checks below are the authoritative readiness contract for this runtime version.
 	var ready bool
 	err := pool.QueryRow(ctx, `
 		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1
@@ -68,24 +70,75 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND to_regclass('app.workout_route_points') IS NOT NULL
 		   AND to_regclass('app.workout_import_events') IS NOT NULL
 		   AND to_regclass('app.ingest_write_capabilities') IS NOT NULL
+		   AND to_regclass('app.job_source_contexts') IS NOT NULL
+		   AND to_regclass('app.job_progress') IS NOT NULL
+		   AND to_regclass('app.source_objects') IS NOT NULL
+		   AND to_regclass('app.ingest_file_slot_guard') IS NOT NULL
+		   AND to_regclass('app.ingest_file_slot_limits') IS NOT NULL
+		   AND to_regclass('app.ingest_file_slots') IS NOT NULL
+		   AND to_regclass('app.job_file_candidate_sets') IS NOT NULL
+		   AND to_regclass('app.job_file_candidates') IS NOT NULL
+		   AND to_regclass('app.job_events') IS NOT NULL
+		   AND to_regclass('app.job_logs') IS NOT NULL
+		   AND to_regclass('app.notifications') IS NOT NULL
+		   AND to_regclass('app.source_sync_state') IS NOT NULL
+		   AND to_regclass('app.auto_sync_policy') IS NOT NULL
+		   AND to_regclass('app.account_sync_schedules') IS NOT NULL
 		   AND has_function_privilege(current_user, 'app.current_account_id()', 'EXECUTE')
-		   AND has_function_privilege(current_user, 'app.request_job_cancellation(uuid,uuid)', 'EXECUTE')
-		   AND (SELECT count(*) = 10 AND bool_and(pg_get_userbyid(p.proowner) = 'workouts_security_owner')
+		   AND (SELECT bool_and(pg_get_userbyid(p.proowner) = 'workouts_security_owner')
 		          FROM pg_proc p
 		         WHERE p.oid IN (
 		             'app.claim_next_worker_job_internal(text,uuid,interval,boolean)'::regprocedure,
 		             'app.claim_next_worker_job(text,uuid,interval)'::regprocedure,
+		             'app.claim_next_worker_job(text,uuid,interval,integer)'::regprocedure,
 		             'app.claim_next_source_connection_check(text,uuid,interval)'::regprocedure,
 		             'app.fence_ingest_job(uuid,text,uuid)'::regprocedure,
 		             'app.clear_ingest_write_capability()'::regprocedure,
 		             'app.finish_job(uuid,text,uuid,text,text,text)'::regprocedure,
 		             'app.recover_expired_job(uuid)'::regprocedure,
 		             'app.request_job_cancellation(uuid,uuid)'::regprocedure,
+		             'app.request_owned_job_cancellation(uuid,uuid)'::regprocedure,
 		             'app.delete_source(uuid,uuid)'::regprocedure,
-		             'app.read_worker_job_log_context(uuid,text,uuid)'::regprocedure
+		             'app.read_worker_job_log_context(uuid,text,uuid)'::regprocedure,
+		             'app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint)'::regprocedure,
+		             'app.record_job_event(uuid,text,uuid,text,jsonb)'::regprocedure,
+		             'app.record_job_log(uuid,text,uuid,text,jsonb)'::regprocedure
+		             ,'app.configure_ingest_file_slot_limits(integer,integer)'::regprocedure
+		             ,'app.acquire_ingest_file_slot(uuid,text,uuid)'::regprocedure
+		             ,'app.release_ingest_file_slot(uuid,text,uuid,uuid)'::regprocedure
+		             ,'app.record_ingest_file_manifest(uuid,text,uuid,jsonb)'::regprocedure
+		             ,'app.record_successful_source_object(uuid,text,uuid,text,date,bigint,timestamp with time zone,text,bytea)'::regprocedure
+		             ,'app.track_source_sync_job()'::regprocedure
+		             ,'app.create_source_sync_state()'::regprocedure
+		             ,'app.notify_terminal_ingest_parent()'::regprocedure
+		             ,'app.evaluate_source_staleness(uuid,integer,timestamp with time zone)'::regprocedure
+		             ,'app.dismiss_owned_notification(uuid,uuid)'::regprocedure
+		             ,'app.read_owned_job_files(uuid,integer,integer)'::regprocedure
+		             ,'app.read_owned_job_logs(uuid,integer,integer)'::regprocedure
+		             ,'app.count_owned_job_rows(uuid,text)'::regprocedure
+		             ,'app.configure_auto_sync_policy(interval,integer)'::regprocedure
+		             ,'app.claim_due_sync_account(text,uuid,interval,integer)'::regprocedure
+		             ,'app.read_leased_sync_sources(uuid,text,uuid)'::regprocedure
+		             ,'app.enqueue_leased_scheduled_ingest(uuid,text,uuid,uuid,bytea,jsonb)'::regprocedure
+		             ,'app.finish_sync_account(uuid,text,uuid,uuid)'::regprocedure
+		             ,'app.release_sync_account(uuid,text,uuid,interval)'::regprocedure
+		             ,'app.read_owned_sync_schedule()'::regprocedure
+		             ,'app.create_legacy_ingest_read_models()'::regprocedure
 		         ))
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='job_config_snapshots_ingest_compatibility_after_insert' AND NOT tgisinternal)
+		   AND position('worker runtime version 7 or newer is required' in
+		       pg_get_functiondef('app.claim_next_worker_job(text,uuid,interval)'::regprocedure)) > 0
 		   AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'workouts_security_owner'
 		       AND NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls)
+		   AND has_table_privilege('workouts_security_owner', 'app.jobs', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.sources', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.preferences', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.source_files', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.job_source_contexts', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.auto_sync_policy', 'SELECT')
+		   AND has_table_privilege('workouts_security_owner', 'app.account_sync_schedules', 'SELECT')
+		   AND has_column_privilege('workouts_security_owner', 'app.accounts', 'state', 'UPDATE')
 		   AND (current_user = 'workouts_worker' OR (
 		       to_regclass('app.authentication_principals') IS NOT NULL
 		       AND to_regclass('app.sessions') IS NOT NULL
@@ -100,16 +153,57 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND has_column_privilege(current_user, 'app.sources', 'canonical_display_name', 'INSERT')
 		       AND has_column_privilege(current_user, 'app.sources', 'canonical_display_name', 'UPDATE')
 		       AND has_function_privilege(current_user, 'app.delete_source(uuid,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.request_owned_job_cancellation(uuid,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.request_job_cancellation(uuid,uuid)', 'EXECUTE')
 		       AND NOT has_column_privilege(current_user, 'app.sources', 'deleted_at', 'UPDATE')
 		       AND has_column_privilege(current_user, 'app.job_config_snapshots', 'config_envelope', 'INSERT')
 		       AND has_column_privilege(current_user, 'app.job_config_snapshots', 'source_id', 'SELECT')
 		       AND NOT has_column_privilege(current_user, 'app.job_config_snapshots', 'config_envelope', 'SELECT')
 		       AND NOT has_column_privilege(current_user, 'app.job_config_snapshots', 'created_at', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.source_files', 'SELECT')
+		       AND has_function_privilege(current_user, 'app.read_owned_job_files(uuid,integer,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.read_owned_job_logs(uuid,integer,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.count_owned_job_rows(uuid,text)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.workouts', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.workout_import_events', 'SELECT')
 		       AND has_column_privilege(current_user, 'app.workout_import_events', 'warnings', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.workouts', 'INSERT')
+		       AND has_table_privilege(current_user, 'app.job_source_contexts', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_source_contexts', 'job_id', 'INSERT')
+		       AND has_column_privilege(current_user, 'app.job_source_contexts', 'source_type', 'INSERT')
+		       AND has_table_privilege(current_user, 'app.job_progress', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'job_id', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.job_progress', 'UPDATE')
+		       AND has_column_privilege(current_user, 'app.job_events', 'safe_message', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.job_events', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.notifications', 'message', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.notifications', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.job_logs', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'account_id', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'source_id', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'last_sync_started_at', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'last_sync_succeeded_at', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'last_new_export_discovered_at', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'last_new_export_date', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_sync_state', 'stale_since', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.source_sync_state', 'SELECT')
+		       AND has_function_privilege(current_user, 'app.evaluate_source_staleness(uuid,integer,timestamp with time zone)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.dismiss_owned_notification(uuid,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.read_owned_sync_schedule()', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.configure_auto_sync_policy(interval,integer)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.claim_due_sync_account(text,uuid,interval,integer)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.read_leased_sync_sources(uuid,text,uuid)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.enqueue_leased_scheduled_ingest(uuid,text,uuid,uuid,bytea,jsonb)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.finish_sync_account(uuid,text,uuid,uuid)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.release_sync_account(uuid,text,uuid,interval)', 'EXECUTE')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'UPDATE')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'UPDATE')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'DELETE')
 		   ))
 		   AND EXISTS (
 		       SELECT 1 FROM pg_roles
@@ -130,10 +224,56 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND has_column_privilege(current_user, 'app.workout_import_events', 'warnings', 'INSERT')
 		       AND has_function_privilege(current_user, 'app.valid_workout_warnings(jsonb)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.read_worker_job_log_context(uuid,text,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.record_job_event(uuid,text,uuid,text,jsonb)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.record_job_log(uuid,text,uuid,text,jsonb)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.claim_next_worker_job(text,uuid,interval,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.configure_ingest_file_slot_limits(integer,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.acquire_ingest_file_slot(uuid,text,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.release_ingest_file_slot(uuid,text,uuid,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.record_ingest_file_manifest(uuid,text,uuid,jsonb)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.record_successful_source_object(uuid,text,uuid,text,date,bigint,timestamp with time zone,text,bytea)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.configure_auto_sync_policy(interval,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.claim_due_sync_account(text,uuid,interval,integer)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.read_leased_sync_sources(uuid,text,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.enqueue_leased_scheduled_ingest(uuid,text,uuid,uuid,bytea,jsonb)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.finish_sync_account(uuid,text,uuid,uuid)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.release_sync_account(uuid,text,uuid,interval)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.read_owned_sync_schedule()', 'EXECUTE')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'job_id', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'account_id', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'files_discovered', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'files_skipped', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'files_succeeded', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'files_failed', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'workouts_created', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'workouts_updated', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'workouts_unchanged', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.job_progress', 'workouts_rejected', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.job_progress', 'SELECT')
+		       AND has_column_privilege(current_user, 'app.source_objects', 'observed_identity', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.source_objects', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.ingest_file_slots', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.ingest_file_slot_limits', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.job_file_candidates', 'SELECT')
+		       AND NOT has_function_privilege(current_user, 'app.request_owned_job_cancellation(uuid,uuid)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.request_job_cancellation(uuid,uuid)', 'EXECUTE')
+		       AND NOT has_table_privilege(current_user, 'app.job_progress', 'UPDATE')
+		       AND NOT has_table_privilege(current_user, 'app.job_events', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.job_logs', 'INSERT')
 		       AND NOT has_table_privilege(current_user, 'app.workout_import_events', 'DELETE')
 		       AND NOT has_table_privilege(current_user, 'app.ingest_write_capabilities', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.ingest_write_capabilities', 'INSERT')
 		       AND NOT has_table_privilege(current_user, 'app.job_config_snapshots', 'SELECT')
+		       AND NOT has_column_privilege(current_user, 'app.sources', 'config_envelope', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'UPDATE')
+		       AND NOT has_table_privilege(current_user, 'app.auto_sync_policy', 'DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'UPDATE')
+		       AND NOT has_table_privilege(current_user, 'app.account_sync_schedules', 'DELETE')
 		       AND NOT has_table_privilege(current_user, 'app.authentication_principals', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.users', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.administrators', 'SELECT')

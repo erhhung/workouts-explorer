@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,6 +31,9 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 	workerDB := openWorkerTestPool(t, ctx, workerURL)
 	setupDB := openWorkerTestPool(t, ctx, migrationURL)
 	keys := testKeyring(t)
+	if err := ConfigureFileSlotLimits(ctx, workerDB, 2, 4); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("golden import and unchanged reimport", func(t *testing.T) {
 		root := t.TempDir()
@@ -115,6 +120,88 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.workout_import_events WHERE job_id=$1 AND kind='created'`, first.childID)
 		assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.workout_import_events WHERE job_id=$1 AND kind='updated'`, second.childID)
 		assertTerminalIngest(t, tx, second, "succeeded", "succeeded")
+	})
+
+	t.Run("newest export deterministically wins overlapping provider workout", func(t *testing.T) {
+		root := t.TempDir()
+		olderName := "HealthAutoExport-2026-08-03.json"
+		writeSyntheticExport(t, filepath.Join(root, olderName), "60", 2)
+		writeSyntheticExport(t, filepath.Join(root, "HealthAutoExport-2026-08-04.json"), "90", 4)
+		fixture := insertIngestSource(t, setupDB, root)
+		first := enqueueIngestJob(t, setupDB, keys, fixture)
+		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.beforeProcessFile = func(file sourceFile) {
+			if file.name == olderName {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		assertRanIngest(t, runner, ctx)
+		assertSyntheticWorkoutState(t, setupDB, fixture, "90", 4)
+
+		second := enqueueIncrementalIngestJob(t, setupDB, keys, fixture)
+		runner.beforeProcessFile = nil
+		assertRanIngest(t, runner, ctx)
+		assertSyntheticWorkoutState(t, setupDB, fixture, "90", 4)
+		tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer tx.Rollback(ctx)
+		assertCountQuery(t, tx, 2, `SELECT count(*) FROM app.source_files WHERE job_id=$1 AND state='succeeded'`, first.childID)
+		assertCountQuery(t, tx, 0, `SELECT count(*) FROM app.source_files WHERE job_id=$1`, second.childID)
+	})
+
+	t.Run("committed file before progress recovers as succeeded", func(t *testing.T) {
+		root := t.TempDir()
+		writeSyntheticExport(t, filepath.Join(root, "HealthAutoExport-2026-08-02.json"), "60", 1)
+		fixture := insertIngestSource(t, setupDB, root)
+		jobFixture := enqueueIngestJob(t, setupDB, keys, fixture)
+		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.leaseDuration = 250 * time.Millisecond
+		job, err := runner.claimNext(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sourceID, _, _, err := runner.readSnapshot(ctx, job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		directory, err := sourceconfig.OpenDirectory(root, []string{root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files, err := discoverSourceFiles(directory)
+		_ = directory.Close()
+		if err != nil || len(files) != 1 {
+			t.Fatalf("files=%d err=%v", len(files), err)
+		}
+		if err := runner.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
+			t.Fatal(err)
+		}
+		if state, err := runner.recordFileManifest(ctx, job, files); err != nil || state != "created" {
+			t.Fatalf("manifest=%s err=%v", state, err)
+		}
+		outcome := runner.processSourceFile(ctx, job, sourceID, root, files[0])
+		if !outcome.succeeded || outcome.fatal != nil {
+			t.Fatalf("pre-progress outcome=%+v", outcome)
+		}
+		time.Sleep(runner.leaseDuration + 50*time.Millisecond)
+		replacement := testRunner(workerDB, keys, root, io.Discard)
+		replacementJob, err := replacement.claimNext(ctx)
+		if err != nil || replacementJob.id != jobFixture.childID {
+			t.Fatalf("replacement job=%s err=%v", replacementJob.id, err)
+		}
+		if _, err := replacement.execute(ctx, replacementJob); err != nil {
+			t.Fatal(err)
+		}
+		tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer tx.Rollback(ctx)
+		var skipped, succeeded int
+		if err := tx.QueryRow(ctx, `SELECT files_skipped,files_succeeded FROM app.job_progress WHERE job_id=$1`,
+			jobFixture.childID).Scan(&skipped, &succeeded); err != nil {
+			t.Fatal(err)
+		}
+		if skipped != 0 || succeeded != 1 {
+			t.Fatalf("recovered progress skipped/succeeded=%d/%d", skipped, succeeded)
+		}
+		assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.workout_import_events WHERE job_id=$1`, jobFixture.childID)
 	})
 
 	t.Run("malformed file rolls back and redacts", func(t *testing.T) {
@@ -261,6 +348,49 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 			t.Fatal("replacement ingest lease cleanup failed")
 		}
 	})
+
+	t.Run("shutdown interruption leaves ingest retryable", func(t *testing.T) {
+		root := t.TempDir()
+		fixture := insertIngestSource(t, setupDB, root)
+		jobFixture := enqueueIngestJob(t, setupDB, keys, fixture)
+		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.leaseDuration = 5 * time.Millisecond
+		job, err := runner.claimNext(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		interrupted, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := runner.execute(interrupted, job); !errors.Is(err, context.Canceled) {
+			t.Fatalf("shutdown ingest error=%v", err)
+		}
+		tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer tx.Rollback(ctx)
+		var childStatus, parentStatus string
+		var snapshots int
+		if err := tx.QueryRow(ctx, `SELECT child.status,parent.status,
+			(SELECT count(*) FROM app.job_config_snapshots WHERE job_id=child.id)
+			FROM app.jobs child JOIN app.jobs parent ON parent.id=child.parent_job_id WHERE child.id=$1`,
+			jobFixture.childID).Scan(&childStatus, &parentStatus, &snapshots); err != nil {
+			t.Fatal(err)
+		}
+		if childStatus != "running" || parentStatus != "running" || snapshots != 1 {
+			t.Fatalf("interrupted child/parent/snapshots=%s/%s/%d", childStatus, parentStatus, snapshots)
+		}
+		_ = tx.Rollback(ctx)
+		time.Sleep(runner.leaseDuration + 10*time.Millisecond)
+		replacement := testRunner(workerDB, keys, root, io.Discard)
+		replacementJob, err := replacement.claimNext(ctx)
+		if err != nil || replacementJob.id != jobFixture.childID {
+			t.Fatalf("interrupted ingest recovery job=%s err=%v", replacementJob.id, err)
+		}
+		if _, err := replacement.execute(ctx, replacementJob); err != nil {
+			t.Fatal(err)
+		}
+		tx = beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer tx.Rollback(ctx)
+		assertTerminalIngest(t, tx, jobFixture, "succeeded", "succeeded")
+	})
 }
 
 func assertIngestLogResults(t *testing.T, output string, files, processed, ingested int, failed []string) {
@@ -333,7 +463,20 @@ func enqueueIngestJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring
 	return enqueueIngestJobKind(t, db, keys, fixture, "manual_ingest", "manual_ingest_source")
 }
 
+func enqueueIncrementalIngestJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture) ingestJobFixture {
+	parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1,"mode":"incremental"}`,
+		strings.ToUpper(strings.ReplaceAll(fixture.sourceID.String(), "-", "")))
+	return enqueueIngestJobWithParameters(t, db, keys, fixture, "manual_ingest", "manual_ingest_source", parameters)
+}
+
 func enqueueIngestJobKind(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture, parentKind, childKind string) ingestJobFixture {
+	t.Helper()
+	parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1,"mode":"bounded","startDate":"0001-01-01","endDate":"9999-12-31"}`,
+		strings.ToUpper(strings.ReplaceAll(fixture.sourceID.String(), "-", "")))
+	return enqueueIngestJobWithParameters(t, db, keys, fixture, parentKind, childKind, parameters)
+}
+
+func enqueueIngestJobWithParameters(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture, parentKind, childKind, parameters string) ingestJobFixture {
 	t.Helper()
 	job := ingestJobFixture{parentID: uuid.New(), childID: uuid.New()}
 	canonical := []byte(fmt.Sprintf(`{"version":1,"path":%q}`, fixture.root))
@@ -349,8 +492,17 @@ func enqueueIngestJobKind(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Key
 		VALUES($1,$2,$3,80)`, job.parentID, fixture.accountID, parentKind); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority)
-		VALUES($1,$2,$3,$4,80)`, job.childID, job.parentID, fixture.accountID, childKind); err != nil {
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority,parameters)
+		VALUES($1,$2,$3,$4,80,$5)`, job.childID, job.parentID, fixture.accountID, childKind, parameters); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.job_progress(job_id,account_id) VALUES($1,$3),($2,$3)`,
+		job.parentID, job.childID, fixture.accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.job_source_contexts
+		(job_id,account_id,source_id,source_generation,display_name,source_type)
+		VALUES($1,$2,$3,1,'integration source','health-auto-export-local')`, job.childID, fixture.accountID, fixture.sourceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(context.Background(), `INSERT INTO app.job_config_snapshots
@@ -362,6 +514,24 @@ func enqueueIngestJobKind(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Key
 		t.Fatal(err)
 	}
 	return job
+}
+
+func assertSyntheticWorkoutState(t *testing.T, db *pgxpool.Pool, fixture ingestSourceFixture, duration string, routePoints int) {
+	t.Helper()
+	tx := beginWorkerTestAccount(t, db, fixture.accountID)
+	defer tx.Rollback(context.Background())
+	var actualDuration string
+	var actualPoints int
+	if err := tx.QueryRow(context.Background(), `SELECT workout.provider_duration::text,count(point.sequence)
+		FROM app.workouts workout LEFT JOIN app.workout_route_points point
+		  ON point.workout_id=workout.id AND point.account_id=workout.account_id
+		WHERE workout.source_id=$1 AND workout.provider_id='synthetic-provider'
+		GROUP BY workout.provider_duration`, fixture.sourceID).Scan(&actualDuration, &actualPoints); err != nil {
+		t.Fatal(err)
+	}
+	if actualDuration != duration || actualPoints != routePoints {
+		t.Fatalf("synthetic workout duration/route points=%s/%d want=%s/%d", actualDuration, actualPoints, duration, routePoints)
+	}
 }
 
 func copyGoldenIngestFixtures(t *testing.T, target string) {
