@@ -271,6 +271,7 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 
 ### Parsing and normalization
 
+- Provider reference: [Health Auto Export workout JSON format](https://help.healthyapps.dev/en/health-auto-export/export-format/workouts/), including versioned workout fields, aggregate units, and route-point semantics.
 - Parse `/data/workouts` without depending on JSON key order.
 - Preserve provider duration independently from rounded timestamp differences.
 - Prefer explicit provider aggregates over sums of incomplete sample arrays.

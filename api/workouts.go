@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -120,6 +123,357 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		Pagination: generated.Pagination{Page: page, PageSize: pageSize, TotalItems: total, TotalPages: totalPages},
 		Items:      items,
 	})
+}
+
+func (s *Server) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutID generated.WorkoutID) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	id, valid := parseCompactUUID(workoutID)
+	if !valid {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "workout ID is invalid")
+		return
+	}
+	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var exists bool
+	if err = tx.QueryRow(r.Context(), `SELECT true FROM app.workouts WHERE id=$1 AND account_id=$2`, id, *session.accountID).Scan(&exists); err == pgx.ErrNoRows {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "workout was not found")
+		return
+	} else if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	rows, err := tx.Query(r.Context(), `SELECT event.id,event.kind,event.job_id,event.source_id,
+		COALESCE(context.display_name,source.display_name),COALESCE(context.source_type,source.type),
+		file.relative_name,event.warnings,event.created_at
+	 FROM app.workout_import_events event
+	 JOIN app.source_files file ON file.id=event.source_file_id AND file.account_id=event.account_id
+	 JOIN app.sources source ON source.id=event.source_id AND source.account_id=event.account_id
+	 LEFT JOIN app.job_source_contexts context ON context.job_id=event.job_id AND context.account_id=event.account_id
+	 WHERE event.workout_id=$1 AND event.account_id=$2
+	 ORDER BY event.created_at,event.id`, id, *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer rows.Close()
+	items := make([]generated.WorkoutProvenanceEvent, 0)
+	for rows.Next() {
+		var item generated.WorkoutProvenanceEvent
+		var eventID, jobID, sourceID uuid.UUID
+		var relativeName string
+		var warnings []byte
+		if err = rows.Scan(&eventID, &item.Kind, &jobID, &sourceID, &item.SourceName, &item.SourceType,
+			&relativeName, &warnings, &item.ImportedAt); err != nil {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+		item.Id, item.JobId, item.SourceId = compactUUID(eventID), compactUUID(jobID), compactUUID(sourceID)
+		item.SourceFile = path.Base(relativeName)
+		if item.Warnings, err = decodeProvenanceWarnings(warnings); err != nil {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+		items = append(items, item)
+	}
+	if rows.Err() != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, generated.WorkoutProvenance{WorkoutId: compactUUID(id), Items: items})
+}
+
+func (s *Server) DeleteWorkout(w http.ResponseWriter, r *http.Request, workoutID generated.WorkoutID, params generated.DeleteWorkoutParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok || !requireCSRF(w, r, session, params.XCSRFToken) {
+		return
+	}
+	id, valid := parseCompactUUID(workoutID)
+	if !valid {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "workout ID is invalid")
+		return
+	}
+	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var jobID uuid.UUID
+	var reused bool
+	var targetCount int
+	err = tx.QueryRow(r.Context(), `SELECT job_id,reused,target_count FROM app.enqueue_workout_deletion($1,$2)`, id, session.principalID).Scan(&jobID, &reused, &targetCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "workout was not found")
+		return
+	}
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	var status generated.JobStatus
+	if err = tx.QueryRow(r.Context(), `SELECT status FROM app.jobs WHERE id=$1`, jobID).Scan(&status); err != nil || tx.Commit(r.Context()) != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	w.Header().Set("Location", "/api/jobs/"+compactUUID(jobID))
+	writeJSON(w, http.StatusAccepted, generated.WorkoutDeletionAccepted{
+		JobId: compactUUID(jobID), Status: status, Reused: reused, TargetCount: targetCount,
+	})
+}
+
+func (s *Server) DeleteWorkoutRange(w http.ResponseWriter, r *http.Request, params generated.DeleteWorkoutRangeParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok || !requireCSRF(w, r, session, params.XCSRFToken) {
+		return
+	}
+	if params.EndDate.Time.Before(params.StartDate.Time) {
+		writeValidationProblem(w, r, http.StatusBadRequest, "date range is invalid", generated.ValidationError{Field: "endDate", Code: "range"})
+		return
+	}
+	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var jobID uuid.UUID
+	var reused bool
+	var targetCount int
+	err = tx.QueryRow(r.Context(), `SELECT job_id,reused,target_count FROM app.enqueue_workout_range_deletion($1,$2,$3)`,
+		params.StartDate.Time, params.EndDate.Time, session.principalID).Scan(&jobID, &reused, &targetCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "no workouts were found in the requested range")
+		return
+	}
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	var status generated.JobStatus
+	if err = tx.QueryRow(r.Context(), `SELECT status FROM app.jobs WHERE id=$1`, jobID).Scan(&status); err != nil || tx.Commit(r.Context()) != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	w.Header().Set("Location", "/api/jobs/"+compactUUID(jobID))
+	writeJSON(w, http.StatusAccepted, generated.WorkoutDeletionAccepted{
+		JobId: compactUUID(jobID), Status: status, Reused: reused, TargetCount: targetCount,
+	})
+}
+
+func (s *Server) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, workoutID generated.WorkoutID) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	id, valid := parseCompactUUID(workoutID)
+	if !valid {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "workout ID is invalid")
+		return
+	}
+	tx, err := s.accountTransactionWithOptions(r.Context(), *session.accountID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	result := generated.WorkoutPointsExport{SchemaVersion: generated.WorkoutPointsExportSchemaVersionN1, WorkoutId: compactUUID(id)}
+	var localDate *time.Time
+	err = tx.QueryRow(r.Context(), `SELECT type.provider_label,workout.started_at,workout.ended_at,workout.local_start_date
+		FROM app.workouts workout JOIN app.workout_types type ON type.id=workout.workout_type_id AND type.account_id=workout.account_id
+		WHERE workout.id=$1 AND workout.account_id=$2`, id, *session.accountID).
+		Scan(&result.WorkoutType, &result.StartedAt, &result.EndedAt, &localDate)
+	if err == pgx.ErrNoRows {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "workout was not found")
+		return
+	} else if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	rows, err := tx.Query(r.Context(), `SELECT sequence,recorded_at,timestamp_offset_minutes,longitude,latitude,altitude,speed,course,
+		horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy
+		FROM app.workout_route_points WHERE workout_id=$1 AND account_id=$2 ORDER BY sequence`, id, *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer rows.Close()
+	result.Points = make([]generated.NormalizedRoutePoint, 0)
+	for rows.Next() {
+		var point generated.NormalizedRoutePoint
+		var offset *int
+		var altitude, speed, course, horizontalAccuracy, verticalAccuracy, speedAccuracy, courseAccuracy *float64
+		if err = rows.Scan(&point.Sequence, &point.RecordedAt, &offset, &point.Longitude, &point.Latitude, &altitude, &speed, &course,
+			&horizontalAccuracy, &verticalAccuracy, &speedAccuracy, &courseAccuracy); err != nil {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+		setNullable(&point.OriginalOffsetMinutes, offset)
+		setNullable(&point.AltitudeMeters, altitude)
+		setNullable(&point.SpeedMetersPerSecond, speed)
+		setNullable(&point.CourseDegrees, course)
+		setNullable(&point.HorizontalAccuracyMeters, horizontalAccuracy)
+		setNullable(&point.VerticalAccuracyMeters, verticalAccuracy)
+		setNullable(&point.SpeedAccuracyMetersPerSecond, speedAccuracy)
+		setNullable(&point.CourseAccuracyDegrees, courseAccuracy)
+		result.Points = append(result.Points, point)
+	}
+	if rows.Err() != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	if len(result.Points) == 0 {
+		writeProblem(w, r, http.StatusConflict, "Conflict", "workout has no route to export")
+		return
+	}
+	date := result.StartedAt.UTC().Format(time.DateOnly)
+	if localDate != nil {
+		date = localDate.Format(time.DateOnly)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+workoutExportFilename(date, result.WorkoutType, "json")+`"`)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, workoutID generated.WorkoutID) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	id, valid := parseCompactUUID(workoutID)
+	if !valid {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "workout ID is invalid")
+		return
+	}
+	tx, err := s.accountTransactionWithOptions(r.Context(), *session.accountID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	result := generated.WorkoutGeoJSONFeature{Type: generated.Feature, Geometry: generated.GeoJSONLineString{Type: generated.LineString}}
+	result.Properties.WorkoutId = compactUUID(id)
+	var localDate *time.Time
+	var minimumAltitude, maximumAltitude, elevationGain *float64
+	var completeAltitude bool
+	err = tx.QueryRow(r.Context(), `SELECT type.provider_label,workout.started_at,workout.ended_at,workout.local_start_date,
+		route.point_count,route.minimum_longitude,route.minimum_latitude,route.maximum_longitude,route.maximum_latitude,
+		route.minimum_altitude,route.maximum_altitude,route.elevation_gain,route.has_complete_altitude
+		FROM app.workouts workout JOIN app.workout_types type ON type.id=workout.workout_type_id AND type.account_id=workout.account_id
+		JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
+		WHERE workout.id=$1 AND workout.account_id=$2`, id, *session.accountID).
+		Scan(&result.Properties.WorkoutType, &result.Properties.StartedAt, &result.Properties.EndedAt, &localDate,
+			&result.Properties.PointCount, &result.Properties.Bounds.MinimumLongitude, &result.Properties.Bounds.MinimumLatitude,
+			&result.Properties.Bounds.MaximumLongitude, &result.Properties.Bounds.MaximumLatitude,
+			&minimumAltitude, &maximumAltitude, &elevationGain, &completeAltitude)
+	if err == pgx.ErrNoRows {
+		var routeExists bool
+		lookupErr := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM app.workouts WHERE id=$1 AND account_id=$2)`, id, *session.accountID).Scan(&routeExists)
+		if lookupErr != nil {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+		if routeExists {
+			writeProblem(w, r, http.StatusConflict, "Conflict", "workout has no route to export")
+			return
+		}
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "workout was not found")
+		return
+	} else if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	if minimumAltitude != nil && maximumAltitude != nil && elevationGain != nil {
+		result.Properties.Elevation.Set(generated.RouteElevation{MinimumMeters: *minimumAltitude, MaximumMeters: *maximumAltitude, GainMeters: *elevationGain})
+	} else {
+		result.Properties.Elevation.SetNull()
+	}
+	if result.Properties.PointCount < 2 {
+		writeProblem(w, r, http.StatusConflict, "Conflict", "workout route needs at least two points for GeoJSON")
+		return
+	}
+	rows, err := tx.Query(r.Context(), `SELECT longitude,latitude,altitude FROM app.workout_route_points
+		WHERE workout_id=$1 AND account_id=$2 ORDER BY sequence`, id, *session.accountID)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	defer rows.Close()
+	result.Geometry.Coordinates = make([][]float64, 0, result.Properties.PointCount)
+	for rows.Next() {
+		var longitude, latitude float64
+		var altitude *float64
+		if err = rows.Scan(&longitude, &latitude, &altitude); err != nil || (completeAltitude && altitude == nil) {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+		coordinate := []float64{longitude, latitude}
+		if completeAltitude {
+			coordinate = append(coordinate, *altitude)
+		}
+		result.Geometry.Coordinates = append(result.Geometry.Coordinates, coordinate)
+	}
+	if rows.Err() != nil || len(result.Geometry.Coordinates) != result.Properties.PointCount {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	date := result.Properties.StartedAt.UTC().Format(time.DateOnly)
+	if localDate != nil {
+		date = localDate.Format(time.DateOnly)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+workoutExportFilename(date, result.Properties.WorkoutType, "geojson")+`"`)
+	w.Header().Set("Content-Type", "application/geo+json")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func workoutExportFilename(date, workoutType, extension string) string {
+	var slug strings.Builder
+	pendingSeparator := false
+	for _, r := range strings.ToLower(workoutType) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if pendingSeparator && slug.Len() < 39 {
+				slug.WriteByte('-')
+			}
+			if slug.Len() < 40 {
+				slug.WriteRune(r)
+			}
+			pendingSeparator = false
+		} else if slug.Len() > 0 {
+			pendingSeparator = true
+		}
+	}
+	name := strings.Trim(slug.String(), "-")
+	if name == "" {
+		name = "workout"
+	}
+	return date + "-" + name + "." + extension
+}
+
+func decodeProvenanceWarnings(value []byte) ([]generated.WorkoutProvenanceWarning, error) {
+	var stored []struct {
+		Code       generated.WorkoutProvenanceWarningCode `json:"code"`
+		Field      string                                 `json:"field"`
+		RoutePoint int                                    `json:"route_point"`
+	}
+	if err := json.Unmarshal(value, &stored); err != nil {
+		return nil, err
+	}
+	warnings := make([]generated.WorkoutProvenanceWarning, 0, len(stored))
+	for _, warning := range stored {
+		item := generated.WorkoutProvenanceWarning{Code: warning.Code, Field: warning.Field}
+		if warning.RoutePoint >= 0 {
+			item.RoutePoint = &warning.RoutePoint
+		}
+		warnings = append(warnings, item)
+	}
+	return warnings, nil
 }
 
 func (s *Server) ListWorkoutTypes(w http.ResponseWriter, r *http.Request) {

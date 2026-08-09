@@ -8,7 +8,7 @@ const checks = [
   ["immediate pinned tooltip", /\.info-tip\.is-open > \.tooltip-content[^}]+transition-delay: 0s/.test(styles)],
   ["Data Sync overflow", /\.data-sync-page\s*\{[^}]+overflow: visible/.test(styles)],
   ["narrow schedule layout", styles.includes("@media (max-width: 30rem)")],
-  ["viewport tooltip width", styles.includes("max-width: min(18rem, calc(100vw - 4rem))")],
+  ["viewport tooltip width", styles.includes("max-width: min(18.2rem, calc(100vw - 4rem))")],
   ["compact help marker", /\.schedule-details dt\s*\{[^}]+gap: 0\.05rem/.test(styles) && /\.info-tip > button > span\s*\{[^}]+width: 0\.85rem[^}]+height: 0\.85rem/.test(styles)],
   ["notification panel spacing", /\.sync-notification\s*\{[^}]+margin-bottom: var\(--space-5\)/.test(styles)],
   ["filled semantic statuses", ["succeeded", "failed", "partially_succeeded", "cancelled", "running"].every((status) => new RegExp(`\\.sync-status--[^}]*${status}|\\.sync-status--${status}`).test(styles)) && styles.includes("background: var(--status-success)") && styles.includes("background: var(--status-error)")],

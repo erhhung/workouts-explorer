@@ -267,6 +267,8 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		if results.filesDiscovered != 0 || results.filesSkipped != 0 || results.filesSucceeded != 0 || results.filesFailed != 0 {
 			return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
 		}
+	}
+	if results.filesDiscovered == 0 {
 		results.filesDiscovered = len(files)
 	}
 	markRecoveredSkips(files, results.filesSkipped)
@@ -869,6 +871,22 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 }
 
 func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fileID uuid.UUID, workout healthautoexport.Workout) (string, error) {
+	var providerID *string
+	var fallbackVersion *string
+	var fallbackHash []byte
+	if workout.ProviderID != "" {
+		providerID = &workout.ProviderID
+	} else {
+		version := healthautoexport.FallbackFingerprintVersion
+		fallbackVersion, fallbackHash = &version, workout.FallbackSHA256[:]
+	}
+	var suppressed bool
+	if err := tx.QueryRow(ctx, `SELECT app.workout_deletion_suppressed($1,$2,$3,$4)`, sourceID, providerID, fallbackVersion, fallbackHash).Scan(&suppressed); err != nil {
+		return "", err
+	}
+	if suppressed {
+		return "suppressed", nil
+	}
 	typeID := uuid.Must(uuid.NewV7())
 	if err := tx.QueryRow(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
 		VALUES($1,$2,$3,$4) ON CONFLICT(account_id,type_key) DO UPDATE SET provider_label=EXCLUDED.provider_label
@@ -890,15 +908,6 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 	changed := true
 	if errors.Is(err, pgx.ErrNoRows) {
 		workoutID = uuid.Must(uuid.NewV7())
-		var providerID *string
-		var fallbackVersion *string
-		var fallbackHash []byte
-		if workout.ProviderID != "" {
-			providerID = &workout.ProviderID
-		} else {
-			version := healthautoexport.FallbackFingerprintVersion
-			fallbackVersion, fallbackHash = &version, workout.FallbackSHA256[:]
-		}
 		_, err = tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
 			provider_id,fallback_fingerprint_version,fallback_sha256,content_sha256,provider_label,started_at,ended_at,
 			start_offset_minutes,end_offset_minutes,local_start_date,provider_duration,is_indoor,location)
@@ -947,6 +956,17 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 				return "", err
 			}
 		}
+		summary := deriveRouteSummary(workout.Route)
+		var replaced bool
+		if err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			workoutID, summary.pointCount, summary.minimumLongitude, summary.minimumLatitude,
+			summary.maximumLongitude, summary.maximumLatitude, summary.minimumAltitude,
+			summary.maximumAltitude, summary.elevationGain, summary.hasCompleteAltitude).Scan(&replaced); err != nil {
+			return "", err
+		}
+		if !replaced {
+			return "", errors.New("route summary was not replaced")
+		}
 	}
 	warnings, err := encodeWarnings(workout.Warnings)
 	if err != nil {
@@ -957,6 +977,50 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, uuid.Must(uuid.NewV7()), job.accountID, sourceID, workoutID,
 		fileID, job.id, kind, workout.ContentSHA256[:], warnings)
 	return kind, err
+}
+
+type routeSummary struct {
+	pointCount                                          int
+	minimumLongitude, minimumLatitude, maximumLongitude *float64
+	maximumLatitude, minimumAltitude, maximumAltitude   *float64
+	elevationGain                                       *float64
+	hasCompleteAltitude                                 bool
+}
+
+func deriveRouteSummary(points []healthautoexport.RoutePoint) routeSummary {
+	if len(points) == 0 {
+		return routeSummary{}
+	}
+	result := routeSummary{pointCount: len(points), hasCompleteAltitude: true}
+	minLongitude, maxLongitude := points[0].Longitude, points[0].Longitude
+	minLatitude, maxLatitude := points[0].Latitude, points[0].Latitude
+	var minAltitude, maxAltitude, gain float64
+	var priorAltitude *float64
+	hasAltitude := false
+	for _, point := range points {
+		minLongitude, maxLongitude = min(minLongitude, point.Longitude), max(maxLongitude, point.Longitude)
+		minLatitude, maxLatitude = min(minLatitude, point.Latitude), max(maxLatitude, point.Latitude)
+		if point.Altitude == nil {
+			result.hasCompleteAltitude = false
+			priorAltitude = nil
+			continue
+		}
+		if !hasAltitude {
+			minAltitude, maxAltitude, hasAltitude = *point.Altitude, *point.Altitude, true
+		} else {
+			minAltitude, maxAltitude = min(minAltitude, *point.Altitude), max(maxAltitude, *point.Altitude)
+		}
+		if priorAltitude != nil && *point.Altitude > *priorAltitude {
+			gain += *point.Altitude - *priorAltitude
+		}
+		priorAltitude = point.Altitude
+	}
+	result.minimumLongitude, result.maximumLongitude = &minLongitude, &maxLongitude
+	result.minimumLatitude, result.maximumLatitude = &minLatitude, &maxLatitude
+	if hasAltitude {
+		result.minimumAltitude, result.maximumAltitude, result.elevationGain = &minAltitude, &maxAltitude, &gain
+	}
+	return result
 }
 
 func encodeWarnings(warnings []healthautoexport.Warning) ([]byte, error) {

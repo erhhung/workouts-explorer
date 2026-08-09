@@ -18,6 +18,7 @@ func TestJobRequestsAreValidatedByActualRouter(t *testing.T) {
 		{http.MethodGet, "/api/jobs?page=0", "", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/jobs?pageSize=101", "", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/jobs?status=invented", "", "", http.StatusBadRequest},
+		{http.MethodGet, "/api/jobs?operation=invented", "", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/jobs/" + jobID, "", "", http.StatusUnauthorized},
 		{http.MethodPost, "/api/jobs/" + jobID + "/cancellation", `{}`, "application/json", http.StatusUnauthorized},
 		{http.MethodPost, "/api/jobs/" + jobID + "/cancellation", `{"reason":"raw"}`, "application/json", http.StatusBadRequest},

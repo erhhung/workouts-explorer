@@ -137,11 +137,18 @@ func parseMetric(s *tokenStream, spec metricSpec, origin AggregateOrigin, destin
 		*warnings = append(*warnings, Warning{Code: WarningIncompleteMetric, Field: spec.field, RoutePoint: -1})
 		return nil
 	}
-	if units != spec.expected {
+	if !validMetricUnit(spec, units) {
 		*warnings = append(*warnings, Warning{Code: WarningUnexpectedUnit, Field: spec.field, RoutePoint: -1})
 	}
 	destination[spec.key] = metricCandidate{Aggregate{Key: spec.key, Qty: qty, Units: units, Origin: origin}}
 	return nil
+}
+
+func validMetricUnit(spec metricSpec, units string) bool {
+	if units == spec.expected {
+		return true
+	}
+	return units == "km" && (spec.key == MetricAverageSpeed || spec.key == MetricMaximumSpeed)
 }
 
 func parseJSONDecimal(number json.Number, max Decimal) (Decimal, bool, error) {

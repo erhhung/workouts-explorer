@@ -95,6 +95,21 @@ func (e DateRangeEnum) Valid() bool {
 	}
 }
 
+// Defines values for GeoJSONLineStringType.
+const (
+	LineString GeoJSONLineStringType = "LineString"
+)
+
+// Valid indicates whether the value is a known member of the GeoJSONLineStringType enum.
+func (e GeoJSONLineStringType) Valid() bool {
+	switch e {
+	case LineString:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	Ok HealthStatus = "ok"
@@ -112,13 +127,13 @@ func (e HealthStatus) Valid() bool {
 
 // Defines values for HealthAutoExportLocalConfigVersion.
 const (
-	N1 HealthAutoExportLocalConfigVersion = 1
+	HealthAutoExportLocalConfigVersionN1 HealthAutoExportLocalConfigVersion = 1
 )
 
 // Valid indicates whether the value is a known member of the HealthAutoExportLocalConfigVersion enum.
 func (e HealthAutoExportLocalConfigVersion) Valid() bool {
 	switch e {
-	case N1:
+	case HealthAutoExportLocalConfigVersionN1:
 		return true
 	default:
 		return false
@@ -224,6 +239,24 @@ func (e InvitationState) Valid() bool {
 	}
 }
 
+// Defines values for JobDetailOperation.
+const (
+	JobDetailOperationDataSync        JobDetailOperation = "data_sync"
+	JobDetailOperationWorkoutDeletion JobDetailOperation = "workout_deletion"
+)
+
+// Valid indicates whether the value is a known member of the JobDetailOperation enum.
+func (e JobDetailOperation) Valid() bool {
+	switch e {
+	case JobDetailOperationDataSync:
+		return true
+	case JobDetailOperationWorkoutDeletion:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for JobEventSeverity.
 const (
 	JobEventSeverityError   JobEventSeverity = "error"
@@ -317,6 +350,24 @@ func (e JobStatus) Valid() bool {
 	case JobStatusRunning:
 		return true
 	case JobStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for JobSummaryOperation.
+const (
+	JobSummaryOperationDataSync        JobSummaryOperation = "data_sync"
+	JobSummaryOperationWorkoutDeletion JobSummaryOperation = "workout_deletion"
+)
+
+// Valid indicates whether the value is a known member of the JobSummaryOperation enum.
+func (e JobSummaryOperation) Valid() bool {
+	switch e {
+	case JobSummaryOperationDataSync:
+		return true
+	case JobSummaryOperationWorkoutDeletion:
 		return true
 	default:
 		return false
@@ -689,6 +740,99 @@ func (e TokenSessionTokenType) Valid() bool {
 	}
 }
 
+// Defines values for WorkoutGeoJSONFeatureType.
+const (
+	Feature WorkoutGeoJSONFeatureType = "Feature"
+)
+
+// Valid indicates whether the value is a known member of the WorkoutGeoJSONFeatureType enum.
+func (e WorkoutGeoJSONFeatureType) Valid() bool {
+	switch e {
+	case Feature:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkoutPointsExportSchemaVersion.
+const (
+	WorkoutPointsExportSchemaVersionN1 WorkoutPointsExportSchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the WorkoutPointsExportSchemaVersion enum.
+func (e WorkoutPointsExportSchemaVersion) Valid() bool {
+	switch e {
+	case WorkoutPointsExportSchemaVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkoutProvenanceEventKind.
+const (
+	Created          WorkoutProvenanceEventKind = "created"
+	MatchedUnchanged WorkoutProvenanceEventKind = "matched_unchanged"
+	Updated          WorkoutProvenanceEventKind = "updated"
+)
+
+// Valid indicates whether the value is a known member of the WorkoutProvenanceEventKind enum.
+func (e WorkoutProvenanceEventKind) Valid() bool {
+	switch e {
+	case Created:
+		return true
+	case MatchedUnchanged:
+		return true
+	case Updated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkoutProvenanceWarningCode.
+const (
+	IncompleteMetric          WorkoutProvenanceWarningCode = "incomplete_metric"
+	InvalidOptionalRouteValue WorkoutProvenanceWarningCode = "invalid_optional_route_value"
+	UnexpectedUnit            WorkoutProvenanceWarningCode = "unexpected_unit"
+)
+
+// Valid indicates whether the value is a known member of the WorkoutProvenanceWarningCode enum.
+func (e WorkoutProvenanceWarningCode) Valid() bool {
+	switch e {
+	case IncompleteMetric:
+		return true
+	case InvalidOptionalRouteValue:
+		return true
+	case UnexpectedUnit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListJobsParamsOperation.
+const (
+	ListJobsParamsOperationAutomatedSync   ListJobsParamsOperation = "automated_sync"
+	ListJobsParamsOperationManualSync      ListJobsParamsOperation = "manual_sync"
+	ListJobsParamsOperationWorkoutDeletion ListJobsParamsOperation = "workout_deletion"
+)
+
+// Valid indicates whether the value is a known member of the ListJobsParamsOperation enum.
+func (e ListJobsParamsOperation) Valid() bool {
+	switch e {
+	case ListJobsParamsOperationAutomatedSync:
+		return true
+	case ListJobsParamsOperationManualSync:
+		return true
+	case ListJobsParamsOperationWorkoutDeletion:
+		return true
+	default:
+		return false
+	}
+}
+
 // Accepted defines model for Accepted.
 type Accepted struct {
 	Status AcceptedStatus `json:"status"`
@@ -758,6 +902,15 @@ type ExactMetric struct {
 	Unit  string `json:"unit"`
 	Value string `json:"value"`
 }
+
+// GeoJSONLineString defines model for GeoJSONLineString.
+type GeoJSONLineString struct {
+	Coordinates [][]float64           `json:"coordinates"`
+	Type        GeoJSONLineStringType `json:"type"`
+}
+
+// GeoJSONLineStringType defines model for GeoJSONLineString.Type.
+type GeoJSONLineStringType string
 
 // Health defines model for Health.
 type Health struct {
@@ -841,17 +994,20 @@ type JobCancellationCreate = map[string]interface{}
 
 // JobDetail defines model for JobDetail.
 type JobDetail struct {
-	Attempt           int          `json:"attempt"`
-	CancelRequested   bool         `json:"cancelRequested"`
-	CancelRequestedAt *time.Time   `json:"cancelRequestedAt,omitempty"`
-	Children          []JobDetail  `json:"children"`
-	CreatedAt         time.Time    `json:"createdAt"`
-	FailureCode       *string      `json:"failureCode,omitempty"`
-	FailureSummary    *string      `json:"failureSummary,omitempty"`
-	Id                CompactUUID  `json:"id"`
-	ParentJobId       *CompactUUID `json:"parentJobId,omitempty"`
-	Progress          JobProgress  `json:"progress"`
-	Results           *struct {
+	Attempt            int                 `json:"attempt"`
+	CancelRequested    bool                `json:"cancelRequested"`
+	CancelRequestedAt  *time.Time          `json:"cancelRequestedAt,omitempty"`
+	Children           []JobDetail         `json:"children"`
+	CreatedAt          time.Time           `json:"createdAt"`
+	FailureCode        *string             `json:"failureCode,omitempty"`
+	FailureSummary     *string             `json:"failureSummary,omitempty"`
+	Id                 CompactUUID         `json:"id"`
+	LatestRetryJobId   *CompactUUID        `json:"latestRetryJobId,omitempty"`
+	LatestRetryOrdinal *int                `json:"latestRetryOrdinal,omitempty"`
+	Operation          *JobDetailOperation `json:"operation,omitempty"`
+	ParentJobId        *CompactUUID        `json:"parentJobId,omitempty"`
+	Progress           JobProgress         `json:"progress"`
+	Results            *struct {
 		FilesFailed       *int64 `json:"filesFailed,omitempty"`
 		FilesSucceeded    *int64 `json:"filesSucceeded,omitempty"`
 		WorkoutsCreated   *int64 `json:"workoutsCreated,omitempty"`
@@ -870,6 +1026,9 @@ type JobDetail struct {
 	Trigger         JobTrigger        `json:"trigger"`
 	UpdatedAt       time.Time         `json:"updatedAt"`
 }
+
+// JobDetailOperation defines model for JobDetail.Operation.
+type JobDetailOperation string
 
 // JobEvent defines model for JobEvent.
 type JobEvent struct {
@@ -969,18 +1128,38 @@ type JobStatus string
 
 // JobSummary defines model for JobSummary.
 type JobSummary struct {
-	CreatedAt  time.Time   `json:"createdAt"`
-	Id         CompactUUID `json:"id"`
-	Progress   JobProgress `json:"progress"`
-	StartedAt  *time.Time  `json:"startedAt,omitempty"`
-	Status     JobStatus   `json:"status"`
-	TerminalAt *time.Time  `json:"terminalAt,omitempty"`
-	Trigger    JobTrigger  `json:"trigger"`
-	UpdatedAt  time.Time   `json:"updatedAt"`
+	CreatedAt  time.Time            `json:"createdAt"`
+	Id         CompactUUID          `json:"id"`
+	Operation  *JobSummaryOperation `json:"operation,omitempty"`
+	Progress   JobProgress          `json:"progress"`
+	StartedAt  *time.Time           `json:"startedAt,omitempty"`
+	Status     JobStatus            `json:"status"`
+	TerminalAt *time.Time           `json:"terminalAt,omitempty"`
+	Trigger    JobTrigger           `json:"trigger"`
+	UpdatedAt  time.Time            `json:"updatedAt"`
 }
+
+// JobSummaryOperation defines model for JobSummary.Operation.
+type JobSummaryOperation string
 
 // JobTrigger defines model for JobTrigger.
 type JobTrigger string
+
+// NormalizedRoutePoint defines model for NormalizedRoutePoint.
+type NormalizedRoutePoint struct {
+	AltitudeMeters               nullable.Nullable[float64] `json:"altitudeMeters"`
+	CourseAccuracyDegrees        nullable.Nullable[float64] `json:"courseAccuracyDegrees"`
+	CourseDegrees                nullable.Nullable[float64] `json:"courseDegrees"`
+	HorizontalAccuracyMeters     nullable.Nullable[float64] `json:"horizontalAccuracyMeters"`
+	Latitude                     float64                    `json:"latitude"`
+	Longitude                    float64                    `json:"longitude"`
+	OriginalOffsetMinutes        nullable.Nullable[int]     `json:"originalOffsetMinutes"`
+	RecordedAt                   time.Time                  `json:"recordedAt"`
+	Sequence                     int                        `json:"sequence"`
+	SpeedAccuracyMetersPerSecond nullable.Nullable[float64] `json:"speedAccuracyMetersPerSecond"`
+	SpeedMetersPerSecond         nullable.Nullable[float64] `json:"speedMetersPerSecond"`
+	VerticalAccuracyMeters       nullable.Nullable[float64] `json:"verticalAccuracyMeters"`
+}
 
 // Notification defines model for Notification.
 type Notification struct {
@@ -1154,6 +1333,21 @@ type ResolvedDateRange struct {
 	Timezone  string             `json:"timezone"`
 }
 
+// RouteBounds defines model for RouteBounds.
+type RouteBounds struct {
+	MaximumLatitude  float64 `json:"maximumLatitude"`
+	MaximumLongitude float64 `json:"maximumLongitude"`
+	MinimumLatitude  float64 `json:"minimumLatitude"`
+	MinimumLongitude float64 `json:"minimumLongitude"`
+}
+
+// RouteElevation defines model for RouteElevation.
+type RouteElevation struct {
+	GainMeters    float64 `json:"gainMeters"`
+	MaximumMeters float64 `json:"maximumMeters"`
+	MinimumMeters float64 `json:"minimumMeters"`
+}
+
 // SafeFields defines model for SafeFields.
 type SafeFields map[string]SafeFields_AdditionalProperties
 
@@ -1249,6 +1443,9 @@ type TokenSession struct {
 // TokenSessionTokenType defines model for TokenSession.TokenType.
 type TokenSessionTokenType string
 
+// UUIDInput defines model for UUIDInput.
+type UUIDInput = string
+
 // ValidationError defines model for ValidationError.
 type ValidationError struct {
 	Code    string  `json:"code"`
@@ -1282,12 +1479,86 @@ type Workout struct {
 	Type                       WorkoutType                           `json:"type"`
 }
 
+// WorkoutDeletionAccepted defines model for WorkoutDeletionAccepted.
+type WorkoutDeletionAccepted struct {
+	JobId       CompactUUID `json:"jobId"`
+	Reused      bool        `json:"reused"`
+	Status      JobStatus   `json:"status"`
+	TargetCount int         `json:"targetCount"`
+}
+
+// WorkoutGeoJSONFeature defines model for WorkoutGeoJSONFeature.
+type WorkoutGeoJSONFeature struct {
+	Geometry   GeoJSONLineString         `json:"geometry"`
+	Properties WorkoutGeoJSONProperties  `json:"properties"`
+	Type       WorkoutGeoJSONFeatureType `json:"type"`
+}
+
+// WorkoutGeoJSONFeatureType defines model for WorkoutGeoJSONFeature.Type.
+type WorkoutGeoJSONFeatureType string
+
+// WorkoutGeoJSONProperties defines model for WorkoutGeoJSONProperties.
+type WorkoutGeoJSONProperties struct {
+	Bounds      RouteBounds                       `json:"bounds"`
+	Elevation   nullable.Nullable[RouteElevation] `json:"elevation"`
+	EndedAt     time.Time                         `json:"endedAt"`
+	PointCount  int                               `json:"pointCount"`
+	StartedAt   time.Time                         `json:"startedAt"`
+	WorkoutId   CompactUUID                       `json:"workoutId"`
+	WorkoutType string                            `json:"workoutType"`
+}
+
 // WorkoutList defines model for WorkoutList.
 type WorkoutList struct {
 	Items      []Workout         `json:"items"`
 	Pagination Pagination        `json:"pagination"`
 	Range      ResolvedDateRange `json:"range"`
 }
+
+// WorkoutPointsExport defines model for WorkoutPointsExport.
+type WorkoutPointsExport struct {
+	EndedAt       time.Time                        `json:"endedAt"`
+	Points        []NormalizedRoutePoint           `json:"points"`
+	SchemaVersion WorkoutPointsExportSchemaVersion `json:"schemaVersion"`
+	StartedAt     time.Time                        `json:"startedAt"`
+	WorkoutId     CompactUUID                      `json:"workoutId"`
+	WorkoutType   string                           `json:"workoutType"`
+}
+
+// WorkoutPointsExportSchemaVersion defines model for WorkoutPointsExport.SchemaVersion.
+type WorkoutPointsExportSchemaVersion int
+
+// WorkoutProvenance defines model for WorkoutProvenance.
+type WorkoutProvenance struct {
+	Items     []WorkoutProvenanceEvent `json:"items"`
+	WorkoutId CompactUUID              `json:"workoutId"`
+}
+
+// WorkoutProvenanceEvent defines model for WorkoutProvenanceEvent.
+type WorkoutProvenanceEvent struct {
+	Id         CompactUUID                `json:"id"`
+	ImportedAt time.Time                  `json:"importedAt"`
+	JobId      CompactUUID                `json:"jobId"`
+	Kind       WorkoutProvenanceEventKind `json:"kind"`
+	SourceFile string                     `json:"sourceFile"`
+	SourceId   CompactUUID                `json:"sourceId"`
+	SourceName string                     `json:"sourceName"`
+	SourceType string                     `json:"sourceType"`
+	Warnings   []WorkoutProvenanceWarning `json:"warnings"`
+}
+
+// WorkoutProvenanceEventKind defines model for WorkoutProvenanceEvent.Kind.
+type WorkoutProvenanceEventKind string
+
+// WorkoutProvenanceWarning defines model for WorkoutProvenanceWarning.
+type WorkoutProvenanceWarning struct {
+	Code       WorkoutProvenanceWarningCode `json:"code"`
+	Field      string                       `json:"field"`
+	RoutePoint *int                         `json:"routePoint,omitempty"`
+}
+
+// WorkoutProvenanceWarningCode defines model for WorkoutProvenanceWarning.Code.
+type WorkoutProvenanceWarningCode string
 
 // WorkoutSummary defines model for WorkoutSummary.
 type WorkoutSummary struct {
@@ -1332,6 +1603,12 @@ type Page = int
 // PageSize defines model for PageSize.
 type PageSize = int
 
+// RequiredEndDate defines model for RequiredEndDate.
+type RequiredEndDate = openapi_types.Date
+
+// RequiredStartDate defines model for RequiredStartDate.
+type RequiredStartDate = openapi_types.Date
+
 // SourceID defines model for SourceID.
 type SourceID = CompactUUID
 
@@ -1343,6 +1620,9 @@ type Timezone = string
 
 // Token defines model for Token.
 type Token = OpaqueToken
+
+// WorkoutID defines model for WorkoutID.
+type WorkoutID = UUIDInput
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -1362,11 +1642,14 @@ type CreateIngestParams struct {
 
 // ListJobsParams defines parameters for ListJobs.
 type ListJobsParams struct {
-	Page     *int        `form:"page,omitempty" json:"page,omitempty"`
-	PageSize *int        `form:"pageSize,omitempty" json:"pageSize,omitempty"`
-	Status   *JobStatus  `form:"status,omitempty" json:"status,omitempty"`
-	Trigger  *JobTrigger `form:"trigger,omitempty" json:"trigger,omitempty"`
+	Page      *int                     `form:"page,omitempty" json:"page,omitempty"`
+	PageSize  *int                     `form:"pageSize,omitempty" json:"pageSize,omitempty"`
+	Status    *JobStatus               `form:"status,omitempty" json:"status,omitempty"`
+	Operation *ListJobsParamsOperation `form:"operation,omitempty" json:"operation,omitempty"`
 }
+
+// ListJobsParamsOperation defines parameters for ListJobs.
+type ListJobsParamsOperation string
 
 // CreateJobCancellationParams defines parameters for CreateJobCancellation.
 type CreateJobCancellationParams struct {
@@ -1451,6 +1734,13 @@ type GetWorkoutSummaryParams struct {
 	Tz            *Timezone      `form:"tz,omitempty" json:"tz,omitempty"`
 }
 
+// DeleteWorkoutRangeParams defines parameters for DeleteWorkoutRange.
+type DeleteWorkoutRangeParams struct {
+	StartDate  RequiredStartDate `form:"startDate" json:"startDate"`
+	EndDate    RequiredEndDate   `form:"endDate" json:"endDate"`
+	XCSRFToken *CSRFToken        `json:"X-CSRF-Token,omitempty"`
+}
+
 // ListWorkoutsParams defines parameters for ListWorkouts.
 type ListWorkoutsParams struct {
 	StartDate     *StartDate     `form:"startDate,omitempty" json:"startDate,omitempty"`
@@ -1460,6 +1750,11 @@ type ListWorkoutsParams struct {
 	Page          *int           `form:"page,omitempty" json:"page,omitempty"`
 	PageSize      *int           `form:"pageSize,omitempty" json:"pageSize,omitempty"`
 	Sort          *[]string      `form:"sort,omitempty" json:"sort,omitempty"`
+}
+
+// DeleteWorkoutParams defines parameters for DeleteWorkout.
+type DeleteWorkoutParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
@@ -1798,8 +2093,23 @@ type ServerInterface interface {
 	// (GET /api/workout-types)
 	ListWorkoutTypes(w http.ResponseWriter, r *http.Request)
 
+	// (DELETE /api/workouts)
+	DeleteWorkoutRange(w http.ResponseWriter, r *http.Request, params DeleteWorkoutRangeParams)
+
 	// (GET /api/workouts)
 	ListWorkouts(w http.ResponseWriter, r *http.Request, params ListWorkoutsParams)
+
+	// (DELETE /api/workouts/{workoutId})
+	DeleteWorkout(w http.ResponseWriter, r *http.Request, workoutId WorkoutID, params DeleteWorkoutParams)
+
+	// (GET /api/workouts/{workoutId}/provenance)
+	GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutId WorkoutID)
+
+	// (GET /api/workouts/{workoutId}/route)
+	ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, workoutId WorkoutID)
+
+	// (GET /api/workouts/{workoutId}/route/points)
+	ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, workoutId WorkoutID)
 
 	// (GET /health/live)
 	GetLiveness(w http.ResponseWriter, r *http.Request)
@@ -1985,8 +2295,33 @@ func (_ Unimplemented) ListWorkoutTypes(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (DELETE /api/workouts)
+func (_ Unimplemented) DeleteWorkoutRange(w http.ResponseWriter, r *http.Request, params DeleteWorkoutRangeParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/workouts)
 func (_ Unimplemented) ListWorkouts(w http.ResponseWriter, r *http.Request, params ListWorkoutsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /api/workouts/{workoutId})
+func (_ Unimplemented) DeleteWorkout(w http.ResponseWriter, r *http.Request, workoutId WorkoutID, params DeleteWorkoutParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/workouts/{workoutId}/provenance)
+func (_ Unimplemented) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutId WorkoutID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/workouts/{workoutId}/route)
+func (_ Unimplemented) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, workoutId WorkoutID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/workouts/{workoutId}/route/points)
+func (_ Unimplemented) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, workoutId WorkoutID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2198,15 +2533,15 @@ func (siw *ServerInterfaceWrapper) ListJobs(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// ------------- Optional query parameter "trigger" -------------
+	// ------------- Optional query parameter "operation" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "trigger", r.URL.Query(), &params.Trigger, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "operation", r.URL.Query(), &params.Operation, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "trigger"})
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "operation"})
 		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "trigger", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operation", Err: err})
 		}
 		return
 	}
@@ -3152,6 +3487,73 @@ func (siw *ServerInterfaceWrapper) ListWorkoutTypes(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteWorkoutRange operation middleware
+func (siw *ServerInterfaceWrapper) DeleteWorkoutRange(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteWorkoutRangeParams
+
+	// ------------- Required query parameter "startDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "startDate", r.URL.Query(), &params.StartDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "startDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "startDate", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "endDate" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "endDate", r.URL.Query(), &params.EndDate, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "endDate"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "endDate", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteWorkoutRange(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWorkouts operation middleware
 func (siw *ServerInterfaceWrapper) ListWorkouts(w http.ResponseWriter, r *http.Request) {
 
@@ -3254,6 +3656,134 @@ func (siw *ServerInterfaceWrapper) ListWorkouts(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListWorkouts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteWorkout operation middleware
+func (siw *ServerInterfaceWrapper) DeleteWorkout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workoutId" -------------
+	var workoutId WorkoutID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workoutId", chi.URLParam(r, "workoutId"), &workoutId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workoutId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteWorkoutParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteWorkout(w, r, workoutId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWorkoutProvenance operation middleware
+func (siw *ServerInterfaceWrapper) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workoutId" -------------
+	var workoutId WorkoutID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workoutId", chi.URLParam(r, "workoutId"), &workoutId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workoutId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWorkoutProvenance(w, r, workoutId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportWorkoutGeoJSON operation middleware
+func (siw *ServerInterfaceWrapper) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workoutId" -------------
+	var workoutId WorkoutID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workoutId", chi.URLParam(r, "workoutId"), &workoutId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workoutId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportWorkoutGeoJSON(w, r, workoutId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportWorkoutPoints operation middleware
+func (siw *ServerInterfaceWrapper) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workoutId" -------------
+	var workoutId WorkoutID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workoutId", chi.URLParam(r, "workoutId"), &workoutId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workoutId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportWorkoutPoints(w, r, workoutId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3524,7 +4054,22 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/notifications/{notificationId}/dismissal", wrapper.CreateNotificationDismissal)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/workouts", wrapper.DeleteWorkoutRange)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/workouts", wrapper.ListWorkouts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/workouts/{workoutId}/provenance", wrapper.GetWorkoutProvenance)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/workouts/{workoutId}", wrapper.DeleteWorkout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/workouts/{workoutId}/route/points", wrapper.ExportWorkoutPoints)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/workouts/{workoutId}/route", wrapper.ExportWorkoutGeoJSON)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/workout-types", wrapper.ListWorkoutTypes)
@@ -3541,103 +4086,158 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"/v8CAAD//w==",
+	"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",
+	"/w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -83,7 +83,13 @@ func TestCompactSourceUUID(t *testing.T) {
 	if !ok || parsed != id {
 		t.Fatalf("compact UUID did not round trip: %q", encoded)
 	}
-	for _, invalid := range []string{id.String(), "018F8E7D7A4C7C03A1C23D4E5F60718g", "018f8e7d7a4c7c03a1c23d4e5f607182"} {
+	for _, accepted := range []string{id.String(), strings.ToUpper(id.String()), strings.ToLower(encoded)} {
+		parsed, ok := parseCompactUUID(accepted)
+		if !ok || parsed != id {
+			t.Fatalf("accepted UUID %q parsed as %s, ok=%v", accepted, parsed, ok)
+		}
+	}
+	for _, invalid := range []string{"018F8E7D7A4C7C03A1C23D4E5F60718g", encoded[:31], encoded + "0", id.String() + "0"} {
 		if _, ok := parseCompactUUID(invalid); ok {
 			t.Fatalf("accepted invalid compact UUID %q", invalid)
 		}

@@ -9,6 +9,8 @@ paths:
   /api/config:
     get:
       operationId: getPublicConfig
+      description: >-
+        Returns non-secret browser runtime settings. No authentication or input parameters are required.
       tags: [public]
       responses:
         '200': {description: Safe browser configuration, content: {application/json: {schema: {$ref: '#/components/schemas/PublicConfig'}}}}
@@ -16,6 +18,8 @@ paths:
   /api/openapi.yaml:
     get:
       operationId: getOpenAPIDocument
+      description: >-
+        Returns this public OpenAPI 3.0.3 document as YAML. No authentication or input parameters are required.
       tags: [public]
       responses:
         '200': {description: OpenAPI YAML, content: {application/yaml: {schema: {type: object, additionalProperties: true}}}}
@@ -23,6 +27,8 @@ paths:
   /swagger:
     get:
       operationId: getSwaggerUI
+      description: >-
+        Serves the public interactive API documentation. Invoking protected operations still requires their normal authentication.
       tags: [public]
       responses:
         '200': {description: Swagger UI, content: {text/html: {schema: {type: string}}}}
@@ -30,12 +36,16 @@ paths:
   /health/live:
     get:
       operationId: getLiveness
+      description: >-
+        Reports whether the API process is alive. This probe requires no authentication and does not depend on downstream services.
       tags: [health]
       responses:
         '200': {description: Live, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
   /health/ready:
     get:
       operationId: getReadiness
+      description: >-
+        Reports whether the API and required application database schema are ready to serve traffic. No authentication is required.
       tags: [health]
       responses:
         '200': {description: Ready, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
@@ -43,6 +53,8 @@ paths:
   /api/session:
     post:
       operationId: createBrowserSession
+      description: >-
+        Authenticates a local identity and creates a revocable browser session. The JSON body is required and must contain username or email in `username` plus `password`.
       tags: [session]
       requestBody: {$ref: '#/components/requestBodies/Signin'}
       responses:
@@ -56,6 +68,8 @@ paths:
         '503': {$ref: '#/components/responses/Problem'}
     get:
       operationId: getCurrentSession
+      description: >-
+        Returns metadata for the authenticated, unexpired current session. A bearer token or browser session cookie is required.
       tags: [session]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -63,6 +77,8 @@ paths:
         '401': {$ref: '#/components/responses/Problem'}
     delete:
       operationId: deleteCurrentSession
+      description: >-
+        Revokes the authenticated current session. Cookie-authenticated requests require `X-CSRF-Token`; bearer-authenticated requests do not.
       tags: [session]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -74,6 +90,8 @@ paths:
   /api/session-tokens:
     post:
       operationId: createSessionToken
+      description: >-
+        Authenticates a local identity and creates a revocable opaque bearer session. The JSON body is required and must contain username or email in `username` plus `password`.
       tags: [session]
       requestBody: {$ref: '#/components/requestBodies/Signin'}
       responses:
@@ -87,6 +105,8 @@ paths:
   /api/admin/invitations:
     post:
       operationId: createInvitation
+      description: >-
+        Administrator-only operation that creates and emails a single-use invitation. The JSON body and unique `email` are required; cookie authentication also requires `X-CSRF-Token`.
       tags: [administration]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -105,6 +125,8 @@ paths:
   /api/invitations/{token}:
     get:
       operationId: getInvitation
+      description: >-
+        Resolves a pending public invitation without exposing its stored verifier. The single-use invitation `token` path parameter is required.
       tags: [public]
       parameters: [{$ref: '#/components/parameters/Token'}]
       responses:
@@ -113,6 +135,8 @@ paths:
   /api/registrations:
     post:
       operationId: createRegistration
+      description: >-
+        Atomically consumes an invitation and creates one private owner account. The required JSON body contains `token`, `username`, `fullName`, `password`, and matching `passwordConfirmation`.
       tags: [public]
       requestBody:
         required: true
@@ -128,6 +152,8 @@ paths:
   /api/password-reset-requests:
     post:
       operationId: createPasswordResetRequest
+      description: >-
+        Accepts an enumeration-resistant password-recovery request. The required JSON body contains `username`, which may be a username or email address.
       tags: [public]
       requestBody:
         required: true
@@ -142,6 +168,8 @@ paths:
   /api/password-resets:
     post:
       operationId: createPasswordReset
+      description: >-
+        Consumes a valid reset token, replaces the password, and revokes existing sessions. The required JSON body contains `token`, `password`, and matching `passwordConfirmation`.
       tags: [public]
       requestBody:
         required: true
@@ -156,6 +184,8 @@ paths:
   /api/me:
     get:
       operationId: getMe
+      description: >-
+        Returns the authenticated data owner's personal profile. A bearer token or browser session cookie is required.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -164,6 +194,8 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateMe
+      description: >-
+        Updates supplied mutable profile fields for the authenticated owner. A non-empty JSON body is required; cookie authentication also requires `X-CSRF-Token`.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -181,6 +213,8 @@ paths:
   /api/me/preferences:
     get:
       operationId: getMyPreferences
+      description: >-
+        Returns the authenticated owner's persisted display, date-range, and pagination preferences. No query parameters are required.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -189,6 +223,8 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateMyPreferences
+      description: >-
+        Partially updates supplied owner preferences while retaining omitted values. A non-empty JSON body is required; cookie authentication also requires `X-CSRF-Token`.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -206,6 +242,8 @@ paths:
   /api/me/avatar:
     get:
       operationId: getMyAvatar
+      description: >-
+        Returns a privacy-proxied avatar or generated fallback for the authenticated identity. Conditional requests may supply standard cache validators.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -216,6 +254,8 @@ paths:
   /api/sources:
     get:
       operationId: listSources
+      description: >-
+        Lists non-deleted sources owned by the authenticated account with safe configuration and connection state. No query parameters are required.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -225,6 +265,8 @@ paths:
         '503': {$ref: '#/components/responses/Problem'}
     post:
       operationId: createSource
+      description: >-
+        Creates an owned source and queues its asynchronous connection check. The required JSON body contains `displayName`, immutable `type`, `autoSyncEnabled`, and type-specific `config`; cookie authentication requires `X-CSRF-Token`.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -244,6 +286,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/SourceID'}]
     get:
       operationId: getSource
+      description: >-
+        Returns one current source owned by the authenticated account without encrypted configuration or secrets. The `sourceId` path parameter is required.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -254,6 +298,8 @@ paths:
         '503': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateSource
+      description: >-
+        Partially updates an owned source; changing adapter configuration increments its generation and queues a new connection check. `sourceId` and a non-empty JSON body are required; cookie authentication requires `X-CSRF-Token`.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -272,6 +318,8 @@ paths:
         '503': {$ref: '#/components/responses/Problem'}
     delete:
       operationId: deleteSource
+      description: >-
+        Deletes an owned source, clears current credentials, and cancels affected ingest work while preserving imported workout provenance. `sourceId` is required; cookie authentication also requires `X-CSRF-Token`.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -284,6 +332,8 @@ paths:
   /api/ingest:
     post:
       operationId: createIngest
+      description: >-
+        Queues or reuses a manual ingest parent for 1-100 required unique `sourceIds`. Optional `startDate` and `endDate` must be supplied together as an inclusive range; cookie authentication requires `X-CSRF-Token`.
       tags: [ingest]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -303,15 +353,17 @@ paths:
   /api/jobs:
     get:
       operationId: listJobs
+      description: >-
+        Lists paginated owner-visible top-level sync and workout-deletion tasks. Optional `page`, `pageSize`, `operation`, and `status` filters constrain the result; internal source checks and per-source child jobs are excluded.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
         - {name: status, in: query, schema: {$ref: '#/components/schemas/JobStatus'}}
-        - {name: trigger, in: query, schema: {$ref: '#/components/schemas/JobTrigger'}}
+        - {name: operation, in: query, schema: {type: string, enum: [manual_sync, automated_sync, workout_deletion]}}
       responses:
-        '200': {description: Parent ingest history, content: {application/json: {schema: {$ref: '#/components/schemas/JobList'}}}}
+        '200': {description: Top-level task history, content: {application/json: {schema: {$ref: '#/components/schemas/JobList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
         '401': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
@@ -320,6 +372,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     get:
       operationId: getJob
+      description: >-
+        Returns security-redacted detail, progress, hierarchy, and retry lineage for one owned job. The `jobId` path parameter is required.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -332,6 +386,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     post:
       operationId: createJobCancellation
+      description: >-
+        Requests cancellation of an owned non-terminal job; running work stops cooperatively at a safe boundary. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -352,6 +408,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     post:
       operationId: createJobRetry
+      description: >-
+        Creates a linked retry for eligible owned failed or cancelled ingest/deletion work without requeuing the original job. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -372,6 +430,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     get:
       operationId: listJobFiles
+      description: >-
+        Lists paginated, redacted file-processing results for an owned ingest job. `jobId` is required; optional `page` and `pageSize` control pagination.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
@@ -386,6 +446,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     get:
       operationId: listJobEvents
+      description: >-
+        Lists paginated safe structured events for an owned job. `jobId` is required; optional `page` and `pageSize` control pagination.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
@@ -400,6 +462,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     get:
       operationId: listJobLogs
+      description: >-
+        Lists paginated security-redacted diagnostics for an owned job. `jobId` is required; optional `page` and `pageSize` control pagination.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
@@ -413,6 +477,8 @@ paths:
   /api/data-sync:
     get:
       operationId: getDataSync
+      description: >-
+        Returns the authenticated owner's synchronization schedule, source freshness, active/latest work, and bounded notifications. No query parameters are required.
       tags: [data-sync]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -423,6 +489,8 @@ paths:
   /api/notifications:
     get:
       operationId: listNotifications
+      description: >-
+        Lists paginated notifications owned by the authenticated user. Optional `page`, `pageSize`, and server-owned `state` filters constrain the result.
       tags: [notifications]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
@@ -439,6 +507,8 @@ paths:
     parameters: [{$ref: '#/components/parameters/NotificationID'}]
     post:
       operationId: createNotificationDismissal
+      description: >-
+        Requests server-controlled dismissal or reminder handling for one owned notification. `notificationId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
       tags: [notifications]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -457,6 +527,8 @@ paths:
   /api/workouts:
     get:
       operationId: listWorkouts
+      description: >-
+        Lists paginated, non-hidden owned workouts in an inclusive local-start-date range. A date selector is required: supply either both `startDate` and `endDate` or `dateRangeEnum`, never both forms; optional `tz`, `page`, `pageSize`, and allowlisted `sort` terms refine the result.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
@@ -473,9 +545,113 @@ paths:
         '401': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteWorkoutRange
+      description: >-
+        Captures and immediately hides the fixed set of owned workouts in a required inclusive `startDate`/`endDate` range, then queues durable deletion. Cookie authentication also requires `X-CSRF-Token`.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/RequiredStartDate'}
+        - {$ref: '#/components/parameters/RequiredEndDate'}
+      responses:
+        '202':
+          description: Durable explicit-range workout deletion accepted and logically hidden
+          headers:
+            Location: {required: true, schema: {type: string}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutDeletionAccepted'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts/{workoutId}/provenance:
+    parameters: [{$ref: '#/components/parameters/WorkoutID'}]
+    get:
+      operationId: getWorkoutProvenance
+      description: >-
+        Returns complete chronological sanitized import provenance for one owned, visible workout. The tolerant compact-or-dashed `workoutId` path parameter is required.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Full chronological import provenance for an owned workout, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutProvenance'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts/{workoutId}:
+    parameters: [{$ref: '#/components/parameters/WorkoutID'}]
+    delete:
+      operationId: deleteWorkout
+      description: >-
+        Immediately hides one owned workout and queues durable physical and derived-data cleanup. The `workoutId` path parameter is required; cookie authentication also requires `X-CSRF-Token`.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '202':
+          description: Durable workout deletion accepted and logically hidden
+          headers:
+            Location: {required: true, schema: {type: string}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutDeletionAccepted'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts/{workoutId}/route/points:
+    parameters: [{$ref: '#/components/parameters/WorkoutID'}]
+    get:
+      operationId: exportWorkoutPoints
+      description: >-
+        Downloads schema-versioned normalized route points in provider sequence for one owned, visible workout. The `workoutId` path parameter is required; workouts without an exportable route return conflict.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200':
+          description: Complete normalized route points in provider order
+          headers:
+            Content-Disposition:
+              required: true
+              schema: {type: string, pattern: '^attachment; filename="[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\.json"$'}
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/WorkoutPointsExport'}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts/{workoutId}/route:
+    parameters: [{$ref: '#/components/parameters/WorkoutID'}]
+    get:
+      operationId: exportWorkoutGeoJSON
+      description: >-
+        Downloads one contextual GeoJSON LineString for a required owned `workoutId`, using consistently 3D coordinates only when every point has altitude and otherwise 2D. Workouts without a usable route return conflict.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200':
+          description: Standard GeoJSON Feature containing one contextual workout LineString
+          headers:
+            Content-Disposition:
+              required: true
+              schema: {type: string, pattern: '^attachment; filename="[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\.geojson"$'}
+          content:
+            application/geo+json: {schema: {$ref: '#/components/schemas/WorkoutGeoJSONFeature'}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/workout-types:
     get:
       operationId: listWorkoutTypes
+      description: >-
+        Lists normalized workout types currently present for the authenticated account. No query parameters are required.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
@@ -486,6 +662,8 @@ paths:
   /api/summary:
     get:
       operationId: getWorkoutSummary
+      description: >-
+        Returns owned workout totals and per-type breakdowns for an inclusive local-start-date range. A date selector is required: supply either both `startDate` and `endDate` or `dateRangeEnum`, never both forms; optional `tz` affects shortcut resolution.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
@@ -529,6 +707,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/CompactUUID'}
+    WorkoutID:
+      name: workoutId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUIDInput'}
     Page:
       name: page
       in: query
@@ -541,9 +724,19 @@ components:
       name: startDate
       in: query
       schema: {type: string, format: date}
+    RequiredStartDate:
+      name: startDate
+      in: query
+      required: true
+      schema: {type: string, format: date}
     EndDate:
       name: endDate
       in: query
+      schema: {type: string, format: date}
+    RequiredEndDate:
+      name: endDate
+      in: query
+      required: true
       schema: {type: string, format: date}
     DateRangeEnum:
       name: dateRangeEnum
@@ -823,6 +1016,7 @@ components:
       required: [id, trigger, status, progress, createdAt, updatedAt]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
+        operation: {type: string, enum: [data_sync, workout_deletion]}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
         progress: {$ref: '#/components/schemas/JobProgress'}
@@ -836,6 +1030,7 @@ components:
       required: [id, trigger, status, attempt, progress, children, retriedByJobIds, createdAt, updatedAt, cancelRequested]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
+        operation: {type: string, enum: [data_sync, workout_deletion]}
         parentJobId: {$ref: '#/components/schemas/CompactUUID'}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
@@ -855,6 +1050,8 @@ components:
         retryOfJobId: {$ref: '#/components/schemas/CompactUUID'}
         retryRootJobId: {$ref: '#/components/schemas/CompactUUID'}
         retryOrdinal: {type: integer, minimum: 1}
+        latestRetryJobId: {$ref: '#/components/schemas/CompactUUID'}
+        latestRetryOrdinal: {type: integer, minimum: 1}
         retriedByJobIds: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/CompactUUID'}}
     JobList:
       type: object
@@ -1082,6 +1279,120 @@ components:
         range: {$ref: '#/components/schemas/ResolvedDateRange'}
         pagination: {$ref: '#/components/schemas/Pagination'}
         items: {type: array, items: {$ref: '#/components/schemas/Workout'}}
+    WorkoutProvenanceWarning:
+      type: object
+      additionalProperties: false
+      required: [code, field]
+      properties:
+        code: {type: string, enum: [incomplete_metric, unexpected_unit, invalid_optional_route_value]}
+        field: {type: string, minLength: 1, maxLength: 64}
+        routePoint: {type: integer, minimum: 0}
+    WorkoutProvenanceEvent:
+      type: object
+      additionalProperties: false
+      required: [id, kind, jobId, sourceId, sourceName, sourceType, sourceFile, warnings, importedAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        kind: {type: string, enum: [created, updated, matched_unchanged]}
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        sourceId: {$ref: '#/components/schemas/CompactUUID'}
+        sourceName: {type: string, minLength: 1, maxLength: 200}
+        sourceType: {type: string, minLength: 1, maxLength: 64}
+        sourceFile: {type: string, minLength: 1, maxLength: 4096}
+        warnings: {type: array, maxItems: 4096, items: {$ref: '#/components/schemas/WorkoutProvenanceWarning'}}
+        importedAt: {type: string, format: date-time}
+    WorkoutProvenance:
+      type: object
+      additionalProperties: false
+      required: [workoutId, items]
+      properties:
+        workoutId: {$ref: '#/components/schemas/CompactUUID'}
+        items: {type: array, items: {$ref: '#/components/schemas/WorkoutProvenanceEvent'}}
+    NormalizedRoutePoint:
+      type: object
+      additionalProperties: false
+      required: [sequence, recordedAt, originalOffsetMinutes, longitude, latitude, altitudeMeters, speedMetersPerSecond, courseDegrees, horizontalAccuracyMeters, verticalAccuracyMeters, speedAccuracyMetersPerSecond, courseAccuracyDegrees]
+      properties:
+        sequence: {type: integer, minimum: 0}
+        recordedAt: {type: string, format: date-time}
+        originalOffsetMinutes: {type: integer, minimum: -1080, maximum: 1080, nullable: true}
+        longitude: {type: number, format: double, minimum: -180, maximum: 180}
+        latitude: {type: number, format: double, minimum: -90, maximum: 90}
+        altitudeMeters: {type: number, format: double, nullable: true}
+        speedMetersPerSecond: {type: number, format: double, minimum: 0, nullable: true}
+        courseDegrees: {type: number, format: double, minimum: 0, maximum: 360, nullable: true}
+        horizontalAccuracyMeters: {type: number, format: double, minimum: 0, nullable: true}
+        verticalAccuracyMeters: {type: number, format: double, minimum: 0, nullable: true}
+        speedAccuracyMetersPerSecond: {type: number, format: double, minimum: 0, nullable: true}
+        courseAccuracyDegrees: {type: number, format: double, minimum: 0, maximum: 360, nullable: true}
+    WorkoutPointsExport:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, workoutId, workoutType, startedAt, endedAt, points]
+      properties:
+        schemaVersion: {type: integer, enum: [1]}
+        workoutId: {$ref: '#/components/schemas/CompactUUID'}
+        workoutType: {type: string, minLength: 1, maxLength: 4096}
+        startedAt: {type: string, format: date-time}
+        endedAt: {type: string, format: date-time}
+        points: {type: array, minItems: 1, maxItems: 250000, items: {$ref: '#/components/schemas/NormalizedRoutePoint'}}
+    RouteBounds:
+      type: object
+      additionalProperties: false
+      required: [minimumLongitude, minimumLatitude, maximumLongitude, maximumLatitude]
+      properties:
+        minimumLongitude: {type: number, format: double}
+        minimumLatitude: {type: number, format: double}
+        maximumLongitude: {type: number, format: double}
+        maximumLatitude: {type: number, format: double}
+    RouteElevation:
+      type: object
+      additionalProperties: false
+      required: [minimumMeters, maximumMeters, gainMeters]
+      properties:
+        minimumMeters: {type: number, format: double}
+        maximumMeters: {type: number, format: double}
+        gainMeters: {type: number, format: double, minimum: 0}
+    WorkoutGeoJSONProperties:
+      type: object
+      additionalProperties: false
+      required: [workoutId, workoutType, startedAt, endedAt, pointCount, bounds, elevation]
+      properties:
+        workoutId: {$ref: '#/components/schemas/CompactUUID'}
+        workoutType: {type: string}
+        startedAt: {type: string, format: date-time}
+        endedAt: {type: string, format: date-time}
+        pointCount: {type: integer, minimum: 1}
+        bounds: {$ref: '#/components/schemas/RouteBounds'}
+        elevation: {allOf: [{$ref: '#/components/schemas/RouteElevation'}], nullable: true}
+    GeoJSONLineString:
+      type: object
+      additionalProperties: false
+      required: [type, coordinates]
+      properties:
+        type: {type: string, enum: [LineString]}
+        coordinates:
+          type: array
+          minItems: 2
+          maxItems: 250000
+          items: {type: array, minItems: 2, maxItems: 3, items: {type: number, format: double}}
+    WorkoutGeoJSONFeature:
+      type: object
+      additionalProperties: false
+      required: [type, geometry, properties]
+      properties:
+        type: {type: string, enum: [Feature]}
+        geometry: {$ref: '#/components/schemas/GeoJSONLineString'}
+        properties: {$ref: '#/components/schemas/WorkoutGeoJSONProperties'}
+    WorkoutDeletionAccepted:
+      type: object
+      additionalProperties: false
+      required: [jobId, status, reused, targetCount]
+      properties:
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        reused: {type: boolean}
+        targetCount: {type: integer, minimum: 1}
     SummaryTotals:
       type: object
       additionalProperties: false
@@ -1127,4 +1438,5 @@ components:
         requestId: {type: string}
         errors: {type: array, items: {$ref: '#/components/schemas/ValidationError'}}
     CompactUUID: {type: string, pattern: '^[0-9A-F]{32}$'}
+    UUIDInput: {type: string, pattern: '^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'}
     OpaqueToken: {type: string, pattern: '^[A-Za-z0-9_-]{43}$'}

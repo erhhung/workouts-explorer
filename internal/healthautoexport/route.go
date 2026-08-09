@@ -70,19 +70,19 @@ func parseRoutePoint(s *tokenStream, sequence int) (RoutePoint, []Warning, error
 				err = parseError(ErrorInvalidRoute)
 			}
 		case "altitude":
-			point.Altitude, warnings, err = optionalRouteNumber(s, -1e6, 1e6, WarningFieldAltitude, sequence, warnings)
+			point.Altitude, warnings, err = optionalRouteNumber(s, -1e6, 1e6, false, WarningFieldAltitude, sequence, warnings)
 		case "speed":
-			point.Speed, warnings, err = optionalRouteNumber(s, 0, 1e4, WarningFieldRouteSpeed, sequence, warnings)
+			point.Speed, warnings, err = optionalRouteNumber(s, 0, 1e4, true, WarningFieldRouteSpeed, sequence, warnings)
 		case "course":
-			point.Course, warnings, err = optionalRouteNumber(s, 0, 360, WarningFieldCourse, sequence, warnings)
+			point.Course, warnings, err = optionalRouteNumber(s, 0, 360, true, WarningFieldCourse, sequence, warnings)
 		case "horizontalAccuracy":
-			point.HorizontalAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, WarningFieldHorizontalAccuracy, sequence, warnings)
+			point.HorizontalAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, true, WarningFieldHorizontalAccuracy, sequence, warnings)
 		case "verticalAccuracy":
-			point.VerticalAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, WarningFieldVerticalAccuracy, sequence, warnings)
+			point.VerticalAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, true, WarningFieldVerticalAccuracy, sequence, warnings)
 		case "speedAccuracy":
-			point.SpeedAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, WarningFieldSpeedAccuracy, sequence, warnings)
+			point.SpeedAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, true, WarningFieldSpeedAccuracy, sequence, warnings)
 		case "courseAccuracy":
-			point.CourseAccuracy, warnings, err = optionalRouteNumber(s, 0, 360, WarningFieldCourseAccuracy, sequence, warnings)
+			point.CourseAccuracy, warnings, err = optionalRouteNumber(s, 0, 360, true, WarningFieldCourseAccuracy, sequence, warnings)
 		default:
 			err = s.skipValue()
 		}
@@ -99,7 +99,7 @@ func parseRoutePoint(s *tokenStream, sequence int) (RoutePoint, []Warning, error
 	return point, warnings, nil
 }
 
-func optionalRouteNumber(s *tokenStream, min, max float64, field WarningField, sequence int, warnings []Warning) (*float64, []Warning, error) {
+func optionalRouteNumber(s *tokenStream, min, max float64, negativeUnavailable bool, field WarningField, sequence int, warnings []Warning) (*float64, []Warning, error) {
 	start := s.decoder.InputOffset()
 	token, err := s.token()
 	if err != nil {
@@ -116,7 +116,13 @@ func optionalRouteNumber(s *tokenStream, min, max float64, field WarningField, s
 		return nil, append(warnings, Warning{Code: WarningInvalidOptionalRouteValue, Field: field, RoutePoint: sequence}), nil
 	}
 	value, err := number.Float64()
-	if err != nil || !finiteInRange(value, math.Max(math.Abs(min), math.Abs(max))) || value < min || value > max {
+	if err != nil || !finiteInRange(value, math.Max(math.Abs(min), math.Abs(max))) {
+		return nil, append(warnings, Warning{Code: WarningInvalidOptionalRouteValue, Field: field, RoutePoint: sequence}), nil
+	}
+	if negativeUnavailable && value < 0 {
+		return nil, warnings, nil
+	}
+	if value < min || value > max {
 		return nil, append(warnings, Warning{Code: WarningInvalidOptionalRouteValue, Field: field, RoutePoint: sequence}), nil
 	}
 	return &value, warnings, nil

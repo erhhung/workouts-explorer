@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,8 +77,73 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatalf("unexpected first page=%#v", list)
 	}
 	displayTimezone, _ := list.Items[0].DisplayTimezone.Get()
-	if list.Items[0].Duration != "120.125" || list.Items[0].RoutePointCount != 1 || !list.Items[0].RouteAvailable || displayTimezone != "UTC-07:00" {
+	if list.Items[0].Duration != "120.125" || list.Items[0].RoutePointCount != 2 || !list.Items[0].RouteAvailable || displayTimezone != "UTC-07:00" {
 		t.Fatalf("exact/fallback/route fields=%#v", list.Items[0])
+	}
+	pointsPath := "/api/workouts/" + strings.ToLower(workouts[1].String()) + "/route/points"
+	pointsResponse := routeOwnerRead(handler, pointsPath, bearer)
+	if pointsResponse.Code != http.StatusOK {
+		t.Fatalf("points status=%d body=%s", pointsResponse.Code, pointsResponse.Body.String())
+	}
+	validateRecordedResponse(t, http.MethodGet, pointsPath, pointsResponse)
+	if disposition := pointsResponse.Header().Get("Content-Disposition"); disposition != `attachment; filename="2026-03-08-cycling.json"` {
+		t.Fatalf("points content disposition=%q", disposition)
+	}
+	if cache := pointsResponse.Header().Get("Cache-Control"); cache != "private, no-store" {
+		t.Fatalf("points cache control=%q", cache)
+	}
+	var points generated.WorkoutPointsExport
+	if err := json.Unmarshal(pointsResponse.Body.Bytes(), &points); err != nil {
+		t.Fatal(err)
+	}
+	altitude, altitudeErr := points.Points[0].AltitudeMeters.Get()
+	if points.SchemaVersion != generated.WorkoutPointsExportSchemaVersionN1 || points.WorkoutId != compactUUID(workouts[1]) || points.WorkoutType != "Cycling" || len(points.Points) != 2 ||
+		points.Points[0].Sequence != 0 || points.Points[1].Sequence != 1 || !points.Points[0].RecordedAt.Equal(points.Points[1].RecordedAt) || altitudeErr != nil || altitude != 1600.25 || points.Points[1].AltitudeMeters.IsNull() {
+		t.Fatalf("normalized points=%#v altitude=%v err=%v", points, altitude, altitudeErr)
+	}
+	geoPath := "/api/workouts/" + compactUUID(workouts[1]) + "/route"
+	geoResponse := routeOwnerRead(handler, geoPath, bearer)
+	if geoResponse.Code != http.StatusOK || geoResponse.Header().Get("Content-Type") != "application/geo+json" || geoResponse.Header().Get("Content-Disposition") != `attachment; filename="2026-03-08-cycling.geojson"` {
+		t.Fatalf("GeoJSON status=%d headers=%v body=%s", geoResponse.Code, geoResponse.Header(), geoResponse.Body.String())
+	}
+	validateRecordedResponse(t, http.MethodGet, geoPath, geoResponse)
+	var geo generated.WorkoutGeoJSONFeature
+	if err := json.Unmarshal(geoResponse.Body.Bytes(), &geo); err != nil {
+		t.Fatal(err)
+	}
+	elevation, elevationErr := geo.Properties.Elevation.Get()
+	if geo.Type != generated.Feature || geo.Geometry.Type != generated.LineString || len(geo.Geometry.Coordinates) != 2 || len(geo.Geometry.Coordinates[0]) != 3 ||
+		geo.Geometry.Coordinates[0][0] != -105 || geo.Geometry.Coordinates[0][2] != 1600.25 || elevationErr != nil || elevation.GainMeters != 1 || geo.Properties.Bounds.MaximumLatitude != 40.1 {
+		t.Fatalf("3D GeoJSON=%#v elevation=%#v err=%v", geo, elevation, elevationErr)
+	}
+	twoDimensional := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[0])+"/route", bearer)
+	var twoDimensionalGeo generated.WorkoutGeoJSONFeature
+	if err := json.Unmarshal(twoDimensional.Body.Bytes(), &twoDimensionalGeo); err != nil || twoDimensional.Code != http.StatusOK || len(twoDimensionalGeo.Geometry.Coordinates) != 2 || len(twoDimensionalGeo.Geometry.Coordinates[0]) != 2 || !twoDimensionalGeo.Properties.Elevation.IsNull() {
+		t.Fatalf("2D GeoJSON status=%d feature=%#v err=%v", twoDimensional.Code, twoDimensionalGeo, err)
+	}
+	noRoute := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[2])+"/route/points", bearer)
+	if noRoute.Code != http.StatusConflict {
+		t.Fatalf("route-less export status=%d body=%s", noRoute.Code, noRoute.Body.String())
+	}
+	provenancePath := "/api/workouts/" + strings.ToLower(workouts[1].String()) + "/provenance"
+	provenanceResponse := routeOwnerRead(handler, provenancePath, bearer)
+	if provenanceResponse.Code != http.StatusOK {
+		t.Fatalf("provenance status=%d body=%s", provenanceResponse.Code, provenanceResponse.Body.String())
+	}
+	validateRecordedResponse(t, http.MethodGet, provenancePath, provenanceResponse)
+	var provenance generated.WorkoutProvenance
+	if err := json.Unmarshal(provenanceResponse.Body.Bytes(), &provenance); err != nil {
+		t.Fatal(err)
+	}
+	if provenance.WorkoutId != compactUUID(workouts[1]) || len(provenance.Items) != 3 ||
+		provenance.Items[0].Kind != generated.Created || provenance.Items[1].Kind != generated.Updated || provenance.Items[2].Kind != generated.MatchedUnchanged {
+		t.Fatalf("provenance chronology=%#v", provenance)
+	}
+	if provenance.Items[0].SourceName != "Archived NFS" || provenance.Items[0].SourceType != "health-auto-export-local" || provenance.Items[0].SourceFile != "fixture.json" || len(provenance.Items[1].Warnings) != 1 || provenance.Items[1].Warnings[0].RoutePoint == nil || *provenance.Items[1].Warnings[0].RoutePoint != 0 {
+		t.Fatalf("provenance context=%#v", provenance.Items)
+	}
+	if malformed := routeOwnerRead(handler, "/api/workouts/not-a-uuid/provenance", bearer); malformed.Code != http.StatusBadRequest {
+		t.Fatalf("malformed workout ID status=%d body=%s", malformed.Code, malformed.Body.String())
 	}
 
 	nulls := routeOwnerRead(handler, "/api/workouts?startDate=2026-03-07&endDate=2026-03-09&page=2&pageSize=2&sort=distance:asc", bearer)
@@ -174,6 +241,18 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 
 	foreignPrincipal, _ := insertSourceTestUser(t, adminDB)
 	foreignBearer := insertTestSession(t, apiDB, foreignPrincipal, "bearer", "")
+	foreignProvenance := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[1])+"/provenance", foreignBearer)
+	if foreignProvenance.Code != http.StatusNotFound {
+		t.Fatalf("foreign provenance status=%d body=%s", foreignProvenance.Code, foreignProvenance.Body.String())
+	}
+	foreignPoints := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[1])+"/route/points", foreignBearer)
+	if foreignPoints.Code != http.StatusNotFound {
+		t.Fatalf("foreign points status=%d body=%s", foreignPoints.Code, foreignPoints.Body.String())
+	}
+	foreignGeoJSON := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[1])+"/route", foreignBearer)
+	if foreignGeoJSON.Code != http.StatusNotFound {
+		t.Fatalf("foreign GeoJSON status=%d body=%s", foreignGeoJSON.Code, foreignGeoJSON.Body.String())
+	}
 	isolated := routeOwnerRead(handler, "/api/workouts?startDate=2026-03-07&endDate=2026-03-09", foreignBearer)
 	var isolatedList generated.WorkoutList
 	if err := json.Unmarshal(isolated.Body.Bytes(), &isolatedList); err != nil || isolatedList.Pagination.TotalItems != 0 || len(isolatedList.Items) != 0 {
@@ -189,6 +268,81 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	if emptySummary.Totals.Count != 0 || emptySummary.Totals.Duration != "0" || emptyDistance.Value != "0" || emptyEnergy.Value != "0" || len(emptySummary.ByType) != 0 {
 		t.Fatalf("empty summary=%#v", emptySummary)
 	}
+	foreignDelete := routeWorkoutDelete(handler, workouts[1], foreignBearer)
+	if foreignDelete.Code != http.StatusNotFound {
+		t.Fatalf("foreign delete status=%d body=%s", foreignDelete.Code, foreignDelete.Body.String())
+	}
+	deleted := routeWorkoutDelete(handler, workouts[1], bearer)
+	if deleted.Code != http.StatusAccepted || deleted.Header().Get("Location") == "" {
+		t.Fatalf("delete status=%d headers=%v body=%s", deleted.Code, deleted.Header(), deleted.Body.String())
+	}
+	validateRecordedResponse(t, http.MethodDelete, "/api/workouts/"+compactUUID(workouts[1]), deleted)
+	var accepted generated.WorkoutDeletionAccepted
+	if err := json.Unmarshal(deleted.Body.Bytes(), &accepted); err != nil || accepted.Reused || accepted.TargetCount != 1 || accepted.Status != "queued" {
+		t.Fatalf("deletion accepted=%#v err=%v", accepted, err)
+	}
+	hidden := routeOwnerRead(handler, "/api/workouts?startDate=2026-03-07&endDate=2026-03-09", bearer)
+	var hiddenList generated.WorkoutList
+	if err := json.Unmarshal(hidden.Body.Bytes(), &hiddenList); err != nil || hiddenList.Pagination.TotalItems != 3 {
+		t.Fatalf("logically hidden list=%#v err=%v", hiddenList.Pagination, err)
+	}
+	if hiddenProvenance := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[1])+"/provenance", bearer); hiddenProvenance.Code != http.StatusNotFound {
+		t.Fatalf("hidden provenance status=%d body=%s", hiddenProvenance.Code, hiddenProvenance.Body.String())
+	}
+	reusedDelete := routeWorkoutDelete(handler, workouts[1], bearer)
+	var reused generated.WorkoutDeletionAccepted
+	if err := json.Unmarshal(reusedDelete.Body.Bytes(), &reused); err != nil || reusedDelete.Code != http.StatusAccepted || !reused.Reused || reused.JobId != accepted.JobId {
+		t.Fatalf("reused deletion status=%d value=%#v err=%v", reusedDelete.Code, reused, err)
+	}
+	job := routeOwnerRead(handler, "/api/jobs/"+accepted.JobId, bearer)
+	if job.Code != http.StatusOK {
+		t.Fatalf("deletion job status=%d body=%s", job.Code, job.Body.String())
+	}
+	listedJobs := routeOwnerRead(handler, "/api/jobs?page=1&pageSize=100&operation=workout_deletion", bearer)
+	var jobList generated.JobList
+	if err := json.Unmarshal(listedJobs.Body.Bytes(), &jobList); err != nil {
+		t.Fatal(err)
+	}
+	listedDeletion := false
+	for _, item := range jobList.Items {
+		if item.Id == accepted.JobId && item.Operation != nil && *item.Operation == generated.JobSummaryOperationWorkoutDeletion {
+			listedDeletion = true
+		}
+	}
+	if listedJobs.Code != http.StatusOK || !listedDeletion {
+		t.Fatalf("deletion job is missing from history: status=%d list=%#v", listedJobs.Code, jobList)
+	}
+	rangeDelete := routeWorkoutRangeDelete(handler, "2026-03-07", "2026-03-09", bearer)
+	var rangeAccepted generated.WorkoutDeletionAccepted
+	if err := json.Unmarshal(rangeDelete.Body.Bytes(), &rangeAccepted); err != nil || rangeDelete.Code != http.StatusAccepted || rangeAccepted.TargetCount != 3 || rangeAccepted.Reused {
+		t.Fatalf("range deletion status=%d accepted=%#v err=%v", rangeDelete.Code, rangeAccepted, err)
+	}
+	afterRange := routeOwnerRead(handler, "/api/workouts?startDate=2026-03-07&endDate=2026-03-09", bearer)
+	var afterRangeList generated.WorkoutList
+	if err := json.Unmarshal(afterRange.Body.Bytes(), &afterRangeList); err != nil || afterRangeList.Pagination.TotalItems != 0 {
+		t.Fatalf("range deletion visibility=%#v err=%v", afterRangeList.Pagination, err)
+	}
+	reusedRange := routeWorkoutRangeDelete(handler, "2026-03-07", "2026-03-09", bearer)
+	var reusedRangeAccepted generated.WorkoutDeletionAccepted
+	if err := json.Unmarshal(reusedRange.Body.Bytes(), &reusedRangeAccepted); err != nil || reusedRange.Code != http.StatusAccepted || !reusedRangeAccepted.Reused || reusedRangeAccepted.JobId != rangeAccepted.JobId || reusedRangeAccepted.TargetCount != 3 {
+		t.Fatalf("reused range deletion status=%d accepted=%#v err=%v", reusedRange.Code, reusedRangeAccepted, err)
+	}
+}
+
+func routeWorkoutDelete(handler http.Handler, workoutID uuid.UUID, bearer string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/workouts/"+compactUUID(workoutID), nil)
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func routeWorkoutRangeDelete(handler http.Handler, startDate, endDate, bearer string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/workouts?startDate="+startDate+"&endDate="+endDate, nil)
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 type workoutReadFixture struct {
@@ -218,6 +372,10 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 		_, err = tx.Exec(ctx, `INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, jobID, accountID, sourceID, []byte("fixture"))
 	}
 	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO app.job_source_contexts(job_id,account_id,source_id,source_generation,display_name,source_type)
+		 VALUES($1,$2,$3,1,'Archived NFS','health-auto-export-local')`, jobID, accountID, sourceID)
+	}
+	if err == nil {
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
@@ -245,7 +403,7 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 		err = tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2)`, jobID, childLease).Scan(&fenced)
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at) VALUES($1,$2,$3,$4,'fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, fileID, accountID, sourceID, jobID, hash[:])
+		_, err = tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at) VALUES($1,$2,$3,$4,'archive/fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, fileID, accountID, sourceID, jobID, hash[:])
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,'cycling','Cycling'),($3,$2,'running','Running')`, cyclingID, accountID, runningID)
@@ -268,7 +426,32 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 		 ($1,$4,'elevation_up',1000,'ft','provider_direct')`, accountID, workouts[0], workouts[1], workouts[2])
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,latitude,longitude) VALUES($1,$2,0,'2026-03-08T15:01:00Z',40,-105)`, accountID, workouts[1])
+		_, err = tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,timestamp_offset_minutes,latitude,longitude,altitude,speed,course,horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy) VALUES
+		 ($1,$2,0,'2026-03-08T15:01:00Z',-420,40,-105,1600.25,3.5,180,4.2,5.3,0.4,1.5),
+		 ($1,$2,1,'2026-03-08T15:01:00Z',-420,40.1,-104.9,1601.25,NULL,NULL,NULL,NULL,NULL,NULL),
+		 ($1,$3,0,'2026-03-07T15:01:00Z',-420,39.9,-105.1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
+		 ($1,$3,1,'2026-03-07T15:02:00Z',-420,40,-105,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`, accountID, workouts[1], workouts[0])
+	}
+	if err == nil {
+		var replaced bool
+		err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,2,-105,40,-104.9,40.1,1600.25,1601.25,1,true)`, workouts[1]).Scan(&replaced)
+		if err == nil && !replaced {
+			err = errors.New("3D fixture route summary was not replaced")
+		}
+	}
+	if err == nil {
+		var replaced bool
+		err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,2,-105.1,39.9,-105,40,NULL,NULL,NULL,false)`, workouts[0]).Scan(&replaced)
+		if err == nil && !replaced {
+			err = errors.New("2D fixture route summary was not replaced")
+		}
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO app.workout_import_events(id,account_id,source_id,workout_id,source_file_id,job_id,kind,content_sha256,warnings,created_at) VALUES
+		 ($1,$4,$5,$6,$7,$8,'created',$9,'[]','2026-03-08T15:03:00Z'),
+		 ($2,$4,$5,$6,$7,$8,'updated',$9,'[{"code":"invalid_optional_route_value","field":"route_speed","route_point":0}]','2026-03-08T15:04:00Z'),
+		 ($3,$4,$5,$6,$7,$8,'matched_unchanged',$9,'[]','2026-03-08T15:05:00Z')`,
+			uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), accountID, sourceID, workouts[1], fileID, jobID, hash[:])
 	}
 	if err == nil {
 		err = tx.Commit(ctx)

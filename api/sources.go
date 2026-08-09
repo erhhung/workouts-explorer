@@ -395,13 +395,8 @@ func canonicalSourceDisplayName(raw string) (display, canonical string, ok bool)
 }
 
 func parseCompactUUID(value string) (uuid.UUID, bool) {
-	if len(value) != 32 {
+	if len(value) != 32 && len(value) != 36 {
 		return uuid.Nil, false
-	}
-	for _, r := range value {
-		if (r < '0' || r > '9') && (r < 'A' || r > 'F') {
-			return uuid.Nil, false
-		}
 	}
 	id, err := uuid.Parse(value)
 	return id, err == nil

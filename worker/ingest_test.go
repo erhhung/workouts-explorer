@@ -19,6 +19,34 @@ import (
 
 const minimalExport = `{"data":{"workouts":[{"id":"provider-1","name":"Walk","start":"2026-01-02 03:04:05 +0000","end":"2026-01-02 03:05:05 +0000","duration":60}]}}`
 
+func TestDeriveRouteSummary(t *testing.T) {
+	altitude := func(value float64) *float64 { return &value }
+	points := []healthautoexport.RoutePoint{
+		{Sequence: 0, Longitude: -105.2, Latitude: 40.1, Altitude: altitude(100)},
+		{Sequence: 1, Longitude: -104.9, Latitude: 39.8, Altitude: altitude(110)},
+		{Sequence: 2, Longitude: -105.0, Latitude: 40.0, Altitude: nil},
+		{Sequence: 3, Longitude: -105.1, Latitude: 39.9, Altitude: altitude(130)},
+		{Sequence: 4, Longitude: -105.0, Latitude: 40.2, Altitude: altitude(125)},
+	}
+	summary := deriveRouteSummary(points)
+	if summary.pointCount != 5 || summary.minimumLongitude == nil || *summary.minimumLongitude != -105.2 ||
+		summary.maximumLongitude == nil || *summary.maximumLongitude != -104.9 ||
+		summary.minimumLatitude == nil || *summary.minimumLatitude != 39.8 ||
+		summary.maximumLatitude == nil || *summary.maximumLatitude != 40.2 ||
+		summary.minimumAltitude == nil || *summary.minimumAltitude != 100 ||
+		summary.maximumAltitude == nil || *summary.maximumAltitude != 130 ||
+		summary.elevationGain == nil || *summary.elevationGain != 10 || summary.hasCompleteAltitude {
+		t.Fatalf("summary=%#v", summary)
+	}
+	complete := deriveRouteSummary(points[:2])
+	if !complete.hasCompleteAltitude || complete.elevationGain == nil || *complete.elevationGain != 10 {
+		t.Fatalf("complete summary=%#v", complete)
+	}
+	if empty := deriveRouteSummary(nil); empty.pointCount != 0 || empty.minimumLongitude != nil || empty.elevationGain != nil {
+		t.Fatalf("empty summary=%#v", empty)
+	}
+}
+
 func TestDiscoverAndReadSourceFiles(t *testing.T) {
 	root := t.TempDir()
 	if !exportNamePattern.MatchString("HealthAutoExport-2026-01-01.json") {

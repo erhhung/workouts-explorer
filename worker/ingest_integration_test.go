@@ -619,14 +619,16 @@ func assertGoldenIngest(t *testing.T, db *pgxpool.Pool, fixture ingestSourceFixt
 	if err := json.Unmarshal(warnings, &warningValues); err != nil {
 		t.Fatal(err)
 	}
-	foundUnexpectedUnit := false
+	foundInvalidCourseAccuracy := false
 	for _, warning := range warningValues {
-		if warning["code"] == "unexpected_unit" && warning["field"] == "speed_average" && warning["route_point"] == float64(-1) {
-			foundUnexpectedUnit = true
-			break
+		if warning["code"] == "unexpected_unit" && (warning["field"] == "speed_average" || warning["field"] == "speed_maximum") {
+			t.Fatalf("valid provider speed unit produced warning: %s", warnings)
+		}
+		if warning["code"] == "invalid_optional_route_value" && warning["field"] == "route_course_accuracy" {
+			foundInvalidCourseAccuracy = true
 		}
 	}
-	if !foundUnexpectedUnit {
+	if !foundInvalidCourseAccuracy {
 		t.Fatalf("warnings=%s", warnings)
 	}
 	assertTerminalIngest(t, tx, job, "succeeded", "succeeded")

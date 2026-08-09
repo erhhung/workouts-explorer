@@ -29,7 +29,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_worker_job_log_owner_username.sql", "00007_durable_data_sync.sql"} {
+	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -44,8 +44,94 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 	}
 }
 
+func TestDurableWorkoutDeletionMigrationContainsSecurityBoundaries(t *testing.T) {
+	source, err := Files.ReadFile("00008_durable_workout_deletion.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.workout_deletion_targets", "CREATE TABLE app.workout_deletion_capabilities",
+		"ALTER TABLE app.workout_deletion_targets FORCE ROW LEVEL SECURITY",
+		"PRIMARY KEY (backend_pid,transaction_id,target_id)",
+		"CREATE POLICY workouts_api_not_deleted_policy ON app.workouts AS RESTRICTIVE",
+		"CREATE FUNCTION app.enqueue_workout_deletion", "account.state='active'", "principal.disabled_at IS NULL", "FOR UPDATE",
+		"RETURNS TABLE(job_id uuid,reused boolean,target_count integer)",
+		"CREATE FUNCTION app.enqueue_workout_range_deletion", "valid inclusive workout deletion dates are required",
+		"worker runtime version 8 or newer is required",
+		"'workout-deletion-range/v1'", "local_start_date BETWEEN start_date AND end_date",
+		"CREATE FUNCTION app.retry_workout_deletion", "retry_of_job_id", "workout deletion retry limit reached",
+		"workout deletion markers require the enqueue function",
+		"'workout_deletion',100", "'workout-deletion-individual/v1'", "CREATE FUNCTION app.claim_next_workout_deletion",
+		"worker runtime version 8 or newer is required", "CREATE FUNCTION app.fence_workout_deletion",
+		"RETURNS TABLE(target_id uuid,workout_id uuid,target_state text)",
+		"capability.backend_pid=pg_backend_pid()", "capability.transaction_id=txid_current()",
+		"CREATE FUNCTION app.purge_workout_deletion", "DELETE FROM app.workout_import_events",
+		"RETURNS TABLE(targets_completed integer,total_completed integer)", "progress_current=total_completed",
+		"DELETE FROM app.workouts", "CREATE FUNCTION app.workout_deletion_suppressed",
+		"CREATE FUNCTION app.notify_failed_workout_deletion", "The workout could not be deleted, but you can retry the task.",
+		"ON CONFLICT ON CONSTRAINT workout_deletion_capabilities_pkey DO NOTHING",
+		"ALTER TABLE app.notifications NO FORCE ROW LEVEL SECURITY", "ALTER TABLE app.notifications FORCE ROW LEVEL SECURITY",
+		"workout deletion tombstones are persistent", "cannot downgrade while workout deletion jobs or targets exist",
+		"schema_version=8,minimum_runtime_version=8", "schema_version=7,minimum_runtime_version=6",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("durable workout deletion migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT DELETE ON app.workouts TO workouts_worker", "GRANT DELETE ON app.workouts TO workouts_api",
+		"GRANT DELETE ON app.workout_import_events TO workouts_worker", "GRANT SELECT ON app.workout_deletion_capabilities TO workouts_worker",
+		"GRANT SELECT ON app.workout_deletion_targets TO workouts_api",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("durable workout deletion migration contains unsafe privilege %q", forbidden)
+		}
+	}
+	claim := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.claim_next_workout_deletion")
+	if sourceLock, workoutLock := strings.Index(claim, "FROM app.sources source"), strings.Index(claim, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
+		t.Fatal("deletion claim does not lock source before workout")
+	}
+	purge := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.purge_workout_deletion")
+	if events, workout := strings.Index(purge, "DELETE FROM app.workout_import_events"), strings.Index(purge, "DELETE FROM app.workouts"); events < 0 || workout < 0 || events >= workout {
+		t.Fatal("purge does not remove import events before the workout")
+	}
+	if !strings.Contains(claim, "EXISTS (") || strings.Contains(claim, "target.state='pending'") {
+		t.Fatal("deletion claim cannot recover a completed purge after a worker crash")
+	}
+	claimSource := strings.Index(claim, "SELECT source.id FROM app.sources source")
+	claimWorkout := strings.Index(claim, "SELECT workout.id FROM app.workouts workout")
+	claimTarget := strings.Index(claim, "SELECT target.id FROM app.workout_deletion_targets target")
+	if claimSource < 0 || claimWorkout < 0 || claimTarget < 0 || claimSource >= claimWorkout || claimWorkout >= claimTarget ||
+		!strings.Contains(claim, "ORDER BY source.id") || !strings.Contains(claim, "ORDER BY workout.id") ||
+		!strings.Contains(claim, "ORDER BY target.id") {
+		t.Fatal("deletion claim does not deterministically lock all sources, workouts, then targets")
+	}
+	rangeEnqueue := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.enqueue_workout_range_deletion")
+	if sourceLock, workoutLock := strings.Index(rangeEnqueue, "FROM app.sources source"), strings.Index(rangeEnqueue, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
+		t.Fatal("range enqueue does not lock sources before workouts")
+	}
+	fence := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.fence_workout_deletion")
+	fenceSource := strings.Index(fence, "FROM app.sources source")
+	fenceWorkout := strings.Index(fence, "FROM app.workouts workout")
+	fenceTarget := strings.Index(fence, "PERFORM 1 FROM app.workout_deletion_targets target")
+	fenceJob := strings.Index(fence, "FROM app.jobs job")
+	if fenceSource < 0 || fenceWorkout < 0 || fenceTarget < 0 || fenceJob < 0 ||
+		fenceSource >= fenceWorkout || fenceWorkout >= fenceTarget || fenceTarget >= fenceJob {
+		t.Fatal("deletion fence does not lock sources, workouts, targets, then job")
+	}
+	retry := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.retry_workout_deletion")
+	if targetLock, jobLock := strings.Index(retry, "FROM app.workout_deletion_targets target"), strings.Index(retry, "FROM app.jobs job"); targetLock < 0 || jobLock < 0 || targetLock >= jobLock || !strings.Contains(retry, "target.state='pending'") {
+		t.Fatal("deletion retry does not lock the exact pending targets before the prior job")
+	}
+	cleanup := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.clear_workout_deletion_capability")
+	if !strings.Contains(cleanup, "capability.target_id=NEW.target_id") {
+		t.Fatal("deletion capability cleanup removes more than its exact target")
+	}
+}
+
 func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00007_durable_data_sync.sql")
+	source, err := Files.ReadFile("00006_durable_data_sync.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +158,8 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"CREATE FUNCTION app.acquire_ingest_file_slot", "CREATE FUNCTION app.release_ingest_file_slot",
 		"CREATE FUNCTION app.record_successful_source_object", "valid_ingest_child_parameters",
 		"requested_account_limit NOT BETWEEN 1 AND 16", "cannot downgrade while ingest file slots are active",
-		"minimum_runtime_version=1", "cannot downgrade while durable ingest jobs are active", "schema_version=7", "schema_version=6",
-		"worker runtime version 7 or newer is required", "claim_next_worker_job(text,uuid,interval,integer)",
+		"minimum_runtime_version=1", "cannot downgrade while durable ingest jobs are active", "schema_version=6", "schema_version=5",
+		"worker runtime version 6 or newer is required", "claim_next_worker_job(text,uuid,interval,integer)",
 		"CREATE TABLE app.job_file_candidates", "CREATE FUNCTION app.record_ingest_file_manifest",
 		"CREATE TABLE app.ingest_file_slot_limits", "CREATE FUNCTION app.configure_ingest_file_slot_limits",
 		"GRANT SELECT(job_id,account_id,files_discovered,files_skipped,files_succeeded,files_failed",
@@ -170,14 +256,14 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		t.Fatal("scheduled enqueue does not recheck active account state under lock")
 	}
 	if strings.Contains(up, "jobs_account_cleanup_fk") {
-		t.Fatal("migration 7 still couples account deletion to job cleanup")
+		t.Fatal("migration 6 still couples account deletion to job cleanup")
 	}
 	for _, compatibilityRevoke := range []string{
 		"REVOKE SELECT ON app.source_files FROM workouts_api",
 		"REVOKE EXECUTE ON FUNCTION app.request_job_cancellation(uuid,uuid) FROM workouts_api",
 	} {
 		if strings.Contains(up, compatibilityRevoke) {
-			t.Fatalf("migration 7 breaks schema-6 API readiness with %q", compatibilityRevoke)
+			t.Fatalf("migration 6 breaks schema-5 API readiness with %q", compatibilityRevoke)
 		}
 	}
 	down := strings.Split(text, "-- +goose Down")[1]
@@ -192,78 +278,36 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"parameters=parameters-'legacySchema6'-'mode'-'startDate'-'endDate'",
 	} {
 		if !strings.Contains(down, required) {
-			t.Fatalf("migration 7 down does not restore schema-6 claim contract %q", required)
+			t.Fatalf("migration 6 down does not restore schema-5 claim contract %q", required)
 		}
 	}
 }
 
-func TestWorkerJobLogOwnerUsernameMigrationReplacesContractSecurely(t *testing.T) {
-	source, err := Files.ReadFile("00006_worker_job_log_owner_username.sql")
+func TestWorkoutRouteSummaryMigrationContainsSecurityBoundaries(t *testing.T) {
+	source, err := Files.ReadFile("00007_workout_route_summaries.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(source)
 	for _, required := range []string{
-		"RETURNS TABLE(owner_username text, source_name text, source_type text)",
-		"SELECT principal.username, source.display_name, source.type",
-		"job.status = 'running'",
-		"job.worker_id = claiming_worker",
-		"job.lease_token = current_lease_token",
-		"job.lease_expires_at >= clock_timestamp()",
-		"prior_account_id text := current_setting('app.account_id', true)",
-		"EXCEPTION WHEN OTHERS THEN",
-		"set_config('app.account_id', COALESCE(prior_account_id, ''), true)",
-		"SECURITY DEFINER",
-		"SET search_path = pg_catalog, app",
-		"ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_security_owner",
-		"GRANT EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) TO workouts_worker",
-		"CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()",
-		"CREATE OR REPLACE FUNCTION app.fence_ingest_job(job_id uuid, claiming_worker text, current_lease_token uuid)",
-		"CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal",
-		"job.kind IN ('manual_ingest_source', 'scheduled_ingest_source')",
-		"parent.kind = expected_parent_kind",
-		"job.kind IN ('manual_ingest_source', 'scheduled_ingest_source')",
-		"candidate_kind = 'scheduled_ingest_source' AND parent.kind = 'scheduled_ingest'",
-		"CREATE FUNCTION app.assert_no_active_scheduled_ingest()",
-		"SELECT app.assert_no_active_scheduled_ingest();",
-		"cannot downgrade while scheduled ingest jobs or snapshots are active",
-		"ALTER FUNCTION app.assert_no_active_scheduled_ingest() OWNER TO workouts_security_owner",
-		"GRANT EXECUTE ON FUNCTION app.assert_no_active_scheduled_ingest() TO workouts_migration",
-		"UPDATE app.schema_metadata SET schema_version = 6",
-		"UPDATE app.schema_metadata SET schema_version = 5",
+		"CREATE TABLE app.workout_routes", "ALTER TABLE app.workout_routes FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION app.replace_workout_route_summary", "capability.backend_pid=pg_backend_pid()",
+		"CREATE FUNCTION app.invalidate_workout_route_summary", "workout_route_points_summary_after_write",
+		"capability.transaction_id=txid_current()", "route summary write requires a live transaction fence",
+		"GRANT SELECT ON app.workout_routes TO workouts_api", "GRANT EXECUTE ON FUNCTION app.replace_workout_route_summary",
+		"OWNER TO workouts_security_owner", "schema_version=7", "minimum_runtime_version=6",
+		"SELECT app.assert_no_active_manual_ingest();", "SELECT app.assert_no_active_scheduled_ingest();",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("worker owner username migration is missing %q", required)
+			t.Fatalf("workout route summary migration is missing %q", required)
 		}
-	}
-	down := strings.Split(text, "-- +goose Down")[1]
-	for _, required := range []string{
-		"RETURNS TABLE(owner_name text, source_name text, source_type text)",
-		"SELECT principal.full_name, source.display_name, source.type",
-		"ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_security_owner",
-		"GRANT EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) TO workouts_worker",
-		"include_manual_ingest AND job.kind = 'manual_ingest_source'",
-		"AND job.kind = 'manual_ingest_source'",
-		"AND parent.kind = 'manual_ingest'",
-		"DROP FUNCTION app.assert_no_active_scheduled_ingest()",
-	} {
-		if !strings.Contains(down, required) {
-			t.Fatalf("migration 00006 down does not restore migration 00005 contract %q", required)
-		}
-	}
-	if strings.Count(text, "CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()") != 2 ||
-		strings.Count(text, "CREATE OR REPLACE FUNCTION app.fence_ingest_job") != 2 ||
-		strings.Count(text, "CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal") != 2 {
-		t.Fatal("migration 00006 does not replace and restore all scheduled-ingest plumbing")
 	}
 	for _, forbidden := range []string{
-		"GRANT SELECT ON app.authentication_principals TO workouts_worker",
-		"GRANT SELECT ON app.users TO workouts_worker",
-		"GRANT SELECT ON app.administrators TO workouts_worker",
-		"GRANT SELECT ON app.sources TO workouts_worker",
+		"GRANT INSERT ON app.workout_routes TO workouts_worker", "GRANT UPDATE ON app.workout_routes TO workouts_worker",
+		"GRANT DELETE ON app.workout_routes TO workouts_worker", "GRANT SELECT ON app.ingest_write_capabilities TO workouts_worker",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("worker owner username migration contains unsafe grant %q", forbidden)
+			t.Fatalf("workout route summary migration contains unsafe privilege %q", forbidden)
 		}
 	}
 }
@@ -283,7 +327,8 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 		"SELECT app.repair_orphaned_source_jobs()",
 		"DROP FUNCTION app.repair_orphaned_source_jobs()",
 		"CREATE FUNCTION app.read_worker_job_log_context",
-		"RETURNS TABLE(owner_name text, source_name text, source_type text)",
+		"RETURNS TABLE(owner_username text, source_name text, source_type text)",
+		"SELECT principal.username, source.display_name, source.type",
 		"SECURITY DEFINER",
 		"SET search_path = pg_catalog, app",
 		"job.status = 'running'",
@@ -297,12 +342,29 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 		"LEFT JOIN app.sources source",
 		"ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_security_owner",
 		"GRANT EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) TO workouts_worker",
+		"CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()",
+		"CREATE OR REPLACE FUNCTION app.fence_ingest_job(job_id uuid, claiming_worker text, current_lease_token uuid)",
+		"CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal",
+		"CREATE FUNCTION app.assert_no_active_scheduled_ingest()",
+		"cannot downgrade while scheduled ingest jobs or snapshots are active",
 		"UPDATE app.schema_metadata SET schema_version = 5",
 		"UPDATE app.schema_metadata SET schema_version = 4",
 		"DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid)",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("worker log context migration is missing %q", required)
+		}
+	}
+	down := strings.Split(text, "-- +goose Down")[1]
+	for _, required := range []string{
+		"include_manual_ingest AND job.kind = 'manual_ingest_source'",
+		"AND job.kind = 'manual_ingest_source'",
+		"AND parent.kind = 'manual_ingest'",
+		"DROP FUNCTION app.assert_no_active_scheduled_ingest()",
+		"DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid)",
+	} {
+		if !strings.Contains(down, required) {
+			t.Fatalf("merged migration 00005 down does not restore schema 4 contract %q", required)
 		}
 	}
 	for _, forbidden := range []string{

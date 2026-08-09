@@ -314,7 +314,7 @@ describe("authenticated shell", () => {
     expect(screen.getByRole("button", { name: /Open account menu/ })).toBeInTheDocument();
   });
 
-  test("keeps Summary route-aware without fetching Data Sync and navigates from desktop and account menus", async () => {
+  test("keeps Summary route-aware and leaves Data Sync navigation in the primary menu", async () => {
     const fetchMock = authenticatedFetch();
     renderApp("/");
     const summaryLink = await screen.findByRole("link", { name: "Summary" });
@@ -328,8 +328,8 @@ describe("authenticated shell", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Open account menu/ }));
     const menuItems = screen.getAllByRole("menuitem");
-    expect(menuItems[0]).toHaveTextContent("Data Sync");
-    expect(menuItems[1]).toHaveTextContent("Preferences");
+    expect(menuItems.map((item) => item.textContent)).not.toContain("Data Sync");
+    expect(menuItems[0]).toHaveTextContent("Preferences");
   });
 
   test("loads a Data Sync deep link and the wordmark returns to Summary", async () => {
@@ -589,6 +589,19 @@ describe("authenticated shell", () => {
     expect(screen.getByRole("button", { name: "Close About Workouts Explorer" })).toBeVisible();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  test("keeps the account menu concise and uses the shared dropdown chevron", async () => {
+    authenticatedFetch();
+    renderApp();
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole("button", { name: /Open account menu/ });
+    expect(trigger.querySelector(".menu-chevron")).toHaveTextContent("v");
+    await user.click(trigger);
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveTextContent("@trailrunner");
+    expect(menu).not.toHaveTextContent("Avery Stone");
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Preferences", "Switch to light theme", "About Workouts Explorer", "Sign out"]);
   });
 
   test("theme bootstrap is synchronous and menu toggle persists through the API and local cache", async () => {

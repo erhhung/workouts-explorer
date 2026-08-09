@@ -284,6 +284,19 @@ func (r *Runner) claimNext(ctx context.Context) (claimedJob, error) {
 	defer tx.Rollback(ctx)
 	var job claimedJob
 	err = tx.QueryRow(ctx, `SELECT job_id,account_id,kind
+		FROM app.claim_next_workout_deletion($1,$2,$3,$4)`, r.workerID, lease, r.leaseDuration,
+		database.SupportedSchemaVersion).Scan(&job.id, &job.accountID, &job.kind)
+	if err == nil {
+		job.lease = lease
+		if err := tx.Commit(ctx); err != nil {
+			return claimedJob{}, err
+		}
+		return job, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return claimedJob{}, err
+	}
+	err = tx.QueryRow(ctx, `SELECT job_id,account_id,kind
 		FROM app.claim_next_worker_job($1,$2,$3,$4)`, r.workerID, lease, r.leaseDuration,
 		database.SupportedSchemaVersion).Scan(&job.id, &job.accountID, &job.kind)
 	if err != nil {
@@ -339,10 +352,90 @@ func decodeIngestParameters(raw []byte) (ingestMode, *time.Time, *time.Time, err
 }
 
 func (r *Runner) execute(ctx context.Context, job claimedJob) (executionResult, error) {
-	if job.kind == "manual_ingest_source" || job.kind == "scheduled_ingest_source" {
+	switch job.kind {
+	case "manual_ingest_source", "scheduled_ingest_source":
 		return r.executeIngest(ctx, job)
+	case "source_connection_check":
+		return executionResult{}, r.executeConnectionCheck(ctx, job)
+	case "workout_deletion":
+		return executionResult{}, r.executeWorkoutDeletion(ctx, job)
+	default:
+		return executionResult{}, fmt.Errorf("unsupported claimed job kind %q", job.kind)
 	}
-	return executionResult{}, r.executeConnectionCheck(ctx, job)
+}
+
+func (r *Runner) executeWorkoutDeletion(ctx context.Context, job claimedJob) error {
+	opCtx, cancelOperation := context.WithCancel(ctx)
+	heartbeatDone := make(chan error, 1)
+	go r.runHeartbeat(opCtx, cancelOperation, job, heartbeatDone)
+	purgeErr := r.purgeWorkoutDeletion(opCtx, job)
+	cancelOperation()
+	heartbeatErr := <-heartbeatDone
+	if errors.Is(purgeErr, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
+		return errJobInterrupted
+	}
+	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
+		return heartbeatErr
+	}
+	if ctx.Err() != nil || errors.Is(purgeErr, context.Canceled) {
+		return errJobInterrupted
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	if purgeErr != nil {
+		failureCode, failureSummary := "workout-delete-failed", "The workout could not be deleted."
+		_, finishErr := r.finishWorkoutDeletion(cleanupCtx, job, "failed", &failureCode, &failureSummary)
+		if finishErr != nil {
+			return finishErr
+		}
+		return purgeErr
+	}
+	finished, err := r.finishWorkoutDeletion(cleanupCtx, job, "succeeded", nil, nil)
+	if err != nil {
+		return err
+	}
+	if !finished {
+		return errJobInterrupted
+	}
+	return nil
+}
+
+func (r *Runner) purgeWorkoutDeletion(ctx context.Context, job claimedJob) error {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var fenced int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM app.fence_workout_deletion($1,$2,$3)`, job.id, r.workerID, job.lease).Scan(&fenced); err != nil {
+		return err
+	}
+	if fenced == 0 {
+		return errLeaseLost
+	}
+	var targetsCompleted, totalCompleted int
+	if err = tx.QueryRow(ctx, `SELECT targets_completed,total_completed FROM app.purge_workout_deletion($1,$2,$3)`, job.id, r.workerID, job.lease).Scan(&targetsCompleted, &totalCompleted); errors.Is(err, pgx.ErrNoRows) {
+		return errLeaseLost
+	} else if err != nil {
+		return err
+	}
+	if totalCompleted != fenced || targetsCompleted < 0 {
+		return errLeaseLost
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *Runner) finishWorkoutDeletion(ctx context.Context, job claimedJob, status string, code, summary *string) (bool, error) {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var finished bool
+	if err = tx.QueryRow(ctx, `SELECT app.finish_job($1,$2,$3,$4,$5,$6)`, job.id, r.workerID, job.lease, status, code, summary).Scan(&finished); err != nil {
+		return false, err
+	}
+	return finished, tx.Commit(ctx)
 }
 
 func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) error {

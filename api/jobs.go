@@ -48,17 +48,20 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 	}
 	defer tx.Rollback(r.Context())
 
-	status, trigger := "", ""
+	status, operation := "", ""
 	if params.Status != nil {
 		status = string(*params.Status)
 	}
-	if params.Trigger != nil {
-		trigger = string(*params.Trigger)
+	if params.Operation != nil {
+		operation = string(*params.Operation)
 	}
 	var total int64
 	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM app.jobs WHERE parent_job_id IS NULL
-		AND kind IN ('manual_ingest','scheduled_ingest') AND ($1='' OR status=$1)
-		AND ($2='' OR kind=CASE $2 WHEN 'manual' THEN 'manual_ingest' WHEN 'scheduled' THEN 'scheduled_ingest' END)`, status, trigger).Scan(&total)
+		AND kind IN ('manual_ingest','scheduled_ingest','workout_deletion') AND ($1='' OR status=$1)
+		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=jobs.id
+			AND successor.parent_job_id IS NULL AND ((jobs.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
+				OR (jobs.kind='workout_deletion' AND successor.kind='workout_deletion')))
+		AND ($2='' OR kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' END)`, status, operation).Scan(&total)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -68,9 +71,12 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
 		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0)
 		FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
-		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest') AND ($1='' OR j.status=$1)
-		AND ($2='' OR j.kind=CASE $2 WHEN 'manual' THEN 'manual_ingest' WHEN 'scheduled' THEN 'scheduled_ingest' END)
-		ORDER BY j.created_at DESC,j.id DESC LIMIT $3 OFFSET $4`, status, trigger, pageSize, (page-1)*pageSize)
+		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest','workout_deletion') AND ($1='' OR j.status=$1)
+		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=j.id
+			AND successor.parent_job_id IS NULL AND ((j.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
+				OR (j.kind='workout_deletion' AND successor.kind='workout_deletion')))
+		AND ($2='' OR j.kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' END)
+		ORDER BY j.created_at DESC,j.id DESC LIMIT $3 OFFSET $4`, status, operation, pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -91,8 +97,12 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 			return
 		}
 		progress.Current, progress.Total = current, progressTotal
+		operation := generated.JobSummaryOperationDataSync
+		if kind == "workout_deletion" {
+			operation = generated.JobSummaryOperationWorkoutDeletion
+		}
 		items = append(items, generated.JobSummary{Id: compactUUID(id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
-			Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: created, UpdatedAt: updated})
+			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: created, UpdatedAt: updated})
 	}
 	if rows.Err() != nil {
 		writeJobUnavailable(w, r)
@@ -155,6 +165,18 @@ func (s *Server) CreateJobCancellation(w http.ResponseWriter, r *http.Request, j
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var jobKind string
+	if err = tx.QueryRow(r.Context(), `SELECT kind FROM app.jobs WHERE id=$1`, id).Scan(&jobKind); errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "job was not found")
+		return
+	} else if err != nil {
+		writeJobUnavailable(w, r)
+		return
+	}
+	if jobKind == "workout_deletion" {
+		writeProblem(w, r, http.StatusConflict, "Conflict", "workout deletion cannot be cancelled")
+		return
+	}
 	if _, err = readJobDetail(r.Context(), tx, id); errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "job was not found")
 		return
@@ -206,7 +228,7 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 	var kind, status string
 	var parentID *uuid.UUID
 	err = tx.QueryRow(r.Context(), `SELECT kind,status,parent_job_id FROM app.jobs WHERE id=$1
-		AND kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source')`, id).Scan(&kind, &status, &parentID)
+		AND kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')`, id).Scan(&kind, &status, &parentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "job was not found")
 		return
@@ -226,6 +248,24 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 	}
 	if status != "failed" && status != "cancelled" && status != "partially_succeeded" {
 		writeProblem(w, r, http.StatusConflict, "Conflict", "job is not retryable")
+		return
+	}
+	if kind == "workout_deletion" {
+		var retryID uuid.UUID
+		var targetCount int
+		if err = tx.QueryRow(r.Context(), `SELECT job_id,target_count FROM app.retry_workout_deletion($1,$2,$3)`,
+			id, session.principalID, maxJobRetryOrdinal).Scan(&retryID, &targetCount); errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, r, http.StatusConflict, "Conflict", "workout deletion has no pending targets to retry")
+			return
+		} else if err != nil {
+			writeJobUnavailable(w, r)
+			return
+		}
+		if targetCount < 1 || tx.Commit(r.Context()) != nil {
+			writeJobUnavailable(w, r)
+			return
+		}
+		writeIngestAccepted(w, retryID, "queued", false)
 		return
 	}
 
@@ -544,7 +584,7 @@ func requireOwnedIngestJob(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 
 func readJobDetail(ctx context.Context, tx pgx.Tx, id uuid.UUID) (generated.JobDetail, error) {
 	detail, kind, err := scanJobDetail(tx.QueryRow(ctx, jobDetailSelect+`
-		WHERE j.id=$1 AND j.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source')`, id))
+		WHERE j.id=$1 AND j.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')`, id))
 	if err != nil {
 		return generated.JobDetail{}, err
 	}
@@ -612,13 +652,12 @@ func readJobRetryMetadata(ctx context.Context, tx pgx.Tx, refs []jobDetailRef) e
 
 	rows, err := tx.Query(ctx, `SELECT requested.id,successor.id FROM unnest($1::uuid[]) requested(id)
 		JOIN LATERAL (SELECT job.id,job.created_at FROM app.jobs job WHERE job.retry_of_job_id=requested.id
-			AND job.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source')
+			AND job.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')
 			ORDER BY job.created_at,job.id LIMIT 100) successor ON true
 		ORDER BY requested.id,successor.created_at,successor.id`, ids)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var requestedID, successorID uuid.UUID
 		if err := rows.Scan(&requestedID, &successorID); err != nil {
@@ -628,7 +667,52 @@ func readJobRetryMetadata(ctx context.Context, tx pgx.Tx, refs []jobDetailRef) e
 			detail.RetriedByJobIds = append(detail.RetriedByJobIds, compactUUID(successorID))
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	latestRows, err := tx.Query(ctx, `WITH RECURSIVE descendants(requested_id,id,retry_of_job_id,parent_job_id,kind,depth,path,cycle,created_at) AS (
+		SELECT requested.id,job.id,job.retry_of_job_id,job.parent_job_id,job.kind,0,ARRAY[job.id],false,job.created_at
+		FROM unnest($1::uuid[]) requested(id) JOIN app.jobs job ON job.id=requested.id
+		UNION ALL
+		SELECT current.requested_id,successor.id,successor.retry_of_job_id,successor.parent_job_id,successor.kind,current.depth+1,
+			current.path||successor.id,successor.id=ANY(current.path),successor.created_at
+		FROM descendants current JOIN app.jobs successor ON successor.retry_of_job_id=current.id
+		WHERE current.depth<$2 AND NOT current.cycle AND current.parent_job_id IS NULL AND successor.parent_job_id IS NULL
+			AND ((current.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
+				OR (current.kind='workout_deletion' AND successor.kind='workout_deletion'))
+	), latest AS (
+		SELECT DISTINCT ON (requested_id) requested_id,id,depth,cycle FROM descendants WHERE depth>0
+		ORDER BY requested_id,depth DESC,created_at DESC,id DESC
+	)
+	SELECT requested_id,id,depth,cycle FROM latest ORDER BY requested_id`, ids, maxJobRetryOrdinal)
+	if err != nil {
+		return err
+	}
+	defer latestRows.Close()
+	for latestRows.Next() {
+		var requestedID, latestID uuid.UUID
+		var depth int
+		var cycle bool
+		if err := latestRows.Scan(&requestedID, &latestID, &depth, &cycle); err != nil {
+			return err
+		}
+		if cycle {
+			return errInvalidJobRetryLineage
+		}
+		detail := byID[requestedID]
+		lineage, ok := lineages[requestedID]
+		if detail == nil || !ok {
+			return errInvalidJobRetryLineage
+		}
+		compactLatest := compactUUID(latestID)
+		latestOrdinal := lineage.ordinal + depth
+		detail.LatestRetryJobId = &compactLatest
+		detail.LatestRetryOrdinal = &latestOrdinal
+	}
+	return latestRows.Err()
 }
 
 type jobRetryLineage struct {
@@ -647,6 +731,8 @@ func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[
 			current.path||prior.id,prior.id=ANY(current.path),current.consistent AND
 			((current.kind IN ('manual_ingest','scheduled_ingest') AND prior.kind IN ('manual_ingest','scheduled_ingest')
 				AND current.parent_job_id IS NULL AND prior.parent_job_id IS NULL) OR
+			 (current.kind='workout_deletion' AND prior.kind='workout_deletion'
+				AND current.parent_job_id IS NULL AND prior.parent_job_id IS NULL) OR
 			 (current.kind IN ('manual_ingest_source','scheduled_ingest_source') AND prior.kind IN ('manual_ingest_source','scheduled_ingest_source')
 				AND current.source_id IS NOT NULL AND prior_source.source_id IS NOT NULL AND current.source_id=prior_source.source_id
 				AND current.parent_job_id IS NOT NULL AND prior.parent_job_id IS NOT NULL AND EXISTS (
@@ -664,6 +750,7 @@ func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[
 	)
 	SELECT checks.requested_id,deepest.id,deepest.depth,checks.cycle,checks.consistent,deepest.retry_of_job_id,
 		COALESCE((deepest.kind IN ('manual_ingest','scheduled_ingest') AND deepest.parent_job_id IS NULL) OR
+		 (deepest.kind='workout_deletion' AND deepest.parent_job_id IS NULL) OR
 		 (deepest.kind='manual_ingest_source' AND deepest.source_id IS NOT NULL AND parent.kind='manual_ingest' AND parent.retry_of_job_id IS NULL) OR
 		 (deepest.kind='scheduled_ingest_source' AND deepest.source_id IS NOT NULL AND parent.kind='scheduled_ingest' AND parent.retry_of_job_id IS NULL),false) root_consistent
 	FROM checks JOIN LATERAL (
@@ -719,6 +806,11 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 		return generated.JobDetail{}, "", err
 	}
 	detail.Id, detail.Status, detail.Trigger = compactUUID(id), generated.JobStatus(status), jobTrigger(kind)
+	operation := generated.JobDetailOperationDataSync
+	if kind == "workout_deletion" {
+		operation = generated.JobDetailOperationWorkoutDeletion
+	}
+	detail.Operation = &operation
 	detail.FailureCode, detail.FailureSummary = safeJobFailure(rawFailureCode)
 	detail.CancelRequested = detail.CancelRequestedAt != nil
 	detail.Children = []generated.JobDetail{}
@@ -765,6 +857,7 @@ func safeJobFailure(code *string) (*string, *string) {
 		"source-directory-limit":    "The source contains too many entries.",
 		"source-files-changed":      "Source files changed while ingest was running.",
 		"source-file-invalid":       "One or more source files could not be processed.",
+		"workout-delete-failed":     "The workout deletion could not be completed.",
 	}
 	summary, ok := summaries[*code]
 	if !ok {

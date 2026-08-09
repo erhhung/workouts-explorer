@@ -217,8 +217,23 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	originalDetailCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+accepted.JobId, "", bearer, "", false)
 	detail = generated.JobDetail{}
 	if err := json.Unmarshal(originalDetailCall.recorder.Body.Bytes(), &detail); err != nil ||
-		len(detail.RetriedByJobIds) != 1 || detail.RetriedByJobIds[0] != retryAccepted.JobId {
+		len(detail.RetriedByJobIds) != 1 || detail.RetriedByJobIds[0] != retryAccepted.JobId ||
+		detail.LatestRetryJobId == nil || *detail.LatestRetryJobId != retryAccepted.JobId ||
+		detail.LatestRetryOrdinal == nil || *detail.LatestRetryOrdinal != 1 {
 		t.Fatalf("reverse retry lineage=%#v err=%v", detail.RetriedByJobIds, err)
+	}
+	historyCall := routeJobRequest(handler, http.MethodGet, "/api/jobs?page=1&pageSize=100", "", bearer, "", false)
+	var history generated.JobList
+	if err := json.Unmarshal(historyCall.recorder.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	var originalListed, retryListed bool
+	for _, item := range history.Items {
+		originalListed = originalListed || item.Id == accepted.JobId
+		retryListed = retryListed || item.Id == retryAccepted.JobId
+	}
+	if historyCall.recorder.Code != http.StatusOK || originalListed || !retryListed {
+		t.Fatalf("retry history original=%t retry=%t status=%d", originalListed, retryListed, historyCall.recorder.Code)
 	}
 	foreignRetry := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/retry", `{}`, foreignBearer, "", false)
 	if foreignRetry.recorder.Code != http.StatusNotFound {

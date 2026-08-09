@@ -95,6 +95,36 @@ export interface WorkoutList {
   items: Workout[];
 }
 
+export interface WorkoutProvenanceWarning {
+  code: "incomplete_metric" | "unexpected_unit" | "invalid_optional_route_value";
+  field: string;
+  routePoint?: number;
+}
+
+export interface WorkoutProvenanceEvent {
+  id: string;
+  kind: "created" | "updated" | "matched_unchanged";
+  jobId: string;
+  sourceId: string;
+  sourceName: string;
+  sourceType: string;
+  sourceFile: string;
+  warnings: WorkoutProvenanceWarning[];
+  importedAt: string;
+}
+
+export interface WorkoutProvenance {
+  workoutId: string;
+  items: WorkoutProvenanceEvent[];
+}
+
+export interface WorkoutDeletionAccepted {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  reused: boolean;
+  targetCount: number;
+}
+
 export interface PublicConfig {
   productName: string;
   pollingIntervalSeconds: number;
@@ -140,6 +170,7 @@ export interface JobSourceContext {
 
 export interface JobSummary {
   id: string;
+  operation?: "data_sync" | "workout_deletion";
   trigger: JobTrigger;
   status: JobStatus;
   progress: JobProgress;
@@ -162,6 +193,8 @@ export interface JobDetail extends JobSummary {
   parentJobId?: string;
   retryRootJobId?: string;
   retryOrdinal?: number;
+  latestRetryJobId?: string;
+  latestRetryOrdinal?: number;
   attempt: number;
   source?: JobSourceContext;
   children: JobDetail[];
@@ -308,11 +341,11 @@ function isPublicRequest(pathname: string, method: string) {
   return method === "POST" && (pathname === "/api/registrations" || pathname === "/api/password-reset-requests" || pathname === "/api/password-resets");
 }
 
-export async function api<T>(path: string, init: RequestInit = {}, csrfToken?: string): Promise<T> {
+async function request(path: string, init: RequestInit, csrfToken: string | undefined, accept: string) {
   const pathname = new URL(path, window.location.origin).pathname;
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json, application/problem+json");
+  headers.set("Accept", accept);
   if (init.body) headers.set("Content-Type", "application/json");
   if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
 
@@ -329,6 +362,18 @@ export async function api<T>(path: string, init: RequestInit = {}, csrfToken?: s
     }
     throw new ApiError(response.status, problem);
   }
+  return response;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}, csrfToken?: string): Promise<T> {
+  const response = await request(path, init, csrfToken, "application/json, application/problem+json");
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export async function downloadApi(path: string, init: RequestInit = {}, accept = "application/json, application/problem+json"): Promise<{ blob: Blob; filename: string }> {
+  const response = await request(path, init, undefined, accept);
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const filename = /^attachment;\s*filename="([A-Za-z0-9._-]+)"$/.exec(disposition)?.[1] ?? "workout-export.json";
+  return { blob: await response.blob(), filename };
 }

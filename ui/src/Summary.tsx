@@ -1,9 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, type FormEvent, type PointerEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   api,
+  ApiError,
+  downloadApi,
   type DateRangeEnum,
   type DateRangePreference,
   type ExactMetric,
@@ -12,6 +14,9 @@ import {
   type Workout,
   type WorkoutColumn,
   type WorkoutList,
+  type WorkoutDeletionAccepted,
+  type WorkoutProvenance,
+  type WorkoutProvenanceWarning,
   type WorkoutSortDirection,
   type WorkoutSummary,
 } from "./api";
@@ -230,6 +235,90 @@ function QueryError({ message, retry }: { message: string; retry: () => void }) 
   return <div className="summary-query-error" role="alert"><span>{message}</span><button className="secondary" onClick={retry}>Retry</button></div>;
 }
 
+function WorkoutActions({ workout, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
+  workout: Workout;
+  onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
+  onExportGeoJSON: (workout: Workout) => void;
+  onExportPoints: (workout: Workout) => void;
+  onDelete: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger ref={triggerRef} className="workout-action-trigger" aria-label={`Actions for ${workout.type.displayName} on ${workout.localStartDate ?? "unknown date"}`}>
+      <span aria-hidden="true">...</span>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal><DropdownMenu.Content className="menu-content workout-action-menu" align="end" sideOffset={6}>
+      <DropdownMenu.Item onSelect={() => onViewProvenance(workout, triggerRef.current)}>View provenance</DropdownMenu.Item>
+      {workout.routePointCount >= 2 && <DropdownMenu.Item onSelect={() => onExportGeoJSON(workout)}>Export GeoJSON</DropdownMenu.Item>}
+      {workout.routeAvailable && <DropdownMenu.Item onSelect={() => onExportPoints(workout)}>Export points</DropdownMenu.Item>}
+      <DropdownMenu.Separator />
+      <DropdownMenu.Item className="danger-item" onSelect={() => onDelete(workout, triggerRef.current)}>Delete workout</DropdownMenu.Item>
+    </DropdownMenu.Content></DropdownMenu.Portal>
+  </DropdownMenu.Root>;
+}
+
+function provenanceKindLabel(kind: WorkoutProvenance["items"][number]["kind"]) {
+  if (kind === "created") return "Imported";
+  if (kind === "updated") return "Updated";
+  return "Matched unchanged";
+}
+
+function provenanceTime(value: string, preferences: Preferences) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium", timeStyle: "medium", timeZone: preferences.timezone, hour12: preferences.clockFormat === "12h",
+  }).format(date);
+}
+
+function warningLabel(warning: WorkoutProvenanceWarning) {
+  const code = warning.code.replaceAll("_", " ");
+  const field = warning.field.replaceAll("_", " ");
+  return warning.routePoint == null ? `${code}: ${field}` : `${code}: ${field}, point ${warning.routePoint + 1}`;
+}
+
+function subtractExact(left: string, right: string) {
+  const [leftWhole, leftFraction = ""] = left.split(".");
+  const [rightWhole, rightFraction = ""] = right.split(".");
+  const scale = Math.max(leftFraction.length, rightFraction.length);
+  const scaled = (whole: string, fraction: string) => BigInt(whole + fraction.padEnd(scale, "0"));
+  const value = scaled(leftWhole, leftFraction) - scaled(rightWhole, rightFraction);
+  if (value <= 0n) return "0";
+  const digits = value.toString().padStart(scale + 1, "0");
+  if (scale === 0) return digits;
+  const fraction = digits.slice(-scale).replace(/0+$/, "");
+  return fraction ? `${digits.slice(0, -scale)}.${fraction}` : digits.slice(0, -scale);
+}
+
+function subtractWorkoutTotals(totals: SummaryTotals, workout: Workout): SummaryTotals {
+  const subtractMetric = (total: ExactMetric | null, item: ExactMetric | null) => total && item && total.unit === item.unit
+    ? { ...total, value: subtractExact(total.value, item.value) }
+    : total;
+  return {
+    count: Math.max(0, totals.count - 1),
+    duration: subtractExact(totals.duration, workout.duration),
+    distance: subtractMetric(totals.distance, workout.distance),
+    energy: subtractMetric(totals.energy, workout.calories),
+  };
+}
+
+function hideWorkoutFromSummary(summary: WorkoutSummary, workout: Workout): WorkoutSummary {
+  return {
+    ...summary,
+    totals: subtractWorkoutTotals(summary.totals, workout),
+    byType: summary.byType.flatMap((entry) => {
+      if (entry.type.id !== workout.type.id) return [entry];
+      const totals = subtractWorkoutTotals(entry.totals, workout);
+      return totals.count === 0 ? [] : [{ ...entry, totals }];
+    }),
+  };
+}
+
+function emptyWorkoutSummary(summary: WorkoutSummary): WorkoutSummary {
+  const zeroMetric = (metric: ExactMetric | null) => metric ? { ...metric, value: "0" } : null;
+  return { ...summary, totals: { count: 0, duration: "0", distance: zeroMetric(summary.totals.distance), energy: zeroMetric(summary.totals.energy) }, byType: [] };
+}
+
 function AggregateCard({ label, value, valueTitle, summary, format }: {
   label: string; value: ReactNode; valueTitle?: string; summary: WorkoutSummary; format: (totals: SummaryTotals) => ReactNode;
 }) {
@@ -258,9 +347,13 @@ function AggregateCard({ label, value, valueTitle, summary, format }: {
   );
 }
 
-function WorkoutTable({ data, preferences, sort, onSort }: {
+function WorkoutTable({ data, preferences, sort, onSort, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
   data: WorkoutList; preferences: Preferences; sort: { field: WorkoutColumn; direction: WorkoutSortDirection };
   onSort: (field: WorkoutColumn) => void;
+  onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
+  onExportGeoJSON: (workout: Workout) => void;
+  onExportPoints: (workout: Workout) => void;
+  onDelete: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const selectedColumns = new Set<unknown>(Array.isArray(preferences.workoutColumns) ? preferences.workoutColumns : []);
@@ -278,12 +371,12 @@ function WorkoutTable({ data, preferences, sort, onSort }: {
     <>
       <div className="workout-table-wrap">
         <table className="workout-table">
-          <colgroup>{columns.map((column, index) => <col key={column} style={{ width: `${columnWidths[index]}%` }} />)}</colgroup>
+          <colgroup>{columns.map((column, index) => <col key={column} style={{ width: `${columnWidths[index]}%` }} />)}<col className="workout-actions-col" /></colgroup>
           <thead><tr>{columns.map((column) => {
             const selected = sort.field === column;
             return <th key={column} aria-sort={selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"} scope="col"><button onClick={() => onSort(column)} disabled={!SORTABLE_COLUMNS.has(column)}><span className="column-label">{COLUMN_LABELS[column]}</span><span className="sort-indicator" aria-hidden="true">{selected ? (sort.direction === "asc" ? <>&#9650;</> : <>&#9660;</>) : <>&#9650; &#9660;</>}</span></button></th>;
-          })}</tr></thead>
-          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => <td key={column}><div className={`workout-cell workout-cell--${column}`}>{columnValue(column, workout, preferences)}</div></td>)}</tr>)}</tbody>
+          })}<th className="workout-actions-heading" scope="col"><span className="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => <td key={column}><div className={`workout-cell workout-cell--${column}`}>{columnValue(column, workout, preferences)}</div></td>)}<td className="workout-actions-cell"><WorkoutActions workout={workout} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} /></td></tr>)}</tbody>
         </table>
       </div>
       <div className="mobile-workouts">
@@ -292,10 +385,13 @@ function WorkoutTable({ data, preferences, sort, onSort }: {
           const detailsId = `workout-details-${workout.id}`;
           const times = workoutTimes(workout, preferences);
           return <article className={`mobile-workout${isExpanded ? " is-expanded" : ""}`} key={workout.id}>
-            <button aria-expanded={isExpanded} aria-controls={detailsId} title={durationTooltip(workout.duration)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(workout.id)) next.delete(workout.id); else next.add(workout.id); return next; })}>
-              <DateTimeValue value={times.start} focusableHelp={false} />
-              <strong>{workout.type.displayName}</strong><DurationValue value={workout.duration} focusable={false} />
-            </button>
+            <div className="mobile-workout-summary">
+              <button aria-expanded={isExpanded} aria-controls={detailsId} title={durationTooltip(workout.duration)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(workout.id)) next.delete(workout.id); else next.add(workout.id); return next; })}>
+                <DateTimeValue value={times.start} focusableHelp={false} />
+                <strong>{workout.type.displayName}</strong><DurationValue value={workout.duration} focusable={false} />
+              </button>
+              <WorkoutActions workout={workout} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} />
+            </div>
             <div id={detailsId} hidden={!isExpanded} className="mobile-workout-details">
               <dl>
                  <div><dt>Local start</dt><dd><DateTimeValue value={times.start} /></dd></div>
@@ -315,6 +411,7 @@ function WorkoutTable({ data, preferences, sort, onSort }: {
 export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
   preferences: Preferences; csrfToken: string; onDateRangeSaved: (dateRange: DateRangePreference) => void;
 }) {
+  const queryClient = useQueryClient();
   const [range, setRange] = useState<DateRangePreference>(() => initialRange(preferences.dateRange));
   const rangeRef = useRef(range);
   const latestSelection = useRef(0);
@@ -325,7 +422,21 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
   const [customOpen, setCustomOpen] = useState(false);
   const [customError, setCustomError] = useState<{ message: string; fields: Array<"start" | "end"> }>();
   const [saveNotice, setSaveNotice] = useState("");
+  const [exportError, setExportError] = useState("");
   const customErrorRef = useRef<HTMLParagraphElement>(null);
+  const provenanceReturnFocus = useRef<HTMLButtonElement | null>(null);
+  const [provenanceWorkout, setProvenanceWorkout] = useState<Workout>();
+  const [deletionTarget, setDeletionTarget] = useState<Workout>();
+  const [deletionError, setDeletionError] = useState("");
+  const [deletionNotice, setDeletionNotice] = useState<string>();
+  const deletionReturnFocus = useRef<HTMLButtonElement | null>(null);
+  const deletionCancelRef = useRef<HTMLButtonElement>(null);
+  const deletionErrorRef = useRef<HTMLParagraphElement>(null);
+  const [rangeDeletionOpen, setRangeDeletionOpen] = useState(false);
+  const [rangeConfirmation, setRangeConfirmation] = useState("");
+  const [rangeDeletionError, setRangeDeletionError] = useState("");
+  const rangeDeletionCancelRef = useRef<HTMLButtonElement>(null);
+  const rangeDeletionErrorRef = useRef<HTMLParagraphElement>(null);
   const customErrorId = useId();
   const explicit = EXPLICIT_RANGE.exec(range);
   useEffect(() => {
@@ -378,8 +489,9 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
     if (start > end) { setCustomError({ message: "Start date must be on or before end date.", fields: ["start", "end"] }); setTimeout(() => customErrorRef.current?.focus()); return; }
     setCustomError(undefined); setCustomOpen(false); selectRange(`${start}/${end}`);
   }
+  const summaryQueryKey = ["summary", range, preferences.timezone, preferences.firstWeekday] as const;
   const summaryQuery = useQuery({
-    queryKey: ["summary", range, preferences.timezone, preferences.firstWeekday],
+    queryKey: summaryQueryKey,
     queryFn: ({ signal }) => api<WorkoutSummary>(`/api/summary?${rangeParams(range, preferences.timezone)}`, { signal }),
   });
   const workoutBaseKey = ["workouts", range, preferences.timezone, preferences.firstWeekday, page, preferences.pageSize] as const;
@@ -400,6 +512,123 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
       return sameFilter && page === 1 && sortChanged ? previousData : undefined;
     },
   });
+  const provenanceQuery = useQuery({
+    queryKey: ["workout-provenance", provenanceWorkout?.id],
+    queryFn: ({ signal }) => api<WorkoutProvenance>(`/api/workouts/${encodeURIComponent(provenanceWorkout!.id)}/provenance`, { signal }),
+    enabled: Boolean(provenanceWorkout),
+  });
+  const deletion = useMutation({
+    scope: { id: "workout-deletion" },
+    mutationFn: (workout: Workout) => api<WorkoutDeletionAccepted>(`/api/workouts/${encodeURIComponent(workout.id)}`, { method: "DELETE" }, csrfToken),
+    onMutate: async (workout) => {
+      setDeletionError("");
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: workoutQueryKey, exact: true }),
+        queryClient.cancelQueries({ queryKey: summaryQueryKey, exact: true }),
+      ]);
+      const previousWorkouts = queryClient.getQueryData<WorkoutList>(workoutQueryKey);
+      const previousSummary = queryClient.getQueryData<WorkoutSummary>(summaryQueryKey);
+      if (previousWorkouts) queryClient.setQueryData<WorkoutList>(workoutQueryKey, {
+        ...previousWorkouts,
+        items: previousWorkouts.items.filter((item) => item.id !== workout.id),
+        pagination: {
+          ...previousWorkouts.pagination,
+          totalItems: Math.max(0, previousWorkouts.pagination.totalItems - 1),
+          totalPages: Math.ceil(Math.max(0, previousWorkouts.pagination.totalItems - 1) / previousWorkouts.pagination.pageSize),
+        },
+      });
+      if (previousSummary) queryClient.setQueryData(summaryQueryKey, hideWorkoutFromSummary(previousSummary, workout));
+      return { previousWorkouts, previousSummary };
+    },
+    onError: (error, _workout, context) => {
+      if (error instanceof ApiError && error.status === 404) {
+        setDeletionTarget(undefined);
+        setDeletionNotice("This workout is no longer available. Summary was refreshed.");
+        void queryClient.invalidateQueries({ queryKey: ["workouts"] });
+        void queryClient.invalidateQueries({ queryKey: ["summary"] });
+        setTimeout(() => document.getElementById("workouts-heading")?.focus());
+        return;
+      }
+      if (context?.previousWorkouts) queryClient.setQueryData(workoutQueryKey, context.previousWorkouts);
+      if (context?.previousSummary) queryClient.setQueryData(summaryQueryKey, context.previousSummary);
+      setDeletionError("The workout could not be queued for deletion. Nothing was changed. Try again.");
+      setTimeout(() => deletionErrorRef.current?.focus());
+    },
+    onSuccess: (_accepted, workout) => {
+      setDeletionTarget(undefined);
+      setDeletionNotice(undefined);
+      if (provenanceWorkout?.id === workout.id) setProvenanceWorkout(undefined);
+      for (const key of [["workouts"], ["summary"], ["workout-provenance"], ["data-sync"], ["jobs"]]) void queryClient.invalidateQueries({ queryKey: key });
+      setTimeout(() => document.getElementById("workouts-heading")?.focus());
+    },
+  });
+  const rangeDeletion = useMutation({
+    scope: { id: "workout-deletion" },
+    mutationFn: ({ startDate, endDate }: { startDate: string; endDate: string }) => {
+      const params = new URLSearchParams({ startDate, endDate });
+      return api<WorkoutDeletionAccepted>(`/api/workouts?${params}`, { method: "DELETE" }, csrfToken);
+    },
+    onMutate: async () => {
+      setRangeDeletionError("");
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: workoutQueryKey, exact: true }),
+        queryClient.cancelQueries({ queryKey: summaryQueryKey, exact: true }),
+      ]);
+      const previousWorkouts = queryClient.getQueryData<WorkoutList>(workoutQueryKey);
+      const previousSummary = queryClient.getQueryData<WorkoutSummary>(summaryQueryKey);
+      if (previousWorkouts) queryClient.setQueryData<WorkoutList>(workoutQueryKey, {
+        ...previousWorkouts, items: [], pagination: { ...previousWorkouts.pagination, totalItems: 0, totalPages: 0 },
+      });
+      if (previousSummary) queryClient.setQueryData(summaryQueryKey, emptyWorkoutSummary(previousSummary));
+      return { previousWorkouts, previousSummary };
+    },
+    onError: (_error, _dates, context) => {
+      if (context?.previousWorkouts) queryClient.setQueryData(workoutQueryKey, context.previousWorkouts);
+      if (context?.previousSummary) queryClient.setQueryData(summaryQueryKey, context.previousSummary);
+      setRangeDeletionError("The range could not be queued for deletion. Nothing was changed. Try again.");
+      setTimeout(() => rangeDeletionErrorRef.current?.focus());
+    },
+    onSuccess: () => {
+      setRangeDeletionOpen(false);
+      setRangeConfirmation("");
+      for (const key of [["workouts"], ["summary"], ["workout-provenance"], ["data-sync"], ["jobs"]]) void queryClient.invalidateQueries({ queryKey: key });
+      setTimeout(() => document.getElementById("workouts-heading")?.focus());
+    },
+  });
+  function openProvenance(workout: Workout, returnFocus: HTMLButtonElement | null) {
+    provenanceReturnFocus.current = returnFocus;
+    setProvenanceWorkout(workout);
+  }
+  function closeProvenance() {
+    setProvenanceWorkout(undefined);
+  }
+  function openDeletion(workout: Workout, returnFocus: HTMLButtonElement | null) {
+    deletionReturnFocus.current = returnFocus;
+    setDeletionError("");
+    setDeletionTarget(workout);
+  }
+  async function exportRoute(workout: Workout, format: "geojson" | "points") {
+    setExportError("");
+    try {
+      const suffix = format === "geojson" ? "route" : "route/points";
+      const accept = format === "geojson" ? "application/geo+json, application/problem+json" : "application/json, application/problem+json";
+      const download = await downloadApi(`/api/workouts/${encodeURIComponent(workout.id)}/${suffix}`, {}, accept);
+      const url = URL.createObjectURL(download.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = download.filename;
+      link.hidden = true;
+      document.body.append(link);
+      try {
+        link.click();
+      } finally {
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      setExportError(`Workout ${format === "geojson" ? "GeoJSON" : "points"} could not be exported. Try again.`);
+    }
+  }
   const updateSort = (field: WorkoutColumn) => {
     const next = sort.field === field ? { field, direction: sort.direction === "asc" ? "desc" as const : "asc" as const } : { field, direction: field === "date" ? "desc" as const : "asc" as const };
     setSort(next);
@@ -423,6 +652,13 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
     if (workoutsQuery.isFetching || workoutsQuery.isPlaceholderData || !workoutsQuery.isSuccess) return;
     setSortActivity({ ...sortActivity, state: "complete" });
   }, [sort, sortActivity, workoutsQuery.isError, workoutsQuery.isFetching, workoutsQuery.isPlaceholderData, workoutsQuery.isSuccess]);
+  useEffect(() => {
+    if (!provenanceWorkout || !(provenanceQuery.error instanceof ApiError) || provenanceQuery.error.status !== 404) return;
+    setProvenanceWorkout(undefined);
+    void workoutsQuery.refetch();
+    void summaryQuery.refetch();
+    setTimeout(() => provenanceReturnFocus.current?.focus());
+  }, [provenanceQuery.error, provenanceWorkout]);
   const displayedWorkouts = pageNeedsCorrection ? undefined : workouts;
   const sortActivityLabel = sortActivity && `${COLUMN_LABELS[sortActivity.field]} ${sortActivity.direction === "asc" ? "ascending" : "descending"}`;
   const rangeZone = summary?.range && currentZone(summary.range.timezone);
@@ -441,14 +677,57 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
         </DropdownMenu.Root>
       </header>
       {saveNotice && <div className="summary-notice" role="status">{saveNotice}</div>}
+      {exportError && <div className="summary-notice summary-export-error" role="alert">{exportError}</div>}
+      {deletionNotice && <div className="summary-notice" role="status">{deletionNotice}</div>}
       <Dialog.Root open={customOpen} onOpenChange={(open) => { setCustomOpen(open); if (!open) setCustomError(undefined); }}>
         <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content custom-range-dialog">
           <div className="dialog-heading"><div><Dialog.Title>Custom date range</Dialog.Title><Dialog.Description>Choose inclusive calendar dates.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Custom date range">&times;</Dialog.Close></div>
           <form className="custom-range-form" onSubmit={submitCustom} noValidate>
             {customError && <p className="error-summary" id={customErrorId} role="alert" tabIndex={-1} ref={customErrorRef}>{customError.message}</p>}
-            <div className="field-pair"><div className="field"><label htmlFor="summary-start-date">Start date</label><input id="summary-start-date" name="startDate" type="date" defaultValue={explicit?.[1]} required aria-invalid={customError?.fields.includes("start") || undefined} aria-describedby={customError?.fields.includes("start") ? customErrorId : undefined} /></div><div className="field"><label htmlFor="summary-end-date">End date</label><input id="summary-end-date" name="endDate" type="date" defaultValue={explicit?.[2]} required aria-invalid={customError?.fields.includes("end") || undefined} aria-describedby={customError?.fields.includes("end") ? customErrorId : undefined} /></div></div>
+            <div className="field-pair"><div className="field"><label htmlFor="summary-start-date">Start date</label><input id="summary-start-date" name="startDate" type="date" defaultValue={explicit?.[1]} required aria-invalid={customError?.fields.includes("start") || undefined} aria-describedby={customError?.fields.includes("start") ? customErrorId : undefined} onBlur={(event) => { const endDate = event.currentTarget.form?.elements.namedItem("endDate"); if (event.currentTarget.value && endDate instanceof HTMLInputElement && !endDate.value) endDate.value = event.currentTarget.value; }} /></div><div className="field"><label htmlFor="summary-end-date">End date</label><input id="summary-end-date" name="endDate" type="date" defaultValue={explicit?.[2]} required aria-invalid={customError?.fields.includes("end") || undefined} aria-describedby={customError?.fields.includes("end") ? customErrorId : undefined} /></div></div>
             <div className="dialog-actions"><Dialog.Close type="button" className="secondary">Cancel</Dialog.Close><button className="primary">Apply range</button></div>
           </form>
+        </Dialog.Content></Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={rangeDeletionOpen} onOpenChange={(open) => { if (!rangeDeletion.isPending) { setRangeDeletionOpen(open); if (!open) { setRangeConfirmation(""); setRangeDeletionError(""); } } }}>
+        <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content deletion-dialog single-deletion-dialog range-deletion-dialog"
+          onOpenAutoFocus={(event) => { event.preventDefault(); setTimeout(() => rangeDeletionCancelRef.current?.focus()); }}
+          onCloseAutoFocus={(event) => { event.preventDefault(); document.getElementById("workouts-heading")?.focus(); }}>
+          <div className="dialog-heading"><div><Dialog.Title>Delete workouts in this range?</Dialog.Title><Dialog.Description>{explicit ? `Delete all workouts from ${rangeDate(explicit[1])} through ${rangeDate(explicit[2])}, inclusive?` : "Delete all workouts in this explicit range?"}</Dialog.Description></div></div>
+          <p className="deletion-confirmation-message">These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.</p>
+          {rangeDeletionError && <p ref={rangeDeletionErrorRef} className="error-summary" role="alert" tabIndex={-1}>{rangeDeletionError}</p>}
+          <div className="field range-confirmation"><label htmlFor="range-delete-confirmation">Type <strong>DELETE</strong> to confirm.</label><input id="range-delete-confirmation" value={rangeConfirmation} placeholder="DELETE" autoComplete="off" onChange={(event) => setRangeConfirmation(event.target.value)} /></div>
+          <div className="dialog-actions"><Dialog.Close ref={rangeDeletionCancelRef} type="button" className="secondary" disabled={rangeDeletion.isPending}>Cancel</Dialog.Close><button className="danger-action" disabled={rangeDeletion.isPending || rangeConfirmation !== "DELETE"} onClick={() => { if (explicit) rangeDeletion.mutate({ startDate: explicit[1], endDate: explicit[2] }); }}>Yes</button></div>
+        </Dialog.Content></Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={Boolean(deletionTarget)} onOpenChange={(open) => { if (!open && !deletion.isPending) { setDeletionTarget(undefined); setDeletionError(""); } }}>
+        <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content deletion-dialog single-deletion-dialog"
+          onOpenAutoFocus={(event) => { event.preventDefault(); setTimeout(() => deletionCancelRef.current?.focus()); }}
+          onCloseAutoFocus={(event) => { event.preventDefault(); const target = deletionReturnFocus.current; if (target?.isConnected) target.focus(); else document.getElementById("workouts-heading")?.focus(); }}>
+          <div className="dialog-heading"><div><Dialog.Title>Delete workout?</Dialog.Title><Dialog.Description>{deletionTarget ? `Delete ${deletionTarget.type.displayName} on ${deletionTarget.localStartDate ? rangeDate(deletionTarget.localStartDate) : "an unknown date"}?` : "Delete this workout?"}</Dialog.Description></div></div>
+          <p className="deletion-confirmation-message">This workout will be hidden from view immediately. All associated data, including route, import history, and derived data, will be purged by a background task. This cannot be undone. Are you sure?</p>
+          {deletionError && <p ref={deletionErrorRef} className="error-summary" role="alert" tabIndex={-1}>{deletionError}</p>}
+          <div className="dialog-actions"><Dialog.Close ref={deletionCancelRef} type="button" className="secondary" disabled={deletion.isPending}>Cancel</Dialog.Close><button className="danger-action" disabled={deletion.isPending} onClick={() => { if (deletionTarget) deletion.mutate(deletionTarget); }}>Yes</button></div>
+        </Dialog.Content></Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={Boolean(provenanceWorkout)} onOpenChange={(open) => { if (!open) closeProvenance(); }}>
+        <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content provenance-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); provenanceReturnFocus.current?.focus(); }}>
+          <div className="dialog-heading provenance-dialog-header"><div><Dialog.Title>Workout provenance</Dialog.Title><Dialog.Description>{provenanceWorkout ? `${provenanceWorkout.type.displayName} on ${provenanceWorkout.localStartDate ?? "an unknown date"}. Full import history, oldest first.` : "Full import history."}</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Workout provenance">&times;</Dialog.Close></div>
+          <div className="provenance-dialog-body">
+            {provenanceQuery.isPending && <p className="provenance-state" role="status">Loading provenance...</p>}
+            {provenanceQuery.isError && !(provenanceQuery.error instanceof ApiError && provenanceQuery.error.status === 404) && <QueryError message="Provenance is unavailable." retry={() => void provenanceQuery.refetch()} />}
+            {provenanceQuery.data?.items.length === 0 && <p className="provenance-state">No import events were recorded.</p>}
+            {provenanceQuery.data && provenanceQuery.data.items.length > 0 && <ol className="provenance-timeline">
+              {provenanceQuery.data.items.map((event) => <li key={event.id}>
+                <div className="provenance-event-heading"><strong>{provenanceKindLabel(event.kind)}</strong><time dateTime={event.importedAt}>{provenanceTime(event.importedAt, preferences)}</time></div>
+                <dl><div><dt>Source</dt><dd>{event.sourceName}</dd></div><div><dt>File</dt><dd>{event.sourceFile}</dd></div><div><dt>Source type</dt><dd>{event.sourceType}</dd></div><div><dt>Job ID</dt><dd><code>{event.jobId}</code></dd></div></dl>
+                {event.warnings.length > 0 && <div className="provenance-warnings"><strong>{event.warnings.length} {event.warnings.length === 1 ? "warning" : "warnings"}</strong><ul>{event.warnings.map((warning, index) => <li key={`${warning.code}-${warning.field}-${warning.routePoint ?? "workout"}-${index}`}>{warningLabel(warning)}</li>)}</ul></div>}
+              </li>)}
+            </ol>}
+          </div>
         </Dialog.Content></Dialog.Portal>
       </Dialog.Root>
 
@@ -465,13 +744,13 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
       </section>
 
       <section className="workouts-section" aria-labelledby="workouts-heading">
-        <div className="section-line"><h2 id="workouts-heading">Workout log</h2>{displayedWorkouts && <span>{displayedWorkouts.pagination.totalItems} {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} / Page {displayedWorkouts.pagination.page} of {Math.max(1, displayedWorkouts.pagination.totalPages)}</span>}</div>
+        <div className="section-line"><h2 id="workouts-heading" tabIndex={-1}>Workout log</h2><div className="workout-log-actions">{explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && <button type="button" className="range-delete-trigger" aria-label="Delete workouts in this range" title="Delete workouts in this range" onClick={() => { setRangeConfirmation(""); setRangeDeletionError(""); setRangeDeletionOpen(true); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></svg></button>}{displayedWorkouts && <span>{displayedWorkouts.pagination.totalItems} {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} / Page {displayedWorkouts.pagination.page} of {Math.max(1, displayedWorkouts.pagination.totalPages)}</span>}</div></div>
         {(workoutsQuery.isPending || pageNeedsCorrection) && <p className="summary-loading" role="status">Loading workouts...</p>}
         {workoutsQuery.isError && <QueryError message="Workouts are unavailable." retry={() => void workoutsQuery.refetch()} />}
         {displayedWorkouts && displayedWorkouts.items.length === 0 && <div className="summary-empty"><strong>No workouts in this range.</strong><span>Choose another date range to continue tracing your archive.</span></div>}
         {sortActivity?.state === "sorting" && <p className="visually-hidden workout-sort-status" role="status">Sorting by {sortActivityLabel}...</p>}
         {sortActivity?.state === "complete" && <span className="visually-hidden" role="status">Sorted by {sortActivityLabel}.</span>}
-        {displayedWorkouts && displayedWorkouts.items.length > 0 && <div className="workout-results" aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} preferences={preferences} sort={sort} onSort={updateSort} /></div>}
+        {displayedWorkouts && displayedWorkouts.items.length > 0 && <div className="workout-results" aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} preferences={preferences} sort={sort} onSort={updateSort} onViewProvenance={openProvenance} onExportGeoJSON={(workout) => void exportRoute(workout, "geojson")} onExportPoints={(workout) => void exportRoute(workout, "points")} onDelete={openDeletion} /></div>}
         {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && <nav className="pagination" aria-label="Workout pages"><button className="secondary" disabled={page <= 1 || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page - 1, pageSize: preferences.pageSize }))}>Previous</button><span>Page {displayedWorkouts.pagination.page} of {displayedWorkouts.pagination.totalPages}</span><button className="secondary" disabled={page >= displayedWorkouts.pagination.totalPages || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page + 1, pageSize: preferences.pageSize }))}>Next</button></nav>}
       </section>
     </main>

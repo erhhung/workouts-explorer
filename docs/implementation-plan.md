@@ -174,7 +174,7 @@ An owner configures a local/NFS Health Auto Export source through Swagger, impor
 
 ### Completion evidence (2026-08-05)
 
-- Schema 1-to-6 migration, upgrade, RLS, API, worker, parser, and UI suites pass against PostgreSQL 18.
+- Schema 1-to-5 migration, upgrade, RLS, API, worker, parser, and UI suites pass against PostgreSQL 18.
 - The `xdev` deployment imported all three supplied NFS fixtures into five workouts, three workout types, and 788 route points.
 - An unchanged deployed reimport produced five `matched_unchanged` events and retained five workouts.
 - Encrypted source configuration contains no plaintext path, and terminal jobs retain neither snapshots nor leases.
@@ -223,7 +223,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 
 ### Completion evidence (2026-08-06)
 
-- Schema 1-to-7 migration, upgrade, tenant isolation, job-state, scheduler, file-slot, recovery, API, worker, and UI suites pass against PostgreSQL 18.
+- Schema 1-to-6 migration, upgrade, tenant isolation, job-state, scheduler, file-slot, recovery, API, worker, and UI suites pass against PostgreSQL 18.
 - The `xdev` deployment completed a two-source parent sync, reused an equivalent active request, and persisted independent source-child progress and diagnostics.
 - A repeat incremental sync skipped all 34 unchanged files, while a bounded one-day sync deliberately reprocessed its matching export.
 - A database-leased scheduled sync created one parent with two source children, completed as a silent no-data success, and advanced the next cadence boundary.
@@ -264,6 +264,28 @@ Users can inspect where a workout came from, export normalized route data, and d
 - Content-Disposition filename tests
 - Delete/retry race tests with concurrent ingest
 - Provenance and location-data purge verification
+
+### Progress (2026-08-07)
+
+- Added the owner-only chronological workout provenance contract and responsive
+  Summary action/dialog flow, including normalized compact or dashed UUID input,
+  historical source context, safe warning details, stale-workout refresh, and
+  cross-account/API/UI coverage.
+- Added versioned normalized points downloads in provider sequence with duplicate
+  timestamp preservation, canonical-unit field names, every retained accuracy
+  value, private no-store attachment responses, short safe filenames, and a
+  route-aware buffered Summary export action.
+- Added schema 7 route summaries with fenced worker replacement and historical
+  backfill, persisted bounds and elevation derivation, and standard contextual
+  GeoJSON downloads that use 3D coordinates only for complete-altitude routes
+  and otherwise emit a consistent 2D LineString.
+- Added the schema 8 individual-deletion foundation: immediate API-only logical
+  hiding, persistent identity tombstones, runtime-gated claiming, exact-target
+  fenced purge, reimport suppression, safe failure notifications, durable job
+  detail, and optimistic Summary confirmation with exact rollback on enqueue
+  failure. Extended the same job model to immutable explicit-range target sets,
+  case-sensitive `DELETE` confirmation, atomic multi-target purge/progress, and
+  terminal retries that reuse only the originally captured pending targets.
 
 ## Milestone 6: Raw Route Map
 

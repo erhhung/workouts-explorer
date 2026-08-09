@@ -66,6 +66,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	legacyParent := uuid.Must(uuid.NewV7())
 	legacyQueuedCheck, legacyRunningCheck := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	legacyQueuedChild, legacyRunningChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	legacyDeletion := uuid.Must(uuid.NewV7())
 	legacyTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		($1,$5,'manual_ingest',80),
 		($2,$5,'source_connection_check',100),
 		($3,$5,'source_connection_check',100),
-		($4,$5,'workout_deletion',50)`, legacyParent, legacyQueuedCheck, legacyRunningCheck, uuid.Must(uuid.NewV7()), legacyAccount); err != nil {
+		($4,$5,'workout_deletion',50)`, legacyParent, legacyQueuedCheck, legacyRunningCheck, legacyDeletion, legacyAccount); err != nil {
 		_ = legacyTx.Rollback()
 		t.Fatal(err)
 	}
@@ -110,12 +111,15 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=7 AND minimum_runtime_version=1
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=8 AND minimum_runtime_version=8
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL
 		AND to_regclass('app.source_files') IS NOT NULL
 		AND to_regclass('app.workouts') IS NOT NULL
 		AND to_regclass('app.workout_import_events') IS NOT NULL
+		AND to_regclass('app.workout_routes') IS NOT NULL
+		AND to_regclass('app.workout_deletion_targets') IS NOT NULL
+		AND to_regclass('app.workout_deletion_capabilities') IS NOT NULL
 		AND to_regclass('app.ingest_write_capabilities') IS NOT NULL
 		AND to_regprocedure('app.valid_workout_warnings(jsonb)') IS NOT NULL
 		AND to_regprocedure('app.delete_source(uuid,uuid)') IS NOT NULL
@@ -134,6 +138,13 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND to_regprocedure('app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint)') IS NOT NULL
 		AND to_regprocedure('app.request_owned_job_cancellation(uuid,uuid)') IS NOT NULL
 		AND to_regprocedure('app.create_legacy_ingest_read_models()') IS NOT NULL
+		AND to_regprocedure('app.replace_workout_route_summary(uuid,integer,double precision,double precision,double precision,double precision,double precision,double precision,double precision,boolean)') IS NOT NULL
+		AND to_regprocedure('app.enqueue_workout_deletion(uuid,uuid)') IS NOT NULL
+		AND to_regprocedure('app.enqueue_workout_range_deletion(date,date,uuid)') IS NOT NULL
+		AND to_regprocedure('app.retry_workout_deletion(uuid,uuid,integer)') IS NOT NULL
+		AND to_regprocedure('app.claim_next_workout_deletion(text,uuid,interval,integer)') IS NOT NULL
+		AND to_regprocedure('app.fence_workout_deletion(uuid,text,uuid)') IS NOT NULL
+		AND to_regprocedure('app.purge_workout_deletion(uuid,text,uuid)') IS NOT NULL
 		AND EXISTS (SELECT 1 FROM pg_trigger
 			WHERE tgname='job_config_snapshots_ingest_compatibility_after_insert' AND NOT tgisinternal)
 		AND to_regprocedure('app.record_job_event(uuid,text,uuid,text,jsonb)') IS NOT NULL
@@ -151,7 +162,30 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	}
 	defer apiDB.Close()
 	if !database.Ready(ctx, apiDB) {
-		t.Fatalf("API role is not ready after schema-v1 upgrade: %s", runtime7ReadinessDiagnostics(ctx, apiDB))
+		t.Fatalf("API role is not ready after schema-v1 upgrade: %s", runtime8ReadinessDiagnostics(ctx, apiDB))
+	}
+	if err := goose.DownToContext(ctx, db, ".", 7); err == nil {
+		t.Fatal("migration 00008 down ignored an existing workout deletion job")
+	}
+	cleanupTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanupTx.ExecContext(ctx, `SELECT set_config('app.account_id',$1,true)`, legacyAccount.String()); err != nil {
+		_ = cleanupTx.Rollback()
+		t.Fatal(err)
+	}
+	result, err := cleanupTx.ExecContext(ctx, `DELETE FROM app.jobs WHERE id=$1`, legacyDeletion)
+	if err != nil {
+		_ = cleanupTx.Rollback()
+		t.Fatal(err)
+	}
+	if deleted, err := result.RowsAffected(); err != nil || deleted != 1 {
+		_ = cleanupTx.Rollback()
+		t.Fatalf("legacy deletion cleanup rows=%d err=%v", deleted, err)
+	}
+	if err := cleanupTx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	var narrowSyncStateRead bool
 	if err := apiDB.QueryRow(ctx, `SELECT
@@ -242,7 +276,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := goose.DownToContext(ctx, db, ".", 5); err == nil {
-		t.Fatal("migration 00006 down ignored active scheduled ingest")
+		t.Fatal("migration 00007 down ignored active scheduled ingest")
 	}
 	scheduledTx, err = apiDB.Begin(ctx)
 	if err != nil {
@@ -264,32 +298,29 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	if err := goose.DownToContext(ctx, db, ".", 5); err != nil {
 		t.Fatal(err)
 	}
-	var migrationSixDown bool
+	var mergedMigrationFive bool
 	if err := db.QueryRowContext(ctx, `SELECT schema_version=5
 		AND pg_get_function_result('app.read_worker_job_log_context(uuid,text,uuid)'::regprocedure)
-			= 'TABLE(owner_name text, source_name text, source_type text)'
+			= 'TABLE(owner_username text, source_name text, source_type text)'
 		AND pg_get_userbyid(p.proowner)='workouts_security_owner'
 		AND has_function_privilege('workouts_worker',p.oid,'EXECUTE')
 		AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')
-		AND to_regprocedure('app.assert_no_active_scheduled_ingest()') IS NULL
+		AND to_regprocedure('app.assert_no_active_scheduled_ingest()') IS NOT NULL
 		AND to_regprocedure('app.create_legacy_ingest_read_models()') IS NULL
 		AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='job_config_snapshots_ingest_compatibility_after_insert')
-		AND position('scheduled_ingest_source' in pg_get_functiondef(claim.oid))=0
-		AND position('scheduled_ingest_source' in pg_get_functiondef(fence.oid))=0
-		AND position('scheduled_ingest_source' in pg_get_functiondef(cleanup.oid))=0
+		AND position('scheduled_ingest_source' in pg_get_functiondef(claim.oid))>0
+		AND position('scheduled_ingest_source' in pg_get_functiondef(fence.oid))>0
+		AND position('scheduled_ingest_source' in pg_get_functiondef(cleanup.oid))>0
 		FROM app.schema_metadata
 		JOIN pg_proc p ON p.oid='app.read_worker_job_log_context(uuid,text,uuid)'::regprocedure
 		JOIN pg_proc claim ON claim.oid='app.claim_next_worker_job_internal(text,uuid,interval,boolean)'::regprocedure
 		JOIN pg_proc fence ON fence.oid='app.fence_ingest_job(uuid,text,uuid)'::regprocedure
 		JOIN pg_proc cleanup ON cleanup.oid='app.clear_ingest_write_capability()'::regprocedure
-		WHERE singleton`).Scan(&migrationSixDown); err != nil || !migrationSixDown {
-		t.Fatalf("migration 00006 down is incomplete: correct=%t err=%v", migrationSixDown, err)
+		WHERE singleton`).Scan(&mergedMigrationFive); err != nil || !mergedMigrationFive {
+		t.Fatalf("merged migration 00005 state is incomplete: correct=%t err=%v", mergedMigrationFive, err)
 	}
 	if database.Ready(ctx, apiDB) {
-		t.Fatal("schema-v6 runtime reported ready after migration 00006 down")
-	}
-	if err := goose.UpToContext(ctx, db, ".", 6); err != nil {
-		t.Fatal(err)
+		t.Fatal("schema-v8 runtime reported ready at schema 5")
 	}
 	drainAccount, drainSource := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	drainParent, drainChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -334,11 +365,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	if err := drainTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.UpToContext(ctx, db, ".", 7); err != nil {
+	if err := goose.UpToContext(ctx, db, ".", 6); err != nil {
 		t.Fatal(err)
 	}
-	if !schema6APIReady(ctx, apiDB) {
-		t.Fatal("schema-6 API readiness did not survive migration 7")
+	if !schema5APIReady(ctx, apiDB) {
+		t.Fatal("schema-5 API readiness did not survive migration 6")
 	}
 	rolloutParent, rolloutChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	rolloutKey := make([]byte, 32)
@@ -387,9 +418,12 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		(id,parent_job_id,account_id,kind,priority,parameters,coalescing_version,coalescing_scope,coalescing_key)
 		VALUES($1,$2,$3,'manual_ingest_source',80,$4,1,'manual-ingest-source',$5)`,
 		uuid.Must(uuid.NewV7()), duplicateParent, drainAccount, drainParameters, rolloutKey); err == nil {
-		t.Fatal("duplicate schema-6 child coalescing key created a second active job")
+		t.Fatal("duplicate schema-5 child coalescing key created a second active job")
 	}
 	_ = duplicate.Rollback(ctx)
+	if err := goose.UpToContext(ctx, db, ".", 7); err != nil {
+		t.Fatal(err)
+	}
 	oldClaim, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -399,9 +433,9 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		_ = oldClaim.Rollback()
 		t.Fatal(err)
 	}
-	if _, err := oldClaim.ExecContext(ctx, `SELECT * FROM app.claim_next_worker_job('schema6-rollout-worker',$1,interval '1 minute')`, uuid.New()); err == nil {
+	if _, err := oldClaim.ExecContext(ctx, `SELECT * FROM app.claim_next_worker_job('schema5-rollout-worker',$1,interval '1 minute')`, uuid.New()); err == nil {
 		_ = oldClaim.Rollback()
-		t.Fatal("schema-6 worker claim was accepted after migration 7")
+		t.Fatal("schema-5 worker claim was accepted after migration 6")
 	}
 	_ = oldClaim.Rollback()
 	var drainContextRows int
@@ -466,7 +500,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	var claimedDrainJob, claimedDrainAccount uuid.UUID
 	var claimedDrainKind string
 	if err := drainClaim.QueryRowContext(ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('schema7-drain-worker',$1,interval '1 minute',7)`, drainLease).Scan(
+		FROM app.claim_next_worker_job('schema6-drain-worker',$1,interval '1 minute',6)`, drainLease).Scan(
 		&claimedDrainJob, &claimedDrainAccount, &claimedDrainKind); err != nil {
 		_ = drainClaim.Rollback()
 		t.Fatal(err)
@@ -476,7 +510,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatalf("legacy drain claim=%s/%s/%s", claimedDrainJob, claimedDrainAccount, claimedDrainKind)
 	}
 	var drainFinished bool
-	if err := drainClaim.QueryRowContext(ctx, `SELECT app.finish_job($1,'schema7-drain-worker',$2,'succeeded')`,
+	if err := drainClaim.QueryRowContext(ctx, `SELECT app.finish_job($1,'schema6-drain-worker',$2,'succeeded')`,
 		drainChild, drainLease).Scan(&drainFinished); err != nil || !drainFinished {
 		_ = drainClaim.Rollback()
 		t.Fatalf("legacy drain finish=%t err=%v", drainFinished, err)
@@ -494,22 +528,22 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	}
 	rolloutLease := uuid.New()
 	if err := rolloutClaim.QueryRowContext(ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('schema7-rollout-worker',$1,interval '1 minute',7)`, rolloutLease).Scan(
+		FROM app.claim_next_worker_job('schema6-rollout-worker',$1,interval '1 minute',6)`, rolloutLease).Scan(
 		&claimedDrainJob, &claimedDrainAccount, &claimedDrainKind); err != nil {
 		t.Fatal(err)
 	}
 	if claimedDrainJob != rolloutChild || claimedDrainAccount != drainAccount || claimedDrainKind != "manual_ingest_source" {
 		t.Fatalf("post-migration legacy claim=%s/%s/%s", claimedDrainJob, claimedDrainAccount, claimedDrainKind)
 	}
-	if err := rolloutClaim.QueryRowContext(ctx, `SELECT app.finish_job($1,'schema7-rollout-worker',$2,'succeeded')`,
+	if err := rolloutClaim.QueryRowContext(ctx, `SELECT app.finish_job($1,'schema6-rollout-worker',$2,'succeeded')`,
 		rolloutChild, rolloutLease).Scan(&drainFinished); err != nil || !drainFinished {
 		t.Fatalf("post-migration legacy finish=%t err=%v", drainFinished, err)
 	}
 	if err := rolloutClaim.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if !database.Ready(ctx, apiDB) {
-		t.Fatal("runtime-7 API role is not ready after migration 7")
+	if database.Ready(ctx, apiDB) {
+		t.Fatal("runtime-8 API role reported ready at schema 7")
 	}
 	legacyTx, err = db.BeginTx(ctx, nil)
 	if err != nil {
@@ -554,11 +588,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	if database.Ready(ctx, apiDB) {
 		t.Fatal("schema-v5 runtime reported ready after migration 00005 down")
 	}
-	if err := goose.UpToContext(ctx, db, ".", 7); err != nil {
+	if err := goose.UpToContext(ctx, db, ".", 6); err != nil {
 		t.Fatal(err)
 	}
-	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00005 and 00006 reapply")
+	if database.Ready(ctx, apiDB) {
+		t.Fatal("runtime-8 API role reported ready after reapplying only through schema 6")
 	}
 	guardAccount, guardSource := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	guardParent, guardChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -628,7 +662,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cancelled bool
-	// Migration 7 has already rolled back while migration 4's active-ingest guard stopped the downgrade.
+	// Migration 6 has already rolled back while migration 4's active-ingest guard stopped the downgrade.
 	if err := guardTx.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, guardParent, guardRequester).Scan(&cancelled); err != nil || !cancelled {
 		_ = guardTx.Rollback(ctx)
 		t.Fatalf("could not clear down-guard fixture: cancelled=%t err=%v", cancelled, err)
@@ -671,7 +705,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00004 through 00006 reapply")
+		t.Fatal("API role is not ready after migrations 00004 through 00008 reapply")
 	}
 	if err := goose.DownToContext(ctx, db, ".", 2); err != nil {
 		t.Fatal(err)
@@ -694,15 +728,15 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00003 through 00006 reapply")
+		t.Fatal("API role is not ready after migrations 00003 through 00008 reapply")
 	}
 }
 
-// schema6APIReady preserves the API branch of runtime 6's shipped readiness contract as rollout proof.
-func schema6APIReady(ctx context.Context, pool *pgxpool.Pool) bool {
+// schema5APIReady preserves the API branch of runtime 5's shipped readiness contract as rollout proof.
+func schema5APIReady(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool
 	err := pool.QueryRow(ctx, `
-		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied),0)>=6
+		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied),0)>=5
 		   AND to_regclass('app.schema_metadata') IS NOT NULL
 		   AND to_regclass('app.jobs') IS NOT NULL
 		   AND to_regclass('app.sources') IS NOT NULL
@@ -760,12 +794,12 @@ func schema6APIReady(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user AND rolcanlogin
 		       AND NOT rolsuper AND NOT rolbypassrls AND rolname='workouts_api')
 		   AND EXISTS (SELECT 1 FROM app.schema_metadata WHERE singleton
-		       AND schema_version>=6 AND minimum_runtime_version<=6)
+		       AND schema_version>=5 AND minimum_runtime_version<=5)
 		FROM public.goose_db_version`).Scan(&ready)
 	return err == nil && ready
 }
 
-func runtime7ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) string {
+func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) string {
 	var missingObjects, wrongOwners, failedPrivileges []string
 	err := pool.QueryRow(ctx, `
 		SELECT
@@ -811,7 +845,7 @@ func runtime7ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) strin
 				('source sync state export date select',has_column_privilege(current_user,'app.source_sync_state','last_new_export_date','SELECT')),
 				('source sync state stale select',has_column_privilege(current_user,'app.source_sync_state','stale_since','SELECT')),
 				('source sync state narrow select',NOT has_table_privilege(current_user,'app.source_sync_state','SELECT')),
-				('minimum runtime metadata',EXISTS(SELECT 1 FROM app.schema_metadata WHERE singleton AND schema_version>=7 AND minimum_runtime_version<=7))
+				('minimum runtime metadata',EXISTS(SELECT 1 FROM app.schema_metadata WHERE singleton AND schema_version>=8 AND minimum_runtime_version<=8))
 			) checks(label,ok) WHERE NOT ok)`).Scan(&missingObjects, &wrongOwners, &failedPrivileges)
 	if err != nil {
 		return fmt.Sprintf("diagnostic query failed: %v", err)

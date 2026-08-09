@@ -102,11 +102,38 @@ func TestWorkoutDisplayTimezoneFallback(t *testing.T) {
 	}
 }
 
+func TestWorkoutExportFilename(t *testing.T) {
+	tests := map[string]string{
+		"Outdoor Run":                           "2026-08-05-outdoor-run.json",
+		"  Hike / Walk  ":                       "2026-08-05-hike-walk.json",
+		"CAFÉ":                                  "2026-08-05-caf.json",
+		"雪山":                                    "2026-08-05-workout.json",
+		"A deliberately very long workout type": "2026-08-05-a-deliberately-very-long-workout-type.json",
+	}
+	for workoutType, want := range tests {
+		if got := workoutExportFilename("2026-08-05", workoutType, "json"); got != want {
+			t.Errorf("type %q filename=%q want=%q", workoutType, got, want)
+		}
+	}
+}
+
 func TestWorkoutReadRoutesRequireAuthentication(t *testing.T) {
 	handler := testHandler(t)
-	for _, path := range []string{"/api/workouts?dateRangeEnum=thisMonth", "/api/workout-types", "/api/summary?dateRangeEnum=thisMonth"} {
+	for _, path := range []string{"/api/workouts?dateRangeEnum=thisMonth", "/api/workouts/018F8E7D7A4C7C03A1C23D4E5F607182/provenance", "/api/workouts/018F8E7D7A4C7C03A1C23D4E5F607182/route/points", "/api/workout-types", "/api/summary?dateRangeEnum=thisMonth"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestWorkoutDeletionRequiresAuthentication(t *testing.T) {
+	handler := testHandler(t)
+	for _, path := range []string{"/api/workouts/018F8E7D7A4C7C03A1C23D4E5F607182", "/api/workouts?startDate=2026-08-01&endDate=2026-08-31"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodDelete, path, nil)
+		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
 		}

@@ -110,9 +110,10 @@ func TestSampleFixtures(t *testing.T) {
 	assertMetric(t, walk, MetricFlightsClimbed, "11.999999999999998", "count", OriginDirect)
 	assertMetric(t, walk, MetricAverageHeartRate, "118.27670240235592", "count/min", OriginDirect)
 	assertMetric(t, walk, MetricHeartRateMinimum, "103", "count/min", OriginHeartRate)
-	assertWarning(t, walk.Warnings, WarningUnexpectedUnit, WarningFieldAverageSpeed)
+	if averageSpeed := findMetric(walk, MetricAverageSpeed); averageSpeed == nil || averageSpeed.Units != "km" {
+		t.Fatalf("average speed provider unit changed: %#v", averageSpeed)
+	}
 	assertMetric(t, walk, MetricMaximumSpeed, "11.909202430745099", "km", OriginDirect)
-	assertWarning(t, walk.Warnings, WarningUnexpectedUnit, WarningFieldMaximumSpeed)
 	qualityWarnings := 0
 	for _, warning := range walk.Warnings {
 		if warning.Code == WarningInvalidOptionalRouteValue {
@@ -139,6 +140,37 @@ func TestSampleFixtures(t *testing.T) {
 	climbing := workoutByID(t, workouts, "3191EA2A-D556-4986-B169-46FF66CB42E1")
 	if climbing.IsIndoor != nil || climbing.Location != nil {
 		t.Fatal("absent nullable values were invented")
+	}
+}
+
+func TestCyclingSampleWarningClassification(t *testing.T) {
+	path := filepath.Join("..", "..", "data", "samples", "HealthAutoExport-2026-04-26.json")
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("workspace cycling sample fixture is not present")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, parseErr := Parse(file)
+	closeErr := file.Close()
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if len(document.Workouts) != 1 || len(document.Workouts[0].Route) != 7842 {
+		t.Fatalf("workouts/route points = %d/%d", len(document.Workouts), len(document.Workouts[0].Route))
+	}
+	warnings := document.Workouts[0].Warnings
+	if len(warnings) != 952 {
+		t.Fatalf("warnings = %d", len(warnings))
+	}
+	for _, warning := range warnings {
+		if warning.Code != WarningInvalidOptionalRouteValue || warning.Field != WarningFieldCourseAccuracy || warning.RoutePoint < 0 {
+			t.Fatalf("unexpected warning = %#v", warning)
+		}
 	}
 }
 

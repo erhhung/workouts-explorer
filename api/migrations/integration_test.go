@@ -177,7 +177,7 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 		_, _ = db.migration.Exec(context.Background(), `GRANT EXECUTE ON FUNCTION app.claim_next_worker_job(text,uuid,interval,integer) TO workouts_worker`)
 	})
 	if database.Ready(db.ctx, db.worker) {
-		t.Fatal("readiness ignored a missing schema-7 claim privilege")
+		t.Fatal("readiness ignored a missing schema-6 claim privilege")
 	}
 	if _, err := db.migration.Exec(db.ctx, `GRANT EXECUTE ON FUNCTION app.claim_next_worker_job(text,uuid,interval,integer) TO workouts_worker`); err != nil {
 		t.Fatal(err)
@@ -233,13 +233,30 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `ALTER FUNCTION app.read_owned_sync_schedule() OWNER TO workouts_migration`); err != nil {
 		t.Fatal(err)
 	}
+	restoreScheduleOwner := func(ctx context.Context) error {
+		tx, err := db.migration.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `GRANT CREATE ON SCHEMA app TO workouts_security_owner`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `ALTER FUNCTION app.read_owned_sync_schedule() OWNER TO workouts_security_owner`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `REVOKE CREATE ON SCHEMA app FROM workouts_security_owner`); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 	t.Cleanup(func() {
-		_, _ = db.migration.Exec(context.Background(), `ALTER FUNCTION app.read_owned_sync_schedule() OWNER TO workouts_security_owner`)
+		_ = restoreScheduleOwner(context.Background())
 	})
 	if database.Ready(db.ctx, db.api) {
 		t.Fatal("readiness ignored an unsafe scheduler function owner")
 	}
-	if _, err := db.migration.Exec(db.ctx, `ALTER FUNCTION app.read_owned_sync_schedule() OWNER TO workouts_security_owner`); err != nil {
+	if err := restoreScheduleOwner(db.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.migration.Exec(db.ctx, `ALTER TABLE app.auto_sync_policy RENAME TO auto_sync_policy_readiness_test`); err != nil {
@@ -303,11 +320,11 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `REVOKE SELECT ON app.ingest_write_capabilities FROM workouts_worker`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 8, minimum_runtime_version = 8`); err != nil {
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 9, minimum_runtime_version = 9`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 7, minimum_runtime_version = 1`)
+		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 8, minimum_runtime_version = 8`)
 	})
 	if database.Ready(db.ctx, db.api) {
 		t.Fatal("readiness ignored an incompatible minimum runtime version")
@@ -1591,7 +1608,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 	var claimedJob, claimedAccount uuid.UUID
 	var claimedKind string
 	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('import-worker',$1,interval '1 minute',7)`, lease).Scan(
+		FROM app.claim_next_worker_job('import-worker',$1,interval '1 minute',$2)`, lease, database.SupportedSchemaVersion).Scan(
 		&claimedJob, &claimedAccount, &claimedKind); err != nil {
 		t.Fatal(err)
 	}
@@ -1672,6 +1689,11 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 			t.Fatal(err)
 		}
 	}
+	var routeReplaced bool
+	if err := tx.QueryRow(db.ctx, `SELECT app.replace_workout_route_summary($1,2,-122.2,37.5,-122.2,37.5,12.5,12.5,0,true)`, workoutID).Scan(&routeReplaced); err != nil || !routeReplaced {
+		_ = tx.Rollback(db.ctx)
+		t.Fatalf("route summary replaced=%t err=%v", routeReplaced, err)
+	}
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_import_events
 		(id,account_id,source_id,workout_id,source_file_id,job_id,kind,content_sha256,warnings)
 		VALUES($1,$2,$3,$4,$5,$6,'created',$7,$8::jsonb)`, eventID, account, sourceID, workoutID, fileID, jobID, hash,
@@ -1689,6 +1711,12 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 	if capabilityCount != 0 {
 		t.Fatalf("committed transaction retained %d ingest capabilities", capabilityCount)
 	}
+	unauthorizedRoute := beginAccount(t, db.ctx, db.worker, account)
+	if err := unauthorizedRoute.QueryRow(db.ctx, `SELECT app.replace_workout_route_summary($1,2,-1,-1,1,1,0,1,1,true)`, workoutID).Scan(&routeReplaced); err == nil {
+		_ = unauthorizedRoute.Rollback(db.ctx)
+		t.Fatal("route summary replacement succeeded without a live transaction fence")
+	}
+	_ = unauthorizedRoute.Rollback(db.ctx)
 
 	stateFileID := uuid.Must(uuid.NewV7())
 	tx = beginAccount(t, db.ctx, db.worker, account)
@@ -1750,17 +1778,20 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 
 	tx = beginAccount(t, db.ctx, db.api, account)
 	var duration string
-	var routePoints, warningCount int
+	var routePoints, warningCount, summarizedPoints int
+	var elevationGain float64
 	if err := tx.QueryRow(db.ctx, `SELECT w.provider_duration::text,
 		(SELECT count(*) FROM app.workout_route_points p WHERE p.workout_id=w.id),
-		(SELECT jsonb_array_length(e.warnings) FROM app.workout_import_events e WHERE e.workout_id=w.id)
-		FROM app.workouts w WHERE w.id=$1`, workoutID).Scan(&duration, &routePoints, &warningCount); err != nil {
+		(SELECT jsonb_array_length(e.warnings) FROM app.workout_import_events e WHERE e.workout_id=w.id),
+		(SELECT point_count FROM app.workout_routes route WHERE route.workout_id=w.id),
+		(SELECT elevation_gain FROM app.workout_routes route WHERE route.workout_id=w.id)
+		FROM app.workouts w WHERE w.id=$1`, workoutID).Scan(&duration, &routePoints, &warningCount, &summarizedPoints, &elevationGain); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
 	_ = tx.Rollback(db.ctx)
-	if duration != "2195.6228786706924" || routePoints != 2 || warningCount != 2 {
-		t.Fatalf("duration/duplicate-timestamp route points/warnings=%s/%d/%d", duration, routePoints, warningCount)
+	if duration != "2195.6228786706924" || routePoints != 2 || warningCount != 2 || summarizedPoints != 2 || elevationGain != 0 {
+		t.Fatalf("duration/route points/warnings/summary/gain=%s/%d/%d/%d/%v", duration, routePoints, warningCount, summarizedPoints, elevationGain)
 	}
 	tx = beginAccount(t, db.ctx, db.api, foreignAccount)
 	var foreignVisible int
@@ -1874,7 +1905,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 	time.Sleep(5 * time.Millisecond)
 	recoveryLease := uuid.New()
 	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('recovery-worker',$1,interval '1 minute',7)`, recoveryLease).Scan(
+		FROM app.claim_next_worker_job('recovery-worker',$1,interval '1 minute',$2)`, recoveryLease, database.SupportedSchemaVersion).Scan(
 		&claimedJob, &claimedAccount, &claimedKind); err != nil {
 		t.Fatal(err)
 	}
@@ -1905,7 +1936,7 @@ func TestScheduledIngestClaimFenceCommitAndKindPairing(t *testing.T) {
 	var claimedJob, claimedAccount uuid.UUID
 	var claimedKind string
 	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('scheduled-worker',$1,interval '1 minute',7)`, lease).Scan(
+		FROM app.claim_next_worker_job('scheduled-worker',$1,interval '1 minute',$2)`, lease, database.SupportedSchemaVersion).Scan(
 		&claimedJob, &claimedAccount, &claimedKind); err != nil {
 		t.Fatal(err)
 	}
@@ -2000,7 +2031,7 @@ func TestWorkerClaimSkipsParentLockedForCancellation(t *testing.T) {
 	var jobID, accountID uuid.UUID
 	var kind string
 	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id,kind
-		FROM app.claim_next_worker_job('skip-locked-worker',$1,interval '1 minute',7)`, lease).Scan(&jobID, &accountID, &kind); err != nil {
+		FROM app.claim_next_worker_job('skip-locked-worker',$1,interval '1 minute',$2)`, lease, database.SupportedSchemaVersion).Scan(&jobID, &accountID, &kind); err != nil {
 		_ = cancellation.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2697,24 +2728,121 @@ func TestActiveCoalescingConstraint(t *testing.T) {
 	_ = tx.Rollback(db.ctx)
 }
 
-func TestSchema7WorkerRuntimeClaimGate(t *testing.T) {
+func TestSchema8WorkerRuntimeClaimGate(t *testing.T) {
 	db := openTestDatabases(t)
 	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_next_worker_job('schema6-worker',$1,interval '1 minute')`, uuid.New()); err == nil {
-		t.Fatal("schema-6 worker claim signature was not blocked")
+		t.Fatal("schema-5 worker claim signature was not blocked")
 	}
-	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_next_worker_job('old-runtime',$1,interval '1 minute',6)`, uuid.New()); err == nil {
-		t.Fatal("old runtime version was accepted by schema-7 claim")
+	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_next_worker_job('old-runtime',$1,interval '1 minute',7)`, uuid.New()); err == nil {
+		t.Fatal("old runtime version was accepted by schema-8 claim")
 	}
 	tx, err := db.worker.Begin(db.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(db.ctx)
-	rows, err := tx.Query(db.ctx, `SELECT * FROM app.claim_next_worker_job('schema7-worker',$1,interval '1 minute',7)`, uuid.New())
+	rows, err := tx.Query(db.ctx, `SELECT * FROM app.claim_next_worker_job('schema8-worker',$1,interval '1 minute',$2)`, uuid.New(), database.SupportedSchemaVersion)
 	if err != nil {
-		t.Fatalf("schema-7 worker claim failed: %v", err)
+		t.Fatalf("schema-8 worker claim failed: %v", err)
 	}
 	rows.Close()
+}
+
+func TestWorkoutDeletionFenceAndPurge(t *testing.T) {
+	db := openTestDatabases(t)
+	account, sourceID, sourceFileID, ingestJobID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	workoutTypeID, workoutID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	requester := accountRequester(t, db, account)
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.sources(id,account_id,display_name,canonical_display_name,type,config_envelope)
+		VALUES($1,$2,'Deletion fixture','deletion fixture','health-auto-export-local',$3)`, sourceID, account, []byte(`{"fixture":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1}`, strings.ToUpper(strings.ReplaceAll(sourceID.String(), "-", "")))
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.jobs(id,account_id,kind,priority,parameters) VALUES($1,$2,'source_connection_check',60,$3)`, ingestJobID, account, parameters); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, ingestJobID, account, sourceID, []byte(`{"fixture":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.source_files DISABLE TRIGGER source_files_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at) VALUES($1,$2,$3,$4,'fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, sourceFileID, account, sourceID, ingestJobID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.source_files ENABLE TRIGGER source_files_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.workout_types DISABLE TRIGGER workout_types_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.workouts DISABLE TRIGGER workouts_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,'fixture','Fixture')`, workoutTypeID, account); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+		VALUES($1,$2,$3,$4,$5,'deletion-fixture',$6,'Fixture','2026-08-01T12:00:00Z','2026-08-01T12:01:00Z','2026-08-01',60)`, workoutID, account, sourceID, sourceFileID, workoutTypeID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.workouts ENABLE TRIGGER workouts_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.workout_types ENABLE TRIGGER workout_types_capability_before_write`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var jobID uuid.UUID
+	apiTx := beginAccount(t, db.ctx, db.api, account)
+	if err := apiTx.QueryRow(db.ctx, `SELECT job_id FROM app.enqueue_workout_deletion($1,$2)`, workoutID, requester).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := apiTx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	lease := uuid.New()
+	var claimedJob, claimedAccount uuid.UUID
+	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id FROM app.claim_next_workout_deletion('deletion-test',$1,interval '1 minute',$2)`, lease, database.SupportedSchemaVersion).Scan(&claimedJob, &claimedAccount); err != nil {
+		t.Fatal(err)
+	}
+	if claimedJob != jobID || claimedAccount != account {
+		t.Fatalf("claimed deletion = %s/%s, want %s/%s", claimedJob, claimedAccount, jobID, account)
+	}
+	workerTx := beginAccount(t, db.ctx, db.worker, account)
+	var fenced, completed, total int
+	if err := workerTx.QueryRow(db.ctx, `SELECT count(*) FROM app.fence_workout_deletion($1,'deletion-test',$2)`, jobID, lease).Scan(&fenced); err != nil {
+		t.Fatal(err)
+	}
+	if err := workerTx.QueryRow(db.ctx, `SELECT targets_completed,total_completed FROM app.purge_workout_deletion($1,'deletion-test',$2)`, jobID, lease).Scan(&completed, &total); err != nil {
+		t.Fatal(err)
+	}
+	if fenced != 1 || completed != 1 || total != 1 {
+		t.Fatalf("deletion progress = fenced %d, completed %d, total %d", fenced, completed, total)
+	}
+	if err := workerTx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertTx := beginAccount(t, db.ctx, db.migration, account)
+	var workoutExists bool
+	if err := assertTx.QueryRow(db.ctx, `SELECT EXISTS(SELECT 1 FROM app.workouts WHERE id=$1)`, workoutID).Scan(&workoutExists); err != nil {
+		t.Fatal(err)
+	}
+	if workoutExists {
+		t.Fatal("purged workout still exists")
+	}
+	var state string
+	if err := assertTx.QueryRow(db.ctx, `SELECT state FROM app.workout_deletion_targets WHERE workout_id=$1`, workoutID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "completed" {
+		t.Fatalf("deletion target state = %q", state)
+	}
 }
 
 func TestIngestFileSlotPolicyLifecycle(t *testing.T) {
@@ -3103,7 +3231,7 @@ func TestDurableProgressFencingAggregationAndAppendOnlyRows(t *testing.T) {
 	if _, err := legacy.Exec(db.ctx, `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority)
 		VALUES($1,$2,$3,'manual_ingest_source',80)`, uuid.Must(uuid.NewV7()), parent, account); err == nil {
 		_ = legacy.Rollback(db.ctx)
-		t.Fatal("schema-6 API child parameters were accepted after schema 7")
+		t.Fatal("schema-5 API child parameters were accepted after schema 6")
 	}
 	_ = legacy.Rollback(db.ctx)
 	legacy = beginAccount(t, db.ctx, db.api, account)
@@ -3114,7 +3242,7 @@ func TestDurableProgressFencingAggregationAndAppendOnlyRows(t *testing.T) {
 		VALUES($1,$2,$3,'manual_ingest_source',80,1,'legacy-child',$4,$5)`, uuid.Must(uuid.NewV7()), parent, account,
 		make([]byte, 32), coalescedParameters); err == nil {
 		_ = legacy.Rollback(db.ctx)
-		t.Fatal("schema-6 child-level coalescing was accepted")
+		t.Fatal("schema-5 child-level coalescing was accepted")
 	}
 	_ = legacy.Rollback(db.ctx)
 	lease := uuid.New()

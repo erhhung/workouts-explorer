@@ -22,7 +22,14 @@ func TestOpenAPIContract(t *testing.T) {
 	if err := document.Validate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation", "/api/jobs/{jobId}/retry", "/api/jobs/{jobId}/files", "/api/jobs/{jobId}/events", "/api/jobs/{jobId}/logs", "/api/data-sync", "/api/notifications", "/api/notifications/{notificationId}/dismissal", "/api/workouts", "/api/workout-types", "/api/summary"} {
+	for path, item := range document.Paths.Map() {
+		for method, operation := range item.Operations() {
+			if strings.TrimSpace(operation.Description) == "" {
+				t.Errorf("%s %s lacks an operation description", method, path)
+			}
+		}
+	}
+	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation", "/api/jobs/{jobId}/retry", "/api/jobs/{jobId}/files", "/api/jobs/{jobId}/events", "/api/jobs/{jobId}/logs", "/api/data-sync", "/api/notifications", "/api/notifications/{notificationId}/dismissal", "/api/workouts", "/api/workouts/{workoutId}", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workout-types", "/api/summary"} {
 		if document.Paths.Find(path) == nil {
 			t.Errorf("missing path %s", path)
 		}
@@ -82,20 +89,20 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Errorf("job owner route %s lacks operation or security alternatives", route)
 		}
 	}
-	for _, route := range []string{"/api/workouts", "/api/workout-types", "/api/summary"} {
+	for _, route := range []string{"/api/workouts", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workout-types", "/api/summary"} {
 		operation := document.Paths.Find(route).Get
 		if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
 			t.Errorf("owner read route %s lacks GET or security alternatives", route)
 		}
 	}
-	for _, name := range []string{"ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "ExactMetric", "Workout", "Pagination", "WorkoutList", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
+	for _, name := range []string{"ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "ExactMetric", "Workout", "Pagination", "WorkoutList", "WorkoutProvenanceWarning", "WorkoutProvenanceEvent", "WorkoutProvenance", "NormalizedRoutePoint", "WorkoutPointsExport", "RouteBounds", "RouteElevation", "WorkoutGeoJSONProperties", "GeoJSONLineString", "WorkoutGeoJSONFeature", "WorkoutDeletionAccepted", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
 		schema := document.Components.Schemas[name].Value
 		if schema.AdditionalProperties.Has == nil || *schema.AdditionalProperties.Has {
 			t.Errorf("owner response schema %s is not closed", name)
 		}
 	}
 	jobDetail := document.Components.Schemas["JobDetail"].Value
-	for _, name := range []string{"retryRootJobId", "retryOrdinal"} {
+	for _, name := range []string{"retryRootJobId", "retryOrdinal", "latestRetryJobId", "latestRetryOrdinal"} {
 		if _, exists := jobDetail.Properties[name]; !exists {
 			t.Errorf("job detail lacks %s", name)
 		}
@@ -196,6 +203,7 @@ func TestImplementedResponsesMatchOpenAPI(t *testing.T) {
 
 func validateRecordedResponse(t *testing.T, method, path string, response *httptest.ResponseRecorder) {
 	t.Helper()
+	openapi3filter.RegisterBodyDecoder("application/geo+json", openapi3filter.JSONBodyDecoder)
 	document, err := openapi3.NewLoader().LoadFromData(openAPIDocument)
 	if err != nil {
 		t.Fatal(err)

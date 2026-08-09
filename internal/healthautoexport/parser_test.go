@@ -59,7 +59,6 @@ func TestParseProviderModelMetricsAndRoute(t *testing.T) {
 	if findMetric(w, MetricDistance) != nil || findMetric(w, MetricTotalEnergy) != nil {
 		t.Fatal("nullable metric was retained")
 	}
-	assertWarning(t, w.Warnings, WarningUnexpectedUnit, WarningFieldAverageSpeed)
 	assertWarning(t, w.Warnings, WarningIncompleteMetric, WarningFieldDistance)
 	assertWarning(t, w.Warnings, WarningIncompleteMetric, WarningFieldTotalEnergy)
 	if len(w.Route) != 2 || w.Route[0].Sequence != 0 || w.Route[1].Sequence != 1 || !w.Route[0].Timestamp.Equal(w.Route[1].Timestamp) {
@@ -71,7 +70,7 @@ func TestParseProviderModelMetricsAndRoute(t *testing.T) {
 	if w.Route[1].Speed != nil || w.Route[1].Course != nil || w.Route[1].HorizontalAccuracy != nil {
 		t.Fatalf("invalid optional route values retained: %#v", w.Route[1])
 	}
-	assertWarning(t, w.Warnings, WarningInvalidOptionalRouteValue, WarningFieldRouteSpeed)
+	assertWarning(t, w.Warnings, WarningInvalidOptionalRouteValue, WarningFieldCourse)
 }
 
 func TestOptionalOpaqueProviderIDsAndFallback(t *testing.T) {
@@ -133,6 +132,28 @@ func TestMetricPrecedenceIsProviderKeyOrderIndependent(t *testing.T) {
 	assertWarning(t, w.Warnings, WarningUnexpectedUnit, WarningFieldAverageSpeed)
 }
 
+func TestAverageAndMaximumSpeedAcceptObservedProviderUnits(t *testing.T) {
+	tests := []struct {
+		field string
+		key   MetricKey
+	}{
+		{"avgSpeed", MetricAverageSpeed},
+		{"maxSpeed", MetricMaximumSpeed},
+	}
+	for _, test := range tests {
+		for _, unit := range []string{"km", "km/hr"} {
+			t.Run(test.field+"/"+unit, func(t *testing.T) {
+				workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"` + test.field + `":{"qty":8,"units":"` + unit + `"}}`
+				parsed := parseOne(t, workout)
+				assertMetric(t, parsed, test.key, "8", unit, OriginDirect)
+				if len(parsed.Warnings) != 0 {
+					t.Fatalf("warnings = %#v", parsed.Warnings)
+				}
+			})
+		}
+	}
+}
+
 func TestRouteTimestampOffsetCanDifferFromWorkout(t *testing.T) {
 	changed := strings.Replace(syntheticWorkout, `"timestamp":"2026-04-11 19:24:02 -0700","latitude":37.2`, `"timestamp":"2026-04-12 07:54:02 +0530","latitude":37.2`, 1)
 	w := parseOne(t, changed)
@@ -142,7 +163,7 @@ func TestRouteTimestampOffsetCanDifferFromWorkout(t *testing.T) {
 }
 
 func TestOptionalRouteWarningsUseIndependentFields(t *testing.T) {
-	workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"route":[{"timestamp":"2026-01-02 03:04:06 -0700","latitude":1,"longitude":2,"altitude":1000001,"speed":-1,"course":361,"horizontalAccuracy":-1,"verticalAccuracy":-1,"speedAccuracy":-1,"courseAccuracy":361}]}`
+	workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"route":[{"timestamp":"2026-01-02 03:04:06 -0700","latitude":1,"longitude":2,"altitude":1000001,"speed":10001,"course":361,"horizontalAccuracy":1000001,"verticalAccuracy":1000001,"speedAccuracy":1000001,"courseAccuracy":361}]}`
 	warnings := parseOne(t, workout).Warnings
 	want := []WarningField{
 		WarningFieldAltitude, WarningFieldRouteSpeed, WarningFieldCourse,
@@ -162,6 +183,21 @@ func TestOptionalRouteWarningsUseIndependentFields(t *testing.T) {
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("unexpected route warning fields: %v", counts)
+	}
+}
+
+func TestNegativeRouteQualityValuesAreUnavailable(t *testing.T) {
+	workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"route":[{"timestamp":"2026-01-02 03:04:06 -0700","latitude":1,"longitude":2,"altitude":-5,"speed":-1,"course":-1,"horizontalAccuracy":-1,"verticalAccuracy":-1,"speedAccuracy":-1,"courseAccuracy":-1}]}`
+	parsed := parseOne(t, workout)
+	point := parsed.Route[0]
+	if point.Altitude == nil || *point.Altitude != -5 {
+		t.Fatalf("altitude = %v", point.Altitude)
+	}
+	if point.Speed != nil || point.Course != nil || point.HorizontalAccuracy != nil || point.VerticalAccuracy != nil || point.SpeedAccuracy != nil || point.CourseAccuracy != nil {
+		t.Fatalf("unavailable route quality values retained: %#v", point)
+	}
+	if len(parsed.Warnings) != 0 {
+		t.Fatalf("warnings = %#v", parsed.Warnings)
 	}
 }
 

@@ -15,6 +15,7 @@ import {
   type JobEvent,
   type JobLog,
   type JobProgress,
+  type JobSummary,
   type JobStatus,
   type Notification,
   type Preferences,
@@ -33,7 +34,7 @@ const STATUS_LABELS: Record<JobStatus, string> = {
 };
 const PAGE_SIZE = 25;
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as Array<[JobStatus, string]>;
-const TRIGGER_OPTIONS = [["manual", "Manual"], ["scheduled", "Scheduled"]] as const;
+const OPERATION_OPTIONS = [["manual_sync", "Manual sync"], ["automated_sync", "Automated sync"], ["workout_deletion", "Workout deletion"]] as const;
 
 function validDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -68,6 +69,15 @@ function interval(seconds: number) {
   if (seconds === 43200) return "Twice a day";
   const hours = seconds / 3600;
   return `Every ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(hours)} ${hours === 1 ? "hour" : "hours"}`;
+}
+
+function historyOperation(job: JobSummary) {
+  return job.operation === "workout_deletion" ? "Workout deletion" : job.trigger === "manual" ? "Manual sync" : "Automated sync";
+}
+
+function historyResults(job: JobSummary) {
+  if (job.operation === "workout_deletion") return `${job.progress.current} of ${job.progress.total} deleted`;
+  return `${job.progress.filesSucceeded} files / ${job.progress.workoutsCreated} new`;
 }
 
 function NextRun({ value, preferences }: { value?: string; preferences: Preferences }) {
@@ -191,18 +201,20 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
   onRetry: () => void;
   onSelectJob: (jobId: string) => void;
 }) {
+  const deletion = job.operation === "workout_deletion";
   return <article className="sync-card job-detail-card">
-    <div className="sync-card-heading"><div><p className="card-kicker">Job {job.id.slice(0, 8)}</p><h2>Run detail</h2></div><StatusBadge status={job.status} cancelRequested={job.cancelRequested} /></div>
+    <div className="sync-card-heading"><div><p className="card-kicker">Job {job.id.slice(0, 8)}</p><h2>{deletion ? "Workout deletion" : "Run detail"}</h2></div><StatusBadge status={job.status} cancelRequested={job.cancelRequested} /></div>
     <dl className="job-metadata">
-      <div><dt>Trigger</dt><dd>{job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div>
-      <div><dt>Sources</dt><dd>{job.children.length || (job.source ? 1 : 0)}</dd></div>
+      <div><dt>{deletion ? "Operation" : "Trigger"}</dt><dd>{deletion ? "Workout deletion" : job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div>
+      <div><dt>{deletion ? "Targets" : "Sources"}</dt><dd>{deletion ? job.progress.total : job.children.length || (job.source ? 1 : 0)}</dd></div>
       <div><dt>Queued</dt><dd>{dateTime(job.createdAt, preferences)}</dd></div>
       <div><dt>Started</dt><dd>{dateTime(job.startedAt, preferences)}</dd></div>
       <div><dt>Finished</dt><dd>{dateTime(job.terminalAt, preferences)}</dd></div>
       {job.retryRootJobId && job.retryOrdinal != null && <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd>{ordinal(job.retryOrdinal)}</dd></div>}
+      {job.latestRetryJobId && job.latestRetryOrdinal != null && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd>{ordinal(job.latestRetryOrdinal)}</dd></div>}
     </dl>
-    <Progress progress={job.progress} status={job.status} />
-    {(!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
+    {!deletion && <Progress progress={job.progress} status={job.status} />}
+    {!deletion && (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
     {job.failureSummary && <p className="failure-copy"><strong>Run issue:</strong> {job.failureSummary}</p>}
     {job.children.length > 0 && <section className="source-runs" aria-labelledby="source-runs-heading"><h3 id="source-runs-heading">Source runs</h3>{job.children.map((child) => <article key={child.id} className="source-run">
       <div className="source-run-heading"><div><strong>{child.source?.displayName ?? "Source unavailable"}</strong> <span>({child.source ? sourceType(child.source.sourceType) : "Type unavailable"})</span></div><StatusBadge status={child.status} cancelRequested={child.cancelRequested} style={{ position: "relative", top: ".2rem" }} /></div>
@@ -210,22 +222,23 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
       {(!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && <Results progress={child.progress} results={child.results} status={child.status} />}
       {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
     </article>)}</section>}
-    {(ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && <div className="job-actions">
+    {!deletion && (ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && <div className="job-actions">
       {ACTIVE_STATUSES.has(job.status) && <button type="button" className="secondary danger-button" disabled={busy !== null || job.cancelRequested} onClick={onCancel}>{busy === "cancel" || job.cancelRequested ? "Cancelling..." : "Cancel run"}</button>}
-      {RETRYABLE_STATUSES.has(job.status) && <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry run"}</button>}
+      {RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry run"}</button>}
     </div>}
-    <div className="artifact-group" aria-label="Run records">
+    {deletion && RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <div className="job-actions"><button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry deletion"}</button></div>}
+    {!deletion && <div className="artifact-group" aria-label="Run records">
       <ArtifactDisclosure key={`${job.id}-files`} jobId={job.id} kind="files" preferences={preferences} />
       <ArtifactDisclosure key={`${job.id}-events`} jobId={job.id} kind="events" preferences={preferences} />
       <ArtifactDisclosure key={`${job.id}-logs`} jobId={job.id} kind="logs" preferences={preferences} />
-    </div>
+    </div>}
   </article>;
 }
 
 function NotificationBanner({ notification, pending, onDismiss, onSelectJob }: { notification: Notification; pending: boolean; onDismiss: () => void; onSelectJob: (jobId: string) => void }) {
   return <article className={`sync-notification sync-notification--${notification.severity}`}>
     <div><strong>{notification.title}</strong><p>{notification.message}</p>{notification.state === "remind" && notification.remindAt && <small>Reminded until a later review.</small>}</div>
-    <div className="notification-actions">{notification.jobId && <button type="button" className="detail-link" onClick={() => onSelectJob(notification.jobId!)}>View run</button>}{(notification.state === "unresolved" || notification.state === "remind") && <button type="button" className="secondary" disabled={pending} onClick={onDismiss}>{pending ? "Dismissing..." : "Dismiss"}</button>}</div>
+    <div className="notification-actions">{notification.jobId && <button type="button" className="detail-link" onClick={() => onSelectJob(notification.jobId!)}>View detail</button>}{(notification.state === "unresolved" || notification.state === "remind") && <button type="button" className="secondary" disabled={pending} onClick={onDismiss}>{pending ? "Dismissing..." : "Dismiss"}</button>}</div>
   </article>;
 }
 
@@ -239,7 +252,7 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   const queryClient = useQueryClient();
   const [historyPage, setHistoryPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
-  const [triggerFilter, setTriggerFilter] = useState("");
+  const [operationFilter, setOperationFilter] = useState("");
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
   const selectionInitialized = useRef(false);
   const [rangeMode, setRangeMode] = useState<"incremental" | "bounded">("incremental");
@@ -279,14 +292,17 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   }, [queryClient, snapshot.data, snapshotJobSignature]);
   useEffect(() => {
     const status = detail.data?.status;
-    if (status && previousStatus.current && ACTIVE_STATUSES.has(previousStatus.current) && !ACTIVE_STATUSES.has(status)) setAnnouncement(`Run ${STATUS_LABELS[status].toLowerCase()}.`);
+    if (status && previousStatus.current && ACTIVE_STATUSES.has(previousStatus.current) && !ACTIVE_STATUSES.has(status)) {
+      setAnnouncement(`Run ${STATUS_LABELS[status].toLowerCase()}.`);
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    }
     previousStatus.current = status;
-  }, [detail.data?.status]);
+  }, [detail.data?.status, queryClient]);
   const historyParams = new URLSearchParams({ page: String(historyPage), pageSize: String(PAGE_SIZE) });
+  if (operationFilter) historyParams.set("operation", operationFilter);
   if (statusFilter) historyParams.set("status", statusFilter);
-  if (triggerFilter) historyParams.set("trigger", triggerFilter);
   const jobs = useQuery({
-    queryKey: ["jobs", historyPage, statusFilter, triggerFilter],
+    queryKey: ["jobs", historyPage, operationFilter, statusFilter],
     queryFn: ({ signal }) => api<JobList>(`/api/jobs?${historyParams}`, { signal }),
   });
 
@@ -424,20 +440,20 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
     </section>}
 
     <section className="history-section" aria-labelledby="history-heading">
-      <div className="history-heading"><div><p className="card-kicker">Sync History</p><h2 id="history-heading">Job runs</h2></div><div className="history-filters">
+      <div className="history-heading"><div><p className="card-kicker">Task history</p><h2 id="history-heading">Recent activity</h2></div><div className="history-filters">
+        <HistoryFilter label="Operation" value={operationFilter} allLabel="All operations" options={OPERATION_OPTIONS} onChange={(value) => { setOperationFilter(value); setHistoryPage(1); }} />
         <HistoryFilter label="Status" value={statusFilter} allLabel="All statuses" options={STATUS_OPTIONS} onChange={(value) => { setStatusFilter(value); setHistoryPage(1); }} />
-        <HistoryFilter label="Trigger" value={triggerFilter} allLabel="All triggers" options={TRIGGER_OPTIONS} onChange={(value) => { setTriggerFilter(value); setHistoryPage(1); }} />
       </div></div>
-      {jobs.isPending && <p className="sync-history-state" role="status">Loading sync history...</p>}
-      {jobs.isError && <QueryError copy="Sync history is unavailable." retry={() => void jobs.refetch()} />}
-      {jobs.data?.items.length === 0 && <p className="sync-history-state">No sync runs match these filters.</p>}
+      {jobs.isPending && <p className="sync-history-state" role="status">Loading task history...</p>}
+      {jobs.isError && <QueryError copy="Task history is unavailable." retry={() => void jobs.refetch()} />}
+      {jobs.data?.items.length === 0 && <p className="sync-history-state">No tasks match these filters.</p>}
       {jobs.data && jobs.data.items.length > 0 && <div aria-busy={jobs.isFetching}>
-        <div className="sync-history-table"><table><thead><tr><th scope="col">Started</th><th scope="col">Trigger</th><th scope="col">Result counts</th><th scope="col">Status</th><th scope="col"><span className="visually-hidden">Action</span></th></tr></thead><tbody>{jobs.data.items.map((job) => <tr key={job.id}>
-          <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td><td>{job.trigger === "manual" ? "Manual" : "Scheduled"}</td><td>{job.progress.filesSucceeded} files / {job.progress.workoutsCreated} new</td><td><span className={`sync-status-text sync-status-text--${job.status}`}>{STATUS_LABELS[job.status]}</span></td><td><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></td>
+        <div className="sync-history-table"><table><thead><tr><th scope="col">Started</th><th scope="col">Operation</th><th scope="col">Results</th><th scope="col">Status</th><th scope="col"><span className="visually-hidden">Action</span></th></tr></thead><tbody>{jobs.data.items.map((job) => <tr key={job.id}>
+          <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td><td>{historyOperation(job)}</td><td>{historyResults(job)}</td><td><span className={`sync-status-text sync-status-text--${job.status}`}>{STATUS_LABELS[job.status]}</span></td><td><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></td>
         </tr>)}</tbody></table></div>
-        <div className="sync-history-cards">{jobs.data.items.map((job) => <article key={job.id}><div><time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time><StatusBadge status={job.status} /></div><dl><div><dt>Trigger</dt><dd>{job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div><div><dt>Results</dt><dd>{job.progress.filesSucceeded} files / {job.progress.workoutsCreated} new</dd></div></dl><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></article>)}</div>
+        <div className="sync-history-cards">{jobs.data.items.map((job) => <article key={job.id}><div><time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time><StatusBadge status={job.status} /></div><dl><div><dt>Operation</dt><dd>{historyOperation(job)}</dd></div><div><dt>Results</dt><dd>{historyResults(job)}</dd></div></dl><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></article>)}</div>
       </div>}
-      {jobs.data && jobs.data.pagination.totalPages > 1 && <nav className="pagination" aria-label="Sync history pages"><button type="button" className="secondary" disabled={historyPage <= 1 || jobs.isFetching} onClick={() => setHistoryPage((page) => page - 1)}>Previous</button><span>Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}</span><button type="button" className="secondary" disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching} onClick={() => setHistoryPage((page) => page + 1)}>Next</button></nav>}
+      {jobs.data && jobs.data.pagination.totalPages > 1 && <nav className="pagination" aria-label="Task history pages"><button type="button" className="secondary" disabled={historyPage <= 1 || jobs.isFetching} onClick={() => setHistoryPage((page) => page - 1)}>Previous</button><span>Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}</span><button type="button" className="secondary" disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching} onClick={() => setHistoryPage((page) => page + 1)}>Next</button></nav>}
     </section>
   </main>;
 }

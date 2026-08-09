@@ -419,11 +419,10 @@ function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { ses
         <AppLink to="/" className="wordmark"><Mark compact /><span>Workouts Explorer</span></AppLink>
         <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute}>Summary</AppLink><span aria-disabled="true">Map</span><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span aria-hidden="true">&#8964;</span></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span className="menu-chevron" aria-hidden="true">v</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
-            <DropdownMenu.Label><strong>{data.profile.fullName}</strong><span>@{data.profile.username}</span></DropdownMenu.Label>
+            <DropdownMenu.Label className="account-menu-label">@{data.profile.username}</DropdownMenu.Label>
             <DropdownMenu.Separator />
-            <DropdownMenu.Item onSelect={() => navigate("/data-sync")}>Data Sync</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setDialog("preferences")}>Preferences</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => void switchTheme()}>Switch to {data.preferences.theme === "dark" ? "light" : "dark"} theme</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setDialog("about")}>About Workouts Explorer</DropdownMenu.Item>

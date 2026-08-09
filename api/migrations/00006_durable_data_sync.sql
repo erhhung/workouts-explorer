@@ -12,7 +12,7 @@ CREATE TABLE app.job_source_contexts (
 );
 CREATE INDEX job_source_contexts_source_idx ON app.job_source_contexts (account_id, source_id, created_at DESC);
 
--- Backfill schema-6 children so rollout drain uses the same fenced runtime path.
+-- Backfill schema-5 children so rollout drain uses the same fenced runtime path.
 INSERT INTO app.job_source_contexts(job_id,account_id,source_id,source_generation,display_name,source_type)
 SELECT job.id,job.account_id,snapshot.source_id,snapshot.source_generation,source.display_name,source.type
   FROM app.jobs job
@@ -20,7 +20,7 @@ SELECT job.id,job.account_id,snapshot.source_id,snapshot.source_generation,sourc
   JOIN app.sources source ON source.id=snapshot.source_id AND source.account_id=snapshot.account_id
  WHERE job.kind IN ('manual_ingest_source','scheduled_ingest_source');
 
--- Runtime-7 workers consume schema-6 children as an all-files bounded ingest.
+-- Runtime-6 workers consume schema-5 children as an all-files bounded ingest.
 ALTER TABLE app.jobs DISABLE TRIGGER jobs_state_before_write;
 UPDATE app.jobs SET parameters=parameters||jsonb_build_object(
     'mode','bounded','startDate','0001-01-01','endDate','9999-12-31','legacySchema6',true)
@@ -246,7 +246,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, app
 AS $$
 BEGIN
-    IF runtime_version<7 THEN RAISE EXCEPTION 'worker runtime version 7 or newer is required' USING ERRCODE='55000'; END IF;
+    IF runtime_version<6 THEN RAISE EXCEPTION 'worker runtime version 6 or newer is required' USING ERRCODE='55000'; END IF;
     IF claiming_worker='' OR new_lease_token IS NULL OR lease_duration<interval '1 second' OR lease_duration>interval '15 minutes' THEN
         RAISE EXCEPTION 'invalid scheduler lease arguments' USING ERRCODE='22023';
     END IF;
@@ -815,7 +815,7 @@ END;
 $$;
 -- +goose StatementEnd
 
--- Existing children without mode predate schema 7 and remain drainable; only new rows are constrained.
+-- Existing children without mode predate schema 6 and remain drainable; only new rows are constrained.
 -- +goose StatementBegin
 CREATE FUNCTION app.enforce_ingest_child_parameters()
 RETURNS trigger
@@ -841,7 +841,7 @@ $$;
 CREATE TRIGGER jobs_ingest_child_parameters_before_insert BEFORE INSERT ON app.jobs
     FOR EACH ROW EXECUTE FUNCTION app.enforce_ingest_child_parameters();
 
--- Schema-6 APIs insert the snapshot last. Materialize schema-7 read models without exposing its envelope.
+-- Schema-5 APIs insert the snapshot last. Materialize schema-6 read models without exposing its envelope.
 -- +goose StatementBegin
 CREATE FUNCTION app.create_legacy_ingest_read_models()
 RETURNS trigger
@@ -917,7 +917,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, app
 AS $$
 BEGIN
-    RAISE EXCEPTION 'worker runtime version 7 or newer is required' USING ERRCODE='55000';
+    RAISE EXCEPTION 'worker runtime version 6 or newer is required' USING ERRCODE='55000';
 END;
 $$;
 -- +goose StatementEnd
@@ -930,8 +930,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, app
 AS $$
 BEGIN
-    IF runtime_version < 7 THEN
-        RAISE EXCEPTION 'worker runtime version 7 or newer is required' USING ERRCODE='55000';
+    IF runtime_version < 6 THEN
+        RAISE EXCEPTION 'worker runtime version 6 or newer is required' USING ERRCODE='55000';
     END IF;
     RETURN QUERY SELECT claimed.job_id,claimed.account_id,claimed.kind
       FROM app.claim_next_worker_job_internal(claiming_worker,new_lease_token,lease_duration,true) claimed;
@@ -1525,7 +1525,7 @@ REVOKE ALL ON FUNCTION app.configure_auto_sync_policy(interval,integer),app.clai
     app.read_leased_sync_sources(uuid,text,uuid),app.enqueue_leased_scheduled_ingest(uuid,text,uuid,uuid,bytea,jsonb),
     app.finish_sync_account(uuid,text,uuid,uuid),app.release_sync_account(uuid,text,uuid,interval),app.read_owned_sync_schedule()
     FROM PUBLIC,workouts_api,workouts_worker;
--- Keep the schema-6 API readiness and request surface intact for a rolling deployment. The legacy
+-- Keep the schema-5 API readiness and request surface intact for a rolling deployment. The legacy
 -- cancellation function remains tenant-scoped; workers lose it and are fenced by the claim blocker.
 REVOKE EXECUTE ON FUNCTION app.request_job_cancellation(uuid,uuid) FROM workouts_worker;
 GRANT EXECUTE ON FUNCTION app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint),
@@ -1554,7 +1554,7 @@ GRANT EXECUTE ON FUNCTION app.current_account_id(),app.request_job_cancellation(
 
 -- Runtime 6 APIs retain source-file reads and legacy tenant cancellation during rollout. Schema-7 insert
 -- and claim fences stop old child writes/workers, while runtime 7 readiness validates the full new contract.
-UPDATE app.schema_metadata SET schema_version=7, minimum_runtime_version=1;
+UPDATE app.schema_metadata SET schema_version=6, minimum_runtime_version=1;
 
 -- +goose Down
 -- +goose StatementBegin
@@ -1573,8 +1573,8 @@ BEGIN
 END
 $$;
 -- +goose StatementEnd
-UPDATE app.schema_metadata SET schema_version=6, minimum_runtime_version=1;
--- Remove schema-7's internal rollout marker and normalization before restoring schema 6.
+UPDATE app.schema_metadata SET schema_version=5, minimum_runtime_version=1;
+-- Remove schema-6's internal rollout marker and normalization before restoring schema 5.
 ALTER TABLE app.jobs DISABLE TRIGGER jobs_state_before_write;
 UPDATE app.jobs SET parameters=parameters-'legacySchema6'-'mode'-'startDate'-'endDate'
  WHERE parameters->'legacySchema6'='true'::jsonb;
