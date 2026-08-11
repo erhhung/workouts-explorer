@@ -12,12 +12,12 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// normalizedTypeKey uses trimmed NFKC plus Unicode case folding as its
+// NormalizedTypeKey uses trimmed NFKC plus Unicode case folding as its
 // canonical label. Its readable letter/digit slug is suffixed with the first
 // 128 bits of SHA-256(canonical label), preventing slug collisions while making
 // canonically equivalent labels share a stable key. The slug is truncated only
 // at rune boundaries so the complete key is at most MaxTypeKeyBytes bytes.
-func normalizedTypeKey(label string) string {
+func NormalizedTypeKey(label string) string {
 	canonical := norm.NFKC.String(cases.Fold().String(norm.NFKC.String(strings.TrimSpace(label))))
 	var slug strings.Builder
 	const maxSlugBytes = MaxTypeKeyBytes - 1 - 32

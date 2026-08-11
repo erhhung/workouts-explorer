@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Workouts Explorer API
-  version: 0.3.0
-  description: Design-first API for account lifecycle, sources, ingest, and workouts.
+  version: 0.4.0
+  description: Design-first API for account lifecycle, sources, ingest, workouts, and private route maps.
 servers:
   - url: /
 paths:
@@ -524,6 +524,65 @@ paths:
         '413': {$ref: '#/components/responses/Problem'}
         '415': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections:
+    post:
+      operationId: createMapSelection
+      description: >-
+        Creates an immutable, expiring route-map selection for the authenticated account and session. Supply either an explicit start/end date pair or a date-range shortcut; omit `workoutIds` to select every routed workout in the resolved period. Cookie authentication requires `X-CSRF-Token`.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/MapSelectionCreate'}}}
+      responses:
+        '201':
+          description: Session-scoped map selection created
+          headers: {Location: {required: true, schema: {type: string}}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/MapSelection'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}:
+    parameters: [{$ref: '#/components/parameters/MapSelectionID'}]
+    delete:
+      operationId: deleteMapSelection
+      description: >-
+        Deletes an owned map selection from the current authenticated session. Cookie authentication requires `X-CSRF-Token`; an already absent selection is treated as deleted.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Map selection deleted or already absent}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf:
+    parameters:
+      - {$ref: '#/components/parameters/MapSelectionID'}
+      - {name: generation, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      - {name: z, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 22}}
+      - {name: x, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 4194303}}
+      - {name: y, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 4194303}}
+    get:
+      operationId: getMapSelectionRouteTile
+      description: >-
+        Proxies one private vector tile for an unexpired map selection owned by the authenticated account and session. Tile coordinates and the account data generation are required; arbitrary account identifiers are never accepted.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Private Mapbox vector tile, content: {application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '502': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/workouts:
     get:
       operationId: listWorkouts
@@ -712,6 +771,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/UUIDInput'}
+    MapSelectionID:
+      name: mapSelectionId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUIDInput'}
     Page:
       name: page
       in: query
@@ -763,15 +827,61 @@ components:
     PublicConfig:
       type: object
       additionalProperties: false
-      required: [productName, pollingIntervalSeconds, mapFitPaddingPixels, passwordMinimumLength, pageSizeMaximum]
+      required: [productName, pollingIntervalSeconds, mapFitPaddingPixels, passwordMinimumLength, pageSizeMaximum, baseMaps]
       properties:
         productName: {type: string}
         pollingIntervalSeconds: {type: integer, minimum: 1, maximum: 3600}
         mapFitPaddingPixels: {type: integer, minimum: 0, maximum: 512}
         passwordMinimumLength: {type: integer, minimum: 12, maximum: 64}
         pageSizeMaximum: {type: integer, minimum: 25, maximum: 1000}
-        baseMapTileUrl: {type: string, format: uri-template}
-        baseMapAttribution: {type: string, maxLength: 1024}
+        baseMaps: {$ref: '#/components/schemas/BaseMapsConfig'}
+    BaseMapAttributionLink:
+      type: object
+      additionalProperties: false
+      required: [label, url]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 128}
+        url: {type: string, format: uri}
+    BaseMapAttribution:
+      type: object
+      additionalProperties: false
+      required: [text, links]
+      properties:
+        text: {type: string, minLength: 1, maxLength: 1024}
+        links: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/BaseMapAttributionLink'}}
+    BaseMapStyles:
+      type: object
+      additionalProperties: false
+      required: [light, dark]
+      properties:
+        light: {type: string, format: uri}
+        dark: {type: string, format: uri}
+    BaseMapFamily:
+      type: object
+      additionalProperties: false
+      required: [id, label, styles, attribution, resourceOrigins]
+      properties:
+        id: {type: string, pattern: '^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$'}
+        label: {type: string, minLength: 1, maxLength: 128}
+        styles: {$ref: '#/components/schemas/BaseMapStyles'}
+        attribution: {$ref: '#/components/schemas/BaseMapAttribution'}
+        resourceOrigins: {type: array, minItems: 1, maxItems: 16, uniqueItems: true, items: {type: string, format: uri}}
+    BaseMapWorkoutTypeMapping:
+      type: object
+      additionalProperties: false
+      required: [providerLabel, normalizedTypeKey, familyId]
+      properties:
+        providerLabel: {type: string, minLength: 1, maxLength: 4096}
+        normalizedTypeKey: {type: string, minLength: 34, maxLength: 200}
+        familyId: {type: string}
+    BaseMapsConfig:
+      type: object
+      additionalProperties: false
+      required: [families, fallbackFamilyId, workoutTypeMappings]
+      properties:
+        families: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/BaseMapFamily'}}
+        fallbackFamilyId: {type: string}
+        workoutTypeMappings: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/BaseMapWorkoutTypeMapping'}}
     Health:
       type: object
       additionalProperties: false
@@ -1230,6 +1340,57 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/WorkoutType'}}
+    MapSelectionCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        startDate: {type: string, format: date}
+        endDate: {type: string, format: date}
+        dateRangeEnum: {$ref: '#/components/schemas/DateRangeEnum'}
+        tz: {type: string, minLength: 1, maxLength: 255}
+        workoutIds:
+          type: array
+          maxItems: 5000
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/UUIDInput'}
+    MapSelectionWorkoutType:
+      type: object
+      additionalProperties: false
+      required: [id, key, name]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        key: {type: string, minLength: 1, maxLength: 200}
+        name: {type: string, minLength: 1, maxLength: 4096}
+    MapSelectionWorkout:
+      type: object
+      additionalProperties: false
+      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevation]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        type: {$ref: '#/components/schemas/MapSelectionWorkoutType'}
+        startedAt: {type: string, format: date-time}
+        endedAt: {type: string, format: date-time}
+        duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
+        localStartDate: {type: string, format: date, nullable: true}
+        partialRoute: {type: boolean}
+        bounds: {$ref: '#/components/schemas/RouteBounds'}
+        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        elevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+    MapSelection:
+      type: object
+      additionalProperties: false
+      required: [id, expiresAt, dataGeneration, range, bounds, workouts, routeTileUrl]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        expiresAt: {type: string, format: date-time}
+        dataGeneration: {type: integer, format: int64, minimum: 1}
+        range: {$ref: '#/components/schemas/ResolvedDateRange'}
+        bounds: {allOf: [{$ref: '#/components/schemas/RouteBounds'}], nullable: true}
+        workouts: {type: array, maxItems: 5000, items: {$ref: '#/components/schemas/MapSelectionWorkout'}}
+        routeTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/route-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
     ExactMetric:
       type: object
       additionalProperties: false

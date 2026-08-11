@@ -41,11 +41,14 @@ Each user owns one personal workout account. Users cannot access another account
 
 1. The user switches to Map.
 2. The map fits the routes in the selected period.
-3. The user selects Routes or Coverage.
-4. Routes are colored by workout type; hovering highlights the topmost, most recent workout route.
-5. Coverage uses fixed blue count buckets so frequently visited paths do not flatten the rest of the scale.
-6. The user filters the map to any subset of workouts.
-7. The user inspects segment visit counts, first and latest visits, and the Path Coverage table.
+3. The base map uses a workout-appropriate style and follows the light or dark application theme.
+4. The user can select any configured base-map style for the current Map visit.
+5. The user selects Routes or Coverage.
+6. Routes are colored by workout type; hovering highlights the topmost, most recent workout route.
+7. Long pause gaps split a workout into separate map segments instead of drawing false connections between distant resumed points.
+8. Coverage uses fixed blue count buckets so frequently visited paths do not flatten the rest of the scale.
+9. The user filters the map to any subset of workouts.
+10. The user inspects segment visit counts, first and latest visits, and the Path Coverage table.
 
 ### Keep data synchronized
 
@@ -127,7 +130,9 @@ Each user owns one personal workout account. Users cannot access another account
 - Fixed blue count buckets for coverage
 - Authenticated private vector tiles
 - Path Coverage table with sortable statistics
-- Public or privately cached base-map tiles
+- Extensible public base-map style families with paired light and dark variants
+- Workout-type style defaults, a Smooth fallback, and a current-visit style selector
+- Provider-specific visible attribution and direct or privately cached public base-map resources
 
 ### API and operations
 

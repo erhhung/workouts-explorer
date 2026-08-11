@@ -33,10 +33,13 @@ const preferences = {
 };
 const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" } }, byType: [] };
 const emptyWorkouts = { range: emptySummary.range, pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] };
+const oneWorkout = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", sourceId: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", key: "running", displayName: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", displayTimezone: "America/Denver", originalStartOffsetMinutes: -360, originalEndOffsetMinutes: -360, timezone: "America/Denver", indoor: false, location: null, distance: { value: "10", unit: "km" }, pace: { value: "6", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevation: { value: "100", unit: "m" }, routePointCount: 2, routeAvailable: true };
+const workoutsWithOne = { ...emptyWorkouts, pagination: { ...emptyWorkouts.pagination, totalItems: 1, totalPages: 1 }, items: [oneWorkout] };
 const publicConfig = {
   productName: "Workouts Explorer",
   pollingIntervalSeconds: 30,
   mapFitPaddingPixels: 48,
+  baseMaps: { families: [], fallbackFamilyId: "", workoutTypeMappings: [] },
   passwordMinimumLength: 12,
   pageSizeMaximum: 100,
 };
@@ -330,6 +333,37 @@ describe("authenticated shell", () => {
     const menuItems = screen.getAllByRole("menuitem");
     expect(menuItems.map((item) => item.textContent)).not.toContain("Data Sync");
     expect(menuItems[0]).toHaveTextContent("Preferences");
+  });
+
+  test("preserves workout sorting across tabs, resets it with the range, and carries that range into Map", async () => {
+    let selectionBody: unknown;
+    authenticatedFetch((path, method, init) => {
+      if (path.startsWith("/api/workouts?") && method === "GET") return json(workoutsWithOne);
+      if (path === "/api/me/preferences" && method === "PATCH") return json({ ...preferences, dateRange: "last7Days" });
+      if (path === "/api/map-selections" && method === "POST") {
+        selectionBody = JSON.parse(String(init?.body));
+        return json({ id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2026-08-10T00:00:00Z", dataGeneration: 1, range: { startDate: "2026-08-03", endDate: "2026-08-09" }, bounds: null, workouts: [], routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/routes/{z}/{x}/{y}" });
+      }
+      if (path === "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && method === "DELETE") return new Response(null, { status: 204 });
+      return undefined as never;
+    });
+    renderApp();
+    const user = userEvent.setup();
+    const typeHeader = (await screen.findByRole("button", { name: "Type" })).closest("th")!;
+    await user.click(screen.getByRole("button", { name: "Type" }));
+    await waitFor(() => expect(typeHeader).toHaveAttribute("aria-sort", "ascending"));
+    await user.click(screen.getByRole("link", { name: "Data Sync" }));
+    await screen.findByRole("heading", { name: "Start a sync" });
+    await user.click(screen.getByRole("link", { name: "Summary" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Type" }).closest("th")).toHaveAttribute("aria-sort", "ascending"));
+    await user.click(await screen.findByRole("button", { name: "Select date range" }));
+    await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Date" }).closest("th")).toHaveAttribute("aria-sort", "descending"));
+    await user.click(screen.getByRole("link", { name: "Map" }));
+    expect(await screen.findByText("No workout routes in this range.")).toBeInTheDocument();
+    expect(location.pathname).toBe("/map");
+    expect(screen.getByRole("link", { name: "Map" })).toHaveAttribute("aria-current", "page");
+    expect(selectionBody).toEqual({ dateRangeEnum: "last7Days", tz: "America/Denver" });
   });
 
   test("loads a Data Sync deep link and the wordmark returns to Summary", async () => {

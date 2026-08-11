@@ -29,7 +29,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql"} {
+	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -41,6 +41,88 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 		if starts != proceduralStatements || ends != proceduralStatements {
 			t.Fatalf("%s: procedural statements = %d, StatementBegin = %d, StatementEnd = %d", name, proceduralStatements, starts, ends)
 		}
+	}
+}
+
+func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00010_segment_route_geometry.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"geometry(MultiLineString,4326)", "CREATE FUNCTION app.build_segmented_workout_route",
+		"row_number() OVER (ORDER BY point.sequence)", "point.recorded_at-prior.recorded_at",
+		"prior.positive_delta_count>0", "delta.value>=3*", "decision.starts_segment",
+		"WHEN decision.starts_segment THEN interval '0'", "HAVING count(*)>=2",
+		"ST_Multi(ST_Collect(segment_line ORDER BY segment_id))",
+		"ALTER TABLE app.workout_route_points NO FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE app.workout_route_points FORCE ROW LEVEL SECURITY",
+		"SELECT app.build_segmented_workout_route(target_account_id,target_workout_id) INTO new_route",
+		"CREATE OR REPLACE FUNCTION app.raw_route_mvt", "UNION ALL",
+		"CROSS JOIN LATERAL ST_Dump(route.route) component", "ST_Length(component.geom)=0",
+		"ST_StartPoint(component.geom)", "component.geom && ST_Transform(bounds,4326)",
+		"OWNER TO workouts_security_owner", "schema_version=10,minimum_runtime_version=8",
+		"schema_version=9,minimum_runtime_version=8", "geometry(LineString,4326)",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("segmented route migration is missing %q", required)
+		}
+	}
+	if strings.Contains(text, "GRANT EXECUTE ON FUNCTION app.build_segmented_workout_route") {
+		t.Fatal("segmented route helper must not be directly executable by application roles")
+	}
+	if strings.Count(strings.Split(text, "-- +goose Down")[0], "ST_AsMVT(tile_rows,'routes',4096,'geometry')") != 1 {
+		t.Fatal("route lines and zero-length markers must share one authorized MVT layer")
+	}
+}
+
+func TestRawRouteMapMigrationContainsSecurityBoundaries(t *testing.T) {
+	source, err := Files.ReadFile("00009_raw_route_map.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"PostGIS must be installed before applying schema 9", "ADD COLUMN route geometry", "USING gist(route)",
+		"ALTER TABLE app.workout_route_points NO FORCE ROW LEVEL SECURITY", "ALTER TABLE app.workout_routes NO FORCE ROW LEVEL SECURITY",
+		"ST_MakeLine", "ORDER BY point.sequence", "CREATE TABLE app.account_data_generations",
+		"CREATE TABLE app.map_selections", "CREATE TABLE app.map_selection_workouts",
+		"map selections are immutable", "selected workouts are immutable", "CREATE FUNCTION app.cleanup_expired_map_selections",
+		"CREATE FUNCTION app.lock_account_data_generation",
+		"CREATE FUNCTION app.raw_route_mvt", "SECURITY DEFINER", "'routes',4096,'geometry'",
+		"upper(replace(workout.id::text,'-','')) AS workout_id", "workout_type.type_key AS workout_type_key",
+		"workout_type.provider_label AS workout_type", "selected.sort_order",
+		"selection.session_id=target_session_id", "selection.generation=target_generation",
+		"data_generation.generation=target_generation", "selection.expires_at>transaction_timestamp()",
+		"GRANT SELECT,INSERT,DELETE ON app.map_selections,app.map_selection_workouts TO workouts_api",
+		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint) TO workouts_tiles",
+		"CREATE POLICY workout_types_map_owner_policy", "CREATE POLICY workout_routes_map_owner_policy",
+		"CREATE POLICY workout_route_points_map_owner_policy",
+		"schema_version=9,minimum_runtime_version=8", "schema_version=8,minimum_runtime_version=8",
+		"PostGIS may be shared by later schemas and is intentionally not dropped",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("raw route map migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"DROP EXTENSION postgis", "GRANT SELECT ON app.workout_routes TO workouts_tiles",
+		"GRANT SELECT ON app.map_selections TO workouts_tiles", "GRANT UPDATE ON app.map_selections TO workouts_api",
+		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint) TO workouts_api",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("raw route map migration contains unsafe contract %q", forbidden)
+		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	replace := functionBody(t, up, "CREATE OR REPLACE FUNCTION app.replace_workout_route_summary")
+	if !strings.Contains(replace, "new_route geometry") || !strings.Contains(replace, "route=EXCLUDED.route") {
+		t.Fatal("route summary replacement does not preserve its signature while rebuilding geometry")
+	}
+	tile := functionBody(t, up, "CREATE FUNCTION app.raw_route_mvt")
+	if !strings.Contains(tile, "route.route && ST_Transform(bounds,4326)") || !strings.Contains(tile, "workout.deletion_requested_at IS NULL") {
+		t.Fatal("raw route tile function lacks indexed spatial or logical-deletion filtering")
 	}
 }
 

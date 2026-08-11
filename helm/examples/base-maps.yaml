@@ -1,0 +1,50 @@
+# Browser map credentials are public. Restrict the MapTiler key to the exact
+# Workouts Explorer origin and use Stadia domain authentication in production.
+api:
+  publicConfig:
+    baseMaps:
+      fallbackFamilyId: smooth
+      styleFamilies:
+        - id: outdoor
+          label: Outdoor
+          styles:
+            light: https://api.maptiler.com/maps/outdoor-v2/style.json?key=YOUR_ORIGIN_RESTRICTED_MAPTILER_KEY
+            dark: https://api.maptiler.com/maps/outdoor-v2-dark/style.json?key=YOUR_ORIGIN_RESTRICTED_MAPTILER_KEY
+          attribution:
+            text: MapTiler and OpenStreetMap contributors
+            links:
+              - {label: MapTiler, url: https://www.maptiler.com/copyright/}
+              - {label: OpenStreetMap, url: https://www.openstreetmap.org/copyright}
+          resourceOrigins: [https://api.maptiler.com]
+        - id: streets
+          label: Streets
+          styles:
+            light: https://api.maptiler.com/maps/YOUR_STREETS_LIGHT_STYLE_ID/style.json?key=YOUR_ORIGIN_RESTRICTED_MAPTILER_KEY
+            dark: https://api.maptiler.com/maps/YOUR_STREETS_DARK_STYLE_ID/style.json?key=YOUR_ORIGIN_RESTRICTED_MAPTILER_KEY
+          attribution:
+            text: MapTiler and OpenStreetMap contributors
+            links:
+              - {label: MapTiler, url: https://www.maptiler.com/copyright/}
+              - {label: OpenStreetMap, url: https://www.openstreetmap.org/copyright}
+          resourceOrigins: [https://api.maptiler.com]
+        - id: smooth
+          label: Alidade Smooth
+          styles:
+            light: https://tiles.stadiamaps.com/styles/alidade_smooth.json
+            dark: https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json
+          attribution:
+            text: Stadia Maps, OpenMapTiles, and OpenStreetMap contributors
+            links:
+              - {label: Stadia Maps, url: https://stadiamaps.com/}
+              - {label: OpenMapTiles, url: https://openmaptiles.org/}
+              - {label: OpenStreetMap, url: https://www.openstreetmap.org/copyright}
+          resourceOrigins: [https://tiles.stadiamaps.com]
+      workoutTypeMappings:
+        - {providerLabel: Hiking, familyId: outdoor}
+        - {providerLabel: Trail Running, familyId: outdoor}
+        - {providerLabel: Cycling, familyId: outdoor}
+        - {providerLabel: Outdoor Cycling, familyId: outdoor}
+        - {providerLabel: Running, familyId: streets}
+        - {providerLabel: Outdoor Run, familyId: streets}
+        - {providerLabel: Walking, familyId: streets}
+        - {providerLabel: Outdoor Walk, familyId: streets}

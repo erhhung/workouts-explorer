@@ -10,9 +10,11 @@ metadata:
   namespace: postgresql
 data:
   001-roles.sql: |
+    CREATE EXTENSION IF NOT EXISTS postgis;
     CREATE ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     CREATE ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     CREATE ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     ALTER DATABASE workouts OWNER TO workouts_migration;
     GRANT CONNECT, TEMPORARY ON DATABASE workouts TO workouts_migration;
@@ -56,7 +58,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:18-alpine
+          image: postgis/postgis:18-3.6-alpine
           env:
             - name: POSTGRES_DB
               value: workouts

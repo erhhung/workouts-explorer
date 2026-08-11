@@ -6,6 +6,8 @@ Object.defineProperty(Element.prototype, "hasPointerCapture", { configurable: tr
 Object.defineProperty(Element.prototype, "setPointerCapture", { configurable: true, value: () => undefined });
 Object.defineProperty(Element.prototype, "releasePointerCapture", { configurable: true, value: () => undefined });
 Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: () => undefined });
+if (!URL.createObjectURL) Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:test-worker" });
+if (!URL.revokeObjectURL) Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => undefined });
 
 afterEach(() => {
   cleanup();

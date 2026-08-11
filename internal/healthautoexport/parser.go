@@ -212,7 +212,7 @@ func parseWorkout(s *tokenStream) (Workout, error) {
 	b.workout.StartOffsetMins = offsetMinutes(b.workout.Start)
 	b.workout.EndOffsetMins = offsetMinutes(b.workout.End)
 	b.workout.LocalStartDate = time.Date(b.workout.Start.Year(), b.workout.Start.Month(), b.workout.Start.Day(), 0, 0, 0, 0, time.UTC)
-	b.workout.TypeKey = normalizedTypeKey(b.workout.ProviderLabel)
+	b.workout.TypeKey = NormalizedTypeKey(b.workout.ProviderLabel)
 	b.workout.Aggregates = resolveMetrics(b.directMetrics, b.nestedMetrics)
 	if len(b.workout.Aggregates) > s.limits.MaxAggregates {
 		return Workout{}, parseError(ErrorCollectionLimit)

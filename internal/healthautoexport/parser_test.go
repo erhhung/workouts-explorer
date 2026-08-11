@@ -264,16 +264,16 @@ func TestCollectionLimitsCheckedBeforeAppend(t *testing.T) {
 }
 
 func TestTypeKeyNormalizationAndCollisionResistance(t *testing.T) {
-	composed := normalizedTypeKey("  CAFÉ  ")
-	decomposed := normalizedTypeKey("cafe\u0301")
+	composed := NormalizedTypeKey("  CAFÉ  ")
+	decomposed := NormalizedTypeKey("cafe\u0301")
 	if composed != decomposed {
 		t.Fatalf("canonically equivalent labels differ: %q != %q", composed, decomposed)
 	}
-	if normalizedTypeKey("Run!") == normalizedTypeKey("Run?") {
+	if NormalizedTypeKey("Run!") == NormalizedTypeKey("Run?") {
 		t.Fatal("labels with colliding slugs share a key")
 	}
-	if normalizedTypeKey("Outdoor Run") != "outdoor-run-27e9c638ed73cbf21bee19a1d4db970f" {
-		t.Fatalf("type-key scheme changed: %s", normalizedTypeKey("Outdoor Run"))
+	if NormalizedTypeKey("Outdoor Run") != "outdoor-run-27e9c638ed73cbf21bee19a1d4db970f" {
+		t.Fatalf("type-key scheme changed: %s", NormalizedTypeKey("Outdoor Run"))
 	}
 }
 

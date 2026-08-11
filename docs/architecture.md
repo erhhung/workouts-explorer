@@ -30,7 +30,7 @@ API and worker are separate Go binaries and Kubernetes Deployments. They may sha
 | OSM PostgreSQL/PostGIS | Imported OSM hierarchy, regional boundaries, derived path segments, public fallback cache |
 | OSM read replica | Optional matching reads without adding load to OSM import/refresh primary |
 | `pg_tileserv` | Generates dense private route and coverage vector tiles from the application database |
-| Public base-map provider | Provides unauthenticated browser base-map tiles |
+| Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
 | NFS archive | Immediately usable source archive for Health Auto Export JSON |
 | Rclone/iCloud Drive | Preferred remote source transport when upstream ADP support permits |
 | SMTP server | Sends invitations and password resets using iCloud SMTP initially |
@@ -73,7 +73,8 @@ Browser    --> public base-map tiles
 - Resolves user interactions into explicit API requests.
 - Polls active jobs and notifications at the configured interval, default 30 seconds.
 - Optimistically removes UI-created deletions while accepting eventual consistency for other sessions.
-- Uses MapLibre for public base maps and authenticated private vector layers.
+- Uses MapLibre for selectable, theme-aware public base-map styles and authenticated private vector layers.
+- Reinstalls product-owned private sources and layers after a public style change without resetting current map state.
 - Never receives source credentials, database topology, or internal `pg_tileserv` URLs.
 
 ### API
@@ -283,6 +284,8 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 ### Derived processing
 
 - Build 3D raw route geometry.
+- Persist raw map geometry as a multi-line route, beginning a new segment when a positive timestamp delta reaches three times the running positive-delta average for the current segment; duplicate and backward timestamps remain ordered but do not affect that baseline.
+- Encode zero-length multi-line components as route-attributed point features alongside line features; MapLibre renders them as route-colored circles with the same selection and hover semantics.
 - Derive bounds and elevation statistics.
 - Resolve or update workout timezone.
 - Ensure required OSM path data exists for route envelopes.
@@ -322,7 +325,16 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 
 ### Public map and OSM data
 
-- Browser base-map tile URL and attribution are safe runtime configuration.
+- Public runtime configuration defines an ordered, extensible set of base-map style families. Each family has a stable ID, user-facing label, light and dark MapLibre style URLs, structured attribution, and the provider resource origins required by browser policy.
+- The initial families are MapTiler Outdoor, customized MapTiler Streets, and Stadia Alidade Smooth. The configured fallback is Alidade Smooth unless an installation explicitly chooses another available family.
+- Workout-type defaults map readable provider labels to family IDs. Labels are normalized with the same Unicode normalization and case folding used by ingest rather than matched by mutable display spelling.
+- Automatic selection uses a mapped family only when every visible routed workout type resolves to that family. Mixed mappings, unmapped types, no visible routed workouts, and indeterminate selections use the configured fallback.
+- A manual family choice lasts for the current Map visit. Theme changes choose the corresponding light or dark variant without clearing that choice; leaving Map returns selection to automatic mode.
+- MapLibre style replacement preserves the camera and application selection state, then reinstalls private route or coverage sources and layers. Public style documents never carry private tile authorization.
+- Attribution is structured text and validated HTTPS links rather than operator-provided HTML. It changes with the active family and remains visible on desktop and mobile.
+- The browser may request approved public style resources directly. Public provider credentials delivered to the browser are not secrets and require provider-side origin restrictions, minimum privileges, quotas, monitoring, and rotation; Stadia domain authentication is preferred where available.
+- The UI content security policy permits only configured provider resource origins needed for style documents, tiles, glyphs, sprites, and images.
+- The UI permits runtime inline CSS because MapLibre positions controls and popups through element styles; scripts remain self-hosted and hash-restricted, and configured attribution never accepts operator HTML.
 - Regional road/path hierarchy begins with a California extract.
 - Missing regions use bounded public Overpass retrieval and caching, never one request per coordinate.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
@@ -426,7 +438,7 @@ Appropriate settings include:
 - SMTP, PostgreSQL, OTel, and master-key secrets
 - Sync cadence and stale-data threshold
 - File concurrency and staging roots
-- Map provider, fit padding, and presentation defaults
+- Base-map style families and variants, structured attribution, provider resource origins, workout-type family defaults, fallback family, fit padding, and presentation defaults
 - Elevation-visible workout types
 - Worker polling and UI polling interval
 

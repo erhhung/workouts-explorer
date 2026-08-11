@@ -20,6 +20,9 @@ func startSecurityMaintenance(ctx context.Context, db *pgxpool.Pool, logger *slo
 				_, err = tx.Exec(maintenanceCtx, `SELECT app.cleanup_rate_limits()`)
 			}
 			if err == nil {
+				_, err = tx.Exec(maintenanceCtx, `SELECT app.cleanup_expired_map_selections()`)
+			}
+			if err == nil {
 				err = tx.Commit(maintenanceCtx)
 			}
 		}
