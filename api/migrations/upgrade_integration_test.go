@@ -111,13 +111,21 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=8 AND minimum_runtime_version=8
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=10 AND minimum_runtime_version=8
+		AND EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL
 		AND to_regclass('app.source_files') IS NOT NULL
 		AND to_regclass('app.workouts') IS NOT NULL
 		AND to_regclass('app.workout_import_events') IS NOT NULL
 		AND to_regclass('app.workout_routes') IS NOT NULL
+		AND to_regclass('app.account_data_generations') IS NOT NULL
+		AND to_regclass('app.map_selections') IS NOT NULL
+		AND to_regclass('app.map_selection_workouts') IS NOT NULL
+		AND to_regclass('app.workout_routes_route_gist_idx') IS NOT NULL
+		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
+			AND attname='route' AND NOT attisdropped)
+		AND to_regprocedure('app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)') IS NOT NULL
 		AND to_regclass('app.workout_deletion_targets') IS NOT NULL
 		AND to_regclass('app.workout_deletion_capabilities') IS NOT NULL
 		AND to_regclass('app.ingest_write_capabilities') IS NOT NULL
@@ -139,6 +147,9 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND to_regprocedure('app.request_owned_job_cancellation(uuid,uuid)') IS NOT NULL
 		AND to_regprocedure('app.create_legacy_ingest_read_models()') IS NOT NULL
 		AND to_regprocedure('app.replace_workout_route_summary(uuid,integer,double precision,double precision,double precision,double precision,double precision,double precision,double precision,boolean)') IS NOT NULL
+		AND to_regprocedure('app.build_segmented_workout_route(uuid,uuid)') IS NOT NULL
+		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass AND attname='route'
+			AND postgis_typmod_type(atttypmod)='MultiLineString' AND postgis_typmod_srid(atttypmod)=4326)
 		AND to_regprocedure('app.enqueue_workout_deletion(uuid,uuid)') IS NOT NULL
 		AND to_regprocedure('app.enqueue_workout_range_deletion(date,date,uuid)') IS NOT NULL
 		AND to_regprocedure('app.retry_workout_deletion(uuid,uuid,integer)') IS NOT NULL
@@ -162,7 +173,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	}
 	defer apiDB.Close()
 	if !database.Ready(ctx, apiDB) {
-		t.Fatalf("API role is not ready after schema-v1 upgrade: %s", runtime8ReadinessDiagnostics(ctx, apiDB))
+		t.Fatalf("API role is not ready after schema-v1 upgrade: %s", runtime9ReadinessDiagnostics(ctx, apiDB))
 	}
 	if err := goose.DownToContext(ctx, db, ".", 7); err == nil {
 		t.Fatal("migration 00008 down ignored an existing workout deletion job")
@@ -320,7 +331,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatalf("merged migration 00005 state is incomplete: correct=%t err=%v", mergedMigrationFive, err)
 	}
 	if database.Ready(ctx, apiDB) {
-		t.Fatal("schema-v8 runtime reported ready at schema 5")
+		t.Fatal("schema-v9 runtime reported ready at schema 5")
 	}
 	drainAccount, drainSource := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	drainParent, drainChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -705,7 +716,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00004 through 00008 reapply")
+		t.Fatal("API role is not ready after migrations 00004 through 00010 reapply")
 	}
 	if err := goose.DownToContext(ctx, db, ".", 2); err != nil {
 		t.Fatal(err)
@@ -728,7 +739,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00003 through 00008 reapply")
+		t.Fatal("API role is not ready after migrations 00003 through 00010 reapply")
 	}
 }
 
@@ -799,7 +810,7 @@ func schema5APIReady(ctx context.Context, pool *pgxpool.Pool) bool {
 	return err == nil && ready
 }
 
-func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) string {
+func runtime9ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) string {
 	var missingObjects, wrongOwners, failedPrivileges []string
 	err := pool.QueryRow(ctx, `
 		SELECT
@@ -809,7 +820,8 @@ func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) strin
 				'app.workout_import_events','app.ingest_write_capabilities','app.job_source_contexts',
 				'app.job_progress','app.source_objects','app.ingest_file_slot_guard','app.ingest_file_slot_limits',
 				'app.ingest_file_slots','app.job_file_candidate_sets','app.job_file_candidates','app.job_events',
-				'app.job_logs','app.notifications','app.source_sync_state','app.auto_sync_policy','app.account_sync_schedules'
+				'app.job_logs','app.notifications','app.source_sync_state','app.auto_sync_policy','app.account_sync_schedules',
+				'app.account_data_generations','app.map_selections','app.map_selection_workouts','app.workout_routes_route_gist_idx'
 			]) name WHERE to_regclass(name) IS NULL),
 			ARRAY(SELECT signature FROM unnest(ARRAY[
 				'app.claim_next_worker_job_internal(text,uuid,interval,boolean)',
@@ -822,7 +834,11 @@ func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) strin
 				'app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint)',
 				'app.record_job_event(uuid,text,uuid,text,jsonb)','app.record_job_log(uuid,text,uuid,text,jsonb)',
 				'app.evaluate_source_staleness(uuid,integer,timestamp with time zone)',
-				'app.read_owned_sync_schedule()'
+				'app.read_owned_sync_schedule()',
+				'app.advance_account_data_generation()','app.seed_account_data_generation()',
+				'app.validate_map_selection()','app.validate_map_selection_workout()',
+				'app.cleanup_expired_map_selections()',
+				'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)'
 				,'app.create_legacy_ingest_read_models()'
 			]) signature WHERE to_regprocedure(signature) IS NULL OR
 				pg_get_userbyid((SELECT proowner FROM pg_proc WHERE oid=to_regprocedure(signature)))<>'workouts_security_owner'),
@@ -834,6 +850,12 @@ func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) strin
 				('current account execute',has_function_privilege(current_user,'app.current_account_id()','EXECUTE')),
 				('staleness execute',has_function_privilege(current_user,'app.evaluate_source_staleness(uuid,integer,timestamp with time zone)','EXECUTE')),
 				('schedule reader execute',has_function_privilege(current_user,'app.read_owned_sync_schedule()','EXECUTE')),
+				('map generations select',has_table_privilege(current_user,'app.account_data_generations','SELECT')),
+				('map selections select',has_table_privilege(current_user,'app.map_selections','SELECT')),
+				('map selections insert',has_table_privilege(current_user,'app.map_selections','INSERT')),
+				('map selections delete',has_table_privilege(current_user,'app.map_selections','DELETE')),
+				('map selections no update',NOT has_table_privilege(current_user,'app.map_selections','UPDATE')),
+				('tile function denied',NOT has_function_privilege(current_user,'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')),
 				('snapshot source select',has_column_privilege(current_user,'app.job_config_snapshots','source_id','SELECT')),
 				('snapshot envelope insert',has_column_privilege(current_user,'app.job_config_snapshots','config_envelope','INSERT')),
 				('notifications message select',has_column_privilege(current_user,'app.notifications','message','SELECT')),
@@ -845,7 +867,7 @@ func runtime8ReadinessDiagnostics(ctx context.Context, pool *pgxpool.Pool) strin
 				('source sync state export date select',has_column_privilege(current_user,'app.source_sync_state','last_new_export_date','SELECT')),
 				('source sync state stale select',has_column_privilege(current_user,'app.source_sync_state','stale_since','SELECT')),
 				('source sync state narrow select',NOT has_table_privilege(current_user,'app.source_sync_state','SELECT')),
-				('minimum runtime metadata',EXISTS(SELECT 1 FROM app.schema_metadata WHERE singleton AND schema_version>=8 AND minimum_runtime_version<=8))
+				('minimum runtime metadata',EXISTS(SELECT 1 FROM app.schema_metadata WHERE singleton AND schema_version>=9 AND minimum_runtime_version<=9))
 			) checks(label,ok) WHERE NOT ok)`).Scan(&missingObjects, &wrongOwners, &failedPrivileges)
 	if err != nil {
 		return fmt.Sprintf("diagnostic query failed: %v", err)

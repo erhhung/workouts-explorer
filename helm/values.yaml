@@ -45,8 +45,31 @@ api:
   publicConfig:
     pollingIntervalSeconds: 30
     mapFitPaddingPixels: 48
-    baseMapTileUrl: ""
-    baseMapAttribution: ""
+    baseMaps:
+      styleFamilies:
+        - id: local-placeholder
+          label: Local placeholder
+          styles:
+            light: https://maps.example.invalid/styles/light.json
+            dark: https://maps.example.invalid/styles/dark.json
+          attribution:
+            text: Base map not configured
+            links: []
+          resourceOrigins:
+            - https://maps.example.invalid
+      fallbackFamilyId: local-placeholder
+      workoutTypeMappings: []
+  resources: {}
+
+# MapTiler style URLs may contain a browser-restricted public key. Stadia can
+# use domain authentication. Put either provider's HTTPS origins in each
+# family's resourceOrigins; never put private credentials in this file.
+pgTileserv:
+  image: docker.io/pramsey/pg_tileserv:20250131@sha256:e390325edd16061a4486142f08c18ee12fa22f9c5ab72928c9b36e6f79ed84be
+  replicas: 1
+  databaseSecret:
+    name: workouts-explorer-database
+    key: tilesDatabaseUrl
   resources: {}
 
 worker:

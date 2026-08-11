@@ -41,6 +41,9 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_worker') THEN
     CREATE ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
   END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_tiles') THEN
+    CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_security_owner') THEN
     CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
   END IF;
@@ -49,7 +52,9 @@ $$;
 ALTER ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 ALTER ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 ALTER ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 ALTER ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE EXTENSION IF NOT EXISTS postgis;
 ALTER DATABASE workouts OWNER TO workouts_migration;
 GRANT CONNECT, TEMPORARY ON DATABASE workouts TO workouts_migration;
 GRANT USAGE, CREATE ON SCHEMA public TO workouts_migration;
@@ -64,6 +69,7 @@ kubectl --context "$context" -n "$app_namespace" create secret generic workouts-
   --from-literal=migrationDatabaseUrl="postgresql://workouts_migration@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=apiDatabaseUrl="postgresql://workouts_api@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=workerDatabaseUrl="postgresql://workouts_worker@${database_host}:5432/workouts?sslmode=disable" \
+  --from-literal=tilesDatabaseUrl="postgresql://workouts_tiles@${database_host}:5432/workouts?sslmode=disable" \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
 rate_limit_key="$(openssl rand -base64 32 | tr -d '=\n')"
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-security \
@@ -125,6 +131,13 @@ helm_args=(
 
 if [[ -n "${WORKOUTS_TEST_IMAGE_PULL_SECRET:-}" ]]; then
   helm_args+=(--set-string "image.pullSecrets[0].name=$WORKOUTS_TEST_IMAGE_PULL_SECRET")
+fi
+if [[ -n "${WORKOUTS_TEST_VALUES_FILE:-}" ]]; then
+  if [[ ! -f "$WORKOUTS_TEST_VALUES_FILE" ]]; then
+    printf 'WORKOUTS_TEST_VALUES_FILE does not exist: %s\n' "$WORKOUTS_TEST_VALUES_FILE" >&2
+    exit 1
+  fi
+  helm_args+=(-f "$WORKOUTS_TEST_VALUES_FILE")
 fi
 
 helm "${helm_args[@]}"

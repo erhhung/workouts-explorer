@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgis/postgis:18-3.6-alpine
         env:
           POSTGRES_DB: workouts
           POSTGRES_USER: workouts_migration
@@ -61,6 +61,7 @@ jobs:
       MIGRATION_DATABASE_URL: postgresql://workouts_migration@127.0.0.1:5432/workouts
       API_DATABASE_URL: postgresql://workouts_api@127.0.0.1:5432/workouts
       WORKER_DATABASE_URL: postgresql://workouts_worker@127.0.0.1:5432/workouts
+      TILE_DATABASE_URL: postgresql://workouts_tiles@127.0.0.1:5432/workouts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

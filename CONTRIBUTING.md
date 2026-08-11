@@ -77,16 +77,17 @@ Invitation listing, resend, and revocation remain sequenced for Milestone 9.
 
 ## Database Verification
 
-Infrastructure creates the migration, API, and worker login roles. For local
-verification, `compose.yaml` starts PostgreSQL with host trust restricted to the
-loopback-published port and initializes separate passwordless development roles;
-it is not a production configuration.
+Infrastructure installs PostGIS and creates the migration, API, worker, and tile
+login roles. For local verification, `compose.yaml` starts PostgreSQL 18 with
+PostGIS 3.6, restricts host trust to the loopback-published port, and initializes
+separate passwordless development roles; it is not a production configuration.
 
 ```sh
 make compose-up
 export MIGRATION_DATABASE_URL=postgresql://workouts_migration@127.0.0.1:54329/workouts
 export API_DATABASE_URL=postgresql://workouts_api@127.0.0.1:54329/workouts
 export WORKER_DATABASE_URL=postgresql://workouts_worker@127.0.0.1:54329/workouts
+export TILE_DATABASE_URL=postgresql://workouts_tiles@127.0.0.1:54329/workouts
 make migration-test
 make compose-down
 ```
@@ -94,9 +95,11 @@ make compose-down
 The migration command holds a PostgreSQL advisory lock and is idempotent. API
 and worker never migrate on startup. Kubernetes receives these URLs from an
 existing Secret selected by Helm values; the chart never creates credentials.
-Migrations fail unless `workouts_api` and `workouts_worker` already exist as
-non-superuser `NOBYPASSRLS` login roles and `workouts_security_owner` exists
-as a non-login, non-bypass function owner. Job status, attempts, leases,
+Schema 9 requires the PostGIS extension to be installed by a database
+administrator before migration. Migrations fail unless `workouts_api`,
+`workouts_worker`, and `workouts_tiles` already exist as non-superuser
+`NOBYPASSRLS` login roles and `workouts_security_owner` exists as a non-login,
+non-bypass function owner. Job status, attempts, leases,
 cancellation, and parent derivation are changed through the `app.*_job`
 state-machine functions rather than direct runtime-role updates.
 
@@ -110,13 +113,17 @@ ROLE_PROVISIONING_DATABASE_URL="$ROLE_PROVISIONER_URL" \
   go run ./api/cmd/provision-roles
 ```
 
-The fixed-purpose command creates or verifies only `workouts_security_owner` as
-`NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, then
-grants it to `workouts_migration`. It rejects an unsafe existing role rather than
-repairing it. Helm's equivalent `api.roleProvisioning.enabled=true` Job uses a
-separate external Secret and runs before migration on install/upgrade and Argo
-CD PreSync. Enable it only for initial provisioning or the M1-to-M2 upgrade,
-then disable it and remove the external CREATEROLE credential Secret.
+The fixed-purpose command creates or verifies `workouts_security_owner` as
+`NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and
+`workouts_tiles` as a login role with the same capability restrictions, then
+grants only the owner role to `workouts_migration`. It rejects an unsafe existing
+role rather than repairing it. Helm's equivalent
+`api.roleProvisioning.enabled=true` Job uses a separate external Secret and runs
+before migration on install/upgrade and Argo CD PreSync. Enable it for initial
+provisioning and upgrades that introduce a role, including M1-to-M2 and M5-to-M6,
+then disable it and remove the external CREATEROLE credential Secret. The
+operator remains responsible for configuring the tile role's database
+authentication to match `pgTileserv.databaseSecret`.
 
 For a development container without a local container runtime, the same topology
 can run in a dedicated vCluster. Publish the three images and run the test with:

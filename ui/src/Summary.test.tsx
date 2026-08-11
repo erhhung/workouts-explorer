@@ -50,10 +50,10 @@ function workoutPage(page = 1, items = [workout], pageSize = 25) {
   return { range, pagination: { page, pageSize, totalItems: 26, totalPages: 2 }, items };
 }
 
-function renderSummary(overrides: Partial<Preferences> = {}, onDateRangeSaved = vi.fn()) {
+function renderSummary(overrides: Partial<Preferences> = {}, onDateRangeSaved = vi.fn(), onShowOnMap?: (workoutId: string) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   let current = { ...preferences, ...overrides };
-  const view = (next: Preferences) => <QueryClientProvider client={client}><Summary preferences={next} csrfToken="csrf-summary" onDateRangeSaved={onDateRangeSaved} /></QueryClientProvider>;
+  const view = (next: Preferences) => <QueryClientProvider client={client}><Summary preferences={next} csrfToken="csrf-summary" onShowOnMap={onShowOnMap} onDateRangeSaved={onDateRangeSaved} /></QueryClientProvider>;
   const result = render(view(current));
   return {
     ...result,
@@ -270,6 +270,8 @@ describe("Summary", () => {
     renderSummary();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Select date range" }));
+    expect(screen.queryByText("Quick ranges")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("menuitem", { name: /Last 30 days/ })).getByLabelText("selected")).toHaveTextContent("✓");
     await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
     expect(await screen.findByRole("status")).toHaveTextContent("continue using your selection");
     expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent("Last 7 days");
@@ -628,6 +630,18 @@ describe("Summary", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Workout provenance" })).not.toBeInTheDocument());
     await waitFor(() => expect(workoutReads).toBeGreaterThan(1));
     expect(trigger).toHaveFocus();
+  });
+
+  test("puts Show on map first for routed workouts and passes the compact workout ID", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    const showOnMap = vi.fn();
+    renderSummary({}, vi.fn(), showOnMap);
+    const user = userEvent.setup();
+    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    await user.click(trigger);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Show on map", "View provenance", "Export GeoJSON", "Export points", "Delete workout"]);
+    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    expect(showOnMap).toHaveBeenCalledWith(workout.id);
   });
 
   test("buffers normalized points before starting the server-provided download", async () => {

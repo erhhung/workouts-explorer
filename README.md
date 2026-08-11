@@ -15,6 +15,8 @@ and local or network Health Auto Export imports. Imported workouts appear
 in a responsive summary with consistent details while repeat imports avoid
 duplicates.
 
+![Workouts Explorer interactive map showing highlighted workout routes](images/map-view.png)
+
 Contributor setup, database verification, and packaging guidance are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -27,7 +29,7 @@ Contributor setup, database verification, and packaging guidance are in
 | ✅ | 3  | Local and network file imports; consistent workout summaries; responsive workout list without duplicate imports |
 | ✅ | 4  | Manual and scheduled syncing; progress, cancellation, and retry controls; warnings when no new data arrives |
 | ✅ | 5  | Import history; route and point downloads; safe individual workout and date-range deletions |
-| 🔳 | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
+| ✅ | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
 | 🔳 | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
 | 🔳 | 8  | Private iCloud setup; remote workout imports; clear prompts when access expires |
 | 🔳 | 9  | User and invitation management; announcements; account deletion; backup and recovery guidance |

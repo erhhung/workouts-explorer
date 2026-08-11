@@ -10,7 +10,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 8
+const SupportedSchemaVersion = 10
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
@@ -87,7 +87,15 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND to_regclass('app.source_sync_state') IS NOT NULL
 		   AND to_regclass('app.auto_sync_policy') IS NOT NULL
 		   AND to_regclass('app.account_sync_schedules') IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM pg_extension WHERE extname='postgis')
+		   AND to_regclass('app.account_data_generations') IS NOT NULL
+		   AND to_regclass('app.map_selections') IS NOT NULL
+		   AND to_regclass('app.map_selection_workouts') IS NOT NULL
+		   AND to_regclass('app.workout_routes_route_gist_idx') IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
+		       AND attname='route' AND NOT attisdropped)
 		   AND has_function_privilege(current_user, 'app.current_account_id()', 'EXECUTE')
+		   AND (current_user='workouts_worker' OR has_function_privilege(current_user, 'app.current_session_id()', 'EXECUTE'))
 		   AND (SELECT bool_and(pg_get_userbyid(p.proowner) = 'workouts_security_owner')
 		          FROM pg_proc p
 		         WHERE p.oid IN (
@@ -141,6 +149,14 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		             ,'app.enforce_workout_deletion_target_lifecycle()'::regprocedure
 		             ,'app.require_ingest_write_capability()'::regprocedure
 		             ,'app.reject_workout_import_event_mutation()'::regprocedure
+		             ,'app.advance_account_data_generation()'::regprocedure
+		             ,'app.current_session_id()'::regprocedure
+		             ,'app.seed_account_data_generation()'::regprocedure
+		             ,'app.validate_map_selection()'::regprocedure
+		             ,'app.validate_map_selection_workout()'::regprocedure
+		             ,'app.cleanup_expired_map_selections()'::regprocedure
+		             ,'app.lock_account_data_generation()'::regprocedure
+		             ,'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)'::regprocedure
 		         ))
 		   AND EXISTS (SELECT 1 FROM pg_trigger
 		       WHERE tgname='job_config_snapshots_ingest_compatibility_after_insert' AND NOT tgisinternal)
@@ -150,12 +166,32 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       WHERE tgname='workout_deletion_capability_cleanup' AND NOT tgisinternal)
 		   AND EXISTS (SELECT 1 FROM pg_trigger
 		       WHERE tgname='jobs_workout_deletion_failure_notification' AND NOT tgisinternal)
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='workout_routes_data_generation_after_write' AND NOT tgisinternal)
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='workouts_data_generation_after_write' AND NOT tgisinternal)
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='map_selections_validate_before_write' AND NOT tgisinternal)
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='map_selection_workouts_validate_before_write' AND NOT tgisinternal)
 		   AND position('worker runtime version 6 or newer is required' in
 		       pg_get_functiondef('app.claim_next_worker_job(text,uuid,interval)'::regprocedure)) > 0
 		   AND position('worker runtime version 8 or newer is required' in
 		       pg_get_functiondef('app.claim_next_worker_job(text,uuid,interval,integer)'::regprocedure)) > 0
 		   AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'workouts_security_owner'
 		       AND NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls)
+		   AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'workouts_tiles'
+		       AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+		       AND NOT rolreplication AND NOT rolbypassrls)
+		   AND has_schema_privilege('workouts_tiles','app','USAGE')
+		   AND has_function_privilege('workouts_tiles','app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+		   AND NOT has_table_privilege('workouts_tiles','app.workout_routes','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.workouts','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.map_selections','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.map_selection_workouts','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.account_data_generations','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.sessions','SELECT')
+		   AND NOT has_table_privilege('workouts_tiles','app.workout_types','SELECT')
 		   AND has_table_privilege('workouts_security_owner', 'app.jobs', 'SELECT')
 		   AND has_table_privilege('workouts_security_owner', 'app.sources', 'SELECT')
 		   AND has_table_privilege('workouts_security_owner', 'app.preferences', 'SELECT')
@@ -201,6 +237,18 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND has_function_privilege(current_user, 'app.count_owned_job_rows(uuid,text)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.workouts', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.workout_routes', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.account_data_generations', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.map_selections', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.map_selections', 'INSERT')
+		       AND has_table_privilege(current_user, 'app.map_selections', 'DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.map_selections', 'UPDATE')
+		       AND has_table_privilege(current_user, 'app.map_selection_workouts', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.map_selection_workouts', 'INSERT')
+		       AND has_table_privilege(current_user, 'app.map_selection_workouts', 'DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.map_selection_workouts', 'UPDATE')
+		       AND has_function_privilege(current_user, 'app.cleanup_expired_map_selections()', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.lock_account_data_generation()', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.workout_import_events', 'SELECT')
 		       AND has_column_privilege(current_user, 'app.workout_import_events', 'warnings', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.workouts', 'INSERT')

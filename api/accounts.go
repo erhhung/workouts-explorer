@@ -701,6 +701,18 @@ func (s *Server) accountTransactionWithOptions(ctx context.Context, accountID uu
 	return tx, nil
 }
 
+func (s *Server) sessionAccountTransactionWithOptions(ctx context.Context, session authenticatedSession, options pgx.TxOptions) (pgx.Tx, error) {
+	tx, err := s.accountTransactionWithOptions(ctx, *session.accountID, options)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(ctx, `SELECT set_config('app.session_id',$1,true)`, session.sessionID.String()); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
 func (s *Server) readPreferences(ctx context.Context, accountID uuid.UUID) (generated.Preferences, error) {
 	tx, err := s.accountTransaction(ctx, accountID)
 	if err != nil {

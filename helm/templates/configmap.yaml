@@ -8,8 +8,8 @@ data:
   PUBLIC_URL: {{ .Values.api.publicUrl | quote }}
   UI_POLLING_INTERVAL_SECONDS: {{ .Values.api.publicConfig.pollingIntervalSeconds | quote }}
   MAP_FIT_PADDING_PIXELS: {{ .Values.api.publicConfig.mapFitPaddingPixels | quote }}
-  BASE_MAP_TILE_URL: {{ .Values.api.publicConfig.baseMapTileUrl | quote }}
-  BASE_MAP_ATTRIBUTION: {{ .Values.api.publicConfig.baseMapAttribution | quote }}
+  BASE_MAPS_JSON: {{ mustToJson .Values.api.publicConfig.baseMaps | quote }}
+  PG_TILESERV_URL: {{ printf "http://%s-pg-tileserv:7800" (include "workouts.fullname" .) | quote }}
   PASSWORD_MINIMUM_LENGTH: {{ .Values.api.passwordMinimumLength | quote }}
   SESSION_LIFETIME: {{ .Values.api.sessionLifetime | quote }}
   PAGE_SIZE_MAXIMUM: {{ .Values.api.pageSizeMaximum | quote }}
@@ -23,3 +23,40 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   SOURCE_KEYRING_FILE: /var/run/secrets/workouts-source/keyring.json
   LOCAL_SOURCE_ROOTS: {{ join "," .Values.sources.localRoots | quote }}
+---
+{{- $origins := dict }}
+{{- range .Values.api.publicConfig.baseMaps.styleFamilies }}
+{{- range .resourceOrigins }}
+{{- $_ := set $origins . true }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "workouts.fullname" . }}-ui-nginx
+  labels:
+    {{- include "workouts.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'sha256-b/Mj2y/nO8JVgfcZBrtey+zfRTYCU35oNGyRFE7HvQM='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:{{ range keys $origins | sortAlpha }} {{ . }}{{ end }}; connect-src 'self'{{ range keys $origins | sortAlpha }} {{ . }}{{ end }}; worker-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        location = /health/live {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        location = /health/ready {
+            access_log off;
+            try_files /index.html =503;
+        }
+    }

@@ -26,6 +26,20 @@ func ProvisionRoles(ctx context.Context, db *pgxpool.Pool) error {
 		return errors.New("role provisioning lock is unavailable")
 	}
 	var canLogin, superuser, createRole, createDB, replication, bypassRLS bool
+	err = tx.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_tiles'`).Scan(&canLogin, &superuser, &createRole, &createDB, &replication, &bypassRLS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := tx.Exec(ctx, `CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`); err != nil {
+			return errors.New("tile role could not be created")
+		}
+	} else if err != nil {
+		return errors.New("tile role could not be verified")
+	} else if !canLogin || superuser || createRole || createDB || replication || bypassRLS {
+		return errors.New("existing tile role is unsafe")
+	}
+	var tileHasMemberships bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_auth_members memberships JOIN pg_roles member_role ON member_role.oid=memberships.member WHERE member_role.rolname='workouts_tiles')`).Scan(&tileHasMemberships); err != nil || tileHasMemberships {
+		return errors.New("existing tile role has unsafe memberships")
+	}
 	err = tx.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_security_owner'`).Scan(&canLogin, &superuser, &createRole, &createDB, &replication, &bypassRLS)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`); err != nil {

@@ -35,8 +35,8 @@ type API struct {
 	PublicURL              string
 	PollingIntervalSeconds int
 	MapFitPaddingPixels    int
-	BaseMapTileURL         string
-	BaseMapAttribution     string
+	BaseMaps               BaseMaps
+	PGTileServURL          string
 	SessionLifetime        time.Duration
 	PasswordMinimum        int
 	PageSizeMaximum        int
@@ -79,6 +79,10 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	baseMaps, err := parseBaseMaps(os.Getenv("BASE_MAPS_JSON"))
+	if err != nil {
+		return API{}, err
+	}
 	passwordMinimum, err := integerRange("PASSWORD_MINIMUM_LENGTH", 12, 12, 64)
 	if err != nil {
 		return API{}, err
@@ -112,8 +116,8 @@ func LoadAPI() (API, error) {
 		PublicURL:              env("PUBLIC_URL", "http://localhost:5173"),
 		PollingIntervalSeconds: polling,
 		MapFitPaddingPixels:    padding,
-		BaseMapTileURL:         os.Getenv("BASE_MAP_TILE_URL"),
-		BaseMapAttribution:     os.Getenv("BASE_MAP_ATTRIBUTION"),
+		BaseMaps:               baseMaps,
+		PGTileServURL:          env("PG_TILESERV_URL", "http://127.0.0.1:7800"),
 		SessionLifetime:        sessionLifetime,
 		PasswordMinimum:        passwordMinimum,
 		PageSizeMaximum:        pageMaximum,
@@ -131,17 +135,8 @@ func LoadAPI() (API, error) {
 	if err := validatePublicOrigin(result.PublicURL, result.LocalDevelopment); err != nil {
 		return API{}, err
 	}
-	allowLocalMap, err := boolean("ALLOW_LOCAL_BASE_MAP", false)
-	if err != nil {
+	if err := validateHTTPURL("PG_TILESERV_URL", result.PGTileServURL, false); err != nil {
 		return API{}, err
-	}
-	if result.BaseMapTileURL != "" {
-		if err := validateBaseMapURL(result.BaseMapTileURL, result.PublicURL, allowLocalMap); err != nil {
-			return API{}, err
-		}
-	}
-	if len(result.BaseMapAttribution) > 1024 {
-		return API{}, fmt.Errorf("BASE_MAP_ATTRIBUTION must not exceed 1024 characters")
 	}
 	if err := validateSMTP(result.SMTP, result.LocalDevelopment); err != nil {
 		return API{}, err
@@ -335,21 +330,6 @@ func boolean(name string, fallback bool) (bool, error) {
 	return value, nil
 }
 
-func validateBaseMapURL(raw, publicURL string, allowLocal bool) error {
-	if err := validateHTTPURL("BASE_MAP_TILE_URL", raw, false); err != nil {
-		return err
-	}
-	parsed, _ := url.Parse(raw)
-	if !isInternalHost(parsed.Hostname()) {
-		return nil
-	}
-	public, _ := url.Parse(publicURL)
-	if !allowLocal || !isInternalHost(public.Hostname()) {
-		return fmt.Errorf("BASE_MAP_TILE_URL must not use a loopback, private, .local, or .internal host")
-	}
-	return nil
-}
-
 func validateHTTPURL(name, raw string, allowFragment bool) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil {
@@ -358,16 +338,10 @@ func validateHTTPURL(name, raw string, allowFragment bool) error {
 	if !allowFragment && parsed.Fragment != "" {
 		return fmt.Errorf("%s must not contain a fragment", name)
 	}
-	return nil
-}
-
-func isInternalHost(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
-		return true
+	if parsed.RawQuery != "" {
+		return fmt.Errorf("%s must not contain a query", name)
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
+	return nil
 }
 
 func isLoopbackHost(host string) bool {

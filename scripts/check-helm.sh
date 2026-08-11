@@ -10,6 +10,30 @@ if ! grep -q 'checksum/config:' "$rendered"; then
   printf '%s\n' 'API Deployment is missing the ConfigMap checksum rollout annotation' >&2
   exit 1
 fi
+if ! grep -q 'name: workouts-explorer-pg-tileserv' "$rendered" ||
+   ! grep -q 'type: ClusterIP' "$rendered" ||
+   ! grep -q 'image: docker.io/pramsey/pg_tileserv:20250131@sha256:' "$rendered" ||
+   ! grep -q 'PG_TILESERV_URL:' "$rendered" ||
+   ! grep -q 'key: tilesDatabaseUrl' "$rendered"; then
+  printf '%s\n' 'Internal pg_tileserv deployment, service, or credential wiring is incomplete' >&2
+  exit 1
+fi
+if ! grep -q 'kind: NetworkPolicy' "$rendered" ||
+   ! grep -q 'app.kubernetes.io/component: pg-tileserv' "$rendered" ||
+   ! grep -q 'app.kubernetes.io/component: api' "$rendered"; then
+  printf '%s\n' 'pg_tileserv is not restricted to API ingress' >&2
+  exit 1
+fi
+if grep -Eq 'path: .*pg-tileserv|type: (NodePort|LoadBalancer)' "$rendered"; then
+  printf '%s\n' 'pg_tileserv must never receive public ingress or an external Service type' >&2
+  exit 1
+fi
+if ! grep -q 'name: workouts-explorer-ui-nginx' "$rendered" ||
+   ! grep -q 'https://maps.example.invalid' "$rendered" ||
+   ! grep -q 'mountPath: /etc/nginx/conf.d/default.conf' "$rendered"; then
+  printf '%s\n' 'UI provider CSP configuration is not mounted from validated map origins' >&2
+  exit 1
+fi
 if grep -q '/mailpit' "$rendered" || grep -q 'kind: ExternalName' "$rendered"; then
   printf '%s\n' 'Default production rendering unexpectedly exposes Mailpit' >&2
   exit 1
@@ -50,6 +74,10 @@ checksum="$(awk '$1 == "checksum/config:" {print $2}' "$rendered")"
 changed_checksum="$(awk '$1 == "checksum/config:" {print $2}' "$changed")"
 if [ -z "$checksum" ] || [ "$checksum" = "$changed_checksum" ]; then
   printf '%s\n' 'API ConfigMap changes do not alter the Deployment rollout checksum' >&2
+  exit 1
+fi
+if helm template workouts-explorer helm --set-string 'api.publicConfig.baseMaps.styleFamilies[0].resourceOrigins[0]=https://maps.example.invalid;script-src *' >/dev/null 2>&1; then
+  printf '%s\n' 'Base-map resource origin validation accepted CSP directive injection' >&2
   exit 1
 fi
 if helm template workouts-explorer helm --set-string worker.schedulerLeaseDuration=30s >/dev/null 2>&1; then

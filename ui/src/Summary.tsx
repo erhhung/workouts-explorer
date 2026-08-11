@@ -13,6 +13,8 @@ import {
   type SummaryTotals,
   type Workout,
   type WorkoutColumn,
+  DEFAULT_WORKOUT_SORT,
+  type WorkoutSort,
   type WorkoutList,
   type WorkoutDeletionAccepted,
   type WorkoutProvenance,
@@ -53,7 +55,7 @@ function validDate(value: string) {
   return date.toISOString().slice(0, 10) === value;
 }
 
-function initialRange(preference?: DateRangePreference | null) {
+export function initialRange(preference?: DateRangePreference | null) {
   if (preference && (isDateRangeEnum(preference) || EXPLICIT_RANGE.test(preference))) return preference;
   return "last30Days" satisfies DateRangeEnum;
 }
@@ -235,8 +237,9 @@ function QueryError({ message, retry }: { message: string; retry: () => void }) 
   return <div className="summary-query-error" role="alert"><span>{message}</span><button className="secondary" onClick={retry}>Retry</button></div>;
 }
 
-function WorkoutActions({ workout, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
+function WorkoutActions({ workout, onShowOnMap, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
   workout: Workout;
+  onShowOnMap?: (workoutId: string) => void;
   onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
   onExportGeoJSON: (workout: Workout) => void;
   onExportPoints: (workout: Workout) => void;
@@ -248,6 +251,7 @@ function WorkoutActions({ workout, onViewProvenance, onExportGeoJSON, onExportPo
       <span aria-hidden="true">...</span>
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content className="menu-content workout-action-menu" align="end" sideOffset={6}>
+      {workout.routePointCount >= 2 && onShowOnMap && <DropdownMenu.Item onSelect={() => onShowOnMap(workout.id)}>Show on map</DropdownMenu.Item>}
       <DropdownMenu.Item onSelect={() => onViewProvenance(workout, triggerRef.current)}>View provenance</DropdownMenu.Item>
       {workout.routePointCount >= 2 && <DropdownMenu.Item onSelect={() => onExportGeoJSON(workout)}>Export GeoJSON</DropdownMenu.Item>}
       {workout.routeAvailable && <DropdownMenu.Item onSelect={() => onExportPoints(workout)}>Export points</DropdownMenu.Item>}
@@ -347,9 +351,10 @@ function AggregateCard({ label, value, valueTitle, summary, format }: {
   );
 }
 
-function WorkoutTable({ data, preferences, sort, onSort, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
+function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
   data: WorkoutList; preferences: Preferences; sort: { field: WorkoutColumn; direction: WorkoutSortDirection };
   onSort: (field: WorkoutColumn) => void;
+  onShowOnMap?: (workoutId: string) => void;
   onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
   onExportGeoJSON: (workout: Workout) => void;
   onExportPoints: (workout: Workout) => void;
@@ -376,7 +381,7 @@ function WorkoutTable({ data, preferences, sort, onSort, onViewProvenance, onExp
             const selected = sort.field === column;
             return <th key={column} aria-sort={selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"} scope="col"><button onClick={() => onSort(column)} disabled={!SORTABLE_COLUMNS.has(column)}><span className="column-label">{COLUMN_LABELS[column]}</span><span className="sort-indicator" aria-hidden="true">{selected ? (sort.direction === "asc" ? <>&#9650;</> : <>&#9660;</>) : <>&#9650; &#9660;</>}</span></button></th>;
           })}<th className="workout-actions-heading" scope="col"><span className="visually-hidden">Actions</span></th></tr></thead>
-          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => <td key={column}><div className={`workout-cell workout-cell--${column}`}>{columnValue(column, workout, preferences)}</div></td>)}<td className="workout-actions-cell"><WorkoutActions workout={workout} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} /></td></tr>)}</tbody>
+          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => <td key={column}><div className={`workout-cell workout-cell--${column}`}>{columnValue(column, workout, preferences)}</div></td>)}<td className="workout-actions-cell"><WorkoutActions workout={workout} onShowOnMap={onShowOnMap} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} /></td></tr>)}</tbody>
         </table>
       </div>
       <div className="mobile-workouts">
@@ -390,7 +395,7 @@ function WorkoutTable({ data, preferences, sort, onSort, onViewProvenance, onExp
                 <DateTimeValue value={times.start} focusableHelp={false} />
                 <strong>{workout.type.displayName}</strong><DurationValue value={workout.duration} focusable={false} />
               </button>
-              <WorkoutActions workout={workout} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} />
+              <WorkoutActions workout={workout} onShowOnMap={onShowOnMap} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} />
             </div>
             <div id={detailsId} hidden={!isExpanded} className="mobile-workout-details">
               <dl>
@@ -408,16 +413,19 @@ function WorkoutTable({ data, preferences, sort, onSort, onViewProvenance, onExp
   );
 }
 
-export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
-  preferences: Preferences; csrfToken: string; onDateRangeSaved: (dateRange: DateRangePreference) => void;
+export function Summary({ preferences, csrfToken, selectedDateRange, onDateRangeSelected, selectedSort, onSortChange, onShowOnMap, onDateRangeSaved }: {
+  preferences: Preferences; csrfToken: string; selectedDateRange?: DateRangePreference; onDateRangeSelected?: (dateRange: DateRangePreference) => void;
+  selectedSort?: WorkoutSort; onSortChange?: (sort: WorkoutSort) => void;
+  onShowOnMap?: (workoutId: string) => void; onDateRangeSaved: (dateRange: DateRangePreference) => void;
 }) {
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<DateRangePreference>(() => initialRange(preferences.dateRange));
+  const [range, setRange] = useState<DateRangePreference>(() => selectedDateRange ?? initialRange(preferences.dateRange));
   const rangeRef = useRef(range);
   const latestSelection = useRef(0);
   const [pageState, setPageState] = useState({ page: 1, pageSize: preferences.pageSize });
   const page = pageState.pageSize === preferences.pageSize ? pageState.page : 1;
-  const [sort, setSort] = useState<{ field: WorkoutColumn; direction: WorkoutSortDirection }>({ field: "date", direction: "desc" });
+  const [localSort, setLocalSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
+  const sort = selectedSort ?? localSort;
   const [sortActivity, setSortActivity] = useState<{ field: WorkoutColumn; direction: WorkoutSortDirection; state: "sorting" | "complete" }>();
   const [customOpen, setCustomOpen] = useState(false);
   const [customError, setCustomError] = useState<{ message: string; fields: Array<"start" | "end"> }>();
@@ -440,16 +448,17 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
   const customErrorId = useId();
   const explicit = EXPLICIT_RANGE.exec(range);
   useEffect(() => {
-    const next = initialRange(preferences.dateRange);
+    const next = selectedDateRange ?? initialRange(preferences.dateRange);
     if (next !== rangeRef.current) {
       latestSelection.current += 1;
       rangeRef.current = next;
       setRange(next);
       setPageState((current) => ({ ...current, page: 1 }));
       setSortActivity(undefined);
+      if (!selectedSort) setLocalSort(DEFAULT_WORKOUT_SORT);
       setSaveNotice("");
     }
-  }, [preferences.dateRange]);
+  }, [preferences.dateRange, selectedDateRange]);
   useEffect(() => {
     if (pageState.pageSize !== preferences.pageSize) { setPageState({ page: 1, pageSize: preferences.pageSize }); setSortActivity(undefined); }
   }, [pageState.pageSize, preferences.pageSize]);
@@ -475,6 +484,8 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
     latestSelection.current = sequence;
     rangeRef.current = next;
     setRange(next); setPageState({ page: 1, pageSize: preferences.pageSize }); setSortActivity(undefined); setSaveNotice("");
+    if (!selectedSort) setLocalSort(DEFAULT_WORKOUT_SORT);
+    onDateRangeSelected?.(next);
     persistence.mutate({ dateRange: next, sequence });
   }
   function submitCustom(event: FormEvent<HTMLFormElement>) {
@@ -631,7 +642,7 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
   }
   const updateSort = (field: WorkoutColumn) => {
     const next = sort.field === field ? { field, direction: sort.direction === "asc" ? "desc" as const : "asc" as const } : { field, direction: field === "date" ? "desc" as const : "asc" as const };
-    setSort(next);
+    if (onSortChange) onSortChange(next); else setLocalSort(next);
     setSortActivity({ ...next, state: "sorting" });
     setPageState({ page: 1, pageSize: preferences.pageSize });
   };
@@ -669,10 +680,9 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
         <DropdownMenu.Root>
           <DropdownMenu.Trigger className="range-trigger" aria-label="Select date range"><span>Date range</span><strong>{rangeLabel(range)}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align="end" sideOffset={8}>
-            <DropdownMenu.Label>Quick ranges</DropdownMenu.Label>
             {DATE_SHORTCUTS.map(([value, label]) => <DropdownMenu.Item key={value} onSelect={() => selectRange(value)}>{label}{range === value && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}
             <DropdownMenu.Separator />
-            <DropdownMenu.Item onSelect={() => setCustomOpen(true)}>Custom{explicit && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => setCustomOpen(true)}>Custom...{explicit && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>
       </header>
@@ -750,7 +760,7 @@ export function Summary({ preferences, csrfToken, onDateRangeSaved }: {
         {displayedWorkouts && displayedWorkouts.items.length === 0 && <div className="summary-empty"><strong>No workouts in this range.</strong><span>Choose another date range to continue tracing your archive.</span></div>}
         {sortActivity?.state === "sorting" && <p className="visually-hidden workout-sort-status" role="status">Sorting by {sortActivityLabel}...</p>}
         {sortActivity?.state === "complete" && <span className="visually-hidden" role="status">Sorted by {sortActivityLabel}.</span>}
-        {displayedWorkouts && displayedWorkouts.items.length > 0 && <div className="workout-results" aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} preferences={preferences} sort={sort} onSort={updateSort} onViewProvenance={openProvenance} onExportGeoJSON={(workout) => void exportRoute(workout, "geojson")} onExportPoints={(workout) => void exportRoute(workout, "points")} onDelete={openDeletion} /></div>}
+        {displayedWorkouts && displayedWorkouts.items.length > 0 && <div className="workout-results" aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} preferences={preferences} sort={sort} onSort={updateSort} onShowOnMap={onShowOnMap} onViewProvenance={openProvenance} onExportGeoJSON={(workout) => void exportRoute(workout, "geojson")} onExportPoints={(workout) => void exportRoute(workout, "points")} onDelete={openDeletion} /></div>}
         {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && <nav className="pagination" aria-label="Workout pages"><button className="secondary" disabled={page <= 1 || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page - 1, pageSize: preferences.pageSize }))}>Previous</button><span>Page {displayedWorkouts.pagination.page} of {displayedWorkouts.pagination.totalPages}</span><button className="secondary" disabled={page >= displayedWorkouts.pagination.totalPages || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page + 1, pageSize: preferences.pageSize }))}>Next</button></nav>}
       </section>
     </main>

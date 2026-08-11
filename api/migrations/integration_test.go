@@ -320,14 +320,54 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `REVOKE SELECT ON app.ingest_write_capabilities FROM workouts_worker`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 9, minimum_runtime_version = 9`); err != nil {
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 11, minimum_runtime_version = 11`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 8, minimum_runtime_version = 8`)
+		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 10, minimum_runtime_version = 8`)
 	})
 	if database.Ready(db.ctx, db.api) {
 		t.Fatal("readiness ignored an incompatible minimum runtime version")
+	}
+}
+
+func TestRawRouteMapRoleAndPostGISContract(t *testing.T) {
+	db := openTestDatabases(t)
+	var contractReady bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT
+		EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
+		AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='workouts_tiles' AND rolcanlogin
+			AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+			AND NOT rolreplication AND NOT rolbypassrls)
+		AND has_schema_privilege('workouts_tiles','app','USAGE')
+		AND has_function_privilege('workouts_tiles',
+			'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+		AND NOT has_table_privilege('workouts_tiles','app.workout_routes','SELECT')
+		AND NOT has_table_privilege('workouts_tiles','app.map_selections','SELECT')
+		AND NOT has_table_privilege('workouts_tiles','app.map_selection_workouts','SELECT')
+		AND NOT has_table_privilege('workouts_tiles','app.account_data_generations','SELECT')
+		AND NOT has_table_privilege('workouts_tiles','app.sessions','SELECT')
+		AND NOT has_table_privilege('workouts_tiles','app.workout_types','SELECT')
+		AND has_table_privilege('workouts_api','app.map_selections','SELECT')
+		AND has_table_privilege('workouts_api','app.map_selections','INSERT')
+		AND has_table_privilege('workouts_api','app.map_selections','DELETE')
+		AND NOT has_table_privilege('workouts_api','app.map_selections','UPDATE')
+		AND has_table_privilege('workouts_api','app.map_selection_workouts','SELECT')
+		AND has_table_privilege('workouts_api','app.map_selection_workouts','INSERT')
+		AND has_table_privilege('workouts_api','app.map_selection_workouts','DELETE')
+		AND NOT has_table_privilege('workouts_api','app.map_selection_workouts','UPDATE')
+		AND NOT has_function_privilege('workouts_api',
+			'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+		AND EXISTS(SELECT 1 FROM pg_attribute
+			WHERE attrelid='app.workout_routes'::regclass AND attname='route'
+			  AND postgis_typmod_type(atttypmod)='MultiLineString'
+			  AND postgis_typmod_srid(atttypmod)=4326)
+		AND EXISTS(SELECT 1 FROM pg_index index_row
+			JOIN pg_class index_class ON index_class.oid=index_row.indexrelid
+			JOIN pg_am access_method ON access_method.oid=index_class.relam
+			WHERE index_class.oid='app.workout_routes_route_gist_idx'::regclass
+			  AND access_method.amname='gist')`).Scan(&contractReady); err != nil || !contractReady {
+		t.Fatalf("raw route map role/PostGIS contract is incomplete: ready=%t err=%v", contractReady, err)
 	}
 }
 
@@ -1679,18 +1719,27 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
-	for sequence := range 2 {
+	routeTimes := []time.Time{
+		time.Date(2026, 4, 11, 15, 1, 0, 0, time.UTC),
+		time.Date(2026, 4, 11, 15, 1, 10, 0, time.UTC),
+		time.Date(2026, 4, 11, 15, 1, 20, 0, time.UTC),
+		time.Date(2026, 4, 11, 15, 1, 50, 0, time.UTC),
+		time.Date(2026, 4, 11, 15, 2, 0, 0, time.UTC),
+	}
+	routeLatitudes := []float64{37.5, 37.51, 37.52, 38.5, 38.5}
+	routeLongitudes := []float64{-122.2, -122.19, -122.18, -121, -121}
+	for sequence := range routeTimes {
 		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_route_points
 			(account_id,workout_id,sequence,recorded_at,timestamp_offset_minutes,latitude,longitude,altitude,speed,course,
 			 horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy)
-			VALUES($1,$2,$3,'2026-04-11T15:01:00Z',-420,37.5,-122.2,12.5,2.5,180,3,4,0.5,2)`,
-			account, workoutID, sequence); err != nil {
+			VALUES($1,$2,$3,$4,-420,$5,$6,12.5,2.5,180,3,4,0.5,2)`,
+			account, workoutID, sequence, routeTimes[sequence], routeLatitudes[sequence], routeLongitudes[sequence]); err != nil {
 			_ = tx.Rollback(db.ctx)
 			t.Fatal(err)
 		}
 	}
 	var routeReplaced bool
-	if err := tx.QueryRow(db.ctx, `SELECT app.replace_workout_route_summary($1,2,-122.2,37.5,-122.2,37.5,12.5,12.5,0,true)`, workoutID).Scan(&routeReplaced); err != nil || !routeReplaced {
+	if err := tx.QueryRow(db.ctx, `SELECT app.replace_workout_route_summary($1,5,-122.2,37.5,-121,38.5,12.5,12.5,0,true)`, workoutID).Scan(&routeReplaced); err != nil || !routeReplaced {
 		_ = tx.Rollback(db.ctx)
 		t.Fatalf("route summary replaced=%t err=%v", routeReplaced, err)
 	}
@@ -1778,20 +1827,26 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 
 	tx = beginAccount(t, db.ctx, db.api, account)
 	var duration string
-	var routePoints, warningCount, summarizedPoints int
+	var routePoints, warningCount, summarizedPoints, routeSegments, geometryPoints, zeroLengthSegments int
+	var routeGeometryType string
 	var elevationGain float64
 	if err := tx.QueryRow(db.ctx, `SELECT w.provider_duration::text,
 		(SELECT count(*) FROM app.workout_route_points p WHERE p.workout_id=w.id),
 		(SELECT jsonb_array_length(e.warnings) FROM app.workout_import_events e WHERE e.workout_id=w.id),
 		(SELECT point_count FROM app.workout_routes route WHERE route.workout_id=w.id),
-		(SELECT elevation_gain FROM app.workout_routes route WHERE route.workout_id=w.id)
-		FROM app.workouts w WHERE w.id=$1`, workoutID).Scan(&duration, &routePoints, &warningCount, &summarizedPoints, &elevationGain); err != nil {
+		(SELECT elevation_gain FROM app.workout_routes route WHERE route.workout_id=w.id),
+		(SELECT GeometryType(route.route) FROM app.workout_routes route WHERE route.workout_id=w.id),
+		(SELECT ST_NumGeometries(route.route) FROM app.workout_routes route WHERE route.workout_id=w.id),
+		(SELECT ST_NPoints(route.route) FROM app.workout_routes route WHERE route.workout_id=w.id),
+		(SELECT count(*) FROM app.workout_routes route CROSS JOIN LATERAL ST_Dump(route.route) component
+			WHERE route.workout_id=w.id AND ST_Length(component.geom)=0)
+		FROM app.workouts w WHERE w.id=$1`, workoutID).Scan(&duration, &routePoints, &warningCount, &summarizedPoints, &elevationGain, &routeGeometryType, &routeSegments, &geometryPoints, &zeroLengthSegments); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
 	_ = tx.Rollback(db.ctx)
-	if duration != "2195.6228786706924" || routePoints != 2 || warningCount != 2 || summarizedPoints != 2 || elevationGain != 0 {
-		t.Fatalf("duration/route points/warnings/summary/gain=%s/%d/%d/%d/%v", duration, routePoints, warningCount, summarizedPoints, elevationGain)
+	if duration != "2195.6228786706924" || routePoints != 5 || warningCount != 2 || summarizedPoints != 5 || elevationGain != 0 || routeGeometryType != "MULTILINESTRING" || routeSegments != 2 || geometryPoints != 5 || zeroLengthSegments != 1 {
+		t.Fatalf("duration/route points/warnings/summary/gain/geometry/segments/geometry points/zero-length segments=%s/%d/%d/%d/%v/%s/%d/%d/%d", duration, routePoints, warningCount, summarizedPoints, elevationGain, routeGeometryType, routeSegments, geometryPoints, zeroLengthSegments)
 	}
 	tx = beginAccount(t, db.ctx, db.api, foreignAccount)
 	var foreignVisible int

@@ -38,6 +38,7 @@ var openAPIDocument []byte
 type Server struct {
 	config     config.API
 	db         *pgxpool.Pool
+	tileClient *http.Client
 	swagger    http.Handler
 	passwords  *passwordHasher
 	delivery   *deliveryService
@@ -71,7 +72,11 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 		delivery.close()
 		return nil, fmt.Errorf("configure source encryption: %w", err)
 	}
-	server := &Server{config: cfg, db: db, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys}
+	tileClient := &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	server := &Server{config: cfg, db: db, tileClient: tileClient, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys}
 	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {
@@ -163,14 +168,33 @@ func (s *Server) GetPublicConfig(w http.ResponseWriter, _ *http.Request) {
 		MapFitPaddingPixels:    s.config.MapFitPaddingPixels,
 		PasswordMinimumLength:  passwordMinimum,
 		PageSizeMaximum:        pageSizeMaximum,
-	}
-	if s.config.BaseMapTileURL != "" {
-		response.BaseMapTileUrl = &s.config.BaseMapTileURL
-	}
-	if s.config.BaseMapAttribution != "" {
-		response.BaseMapAttribution = &s.config.BaseMapAttribution
+		BaseMaps:               publicBaseMaps(s.config.BaseMaps),
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func publicBaseMaps(value config.BaseMaps) generated.BaseMapsConfig {
+	if len(value.StyleFamilies) == 0 {
+		value = config.DefaultBaseMaps()
+	}
+	result := generated.BaseMapsConfig{FallbackFamilyId: value.FallbackFamilyID, Families: make([]generated.BaseMapFamily, 0, len(value.StyleFamilies)), WorkoutTypeMappings: make([]generated.BaseMapWorkoutTypeMapping, 0, len(value.WorkoutTypeMappings))}
+	for _, family := range value.StyleFamilies {
+		item := generated.BaseMapFamily{
+			Id: family.ID, Label: family.Label, ResourceOrigins: family.ResourceOrigins,
+			Styles:      generated.BaseMapStyles{Light: family.Styles.Light, Dark: family.Styles.Dark},
+			Attribution: generated.BaseMapAttribution{Text: family.Attribution.Text, Links: make([]generated.BaseMapAttributionLink, 0, len(family.Attribution.Links))},
+		}
+		for _, link := range family.Attribution.Links {
+			item.Attribution.Links = append(item.Attribution.Links, generated.BaseMapAttributionLink{Label: link.Label, Url: link.URL})
+		}
+		result.Families = append(result.Families, item)
+	}
+	for _, mapping := range value.WorkoutTypeMappings {
+		result.WorkoutTypeMappings = append(result.WorkoutTypeMappings, generated.BaseMapWorkoutTypeMapping{
+			ProviderLabel: mapping.ProviderLabel, NormalizedTypeKey: mapping.NormalizedTypeKey, FamilyId: mapping.FamilyID,
+		})
+	}
+	return result
 }
 
 func (*Server) GetOpenAPIDocument(w http.ResponseWriter, _ *http.Request) {

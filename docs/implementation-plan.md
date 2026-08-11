@@ -42,13 +42,14 @@ implementation that depends on an unresolved choice.
 | Before Milestone 2 authentication implementation | ADR 0005 | Identity canonicalization, password/token policy, distributed throttling, SMTP failure behavior, and administrator bootstrap are accepted. |
 | Before Milestone 2 interface implementation | ADR 0006 | The focused UI spike records the selected styling primitives, theme bootstrap, font, responsive conventions, and accessibility checks. |
 | Before Milestone 3 source persistence | ADR 0007 | The reviewed envelope format, key lifecycle, snapshot encryption, and credential compare-and-swap behavior are accepted. |
+| Before Milestone 6 Map implementation | ADR 0011 | Theme-aware style families, workout-type defaults, fallback and override behavior, provider access, and private-overlay restoration are accepted. |
 | Before Milestone 7 OSM schema/bootstrap | ADR 0008 | The measured importer, derivation schema, segment identity, refresh, and promotion design are accepted. |
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
 | Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
 
-ADRs 0001 through 0007 are accepted. ADRs 0008 through 0010 remain Proposed
-until their stated acceptance evidence is recorded. A proposed record's status
-must change before dependent application work begins.
+ADRs 0001 through 0007 and ADR 0011 are accepted. ADRs 0008 through 0010 remain
+Proposed until their stated acceptance evidence is recorded. A proposed record's
+status must change before dependent application work begins.
 
 ## Milestone 1: Executable Skeleton
 
@@ -297,12 +298,21 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 
 - Implement session-scoped map selections, extent calculation, expiration, and account authorization.
 - Import route geometry into private vector-tile functions.
+- Split persisted route geometry when a positive point-to-point timestamp gap is at least three times the running average for its current segment, so paused and resumed workouts do not render false connecting lines.
+- Emit zero-length route components as point features in private vector tiles so repeated resumed coordinates remain visible and hoverable instead of disappearing from line rendering.
 - Deploy cluster-internal `pg_tileserv` with least-privilege database access.
 - Implement the authenticated API tile proxy and private cache policy.
 - Add account data-generation cache busting.
-- Build the Map view with public base tiles and attribution.
+- Replace the singleton base-map settings with validated, extensible style-family runtime configuration, paired light and dark variants, structured attribution, provider resource origins, a fallback family, and provider-label workout mappings.
+- Seed MapTiler Outdoor, customized MapTiler Streets, and Stadia Alidade Smooth families, with Alidade Smooth as the default fallback.
+- Build the Map view with public base-map styles, visible active-style attribution, automatic workout-type selection, and a current-visit manual selector.
+- Synchronize the active style variant with the application theme and restore private sources and layers after style replacement without resetting map state.
+- Constrain browser provider access through generated content-security policy origins and document that browser provider credentials are public and provider-restricted.
 - Implement date synchronization, workout filtering, Routes mode, type colors, oldest-to-newest order, topmost hover, and purple full-route highlight.
 - Implement desktop controls and mobile bottom sheet.
+- Keep one MapLibre instance mounted while immutable route selections change; update the vector source in place and preserve private sources/layers through public style transforms.
+- Use one compact workout list for visibility, per-route fitting, automatic workout-family selection, synchronized hover highlighting, and delayed route detail popups.
+- Keep empty maps interactive with browser-location centering and a contiguous-US fallback.
 - Wire Show on map from the workout action menu.
 
 ### Acceptance
@@ -312,6 +322,13 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 - Pan and zoom remain interactive during ingest.
 - Hovering an overlap selects the newest topmost route.
 - Deletion followed by redraw does not show a cached deleted route.
+- A single mapped workout type selects its configured family, while mixed, unmapped, and empty route selections use the configured Smooth fallback.
+- Light and dark theme changes switch variants without losing the viewport, filters, selection, ordering, hover behavior, or private overlay.
+- Manual style selection offers every configured family for the current Map visit on desktop and mobile, then returns to automatic selection on the next visit.
+- Active-provider attribution remains visible and current after manual selection and theme changes.
+- Route visibility changes do not blank or recreate the map, and clicking a route fits it without hiding other checked routes.
+- Sustained map hover highlights the full route and matching list row and shows compact type, distance, time-range, and duration details.
+- Paused routes with anomalous timestamp gaps render as separate line segments while retaining their original ordered points and summary bounds.
 
 ### Verification focus
 
@@ -320,6 +337,10 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 - Browser map interaction and mobile layout tests
 - Tile cache-generation invalidation
 - Representative multi-year rendering benchmark
+- Style-family schema, URL, attribution, mapping, fallback, and duplicate-ID validation
+- Provider-label normalization and single-, mixed-, unmapped-, and empty-selection resolution
+- Theme synchronization, current-visit override reset, attribution switching, and private-overlay survival
+- Helm rendering and content-security policy checks for configured provider resource origins
 
 ## Milestone 7: OSM Path Coverage
 

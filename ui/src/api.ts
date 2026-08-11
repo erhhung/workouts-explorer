@@ -35,6 +35,8 @@ export type DateRangeEnum = "thisWeek" | "lastWeek" | "last7Days" | "last30Days"
 export type DateRangePreference = DateRangeEnum | `${string}/${string}`;
 export type WorkoutColumn = "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevation";
 export type WorkoutSortDirection = "asc" | "desc";
+export interface WorkoutSort { field: WorkoutColumn; direction: WorkoutSortDirection }
+export const DEFAULT_WORKOUT_SORT: WorkoutSort = { field: "date", direction: "desc" };
 
 export interface ResolvedDateRange {
   startDate: string;
@@ -129,10 +131,54 @@ export interface PublicConfig {
   productName: string;
   pollingIntervalSeconds: number;
   mapFitPaddingPixels: number;
-  baseMapTileUrl?: string;
-  baseMapAttribution?: string;
+  baseMaps: BaseMapsConfig;
   passwordMinimumLength: number;
   pageSizeMaximum: number;
+}
+
+export interface BaseMapAttribution {
+  text: string;
+  links: Array<{ label: string; url: string }>;
+}
+
+export interface BaseMapFamily {
+  id: string;
+  label: string;
+  styles: { light: string; dark: string };
+  attribution: BaseMapAttribution;
+  resourceOrigins: string[];
+}
+
+export interface BaseMapsConfig {
+  families: BaseMapFamily[];
+  fallbackFamilyId: string;
+  workoutTypeMappings: Array<{ providerLabel: string; normalizedTypeKey: string; familyId: string }>;
+}
+
+export interface MapSelectionWorkout {
+  id: string;
+  type: { id: string; key: string; name: string };
+  startedAt: string;
+  endedAt: string;
+  duration: string;
+  localStartDate: string | null;
+  partialRoute: boolean;
+  bounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  distance: ExactMetric | null;
+  pace: ExactMetric | null;
+  calories: ExactMetric | null;
+  heartRate: ExactMetric | null;
+  elevation: ExactMetric | null;
+}
+
+export interface MapSelection {
+  id: string;
+  expiresAt: string;
+  dataGeneration: number;
+  range: { startDate: string; endDate: string };
+  bounds: null | { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  workouts: MapSelectionWorkout[];
+  routeTileUrl: string;
 }
 
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";

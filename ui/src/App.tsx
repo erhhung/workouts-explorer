@@ -1,11 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { ApiError, SESSION_EXPIRED_EVENT, type Preferences, type Profile, type PublicConfig, type Session, api } from "./api";
+import { lazy, Suspense, type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { ApiError, DEFAULT_WORKOUT_SORT, SESSION_EXPIRED_EVENT, type DateRangePreference, type Preferences, type Profile, type PublicConfig, type Session, type WorkoutSort, api } from "./api";
 import { DataSync } from "./DataSync";
-import { Summary } from "./Summary";
+import { initialRange, Summary } from "./Summary";
 import { applyTheme } from "./theme";
+
+const MapPage = lazy(() => import("./MapPage"));
 
 const SAFE_ERRORS = {
   login: "We couldn't sign you in. Check your details and try again.",
@@ -18,6 +20,7 @@ const LOADING_CONFIG: PublicConfig = {
   productName: "Workouts Explorer",
   pollingIntervalSeconds: 30,
   mapFitPaddingPixels: 48,
+  baseMaps: { families: [], fallbackFamilyId: "", workoutTypeMappings: [] },
   passwordMinimumLength: 12,
   pageSizeMaximum: 100,
 };
@@ -366,16 +369,18 @@ function SelectField({ label, name, id, value, options }: { label: string; name:
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} name={name} defaultValue={value}>{options.map((option) => <option key={option} value={option}>{option === "12h" ? "12-hour" : option === "24h" ? "24-hour" : option[0].toUpperCase() + option.slice(1)}</option>)}</select></div>;
 }
 
-function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { session: Session; pageSizeMaximum: number; pollingIntervalSeconds: number; path: string }) {
+function Shell({ session, config, path }: { session: Session; config: PublicConfig; path: string }) {
   const queryClient = useQueryClient();
   const [data, setData] = useState<{ profile: Profile; preferences: Preferences }>();
   const [loadError, setLoadError] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [visitRange, setVisitRange] = useState<DateRangePreference>();
+  const [workoutSort, setWorkoutSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
   useEffect(() => {
     let active = true;
     Promise.all([api<Profile>("/api/me"), api<Preferences>("/api/me/preferences")]).then(([profile, preferences]) => {
       applyTheme(preferences.theme);
-      if (active) setData({ profile, preferences });
+      if (active) { setData({ profile, preferences }); setVisitRange(initialRange(preferences.dateRange)); }
     }).catch(() => { if (active) setLoadError(true); });
     return () => { active = false; };
   }, []);
@@ -391,11 +396,17 @@ function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { ses
   const jobMatch = /^\/data-sync\/jobs\/([0-9A-Fa-f]{32})$/.exec(pathname);
   const canonicalJobId = jobMatch ? jobMatch[1].toUpperCase() : undefined;
   const dataSyncRoute = pathname === "/data-sync" || Boolean(jobMatch);
+  const mapRoute = pathname === "/map";
   useEffect(() => {
     if (jobMatch && jobMatch[1] !== canonicalJobId) navigate(`/data-sync/jobs/${canonicalJobId}`, true);
   }, [canonicalJobId, jobMatch?.[1]]);
   if (loadError) return <main className="center-state"><Mark /><h1>We couldn't load your explorer.</h1><p role="alert">Your session is active, but profile preferences are unavailable.</p><button className="secondary" onClick={() => location.reload()}>Try again</button></main>;
   if (!data) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Restoring your route preferences...</p></main>;
+  const selectedRange = visitRange ?? initialRange(data.preferences.dateRange);
+  const selectDateRange = (next: DateRangePreference) => {
+    if (next !== selectedRange) setWorkoutSort(DEFAULT_WORKOUT_SORT);
+    setVisitRange(next);
+  };
   const initials = data.profile.fullName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || data.profile.username.slice(0, 2).toUpperCase();
   const switchTheme = async () => {
     const previous = data.preferences.theme;
@@ -417,7 +428,7 @@ function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { ses
     <div className="shell">
       <header className="app-header">
         <AppLink to="/" className="wordmark"><Mark compact /><span>Workouts Explorer</span></AppLink>
-        <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute}>Summary</AppLink><span aria-disabled="true">Map</span><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
+        <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute && !mapRoute}>Summary</AppLink><AppLink to="/map" current={mapRoute}>Map</AppLink><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span className="menu-chevron" aria-hidden="true">v</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
@@ -432,12 +443,13 @@ function Shell({ session, pageSizeMaximum, pollingIntervalSeconds, path }: { ses
         </DropdownMenu.Root>
       </header>
       {menuError && <div className="shell-alert" role="alert">{menuError}<button aria-label="Dismiss message" onClick={() => setMenuError("")}>&times;</button></div>}
-      <PreferencesDialog open={dialog === "preferences"} onOpenChange={(open) => setDialog(open ? "preferences" : null)} returnFocus={avatarTriggerRef} profile={data.profile} preferences={data.preferences} csrfToken={session.csrfToken} pageSizeMaximum={pageSizeMaximum} onSaved={(profile, preferences) => setData((current) => current ? { profile, preferences: { ...preferences, dateRange: current.preferences.dateRange } } : { profile, preferences })} />
+      <PreferencesDialog open={dialog === "preferences"} onOpenChange={(open) => setDialog(open ? "preferences" : null)} returnFocus={avatarTriggerRef} profile={data.profile} preferences={data.preferences} csrfToken={session.csrfToken} pageSizeMaximum={config.pageSizeMaximum} onSaved={(profile, preferences) => setData((current) => current ? { profile, preferences: { ...preferences, dateRange: current.preferences.dateRange } } : { profile, preferences })} />
       <Modal open={dialog === "about"} onOpenChange={(open) => setDialog(open ? "about" : null)} returnFocus={avatarTriggerRef} title="About Workouts Explorer" description="A private atlas for a lifetime of movement.">
-        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 4 &middot; Data Sync</p></div>
+        <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 6 &middot; Raw Route Map</p></div>
       </Modal>
-      {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> :
-        <Summary preferences={data.preferences} csrfToken={session.csrfToken} onDateRangeSaved={(dateRange) => setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current)} />}
+      {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={config.pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> : mapRoute ?
+        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} /></Suspense> :
+        <Summary preferences={data.preferences} csrfToken={session.csrfToken} selectedDateRange={visitRange} onDateRangeSelected={selectDateRange} selectedSort={workoutSort} onSortChange={setWorkoutSort} onShowOnMap={(workoutId) => navigate(`/map?workoutId=${encodeURIComponent(workoutId.toUpperCase())}`)} onDateRangeSaved={(dateRange) => { setVisitRange(dateRange); setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current); }} />}
     </div>
   );
 }
@@ -486,6 +498,6 @@ export function App() {
     return <Login />;
   }
   if (session.isPending) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your explorer...</p></main>;
-  if (session.data) return <Shell session={session.data} pageSizeMaximum={config.pageSizeMaximum} pollingIntervalSeconds={config.pollingIntervalSeconds} path={path} />;
+  if (session.data) return <Shell session={session.data} config={config} path={path} />;
   return <Login />;
 }

@@ -9,3 +9,4 @@ coverage/
 *.out
 *.log
 NOTES
+helm/*.local.yaml

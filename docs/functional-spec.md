@@ -573,28 +573,48 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 ### Behavior
 
 1. The map fits selected route extents with configured padding.
-2. Routes use easily distinguished colors by workout type.
-3. Routes render oldest first and newest last.
-4. Hovering near overlapping routes selects the topmost, most recent route.
-5. The selected route is highlighted bright purple in full.
-6. A workout filter allows any subset within the period.
-7. Private route tiles require authenticated account access.
+2. Configured base-map style families each provide light and dark variants; the active variant follows the application theme.
+3. The initial family is the one mapped from the visible routed workout types when every type resolves to the same family.
+4. Mixed mappings, an unmapped type, no visible routed workouts, or any otherwise indeterminate selection uses the configured fallback family, initially Alidade Smooth.
+5. Workout-type mappings use provider labels normalized with the same Unicode and case-folding rules as ingest.
+6. A user can select any configured family; that choice overrides automatic selection for the current Map visit but still follows theme changes. In automatic mode, clicking a workout selects the family mapped to that workout type.
+7. Leaving and reopening Map restores automatic family selection from the visible routed workouts.
+8. A style or theme change preserves the camera, date range, workout filter, selected route, route order, hover state where still applicable, and private route overlay while only the public base-style resources change.
+9. Routes use easily distinguished colors by workout type.
+10. Routes render oldest first and newest last.
+11. Hovering near overlapping routes selects the topmost, most recent route.
+12. The selected route is highlighted bright purple in full.
+13. One compact workout-route list allows any subset within the period. The checkbox area toggles visibility; clicking the remainder of a row makes the route visible, fits it in the viewport, and retains every other checked route.
+14. Private route tiles require authenticated account access.
+15. Changing route visibility replaces the immutable tile capability in the background without removing the map or public base style.
+16. Hovering a route highlights the full route and matching visible list row. After the standard tooltip delay, an auto-sized two-line popup shows workout type and distance, then the start date and compact start/end times.
+17. Workout-log sort column and direction survive Summary, Map, and Data Sync tab changes for the current date range. Changing the range resets sorting to Date descending, and Map orders its workout-route list with the same active sort.
 
 ### Validation
 
 - A map selection belongs to one session and account.
 - Foreign, expired, or invalid selections are rejected.
 - Tile requests cannot provide arbitrary account IDs.
+- Base-map configuration rejects duplicate family IDs, missing theme variants, an unknown fallback or mapped family, unsafe URLs, and invalid attribution.
+- Public provider credentials and resources are separate from private tile authorization.
 
 ### Failure cases
 
-- No routed workouts produces a helpful empty map state.
+- No routed workouts leaves the base map interactive and centers the browser's current location when permission and location are available; otherwise it fits the contiguous United States.
 - A partial source route renders as recorded and is identified as partial where metadata permits.
+- Failure to load a public base-map style does not expose private tile credentials or remove the user's route selection.
 
 ### Acceptance criteria
 
 - Given overlapping routes, when the overlap is hovered, then the most recent visible workout is selected.
 - Given a changed workout subset, when the map redraws, then only selected workouts appear.
+- Given visible routed workouts mapped to one family, when Map opens, then that family uses the variant matching the application theme.
+- Given mixed or unmapped visible workout types, when automatic style selection runs, then the configured Smooth fallback is used.
+- Given a manual family selection, when the theme changes, then the corresponding family variant replaces the base map without resetting map or route state or reloading private route tiles.
+- Given a manual family selection, when Map is left and reopened, then workout-type automatic selection resumes.
+- Given an automatic family selection, when a workout row is clicked, then its mapped family becomes active and its route is fitted without hiding other checked routes.
+- Given route visibility changes, when a replacement selection is prepared, then the existing map remains visible and interactive until the new private tile capability is installed in place.
+- Given a route hover sustained for 750 milliseconds, when popup metadata is available, then the map shows type and distance on line one and compact start/end/duration on line two.
 
 ## Feature: View Path Coverage
 
@@ -808,14 +828,17 @@ As a user, I want the product to remain usable on desktop and mobile.
 5. An About information control appears beside the avatar.
 6. Mobile omits the wordmark to maximize content space.
 7. Mobile Map overlays the avatar in the upper right.
-8. Mobile view and filter controls live in a bottom slide sheet.
+8. Mobile view, filter, and base-map style controls live in a bottom slide sheet.
 9. Dark and light themes preserve contrast for routes, coverage, controls, and tables.
+10. Desktop Map controls expose the same base-map style families as mobile.
+11. Map date and base-style pickers use the application's shared dropdown treatment; the desktop panel starts directly with those controls and contains no redundant Map hero.
+12. The unified workout-route list consumes the remaining panel height above Fit routes and scrolls independently.
 
 ### Validation
 
 - Keyboard and touch controls expose equivalent actions.
 - Focus, hover, selected, warning, and error states are distinguishable without relying only on color.
-- Public map attribution remains visible.
+- Attribution for the active public map style remains visible and current after style or theme changes.
 
 ### Failure cases
 

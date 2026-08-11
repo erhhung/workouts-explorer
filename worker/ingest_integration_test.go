@@ -154,7 +154,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		fixture := insertIngestSource(t, setupDB, root)
 		jobFixture := enqueueIngestJob(t, setupDB, keys, fixture)
 		runner := testRunner(workerDB, keys, root, io.Discard)
-		runner.leaseDuration = 250 * time.Millisecond
+		runner.leaseDuration = time.Second
 		job, err := runner.claimNext(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -180,7 +180,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		}
 		outcome := runner.processSourceFile(ctx, job, sourceID, root, files[0])
 		if !outcome.succeeded || outcome.fatal != nil {
-			t.Fatalf("pre-progress outcome=%+v", outcome)
+			t.Fatalf("pre-progress outcome=%+v fatal=%v", outcome, outcome.fatal)
 		}
 		time.Sleep(runner.leaseDuration + 50*time.Millisecond)
 		replacement := testRunner(workerDB, keys, root, io.Discard)

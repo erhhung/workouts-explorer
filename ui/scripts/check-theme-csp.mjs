@@ -14,7 +14,7 @@ if (!nginx.includes(`'${hash}'`)) {
   throw new Error(`nginx.conf CSP is missing the exact theme bootstrap hash '${hash}'`);
 }
 
-for (const directive of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "font-src 'self'", "img-src 'self' data:", "connect-src 'self'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"]) {
+for (const directive of ["default-src 'none'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "font-src 'self'", "img-src 'self' data:", "connect-src 'self'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"]) {
   if (!nginx.includes(directive)) throw new Error(`nginx.conf CSP is missing: ${directive}`);
 }
 

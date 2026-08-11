@@ -33,6 +33,12 @@ func TestProvisionRolesIntegration(t *testing.T) {
 	if login || superuser || createRole || createDB || replication || bypass || !member {
 		t.Fatalf("unsafe provisioned role login=%t super=%t createrole=%t createdb=%t replication=%t bypass=%t member=%t", login, superuser, createRole, createDB, replication, bypass, member)
 	}
+	if err := provisioner.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_tiles'`).Scan(&login, &superuser, &createRole, &createDB, &replication, &bypass); err != nil {
+		t.Fatal(err)
+	}
+	if !login || superuser || createRole || createDB || replication || bypass {
+		t.Fatalf("unsafe tile role login=%t super=%t createrole=%t createdb=%t replication=%t bypass=%t", login, superuser, createRole, createDB, replication, bypass)
+	}
 
 	runtime, err := pgxpool.New(ctx, apiURL)
 	if err != nil {

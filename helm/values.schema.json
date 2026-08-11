@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "ui", "api", "worker", "sources", "otel", "ingress"],
+  "required": ["image", "ui", "api", "pgTileserv", "worker", "sources", "otel", "ingress"],
   "properties": {
     "image": {"type": "object", "additionalProperties": false, "required": ["registry", "pullPolicy", "pullSecrets", "tag"], "properties": {"registry": {"type": "string"}, "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}, "pullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}}, "tag": {"type": "string"}}},
     "ui": {"$ref": "#/$defs/component"},
+    "pgTileserv": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "databaseSecret", "resources"], "properties": {"image": {"type": "string", "pattern": "^docker\\.io/pramsey/pg_tileserv:[^@]+@sha256:[a-f0-9]{64}$"}, "replicas": {"type": "integer", "minimum": 1}, "databaseSecret": {"$ref": "#/$defs/secretRef"}, "resources": {"type": "object"}}},
     "api": {
       "type": "object", "additionalProperties": false,
       "required": ["image", "replicas", "publicUrl", "databaseSecret", "migrationDatabaseKey", "roleProvisioning", "securitySecret", "passwordMinimumLength", "sessionLifetime", "pageSizeMaximum", "trustedProxyCidrs", "localDevelopment", "smtp", "bootstrap", "publicConfig", "resources"],
@@ -17,7 +18,7 @@
         "passwordMinimumLength": {"type": "integer", "minimum": 12, "maximum": 64}, "sessionLifetime": {"type": "string", "pattern": "^[1-9][0-9]*(m|h)$"}, "pageSizeMaximum": {"type": "integer", "minimum": 25, "maximum": 1000}, "trustedProxyCidrs": {"type": "string"}, "localDevelopment": {"type": "boolean"},
         "smtp": {"type": "object", "additionalProperties": false, "required": ["address", "username", "fromAddress", "allowInsecureLocal"], "properties": {"address": {"type": "string", "minLength": 3}, "username": {"type": "string"}, "fromAddress": {"type": "string", "minLength": 3}, "allowInsecureLocal": {"type": "boolean"}}},
         "bootstrap": {"type": "object", "additionalProperties": false, "required": ["enabled", "secretName", "usernameKey", "emailKey", "passwordKey", "databaseKey"], "properties": {"enabled": {"type": "boolean"}, "secretName": {"type": "string", "minLength": 1}, "usernameKey": {"type": "string", "minLength": 1}, "emailKey": {"type": "string", "minLength": 1}, "passwordKey": {"type": "string", "minLength": 1}, "databaseKey": {"type": "string", "minLength": 1}}},
-        "publicConfig": {"type": "object", "additionalProperties": false, "required": ["pollingIntervalSeconds", "mapFitPaddingPixels", "baseMapTileUrl", "baseMapAttribution"], "properties": {"pollingIntervalSeconds": {"type": "integer", "minimum": 1}, "mapFitPaddingPixels": {"type": "integer", "minimum": 0}, "baseMapTileUrl": {"type": "string"}, "baseMapAttribution": {"type": "string"}}},
+        "publicConfig": {"type": "object", "additionalProperties": false, "required": ["pollingIntervalSeconds", "mapFitPaddingPixels", "baseMaps"], "properties": {"pollingIntervalSeconds": {"type": "integer", "minimum": 1}, "mapFitPaddingPixels": {"type": "integer", "minimum": 0}, "baseMaps": {"$ref": "#/$defs/baseMaps"}}},
         "resources": {"type": "object"}
       }
     },
@@ -28,6 +29,53 @@
   },
   "$defs": {
     "component": {"type": "object", "additionalProperties": false, "required": ["image", "replicas", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "replicas": {"type": "integer", "minimum": 1}, "resources": {"type": "object"}}},
+    "baseMaps": {"type": "object", "additionalProperties": false, "required": ["styleFamilies", "fallbackFamilyId", "workoutTypeMappings"], "properties": {"styleFamilies": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/baseMapFamily"}}, "fallbackFamilyId": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$"}, "workoutTypeMappings": {"type": "array", "maxItems": 256, "items": {"type": "object", "additionalProperties": false, "required": ["providerLabel", "familyId"], "properties": {"providerLabel": {"type": "string", "minLength": 1, "maxLength": 4096}, "familyId": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$"}}}}}},
+    "baseMapFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "styles", "attribution", "resourceOrigins"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 128},
+        "styles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["light", "dark"],
+          "properties": {
+            "light": {"type": "string", "pattern": "^https://[^[:space:]\"';]+$"},
+            "dark": {"type": "string", "pattern": "^https://[^[:space:]\"';]+$"}
+          }
+        },
+        "attribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "links"],
+          "properties": {
+            "text": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "links": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["label", "url"],
+                "properties": {
+                  "label": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "url": {"type": "string", "pattern": "^https://[^[:space:]\"';]+$"}
+                }
+              }
+            }
+          }
+        },
+        "resourceOrigins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$"}
+        }
+      }
+    },
     "secretRef": {"type": "object", "additionalProperties": false, "required": ["name", "key"], "properties": {"name": {"type": "string", "minLength": 1}, "key": {"type": "string", "minLength": 1}}}
   }
 }
