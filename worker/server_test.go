@@ -17,7 +17,7 @@ func TestHealthEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	handler := NewHandler(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewHandler(db, db, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	live := httptest.NewRecorder()
 	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/health/live", nil))

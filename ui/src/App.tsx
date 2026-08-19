@@ -68,6 +68,26 @@ function sortedTimeZoneOptions(current: string) {
   return [...unique].map(createTimeZoneOption).sort((left, right) => left.offsetMinutes - right.offsetMinutes || left.value.localeCompare(right.value));
 }
 
+function browserTimeZone() {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
+    return timezone;
+  } catch { return "UTC"; }
+}
+
+function preferenceInitialization(preferences: Preferences) {
+  return {
+    theme: preferences.theme,
+    units: preferences.units,
+    timezone: browserTimeZone(),
+    firstWeekday: preferences.firstWeekday,
+    clockFormat: preferences.clockFormat,
+    workoutColumns: preferences.workoutColumns,
+    pageSize: preferences.pageSize,
+  };
+}
+
 async function loadPublicConfig() {
   const config = await api<PublicConfig>("/api/config");
   if (!Number.isInteger(config.passwordMinimumLength) || config.passwordMinimumLength < 12 || config.passwordMinimumLength > 64 ||
@@ -312,11 +332,7 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
   const id = useId();
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const browserTimeZone = (() => {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
-    catch { return "UTC"; }
-  })();
-  const initialTimeZone = preferences.timezone === "UTC" && browserTimeZone !== "UTC" ? browserTimeZone : preferences.timezone;
+  const initialTimeZone = preferences.initialized ? preferences.timezone : browserTimeZone();
   const timeZoneOptions = sortedTimeZoneOptions(initialTimeZone);
   const pageSizeChoices = PAGE_SIZE_CHOICES.filter((choice) => choice <= pageSizeMaximum);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -329,11 +345,11 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
     const selectedColumns = new Set(formData.getAll("workoutColumns").map(String));
     const workoutColumns = WORKOUT_COLUMN_CHOICES.map(([value]) => value).filter((value) => selectedColumns.has(value));
     const nextProfile = { ...profile, fullName: values.fullName.trim() };
-    const nextPreferences: Preferences = { theme: values.theme as Preferences["theme"], units: values.units as Preferences["units"], timezone: values.timezone, firstWeekday: values.firstWeekday as Preferences["firstWeekday"], clockFormat: values.clockFormat as Preferences["clockFormat"], workoutColumns, pageSize };
+    const preferencePatch = { theme: values.theme as Preferences["theme"], units: values.units as Preferences["units"], timezone: values.timezone, firstWeekday: values.firstWeekday as Preferences["firstWeekday"], clockFormat: values.clockFormat as Preferences["clockFormat"], workoutColumns, pageSize };
     setSaving(true);
     try {
       const savedProfile = await api<Profile>("/api/me", { method: "PATCH", body: JSON.stringify({ fullName: nextProfile.fullName }) }, csrfToken);
-      const savedPreferences = await api<Preferences>("/api/me/preferences", { method: "PATCH", body: JSON.stringify(nextPreferences) }, csrfToken);
+      const savedPreferences = await api<Preferences>("/api/me/preferences", { method: "PATCH", body: JSON.stringify(preferencePatch) }, csrfToken);
       applyTheme(savedPreferences.theme);
       onSaved(savedProfile, savedPreferences);
       onOpenChange(false);
@@ -358,7 +374,7 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
               <div className="field field--wide"><span className="field-label" id={`${id}-columns`}>Workout columns</span><div className="checkbox-list" role="group" aria-labelledby={`${id}-columns`}>{WORKOUT_COLUMN_CHOICES.map(([value, label]) => <label className="checkbox-option" key={value}><input type="checkbox" name="workoutColumns" value={value} defaultChecked={preferences.workoutColumns.includes(value)} /><span>{label}</span></label>)}</div><span className="field-hint">Choose the columns to show; they appear in this order.</span></div>
             </div></fieldset>
           </div>
-          <footer className="dialog-actions"><Dialog.Close type="button" className="secondary">Cancel</Dialog.Close><button className="primary" disabled={saving}>{saving ? "Saving..." : "Save preferences"}</button></footer>
+          <footer className="dialog-actions"><Dialog.Close type="button" className="secondary preferences-action">Cancel</Dialog.Close><button className="primary preferences-action" disabled={saving}>{saving ? "Saving..." : "Save"}</button></footer>
         </form>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
@@ -378,10 +394,16 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
   const [workoutSort, setWorkoutSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
   useEffect(() => {
     let active = true;
-    Promise.all([api<Profile>("/api/me"), api<Preferences>("/api/me/preferences")]).then(([profile, preferences]) => {
+    void (async () => {
+      const [profile, storedPreferences] = await Promise.all([api<Profile>("/api/me"), api<Preferences>("/api/me/preferences")]);
+      const preferences = storedPreferences.initialized ? storedPreferences : await api<Preferences>(
+        "/api/me/preferences?initializeOnly=true",
+        { method: "PATCH", body: JSON.stringify(preferenceInitialization(storedPreferences)) },
+        session.csrfToken,
+      );
       applyTheme(preferences.theme);
       if (active) { setData({ profile, preferences }); setVisitRange(initialRange(preferences.dateRange)); }
-    }).catch(() => { if (active) setLoadError(true); });
+    })().catch(() => { if (active) setLoadError(true); });
     return () => { active = false; };
   }, []);
   const [dialog, setDialog] = useState<"preferences" | "about" | null>(null);

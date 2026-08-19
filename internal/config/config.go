@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/mail"
 	"net/url"
@@ -48,6 +50,7 @@ type API struct {
 
 type Worker struct {
 	Common
+	OSMDatabaseURL       string
 	FileConcurrency      int
 	AccountConcurrency   int
 	GlobalConcurrency    int
@@ -56,6 +59,14 @@ type Worker struct {
 	AutoSyncPollInterval time.Duration
 	AutoSyncStaleDays    int
 	SchedulerLease       time.Duration
+	OSM                  OSM
+}
+
+type OSM struct {
+	AutoAddRegions       bool
+	MaxAutoDownloadBytes int64
+	DataProviders        []string
+	Regions              []string
 }
 
 type SMTP struct {
@@ -213,6 +224,10 @@ func LoadWorker() (Worker, error) {
 	if err != nil {
 		return Worker{}, err
 	}
+	osmDatabaseURL := os.Getenv("OSM_DATABASE_URL")
+	if osmDatabaseURL == "" {
+		return Worker{}, fmt.Errorf("OSM_DATABASE_URL is required")
+	}
 	fileConcurrency, err := integerRange("WORKER_FILE_CONCURRENCY", 2, 1, 16)
 	if err != nil {
 		return Worker{}, err
@@ -247,15 +262,84 @@ func LoadWorker() (Worker, error) {
 	if schedulerLease <= autoSyncPollInterval {
 		return Worker{}, fmt.Errorf("SCHEDULER_LEASE_DURATION must exceed AUTO_SYNC_POLL_INTERVAL")
 	}
+	osm, err := loadOSM()
+	if err != nil {
+		return Worker{}, err
+	}
 	stagingRoot := env("WORKER_STAGING_ROOT", "/var/lib/workouts/staging")
 	if !filepath.IsAbs(stagingRoot) || filepath.Clean(stagingRoot) != stagingRoot || stagingRoot == string(filepath.Separator) {
 		return Worker{}, fmt.Errorf("WORKER_STAGING_ROOT must be a clean absolute path other than the filesystem root")
 	}
 	return Worker{
-		Common: common, FileConcurrency: fileConcurrency, AccountConcurrency: accountConcurrency,
+		Common: common, OSMDatabaseURL: osmDatabaseURL, FileConcurrency: fileConcurrency, AccountConcurrency: accountConcurrency,
 		GlobalConcurrency: globalConcurrency, StagingRoot: stagingRoot, AutoSyncInterval: autoSyncInterval,
 		AutoSyncPollInterval: autoSyncPollInterval, AutoSyncStaleDays: autoSyncStaleDays, SchedulerLease: schedulerLease,
+		OSM: osm,
 	}, nil
+}
+
+func loadOSM() (OSM, error) {
+	autoAdd, err := boolean("OSM_AUTO_ADD_REGIONS", false)
+	if err != nil {
+		return OSM{}, err
+	}
+	maximum, err := int64Range("OSM_MAX_AUTO_DOWNLOAD_BYTES", 1<<30, 1, 1<<40)
+	if err != nil {
+		return OSM{}, err
+	}
+	providers, err := identifierList("OSM_DATA_PROVIDERS_JSON", `["geofabrik"]`, false)
+	if err != nil {
+		return OSM{}, err
+	}
+	regions, err := identifierList("OSM_REGIONS_JSON", `["geofabrik:norcal"]`, true)
+	if err != nil {
+		return OSM{}, err
+	}
+	if autoAdd && len(providers) == 0 {
+		return OSM{}, fmt.Errorf("OSM_DATA_PROVIDERS_JSON must not be empty when OSM_AUTO_ADD_REGIONS is enabled")
+	}
+	return OSM{AutoAddRegions: autoAdd, MaxAutoDownloadBytes: maximum, DataProviders: providers, Regions: regions}, nil
+}
+
+func identifierList(name, fallback string, qualified bool) ([]string, error) {
+	raw := os.Getenv(name)
+	if strings.TrimSpace(raw) == "" {
+		raw = fallback
+	}
+	var values []string
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	if err := decoder.Decode(&values); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("%s must be one JSON string array", name)
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		parts := strings.Split(value, ":")
+		if (!qualified && len(parts) != 1) || (qualified && len(parts) != 2) {
+			return nil, fmt.Errorf("%s contains an invalid identifier", name)
+		}
+		for _, part := range parts {
+			if !validIdentifier(part) {
+				return nil, fmt.Errorf("%s contains an invalid identifier", name)
+			}
+		}
+		if _, exists := seen[value]; exists {
+			return nil, fmt.Errorf("%s must not contain duplicates", name)
+		}
+		seen[value] = struct{}{}
+	}
+	return values, nil
+}
+
+func validIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func loadCommon(databaseVariable, listenVariable, defaultListen string) (Common, error) {
@@ -302,6 +386,18 @@ func integerRange(name string, fallback, minimum, maximum int) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < minimum || value > maximum {
 		return 0, fmt.Errorf("%s must be an integer between %d and %d", name, minimum, maximum)
+	}
+	return value, nil
+}
+
+func int64Range(name string, fallback, minimum, maximum int64) (int64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be an integer from %d through %d", name, minimum, maximum)
 	}
 	return value, nil
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -149,10 +150,13 @@ func TestLoadAPIRestrictsPlaintextSMTPToMailpit(t *testing.T) {
 
 func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
+	t.Setenv("OSM_DATABASE_URL", "postgresql://database.invalid/osm")
 	setSourceConfig(t)
 	cfg, err := LoadWorker()
 	if err != nil || cfg.FileConcurrency != 2 || cfg.AccountConcurrency != 2 || cfg.GlobalConcurrency != 4 || cfg.StagingRoot != "/var/lib/workouts/staging" ||
-		cfg.AutoSyncInterval != 24*time.Hour || cfg.AutoSyncPollInterval != 30*time.Second || cfg.AutoSyncStaleDays != 3 || cfg.SchedulerLease != 2*time.Minute {
+		cfg.AutoSyncInterval != 24*time.Hour || cfg.AutoSyncPollInterval != 30*time.Second || cfg.AutoSyncStaleDays != 3 || cfg.SchedulerLease != 2*time.Minute ||
+		cfg.OSM.AutoAddRegions || cfg.OSM.MaxAutoDownloadBytes != 1<<30 || !reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik"}) ||
+		!reflect.DeepEqual(cfg.OSM.Regions, []string{"geofabrik:norcal"}) {
 		t.Fatalf("defaults=%+v err=%v", cfg, err)
 	}
 	for _, test := range []struct{ key, value string }{
@@ -166,6 +170,11 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 		{"SCHEDULER_LEASE_DURATION", "901s"}, {"SCHEDULER_LEASE_DURATION", "999s"},
 		{"SCHEDULER_LEASE_DURATION", "3600s"}, {"SCHEDULER_LEASE_DURATION", "16m"},
 		{"SCHEDULER_LEASE_DURATION", "1h"},
+		{"OSM_AUTO_ADD_REGIONS", "sometimes"},
+		{"OSM_MAX_AUTO_DOWNLOAD_BYTES", "0"}, {"OSM_MAX_AUTO_DOWNLOAD_BYTES", "1099511627777"},
+		{"OSM_DATA_PROVIDERS_JSON", `{}`}, {"OSM_DATA_PROVIDERS_JSON", `["geofabrik","geofabrik"]`},
+		{"OSM_DATA_PROVIDERS_JSON", `["geofabrik:norcal"]`},
+		{"OSM_REGIONS_JSON", `["norcal"]`}, {"OSM_REGIONS_JSON", `["geofabrik:nor_cal"]`},
 	} {
 		t.Run(test.key+test.value, func(t *testing.T) {
 			t.Setenv(test.key, test.value)
@@ -177,6 +186,18 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 			}
 		})
 	}
+	t.Run("custom osm settings", func(t *testing.T) {
+		t.Setenv("OSM_AUTO_ADD_REGIONS", "true")
+		t.Setenv("OSM_MAX_AUTO_DOWNLOAD_BYTES", "2000000000")
+		t.Setenv("OSM_DATA_PROVIDERS_JSON", `["geofabrik","custom-provider"]`)
+		t.Setenv("OSM_REGIONS_JSON", `["geofabrik:norcal","geofabrik:new-york"]`)
+		cfg, err := LoadWorker()
+		if err != nil || !cfg.OSM.AutoAddRegions || cfg.OSM.MaxAutoDownloadBytes != 2_000_000_000 ||
+			!reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik", "custom-provider"}) ||
+			!reflect.DeepEqual(cfg.OSM.Regions, []string{"geofabrik:norcal", "geofabrik:new-york"}) {
+			t.Fatalf("custom OSM config=%+v err=%v", cfg.OSM, err)
+		}
+	})
 	for _, lease := range []string{"900s", "15m"} {
 		t.Run("valid lease "+lease, func(t *testing.T) {
 			t.Setenv("SCHEDULER_LEASE_DURATION", lease)

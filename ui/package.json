@@ -8,10 +8,11 @@
     "dev": "vite",
     "check:csp": "node scripts/check-theme-csp.mjs",
     "check:data-sync-css": "node scripts/check-data-sync-css.mjs",
+    "check:dialog-css": "node scripts/check-dialog-css.mjs",
     "check:map-css": "node scripts/check-map-css.mjs",
     "check:favicon": "node scripts/generate-favicon.mjs --check",
     "generate:favicon": "node scripts/generate-favicon.mjs",
-    "test": "npm run check:csp && npm run check:favicon && npm run check:data-sync-css && npm run check:map-css && vitest run",
+    "test": "npm run check:csp && npm run check:favicon && npm run check:data-sync-css && npm run check:dialog-css && npm run check:map-css && vitest run",
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.app.json && tsc --noEmit --pretty false -p tsconfig.node.json"
   },
   "dependencies": {

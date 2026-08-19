@@ -224,10 +224,12 @@ paths:
     patch:
       operationId: updateMyPreferences
       description: >-
-        Partially updates supplied owner preferences while retaining omitted values. A non-empty JSON body is required; cookie authentication also requires `X-CSRF-Token`.
+        Partially updates supplied owner preferences while retaining omitted values. With `initializeOnly=true`, applies the body only when preferences have never been persisted and otherwise returns the existing preferences unchanged. A non-empty JSON body is required; cookie authentication also requires `X-CSRF-Token`.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
-      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {name: initializeOnly, in: query, schema: {type: boolean, default: false}}
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PreferencesPatch'}}}
@@ -272,7 +274,16 @@ paths:
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
       requestBody:
         required: true
-        content: {application/json: {schema: {$ref: '#/components/schemas/SourceCreate'}}}
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SourceCreate'}
+            example:
+              displayName: Health Auto Export
+              type: health-auto-export-local
+              autoSyncEnabled: true
+              config:
+                version: 1
+                path: /data/workouts
       responses:
         '201': {description: Source created and connection check queued, headers: {Location: {schema: {type: string, format: uri-reference}}}, content: {application/json: {schema: {$ref: '#/components/schemas/Source'}}}}
         '400': {$ref: '#/components/responses/Problem'}
@@ -997,7 +1008,7 @@ components:
     Preferences:
       type: object
       additionalProperties: false
-      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize]
+      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, initialized]
       properties:
         theme: {type: string, enum: [dark, light]}
         units: {type: string, enum: [imperial, metric]}
@@ -1006,6 +1017,7 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevation]}}
         pageSize: {type: integer, minimum: 10}
+        initialized: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     PreferencesPatch:
       type: object
@@ -1557,12 +1569,14 @@ components:
     SummaryTotals:
       type: object
       additionalProperties: false
-      required: [count, duration, distance, energy]
+      required: [count, duration, distance, energy, routeCount, routedDistance]
       properties:
         count: {type: integer, format: int64, minimum: 0}
         duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         energy: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        routeCount: {type: integer, format: int64, minimum: 0}
+        routedDistance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
     WorkoutTypeSummary:
       type: object
       additionalProperties: false

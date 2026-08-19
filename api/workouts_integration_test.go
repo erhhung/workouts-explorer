@@ -202,17 +202,18 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	}
 	distance, _ := aggregate.Totals.Distance.Get()
 	energy, _ := aggregate.Totals.Energy.Get()
-	if aggregate.Totals.Count != 3 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "300.5" || len(aggregate.ByType) != 2 {
+	routedDistance, _ := aggregate.Totals.RoutedDistance.Get()
+	if aggregate.Totals.Count != 3 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "300.5" || aggregate.Totals.RouteCount != 2 || routedDistance.Value != "8.5" || len(aggregate.ByType) != 2 {
 		t.Fatalf("summary=%#v", aggregate)
 	}
 	runningDistance, _ := aggregate.ByType[1].Totals.Distance.Get()
 	runningEnergy, _ := aggregate.ByType[1].Totals.Energy.Get()
-	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || runningDistance.Value != "5.5" || runningEnergy.Value != "200.25" {
+	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || runningDistance.Value != "5.5" || runningEnergy.Value != "200.25" || aggregate.ByType[1].Totals.RouteCount != 1 {
 		t.Fatalf("mixed-unit type totals included suspicious values: %#v", aggregate.ByType[1])
 	}
 	unknownSummary := routeOwnerRead(handler, "/api/summary?startDate=2026-03-09&endDate=2026-03-09", bearer)
 	var unknownAggregate generated.WorkoutSummary
-	if err := json.Unmarshal(unknownSummary.Body.Bytes(), &unknownAggregate); err != nil || unknownAggregate.Totals.Count != 1 || unknownAggregate.Totals.Duration != "240.125" || !unknownAggregate.Totals.Distance.IsNull() || !unknownAggregate.Totals.Energy.IsNull() || len(unknownAggregate.ByType) != 1 || !unknownAggregate.ByType[0].Totals.Distance.IsNull() || !unknownAggregate.ByType[0].Totals.Energy.IsNull() {
+	if err := json.Unmarshal(unknownSummary.Body.Bytes(), &unknownAggregate); err != nil || unknownAggregate.Totals.Count != 1 || unknownAggregate.Totals.Duration != "240.125" || !unknownAggregate.Totals.Distance.IsNull() || !unknownAggregate.Totals.Energy.IsNull() || unknownAggregate.Totals.RouteCount != 0 || !unknownAggregate.Totals.RoutedDistance.IsNull() || len(unknownAggregate.ByType) != 1 || !unknownAggregate.ByType[0].Totals.Distance.IsNull() || !unknownAggregate.ByType[0].Totals.Energy.IsNull() {
 		t.Fatalf("suspicious-only summary did not remain unavailable: %#v err=%v", unknownAggregate, err)
 	}
 

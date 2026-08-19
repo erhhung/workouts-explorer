@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import maplibregl, { type Map as MapLibreMap, type MapGeoJSONFeature, type MapMouseEvent, type StyleSpecification, type VectorTileSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   DEFAULT_WORKOUT_SORT,
@@ -17,6 +17,8 @@ import {
   type WorkoutColumn,
   type WorkoutSort,
 } from "./api";
+import { formatDateOnly } from "./date";
+import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
 
 const ROUTES_LAYER = "private-workout-routes";
 const HOVER_LAYER = "private-workout-route-hover";
@@ -58,12 +60,7 @@ export function resolveBaseFamily(baseMaps: BaseMapsConfig, workouts: MapSelecti
 function rangeLabel(range: DateRangePreference) {
   const quick = QUICK_RANGES.find(([value]) => value === range);
   const explicit = EXPLICIT_RANGE.exec(range);
-  return quick?.[1] ?? (explicit ? `${explicit[1]} to ${explicit[2]}` : "Last 30 days");
-}
-
-function validDate(value: string) {
-  const date = new Date(`${value}T00:00:00Z`);
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  return quick?.[1] ?? (explicit ? `${formatDateOnly(explicit[1])} to ${formatDateOnly(explicit[2])}` : "Last 30 days");
 }
 
 function formatWorkoutDate(workout: MapSelectionWorkout, preferences: Preferences) {
@@ -385,7 +382,6 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const [focusedWorkoutId, setFocusedWorkoutId] = useState<string>();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
-  const [customError, setCustomError] = useState("");
   const requestedIds = useMemo(() => requestedWorkoutIds(window.location.search), [window.location.search]);
   const [selectedWorkoutIds, setSelectedWorkoutIds] = useState<string[] | undefined>(() => requestedIds.length ? requestedIds : undefined);
   const [availableWorkouts, setAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
@@ -506,15 +502,6 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     }
   }
 
-  function submitCustom(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    const start = String(values.get("startDate")); const end = String(values.get("endDate"));
-    if (!validDate(start) || !validDate(end)) { setCustomError("Enter valid start and end dates."); return; }
-    if (start > end) { setCustomError("Start date must be on or before end date."); return; }
-    setCustomError(""); setCustomOpen(false); void selectRange(`${start}/${end}`);
-  }
-
   const controls = (suffix: string) => <>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select date range"><span>Date range</span><strong>{rangeLabel(dateRange)}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}>{QUICK_RANGES.map(([value, label]) => <DropdownMenu.Item key={value} onSelect={() => void selectRange(value)}>{label}{dateRange === value && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}<DropdownMenu.Separator /><DropdownMenu.Item onSelect={() => setCustomOpen(true)}>Custom...{EXPLICIT_RANGE.test(dateRange) && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select base map"><span>Base map</span><strong>{overrideFamilyId ? family?.label : `Automatic / ${family?.label ?? "Unavailable"}`}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}><DropdownMenu.Item onSelect={() => setOverrideFamilyId(undefined)}>Automatic{!overrideFamilyId && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item><DropdownMenu.Separator />{config.baseMaps.families.map((candidate) => <DropdownMenu.Item key={candidate.id} onSelect={() => setOverrideFamilyId(candidate.id)}>{candidate.label}{overrideFamilyId === candidate.id && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
@@ -523,7 +510,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   </>;
 
   return <main className="map-page">
-    <Dialog.Root open={customOpen} onOpenChange={(open) => { setCustomOpen(open); if (!open) setCustomError(""); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content custom-range-dialog"><div className="dialog-heading"><div><Dialog.Title>Custom map range</Dialog.Title><Dialog.Description>Choose inclusive calendar dates.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Custom map range">&times;</Dialog.Close></div><form className="custom-range-form" onSubmit={submitCustom} noValidate>{customError && <p className="error-summary" role="alert">{customError}</p>}<div className="field-pair"><div className="field"><label htmlFor="map-start-date">Start date</label><input id="map-start-date" name="startDate" type="date" /></div><div className="field"><label htmlFor="map-end-date">End date</label><input id="map-end-date" name="endDate" type="date" /></div></div><div className="dialog-actions"><Dialog.Close type="button" className="secondary">Cancel</Dialog.Close><button className="primary">Apply range</button></div></form></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <CustomDateRangeDialog open={customOpen} onOpenChange={setCustomOpen} range={dateRange} onApply={(next) => void selectRange(next)} />
     <aside className="map-sidebar" aria-label="Map controls"><div className="map-controls">{controls("desktop")}</div></aside>
     <section className="map-stage" aria-live="polite">
       {(rangeError || baseMapError || selectionError || selectionPending) && <div className="map-banner" role="status">{rangeError || baseMapError || selectionError || "Updating routes..."}</div>}

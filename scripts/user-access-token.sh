@@ -22,17 +22,13 @@ printf '\n' >&2
 }
 
 [ -t 1 ] && echo >&2
-curl --fail --silent \
-    -H 'Content-Type: application/json' \
-    --data "$(jq -n \
-      --arg username "$username" \
-      --arg password "$password" \
-      '{
-         username: $username,
-         password: $password
-       }')" \
-    "$WORKOUTS_API_URL/session-tokens" | \
+jo username="$username" \
+   password="$password" | \
+  curl --fail --silent \
+      -H 'Content-Type: application/json' \
+      --data-binary @- \
+      "$WORKOUTS_API_URL/session-tokens" | \
   jq -r '.accessToken' || {
-  echo >&2 'Invalid username or password!'
-  exit 1
-}
+    echo >&2 'Invalid username or password!'
+    exit 1
+  }

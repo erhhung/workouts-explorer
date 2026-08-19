@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
@@ -394,4 +395,8 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   )
 		FROM public.goose_db_version`, SupportedSchemaVersion).Scan(&ready)
 	return err == nil && ready
+}
+
+func OSMReady(ctx context.Context, pool *pgxpool.Pool) bool {
+	return osm.Ready(ctx, pool)
 }

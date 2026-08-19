@@ -803,6 +803,7 @@ func TestAccountLifecycleMigrationContainsSecurityBoundaries(t *testing.T) {
 	for _, required := range []string{
 		`canonical_username text COLLATE "C" NOT NULL UNIQUE`,
 		`canonical_email text COLLATE "C" NOT NULL UNIQUE`,
+		"initialized_at timestamptz",
 		"ALTER TABLE app.preferences FORCE ROW LEVEL SECURITY",
 		"SET search_path = pg_catalog, app",
 		"OWNER TO workouts_security_owner",

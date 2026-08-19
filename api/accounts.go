@@ -491,6 +491,10 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "preferences are unavailable")
 		return
 	}
+	if params.InitializeOnly != nil && *params.InitializeOnly && current.Initialized {
+		writeJSON(w, http.StatusOK, current)
+		return
+	}
 	applyPreferencesPatch(&current, patch)
 	if field, message := s.validatePreferences(current); field != "" {
 		writeFieldError(w, r, field, "invalid", message)
@@ -500,7 +504,7 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 	for index := range current.WorkoutColumns {
 		columns[index] = string(current.WorkoutColumns[index])
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,updated_at=transaction_timestamp() WHERE account_id=$9`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), *session.accountID)
+	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$9`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), *session.accountID)
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
@@ -508,6 +512,7 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "preferences could not be updated")
 		return
 	}
+	current.Initialized = true
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -726,11 +731,11 @@ func readPreferencesTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, forU
 	var result generated.Preferences
 	var columns []string
 	var dateRange *string
-	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range FROM app.preferences WHERE account_id=$1`
+	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,initialized_at IS NOT NULL FROM app.preferences WHERE account_id=$1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange)
+	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.Initialized)
 	if err != nil {
 		return generated.Preferences{}, err
 	}

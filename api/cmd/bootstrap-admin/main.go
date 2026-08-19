@@ -26,6 +26,7 @@ func run(ctx context.Context) error {
 	email := flag.String("email", "", "administrator email")
 	passwordFile := flag.String("password-file", "", "path to a private password file")
 	passwordMinimum := flag.Int("password-minimum", 0, "minimum password length in Unicode scalar values")
+	rotateExistingPassword := flag.Bool("rotate-existing-password", false, "rotate the matching existing administrator password")
 	flag.Parse()
 	if flag.NArg() != 0 || *username == "" || *email == "" || *passwordFile == "" || *passwordMinimum == 0 {
 		return errors.New("--username, --email, --password-file, and --password-minimum are required")
@@ -39,5 +40,5 @@ func run(ctx context.Context) error {
 		return errors.New("database is unavailable")
 	}
 	defer db.Close()
-	return apiapp.BootstrapAdmin(ctx, db, apiapp.BootstrapAdminOptions{Username: *username, Email: *email, PasswordFile: *passwordFile, PasswordMin: *passwordMinimum})
+	return apiapp.BootstrapAdmin(ctx, db, apiapp.BootstrapAdminOptions{Username: *username, Email: *email, PasswordFile: *passwordFile, PasswordMin: *passwordMinimum, RotateExistingPassword: *rotateExistingPassword})
 }

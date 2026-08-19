@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -119,6 +120,22 @@ func TestOpenAPIContract(t *testing.T) {
 	if dateRangePreference.Type == nil || !dateRangePreference.Type.Includes("string") || !dateRangePreference.Nullable || dateRangePreference.Pattern == "" || len(dateRangePreference.OneOf) != 0 || len(dateRangePreference.AnyOf) != 0 {
 		t.Fatal("date range preference must remain one nullable constrained string schema")
 	}
+	preferencesSchema := document.Components.Schemas["Preferences"].Value
+	if !slices.Contains(preferencesSchema.Required, "initialized") || preferencesSchema.Properties["initialized"] == nil {
+		t.Fatal("preference response lacks required initialization state")
+	}
+	if document.Components.Schemas["PreferencesPatch"].Value.Properties["initialized"] != nil {
+		t.Fatal("preference patch permits clients to write initialization state")
+	}
+	initializeParameter := false
+	for _, parameter := range document.Paths.Find("/api/me/preferences").Patch.Parameters {
+		if parameter.Value != nil && parameter.Value.Name == "initializeOnly" {
+			initializeParameter = true
+		}
+	}
+	if !initializeParameter {
+		t.Fatal("preference update lacks the initialization-only precondition")
+	}
 	source := document.Components.Schemas["Source"].Value
 	for _, required := range []string{"id", "displayName", "type", "autoSyncEnabled", "status", "generation", "config", "createdAt", "updatedAt"} {
 		if _, ok := source.Properties[required]; !ok {
@@ -128,6 +145,32 @@ func TestOpenAPIContract(t *testing.T) {
 	for _, forbidden := range []string{"accountId", "configEnvelope", "keyId", "deletedAt"} {
 		if _, ok := source.Properties[forbidden]; ok {
 			t.Errorf("source response exposes %s", forbidden)
+		}
+	}
+	sourceCreateMedia := document.Paths.Find("/api/sources").Post.RequestBody.Value.Content.Get("application/json")
+	sourceCreateExample, ok := sourceCreateMedia.Example.(map[string]any)
+	if !ok {
+		t.Fatal("source create operation lacks an explicit JSON object example")
+	}
+	concreteSourceCreate := document.Components.Schemas["HealthAutoExportLocalSourceCreate"].Value
+	if len(sourceCreateExample) != len(concreteSourceCreate.Required) {
+		t.Fatalf("source create example has %d fields, want %d required fields", len(sourceCreateExample), len(concreteSourceCreate.Required))
+	}
+	for _, required := range concreteSourceCreate.Required {
+		if _, exists := sourceCreateExample[required]; !exists {
+			t.Errorf("source create example lacks required field %s", required)
+		}
+	}
+	if sourceCreateExample["type"] != "health-auto-export-local" {
+		t.Fatal("source create example lacks the supported discriminator value")
+	}
+	configExample, ok := sourceCreateExample["config"].(map[string]any)
+	if !ok {
+		t.Fatal("source create example config is not an object")
+	}
+	for _, required := range document.Components.Schemas["HealthAutoExportLocalConfig"].Value.Required {
+		if _, exists := configExample[required]; !exists {
+			t.Errorf("source create example config lacks required field %s", required)
 		}
 	}
 	rateResponse := document.Components.Responses["RateLimited"].Value

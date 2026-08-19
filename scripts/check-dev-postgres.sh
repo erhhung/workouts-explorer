@@ -63,13 +63,20 @@ require_harness '^database_host="postgresql\.\$\{database_namespace\}\.svc\.clus
 
 delete_line=$(grep -n 'deployment/workouts-postgres service/postgres --ignore-not-found' "$harness" | cut -d: -f1)
 pod_list_line=$(grep -n 'get pods$' "$harness" | cut -d: -f1)
-for marker in 'helm "${helm_args\[@\]}"' 'rollout status deployment/workouts-explorer-worker' 'certificate/workouts-explorer-ingress' 'run workouts-smoke' '"https://\${host}/mailpit/"'; do
+for marker in 'helm "${helm_args\[@\]}"' 'rollout status deployment/workouts-explorer-worker' 'certificate/workouts-explorer-ingress' 'run workouts-smoke'; do
   marker_line=$(grep -n "$marker" "$harness" | cut -d: -f1)
   if [ "$delete_line" -le "$marker_line" ]; then
     printf '%s\n' 'Legacy PostgreSQL resources must only be removed after Helm, rollout, certificate, and smoke checks' >&2
     exit 1
   fi
 done
+if grep -q 'deploy/dev/mailpit.yaml' "$harness" ||
+   ! grep -q 'osmDatabaseUrl="$osm_database_url"' "$harness" ||
+   ! grep -q 'api.smtp.address=${SMTP_HOST}:${SMTP_PORT}' "$harness" ||
+   ! grep -q 'ingress.mailpit.enabled=false' "$harness"; then
+  printf '%s\n' 'vCluster harness must use external SMTP and the shared OSM database without Mailpit' >&2
+  exit 1
+fi
 if [ "$pod_list_line" -ne $((delete_line + 1)) ]; then
   printf '%s\n' 'Legacy PostgreSQL cleanup must immediately precede the final pod listing' >&2
   exit 1

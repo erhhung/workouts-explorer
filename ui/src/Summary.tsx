@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, type FormEvent, type PointerEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -23,6 +23,8 @@ import {
   type WorkoutSummary,
 } from "./api";
 import { instantZone, offsetLabel, Tooltip, zoneAbbreviation, zoneOffsetAt, ZoneBadge } from "./Tooltip";
+import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
+import { formatDateOnly } from "./date";
 
 const DATE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
   ["thisWeek", "This week"],
@@ -77,7 +79,7 @@ function rangeLabel(range: DateRangePreference) {
   const shortcut = DATE_SHORTCUTS.find(([value]) => value === range);
   if (shortcut) return shortcut[1];
   const explicit = EXPLICIT_RANGE.exec(range);
-  return explicit ? `${explicit[1]} to ${explicit[2]}` : "Last 30 days";
+  return explicit ? `${formatDateOnly(explicit[1])} to ${formatDateOnly(explicit[2])}` : "Last 30 days";
 }
 
 function decimal(value: string, maximumFractionDigits = 2) {
@@ -149,10 +151,7 @@ function resolveZone(workoutZone: string | null, offset: number | null, instant:
 }
 
 function rangeDate(value: string) {
-  if (!validDate(value)) return value;
-  const [year, month, day] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
-    .format(new Date(Date.UTC(year, month - 1, day))).replace(",", "");
+  return formatDateOnly(value);
 }
 
 function currentZone(timeZone: string) {
@@ -303,6 +302,8 @@ function subtractWorkoutTotals(totals: SummaryTotals, workout: Workout): Summary
     duration: subtractExact(totals.duration, workout.duration),
     distance: subtractMetric(totals.distance, workout.distance),
     energy: subtractMetric(totals.energy, workout.calories),
+    routeCount: Math.max(0, totals.routeCount - (workout.routeAvailable ? 1 : 0)),
+    routedDistance: workout.routeAvailable ? subtractMetric(totals.routedDistance, workout.distance) : totals.routedDistance,
   };
 }
 
@@ -320,32 +321,90 @@ function hideWorkoutFromSummary(summary: WorkoutSummary, workout: Workout): Work
 
 function emptyWorkoutSummary(summary: WorkoutSummary): WorkoutSummary {
   const zeroMetric = (metric: ExactMetric | null) => metric ? { ...metric, value: "0" } : null;
-  return { ...summary, totals: { count: 0, duration: "0", distance: zeroMetric(summary.totals.distance), energy: zeroMetric(summary.totals.energy) }, byType: [] };
+  return { ...summary, totals: { count: 0, duration: "0", distance: zeroMetric(summary.totals.distance), energy: zeroMetric(summary.totals.energy), routeCount: 0, routedDistance: zeroMetric(summary.totals.routedDistance) }, byType: [] };
 }
 
-function AggregateCard({ label, value, valueTitle, summary, format }: {
-  label: string; value: ReactNode; valueTitle?: string; summary: WorkoutSummary; format: (totals: SummaryTotals) => ReactNode;
-}) {
-  const [pinned, setPinned] = useState(false);
-  const [preview, setPreview] = useState(false);
-  const panelId = useId();
-  const valueTooltipId = useId();
-  const visible = pinned || preview;
-  function previewPointer(event: PointerEvent<HTMLButtonElement>, next: boolean) {
-    if (event.pointerType === "mouse") setPreview(next);
+interface AggregateBreakdown {
+  id: string;
+  label: string;
+  value: ReactNode;
+}
+
+function average(value: string, count: number) {
+  return count > 0 ? String(Number(value) / count) : "0";
+}
+
+function averageMetric(value: ExactMetric | null, count: number) {
+  return value && count > 0 ? { ...value, value: average(value.value, count) } : null;
+}
+
+function descending<T>(items: T[], value: (item: T) => number, label: (item: T) => string) {
+  return [...items].sort((left, right) => value(right) - value(left) || label(left).localeCompare(label(right)));
+}
+
+function workoutBreakdown(summary: WorkoutSummary): AggregateBreakdown[] {
+  const entries = descending(summary.byType, (entry) => entry.totals.count, (entry) => entry.type.displayName);
+  if (summary.totals.count === 0) return [];
+  const shares = entries.map((entry, index) => {
+    const exact = entry.totals.count * 100 / summary.totals.count;
+    return { index, percentage: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let remaining = 100 - shares.reduce((sum, share) => sum + share.percentage, 0);
+  for (const share of [...shares].sort((left, right) => right.remainder - left.remainder || left.index - right.index)) {
+    if (remaining <= 0) break;
+    share.percentage += 1;
+    remaining -= 1;
   }
+  return entries.map((entry, index) => ({
+    id: entry.type.id,
+    label: entry.type.displayName,
+    value: `${decimal(String(entry.totals.count), 0)} (${shares[index].percentage}%)`,
+  }));
+}
+
+function AggregateCard({ label, value, breakdown, averages, onToggleMode }: {
+  label: string; value: ReactNode; breakdown: AggregateBreakdown[]; averages: boolean; onToggleMode: () => void;
+}) {
+  const [preview, setPreview] = useState(false);
+  const [hint, setHint] = useState<{ x: number; y: number }>();
+  const panelId = useId();
+  const hintPosition = useRef({ x: 0, y: 0 });
+  const showHintTimer = useRef<number | undefined>(undefined);
+  const hideHintTimer = useRef<number | undefined>(undefined);
+  const visible = preview;
+  function clearHint() {
+    window.clearTimeout(showHintTimer.current);
+    window.clearTimeout(hideHintTimer.current);
+    setHint(undefined);
+  }
+  function startPreview(event: PointerEvent<HTMLButtonElement>) {
+    if (event.pointerType !== "mouse") return;
+    setPreview(true);
+    clearHint();
+    hintPosition.current = { x: event.clientX ?? 0, y: event.clientY ?? 0 };
+    showHintTimer.current = window.setTimeout(() => {
+      setHint(hintPosition.current);
+      hideHintTimer.current = window.setTimeout(() => setHint(undefined), 2000);
+    }, 750);
+  }
+  useEffect(() => () => {
+    window.clearTimeout(showHintTimer.current);
+    window.clearTimeout(hideHintTimer.current);
+  }, []);
   return (
     <article className={`aggregate-card${visible ? " is-visible" : ""}`}>
-      <button type="button" aria-expanded={visible} aria-controls={panelId} aria-describedby={valueTitle ? valueTooltipId : undefined}
-        onPointerEnter={(event) => previewPointer(event, true)} onPointerLeave={(event) => previewPointer(event, false)}
-        onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) setPreview(true); }} onBlur={() => setPreview(false)}
-        onKeyDown={(event) => { if (event.key === "Escape") { setPinned(false); setPreview(false); } }}
-        onClick={() => setPinned((current) => !current)}>
-        <span>{label}</span><strong>{value}</strong><small>By workout type <span aria-hidden="true">+</span></small>
+      <button type="button" aria-expanded={visible} aria-controls={panelId}
+        onPointerEnter={startPreview} onPointerMove={(event) => { hintPosition.current = { x: event.clientX ?? 0, y: event.clientY ?? 0 }; if (hint) setHint(hintPosition.current); }}
+        onPointerLeave={(event) => { if (event.pointerType === "mouse") { setPreview(false); clearHint(); } }}
+        onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) setPreview(true); }} onBlur={() => { setPreview(false); clearHint(); }}
+        aria-pressed={averages}
+        onKeyDown={(event) => { if (event.key === "Escape") setPreview(false); }}
+        onClick={() => { clearHint(); onToggleMode(); }}>
+        <span>{label}</span><strong>{value}</strong><small>By workout type</small>
       </button>
-      {valueTitle && <span className="tooltip-content aggregate-value-tooltip" id={valueTooltipId} role="tooltip">{valueTitle}</span>}
+      {hint && <span className="aggregate-mode-hint" role="tooltip" style={{ left: hint.x, top: hint.y }}>{averages ? "Click to see totals" : "Click to see averages"}</span>}
       <div id={panelId} className="aggregate-breakdown" aria-hidden={!visible}>
-        {summary.byType.length ? summary.byType.map((entry) => <span key={entry.type.id}><b>{entry.type.displayName}</b><em>{format(entry.totals)}</em></span>) : <span>No workout types</span>}
+        {breakdown.length ? breakdown.map((entry) => <span key={entry.id}><b>{entry.label}</b><em>{entry.value}</em></span>) : <span>No workout types</span>}
       </div>
     </article>
   );
@@ -420,6 +479,7 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
 }) {
   const queryClient = useQueryClient();
   const [range, setRange] = useState<DateRangePreference>(() => selectedDateRange ?? initialRange(preferences.dateRange));
+  const [averages, setAverages] = useState(false);
   const rangeRef = useRef(range);
   const latestSelection = useRef(0);
   const [pageState, setPageState] = useState({ page: 1, pageSize: preferences.pageSize });
@@ -428,10 +488,8 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const sort = selectedSort ?? localSort;
   const [sortActivity, setSortActivity] = useState<{ field: WorkoutColumn; direction: WorkoutSortDirection; state: "sorting" | "complete" }>();
   const [customOpen, setCustomOpen] = useState(false);
-  const [customError, setCustomError] = useState<{ message: string; fields: Array<"start" | "end"> }>();
   const [saveNotice, setSaveNotice] = useState("");
   const [exportError, setExportError] = useState("");
-  const customErrorRef = useRef<HTMLParagraphElement>(null);
   const provenanceReturnFocus = useRef<HTMLButtonElement | null>(null);
   const [provenanceWorkout, setProvenanceWorkout] = useState<Workout>();
   const [deletionTarget, setDeletionTarget] = useState<Workout>();
@@ -445,7 +503,6 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const [rangeDeletionError, setRangeDeletionError] = useState("");
   const rangeDeletionCancelRef = useRef<HTMLButtonElement>(null);
   const rangeDeletionErrorRef = useRef<HTMLParagraphElement>(null);
-  const customErrorId = useId();
   const explicit = EXPLICIT_RANGE.exec(range);
   useEffect(() => {
     const next = selectedDateRange ?? initialRange(preferences.dateRange);
@@ -487,18 +544,6 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
     if (!selectedSort) setLocalSort(DEFAULT_WORKOUT_SORT);
     onDateRangeSelected?.(next);
     persistence.mutate({ dateRange: next, sequence });
-  }
-  function submitCustom(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    const start = String(values.get("startDate"));
-    const end = String(values.get("endDate"));
-    const invalidFields: Array<"start" | "end"> = [];
-    if (!validDate(start)) invalidFields.push("start");
-    if (!validDate(end)) invalidFields.push("end");
-    if (invalidFields.length) { setCustomError({ message: "Enter valid start and end dates.", fields: invalidFields }); setTimeout(() => customErrorRef.current?.focus()); return; }
-    if (start > end) { setCustomError({ message: "Start date must be on or before end date.", fields: ["start", "end"] }); setTimeout(() => customErrorRef.current?.focus()); return; }
-    setCustomError(undefined); setCustomOpen(false); selectRange(`${start}/${end}`);
   }
   const summaryQueryKey = ["summary", range, preferences.timezone, preferences.firstWeekday] as const;
   const summaryQuery = useQuery({
@@ -673,6 +718,26 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const displayedWorkouts = pageNeedsCorrection ? undefined : workouts;
   const sortActivityLabel = sortActivity && `${COLUMN_LABELS[sortActivity.field]} ${sortActivity.direction === "asc" ? "ascending" : "descending"}`;
   const rangeZone = summary?.range && currentZone(summary.range.timezone);
+  const workoutTypes = summary?.byType ?? [];
+  const durationBreakdown = descending(workoutTypes, (entry) => Number(entry.totals.duration) / (averages ? entry.totals.count : 1), (entry) => entry.type.displayName)
+    .map((entry) => ({ id: entry.type.id, label: entry.type.displayName, value: <DurationValue value={averages ? average(entry.totals.duration, entry.totals.count) : entry.totals.duration} aggregate={!averages} /> }));
+  const distanceTypes = workoutTypes.filter((entry) => entry.totals.routeCount > 0 && entry.totals.routedDistance);
+  const distanceBreakdown = descending(distanceTypes, (entry) => Number(averages ? entry.totals.routedDistance?.value : entry.totals.distance?.value) / (averages ? entry.totals.routeCount : 1) || 0, (entry) => entry.type.displayName)
+    .map((entry) => ({
+      id: entry.type.id,
+      label: entry.type.displayName,
+      value: metric(averages ? averageMetric(entry.totals.routedDistance, entry.totals.routeCount) : entry.totals.distance, "distance", preferences.units, true, !averages) ?? <Unavailable />,
+    }));
+  const energyBreakdown = descending(workoutTypes, (entry) => Number(entry.totals.energy?.value) / (averages ? entry.totals.count : 1) || 0, (entry) => entry.type.displayName)
+    .map((entry) => ({
+      id: entry.type.id,
+      label: entry.type.displayName,
+      value: metric(averages ? averageMetric(entry.totals.energy, entry.totals.count) : entry.totals.energy, "calories", preferences.units) ?? <Unavailable />,
+    }));
+  const displayedDuration = summary ? (averages ? average(summary.totals.duration, summary.totals.count) : summary.totals.duration) : "0";
+  const displayedDistance = summary && (averages ? averageMetric(summary.totals.routedDistance, summary.totals.routeCount) : summary.totals.distance);
+  const displayedEnergy = summary && (averages ? averageMetric(summary.totals.energy, summary.totals.count) : summary.totals.energy);
+  const toggleAggregateMode = () => setAverages((current) => !current);
   return (
     <main className="summary-page" style={{ "--summary-inset": "var(--space-5)" } as CSSProperties}>
       <div className="summary-contours" aria-hidden="true" />
@@ -689,22 +754,13 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
       {saveNotice && <div className="summary-notice" role="status">{saveNotice}</div>}
       {exportError && <div className="summary-notice summary-export-error" role="alert">{exportError}</div>}
       {deletionNotice && <div className="summary-notice" role="status">{deletionNotice}</div>}
-      <Dialog.Root open={customOpen} onOpenChange={(open) => { setCustomOpen(open); if (!open) setCustomError(undefined); }}>
-        <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content custom-range-dialog">
-          <div className="dialog-heading"><div><Dialog.Title>Custom date range</Dialog.Title><Dialog.Description>Choose inclusive calendar dates.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Custom date range">&times;</Dialog.Close></div>
-          <form className="custom-range-form" onSubmit={submitCustom} noValidate>
-            {customError && <p className="error-summary" id={customErrorId} role="alert" tabIndex={-1} ref={customErrorRef}>{customError.message}</p>}
-            <div className="field-pair"><div className="field"><label htmlFor="summary-start-date">Start date</label><input id="summary-start-date" name="startDate" type="date" defaultValue={explicit?.[1]} required aria-invalid={customError?.fields.includes("start") || undefined} aria-describedby={customError?.fields.includes("start") ? customErrorId : undefined} onBlur={(event) => { const endDate = event.currentTarget.form?.elements.namedItem("endDate"); if (event.currentTarget.value && endDate instanceof HTMLInputElement && !endDate.value) endDate.value = event.currentTarget.value; }} /></div><div className="field"><label htmlFor="summary-end-date">End date</label><input id="summary-end-date" name="endDate" type="date" defaultValue={explicit?.[2]} required aria-invalid={customError?.fields.includes("end") || undefined} aria-describedby={customError?.fields.includes("end") ? customErrorId : undefined} /></div></div>
-            <div className="dialog-actions"><Dialog.Close type="button" className="secondary">Cancel</Dialog.Close><button className="primary">Apply range</button></div>
-          </form>
-        </Dialog.Content></Dialog.Portal>
-      </Dialog.Root>
+      <CustomDateRangeDialog open={customOpen} onOpenChange={setCustomOpen} range={range} onApply={selectRange} />
 
       <Dialog.Root open={rangeDeletionOpen} onOpenChange={(open) => { if (!rangeDeletion.isPending) { setRangeDeletionOpen(open); if (!open) { setRangeConfirmation(""); setRangeDeletionError(""); } } }}>
         <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content deletion-dialog single-deletion-dialog range-deletion-dialog"
           onOpenAutoFocus={(event) => { event.preventDefault(); setTimeout(() => rangeDeletionCancelRef.current?.focus()); }}
           onCloseAutoFocus={(event) => { event.preventDefault(); document.getElementById("workouts-heading")?.focus(); }}>
-          <div className="dialog-heading"><div><Dialog.Title>Delete workouts in this range?</Dialog.Title><Dialog.Description>{explicit ? `Delete all workouts from ${rangeDate(explicit[1])} through ${rangeDate(explicit[2])}, inclusive?` : "Delete all workouts in this explicit range?"}</Dialog.Description></div></div>
+          <div className="dialog-heading"><div><Dialog.Title>Delete workouts in this range?</Dialog.Title><Dialog.Description>{explicit ? `Delete all workouts from ${rangeDate(explicit[1])} to ${rangeDate(explicit[2])}, inclusive?` : "Delete all workouts in this explicit range?"}</Dialog.Description></div></div>
           <p className="deletion-confirmation-message">These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.</p>
           {rangeDeletionError && <p ref={rangeDeletionErrorRef} className="error-summary" role="alert" tabIndex={-1}>{rangeDeletionError}</p>}
           <div className="field range-confirmation"><label htmlFor="range-delete-confirmation">Type <strong>DELETE</strong> to confirm.</label><input id="range-delete-confirmation" value={rangeConfirmation} placeholder="DELETE" autoComplete="off" onChange={(event) => setRangeConfirmation(event.target.value)} /></div>
@@ -742,14 +798,14 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
       </Dialog.Root>
 
       <section className="aggregate-section" aria-labelledby="totals-heading">
-        <div className="section-line"><h2 id="totals-heading">Range totals</h2>{summary?.range && rangeZone && <span className="range-metadata"><span>{rangeDate(summary.range.startDate)} through {rangeDate(summary.range.endDate)}</span><ZoneBadge label={rangeZone.label} title={rangeZone.title} /></span>}</div>
-        {summaryQuery.isPending && <p className="summary-loading" role="status">Loading range totals...</p>}
-        {summaryQuery.isError && <QueryError message="Range totals are unavailable." retry={() => void summaryQuery.refetch()} />}
+        <div className="section-line"><h2 id="totals-heading">Range {averages ? "averages" : "totals"}</h2>{summary?.range && rangeZone && <span className="range-metadata"><span>{rangeDate(summary.range.startDate)} to {rangeDate(summary.range.endDate)}</span><ZoneBadge label={rangeZone.label} title={rangeZone.title} /></span>}</div>
+        {summaryQuery.isPending && <p className="summary-loading" role="status">Loading range {averages ? "averages" : "totals"}...</p>}
+        {summaryQuery.isError && <QueryError message={`Range ${averages ? "averages" : "totals"} are unavailable.`} retry={() => void summaryQuery.refetch()} />}
         {summary && <div className={`aggregate-grid${summaryQuery.isFetching ? " is-refetching" : ""}`} aria-busy={summaryQuery.isFetching}>
-          <AggregateCard label="Workouts" value={decimal(String(summary.totals.count), 0)} summary={summary} format={(totals) => decimal(String(totals.count), 0)} />
-          <AggregateCard label="Duration" value={<DurationValue value={summary.totals.duration} focusable={false} aggregate />} valueTitle={durationTooltip(summary.totals.duration, true)} summary={summary} format={(totals) => <DurationValue value={totals.duration} aggregate />} />
-          <AggregateCard label="Distance" value={metric(summary.totals.distance, "distance", preferences.units, true, true) ?? <Unavailable />} summary={summary} format={(totals) => metric(totals.distance, "distance", preferences.units, true, true) ?? <Unavailable />} />
-          <AggregateCard label="Energy" value={metric(summary.totals.energy, "calories", preferences.units) ?? <Unavailable />} summary={summary} format={(totals) => metric(totals.energy, "calories", preferences.units) ?? <Unavailable />} />
+          <AggregateCard label="Workouts" value={decimal(String(summary.totals.count), 0)} breakdown={workoutBreakdown(summary)} averages={averages} onToggleMode={toggleAggregateMode} />
+          <AggregateCard label="Duration" value={averages ? formatDuration(displayedDuration) : formatAggregateDuration(displayedDuration)} breakdown={durationBreakdown} averages={averages} onToggleMode={toggleAggregateMode} />
+          <AggregateCard label="Distance" value={metric(displayedDistance || null, "distance", preferences.units, true, !averages) ?? <Unavailable />} breakdown={distanceBreakdown} averages={averages} onToggleMode={toggleAggregateMode} />
+          <AggregateCard label="Energy" value={metric(displayedEnergy || null, "calories", preferences.units) ?? <Unavailable />} breakdown={energyBreakdown} averages={averages} onToggleMode={toggleAggregateMode} />
         </div>}
       </section>
 

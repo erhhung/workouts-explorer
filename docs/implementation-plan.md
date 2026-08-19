@@ -350,23 +350,28 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 
 ### Vertical slice
 
-- Complete the toolchain spike and accept ADR 0008 before creating the OSM schema or importing the California extract.
-- Bootstrap California road/path data into the separate OSM PostGIS database.
+- Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract.
+- Provision the public-data-only `osm` database on the production PostgreSQL server for shared development and production reads.
+- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF.
+- Import authoritative locality boundaries and derive deterministic locality-scoped logical paths above matching segments.
 - Add offline IANA timezone boundaries.
-- Implement loaded-region detection and bounded Overpass fallback caching.
-- Implement nearest-segment matching using retained point quality.
-- Tune the matching threshold against representative routes and accept ADR 0009 with concrete quality rules, tie-breaking, and matcher versioning.
+- Implement named-region coverage detection, bounded provider-catalog auto-addition, globally coalesced region updates, and raw-route-only pending/unavailable behavior outside promoted regions.
+- Chain successful promotions to account/region coverage updates using desired/applied generation watermarks; refresh every intersecting routed workout after an existing region changes.
+- Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
+- Derive clipped positive-length segment traversals from decoded transitions; point projections alone create neither attribution nor rendered coverage.
+- Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning.
 - Choose fixed coverage bucket boundaries from historical distribution and accept ADR 0010 before accepting Coverage rendering.
-- Copy matched segment identity, geometry, name, class, and version into the application database.
-- Enforce one workout/segment attribution with earliest match.
-- Implement daily and all-time account coverage rollups.
+- Copy matched segment and logical-path identity, geometry, name, locality, class, and version into the application database.
+- Retain clipped segment-traversal evidence and enforce one workout/logical-path attribution using the earliest positive-length member-segment traversal.
+- Implement logical-path daily rollups plus all-time counts and date-only first/latest extrema.
 - Implement Coverage vector tiles, fixed blue buckets, hover properties, and legend.
-- Implement sortable, paginated Path Coverage.
+- Implement sortable, paginated Path Coverage in a full-map-area panel that preserves the mounted map and supports Show on map.
 - Implement manual OSM status/refresh and copied-segment reconciliation.
 
 ### Acceptance
 
-- Repeated traversal of one segment in one workout contributes exactly one count.
+- Repeated traversal and multiple matched segments of one logical path in one workout contribute exactly one count.
+- Equally named roads in different localities produce separate rows; compatible same-name segments within one locality produce one row.
 - Unnamed paths appear as N/A.
 - Unmatched points remain visible in Routes but create no false coverage.
 - Month/year coverage remains interactive at the target scale.
@@ -376,10 +381,12 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 
 - Curated match/no-match route fixtures
 - ADR 0008 importer/refresh spike and stable segment reconciliation fixtures
+- Locality-boundary splits, same-name cross-city roads, duplicate locality names, and unnamed-path identity fixtures
 - Parallel-road and poor-accuracy cases
+- Straight intersections, genuine turns, isolated cross-street excursions, grade-separated crossings, and stationary intersection jitter
 - ADR 0009 labeled evaluation metrics and deterministic rematch tests
-- Segment identity/version reconciliation
-- Overpass throttling and cache behavior
+- Segment, locality, and logical-path identity/version reconciliation
+- Named-extract resolution, ephemeral download failure, overlap deduplication, and outside-region behavior
 - Coverage rollup equivalence to source attribution
 - High-density vector-tile benchmark
 - ADR 0010 distribution analysis and light/dark/mobile visual-regression checks
