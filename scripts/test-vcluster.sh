@@ -11,8 +11,21 @@ host="${VCLUSTER_HOST:-workouts.${context}.fourteeners.local}"
 timeout="${VCLUSTER_TIMEOUT:-12m}"
 vcluster_name="${context#x}"
 certificate_secret="workouts-explorer-ingress-tls-x-${app_namespace}-x-${vcluster_name}"
-mailpit_external_name="mailpit-x-mailpit-x-${vcluster_name}.vcluster-${vcluster_name}.svc.cluster.local"
 : "${registry:?WORKOUTS_TEST_IMAGE_REGISTRY or CI_REGISTRY_PATH is required}"
+: "${SMTP_HOST:?SMTP_HOST is required}"
+: "${SMTP_PORT:?SMTP_PORT is required}"
+: "${SMTP_USER:?SMTP_USER is required}"
+: "${SMTP_PASSWORD:?SMTP_PASSWORD is required}"
+smtp_from_address="${SMTP_FROM_ADDRESS:-workouts@fourteeners.local}"
+osm_database_url="${OSM_DATABASE_URL:-}"
+if [[ -z "$osm_database_url" && -f /tmp/prod-pg-url ]]; then
+  IFS= read -r osm_line </tmp/prod-pg-url
+  osm_database_url="${osm_line#osmDatabaseUrl: }"
+fi
+case "$osm_database_url" in
+  postgresql://*'/osm?'*) ;;
+  *) printf '%s\n' 'OSM_DATABASE_URL or /tmp/prod-pg-url must contain the osm database URL' >&2; exit 1 ;;
+esac
 
 if ! kubectl config get-contexts "$context" >/dev/null 2>&1; then
   printf 'kubectl context %s does not exist\n' "$context" >&2
@@ -62,19 +75,19 @@ GRANT workouts_security_owner TO workouts_migration WITH ADMIN OPTION;
 SQL
 
 kubectl --context "$context" create namespace "$app_namespace" --dry-run=client -o yaml | kubectl --context "$context" apply -f -
-kubectl --context "$context" apply -f deploy/dev/mailpit.yaml
-kubectl --context "$context" -n mailpit rollout status deployment/mailpit --timeout="$timeout"
+kubectl --context "$context" -n "$app_namespace" get secret workouts-explorer-database-tls >/dev/null
 database_host="postgresql.${database_namespace}.svc.cluster.local"
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-database \
   --from-literal=migrationDatabaseUrl="postgresql://workouts_migration@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=apiDatabaseUrl="postgresql://workouts_api@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=workerDatabaseUrl="postgresql://workouts_worker@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=tilesDatabaseUrl="postgresql://workouts_tiles@${database_host}:5432/workouts?sslmode=disable" \
+  --from-literal=osmDatabaseUrl="$osm_database_url" \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
 rate_limit_key="$(openssl rand -base64 32 | tr -d '=\n')"
 kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-security \
   --from-literal=rateLimitKey="$rate_limit_key" \
-  --from-literal=smtpPassword=unused-local-development-value \
+  --from-literal=smtpPassword="$SMTP_PASSWORD" \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
 if ! kubectl --context "$context" -n "$app_namespace" get secret workouts-explorer-source-encryption >/dev/null 2>&1; then
   source_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
@@ -83,11 +96,16 @@ if ! kubectl --context "$context" -n "$app_namespace" get secret workouts-explor
     --from-literal=keyring.json="$source_keyring"
   unset source_key source_keyring
 fi
-kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-bootstrap-admin \
-  --from-literal=username=xdev-admin \
-  --from-literal=email=xdev-admin@example.test \
-  --from-literal=password='xdev-only-password' \
-  --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+bootstrap_rotate_existing=false
+if ! kubectl --context "$context" -n "$app_namespace" get secret workouts-explorer-bootstrap-admin >/dev/null 2>&1; then
+  bootstrap_password="$(openssl rand -base64 30 | tr -d '\n')"
+  kubectl --context "$context" -n "$app_namespace" create secret generic workouts-explorer-bootstrap-admin \
+    --from-literal=username=xdev-admin \
+    --from-literal=email=xdev-admin@example.test \
+    --from-literal=password="$bootstrap_password"
+  unset bootstrap_password
+  bootstrap_rotate_existing=true
+fi
 
 # Reset stale pull backoff/progress conditions and repull mutable dev tags before
 # Helm waits on an existing release. This is a no-op for the first installation.
@@ -106,18 +124,18 @@ helm_args=(
   --set-string "image.tag=$tag"
   --set image.pullPolicy=Always
   --set-string "api.publicUrl=https://${host}"
-  --set api.localDevelopment=true
-  --set-string "api.smtp.address=mailpit.mailpit.svc.cluster.local:1025"
-  --set-string "api.smtp.fromAddress=workouts@example.test"
-  --set-string "api.smtp.username="
-  --set api.smtp.allowInsecureLocal=true
+  --set api.localDevelopment=false
+  --set-string "api.smtp.address=${SMTP_HOST}:${SMTP_PORT}"
+  --set-string "api.smtp.fromAddress=${smtp_from_address}"
+  --set-string "api.smtp.username=${SMTP_USER}"
+  --set api.smtp.allowInsecureLocal=false
   --set api.bootstrap.enabled=true
+  --set "api.bootstrap.rotateExistingPassword=${bootstrap_rotate_existing}"
   --set ingress.enabled=true
   --set-string ingress.className=nginx
   --set-string "ingress.host=${host}"
   --set-string "ingress.certificateSecretName=${certificate_secret}"
-  --set ingress.mailpit.enabled=true
-  --set-string "ingress.mailpit.externalName=${mailpit_external_name}"
+  --set ingress.mailpit.enabled=false
   --set sources.nfs.enabled=true
   --set-string sources.nfs.server=qnap.fourteeners.local
   --set-string sources.nfs.path=/k8s_data/datasets/workouts
@@ -166,8 +184,8 @@ kubectl --context "$context" -n "$app_namespace" run workouts-smoke \
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/" >/dev/null
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/api/config" >/dev/null
 curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/swagger" >/dev/null
-curl --fail --silent --show-error --retry 60 --retry-all-errors --retry-delay 5 "https://${host}/mailpit/" >/dev/null
 
 kubectl --context "$context" -n "$database_namespace" delete \
   deployment/workouts-postgres service/postgres --ignore-not-found
 kubectl --context "$context" -n "$app_namespace" get pods
+unset osm_database_url osm_line

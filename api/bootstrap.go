@@ -12,10 +12,11 @@ import (
 )
 
 type BootstrapAdminOptions struct {
-	Username     string
-	Email        string
-	PasswordFile string
-	PasswordMin  int
+	Username               string
+	Email                  string
+	PasswordFile           string
+	PasswordMin            int
+	RotateExistingPassword bool
 }
 
 func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdminOptions) error {
@@ -50,18 +51,19 @@ func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdmi
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(94722102)`); err != nil {
 		return errors.New("bootstrap administrator could not be created")
 	}
-	rows, err := tx.Query(ctx, `SELECT p.canonical_username,p.canonical_email,p.password_hash,p.disabled_at IS NULL FROM app.administrators a JOIN app.authentication_principals p ON p.id=a.principal_id`)
+	rows, err := tx.Query(ctx, `SELECT p.id,p.canonical_username,p.canonical_email,p.password_hash,p.disabled_at IS NULL FROM app.administrators a JOIN app.authentication_principals p ON p.id=a.principal_id`)
 	if err != nil {
 		return errors.New("bootstrap administrator could not be created")
 	}
 	type existingAdmin struct {
+		id                    uuid.UUID
 		username, email, hash string
 		active                bool
 	}
 	var existing []existingAdmin
 	for rows.Next() {
 		var admin existingAdmin
-		if err := rows.Scan(&admin.username, &admin.email, &admin.hash, &admin.active); err != nil {
+		if err := rows.Scan(&admin.id, &admin.username, &admin.email, &admin.hash, &admin.active); err != nil {
 			rows.Close()
 			return errors.New("bootstrap administrator could not be created")
 		}
@@ -72,9 +74,23 @@ func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdmi
 		return errors.New("bootstrap administrator could not be created")
 	}
 	if len(existing) == 1 {
-		verified, _, verifyErr := hasher.verify(ctx, string(password), existing[0].hash)
-		if verifyErr != nil || !verified || !existing[0].active || existing[0].username != canonicalUsernameValue || existing[0].email != canonicalEmailValue {
+		if !existing[0].active || existing[0].username != canonicalUsernameValue || existing[0].email != canonicalEmailValue {
 			return errors.New("bootstrap administrator does not match existing state")
+		}
+		verified, _, verifyErr := hasher.verify(ctx, string(password), existing[0].hash)
+		if verifyErr != nil {
+			return errors.New("bootstrap administrator could not be verified")
+		}
+		if !verified && !options.RotateExistingPassword {
+			return errors.New("bootstrap administrator does not match existing state")
+		}
+		if !verified {
+			if _, err = tx.Exec(ctx, `UPDATE app.authentication_principals SET password_hash=$1,updated_at=transaction_timestamp() WHERE id=$2`, hash, existing[0].id); err != nil {
+				return errors.New("bootstrap administrator password could not be rotated")
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO app.audit_records(id,actor_principal_id,action,target_type,target_id) VALUES($1,$2,'administrator.bootstrap_password_rotated','administrator',$2)`, uuid.Must(uuid.NewV7()), existing[0].id); err != nil {
+				return errors.New("bootstrap administrator password could not be rotated")
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return errors.New("bootstrap administrator could not be verified")

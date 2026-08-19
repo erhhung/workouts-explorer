@@ -15,7 +15,7 @@ const progress: JobProgress = {
 };
 const preferences: Preferences = {
   theme: "dark", units: "metric", timezone: "UTC", firstWeekday: "monday", clockFormat: "24h",
-  workoutColumns: ["date", "type", "duration"], pageSize: 25,
+  workoutColumns: ["date", "type", "duration"], pageSize: 25, initialized: true,
 };
 const snapshot: DataSyncModel = {
   schedule: { enabled: true, sourceCount: 1, cadence: "Daily at 02:00", cadenceSeconds: 86400, staleDays: 3, nextRunAt: "2026-08-07T02:00:00Z" },

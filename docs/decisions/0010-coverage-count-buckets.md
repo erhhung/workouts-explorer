@@ -7,7 +7,9 @@ Proposed - requires historical coverage distribution analysis during Milestone
 
 ## Context
 
-Coverage uses fixed blue buckets based on distinct workout counts. A dynamic
+Coverage uses fixed blue buckets based on distinct workouts attributed to a
+locality-scoped logical path. All visited member segments of that path use the
+same count bucket, while unvisited member segments are not rendered. A dynamic
 scale would let a few heavily visited paths flatten visual differences among
 rarely visited paths, while arbitrary fixed boundaries may waste colors or hide
 meaningful variation.
@@ -33,7 +35,7 @@ legend and efficient vector styling.
 
 ## Proposed Rule Constraints
 
-- Count means distinct workouts, never point matches or traversals.
+- Count means distinct workouts per logical path, never point matches, matched segments, or traversals.
 - Zero-count paths are not rendered as covered.
 - Boundaries are fixed and shared by all accounts and date ranges.
 - The highest bucket is open-ended.

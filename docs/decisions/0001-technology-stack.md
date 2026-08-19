@@ -149,7 +149,7 @@ Joining application attribution to the OSM database through FDW would avoid copi
 
 ### Dedicated map-matching engine
 
-Valhalla or another routing-aware matcher could infer paths between sparse points. It was not selected for the MVP because nearest-segment matching with quality thresholds is acceptable and much simpler. It remains a reconsideration option if measured accuracy is inadequate.
+Valhalla or another standalone routing-aware matcher could infer paths between sparse points. It was not selected for the MVP because an in-process, bounded HMM/Viterbi matcher over the imported segment graph preserves deployment and privacy simplicity. A dedicated engine remains a reconsideration option if measured accuracy or network-search performance is inadequate.
 
 ### Continuous OSM replication
 

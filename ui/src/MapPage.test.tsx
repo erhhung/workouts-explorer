@@ -69,7 +69,7 @@ const baseMaps: BaseMapsConfig = {
   ],
 };
 const config: PublicConfig = { productName: "Workouts Explorer", pollingIntervalSeconds: 30, mapFitPaddingPixels: 48, passwordMinimumLength: 12, pageSizeMaximum: 100, baseMaps };
-const preferences: Preferences = { theme: "dark", units: "metric", timezone: "America/Denver", firstWeekday: "monday", clockFormat: "24h", workoutColumns: ["date", "type"], pageSize: 25, dateRange: "last30Days" };
+const preferences: Preferences = { theme: "dark", units: "metric", timezone: "America/Denver", firstWeekday: "monday", clockFormat: "24h", workoutColumns: ["date", "type"], pageSize: 25, initialized: true, dateRange: "last30Days" };
 const selection: MapSelection = {
   id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2026-08-08T13:00:00Z", dataGeneration: 7,
   range: { startDate: "2026-07-10", endDate: "2026-08-08" },
@@ -166,7 +166,14 @@ describe("MapPage", () => {
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Last 30 days/ })).toHaveTextContent("✓");
     expect(screen.queryByText("Selected")).not.toBeInTheDocument();
-    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
+    expect(await screen.findByRole("dialog", { name: "Custom date range" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("range-dialog-action");
+    expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("range-dialog-action");
+    await user.type(screen.getByLabelText("Start date"), "2026-03-15");
+    await user.tab();
+    expect(screen.getByLabelText("End date")).toHaveValue("2026-03-15");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Select base map" }));
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Automatic/ })).toHaveTextContent("✓");
@@ -183,6 +190,12 @@ describe("MapPage", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("dialog", { name: "Routes and controls" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Routes and controls" })).toContainElement(screen.getByRole("button", { name: "Select base map" }));
+  });
+
+  test("formats an explicit date range consistently in the trigger", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(selection));
+    render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="2026-03-06/2026-03-20" onDateRangeSelected={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Select date range" })).toHaveTextContent("Mar 6, 2026 to Mar 20, 2026");
   });
 
   test("replaces the private selection when a workout route is filtered", async () => {

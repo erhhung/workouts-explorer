@@ -47,8 +47,9 @@ Each user owns one personal workout account. Users cannot access another account
 6. Routes are colored by workout type; hovering highlights the topmost, most recent workout route.
 7. Long pause gaps split a workout into separate map segments instead of drawing false connections between distant resumed points.
 8. Coverage uses fixed blue count buckets so frequently visited paths do not flatten the rest of the scale.
-9. The user filters the map to any subset of workouts.
-10. The user inspects segment visit counts, first and latest visits, and the Path Coverage table.
+9. The user filters the map to any subset of workouts with a bulk checkbox above the workout checkboxes.
+10. The user opens Coverage stats over the map without unloading it, then inspects locality-scoped path counts and all-time first and latest visit dates.
+11. The user can return directly from a Path Coverage row to that path on the map.
 
 ### Keep data synchronized
 
@@ -126,10 +127,12 @@ Each user owns one personal workout account. Users cannot access another account
 - Route colors by workout type and bright-purple hover highlighting
 - Newest route rendered on top
 - Nearest-path matching against all relevant public map paths
-- One attribution per workout and path segment using the earliest match
+- Deterministic OSM-derived segments for matching and visited geometry
+- Locality-scoped logical roads and paths for distinct-workout attribution
+- One attribution per workout and logical path using the earliest accepted segment match
 - Fixed blue count buckets for coverage
 - Authenticated private vector tiles
-- Path Coverage table with sortable statistics
+- Path Coverage table in a non-destructive full-map-area panel with sortable statistics and Show on map actions
 - Extensible public base-map style families with paired light and dark variants
 - Workout-type style defaults, a Smooth fallback, and a current-visit style selector
 - Provider-specific visible attribution and direct or privately cached public base-map resources
@@ -180,7 +183,7 @@ The following are architectural non-goals at the expected scale:
 - A bounded historical ingest can process several years of files without staging the whole range at once.
 - Summary counts and totals match normalized provider aggregates for representative fixtures.
 - Raw routes and path coverage are visible for selected date ranges and workout subsets.
-- Each path segment counts a workout at most once, even when traversed repeatedly in that workout.
+- Each locality-scoped logical path counts a workout at most once, even when several member segments are traversed repeatedly in that workout.
 - Account isolation tests prevent cross-account access to records, tiles, jobs, logs, exports, and notifications.
 - Source secrets, GPS coordinates, and health values do not appear in logs or telemetry.
 - Ordinary API queries complete within 500 ms at p95 under a documented representative homelab benchmark.

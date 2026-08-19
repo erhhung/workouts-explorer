@@ -72,7 +72,7 @@ spec:
       initContainers:
         - name: prepare-smtp-password
           image: {{ include "workouts.image" (list . .Values.api.image) }}
-          command: [/bin/sh, -ec, "cp /secret/password /private/password && chown 65532:65532 /private/password && chmod 0400 /private/password"]
+          command: [/bin/sh, -ec, "cp /secret/password /private/password && chmod 0400 /private/password && chown 65532:65532 /private/password"]
           securityContext: {runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [CHOWN]}, readOnlyRootFilesystem: true}
           volumeMounts:
             - {name: smtp-source, mountPath: /secret, readOnly: true}
@@ -89,12 +89,14 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
             - name: RATE_LIMIT_KEY
               valueFrom: {secretKeyRef: {name: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}, key: {{ .Values.api.securitySecret.rateLimitKey }}}}
+            - {name: SSL_CERT_FILE, value: /var/run/secrets/workouts-trust/ca.crt}
           ports: [{name: http, containerPort: 8080}]
           livenessProbe: {httpGet: {path: /health/live, port: http}}
           readinessProbe: {httpGet: {path: /health/ready, port: http}}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
+            - {name: trusted-ca, mountPath: /var/run/secrets/workouts-trust, readOnly: true}
           {{- if not .Values.api.smtp.allowInsecureLocal }}
             - {name: smtp-password, mountPath: /var/run/secrets/workouts-smtp, readOnly: true}
           {{- end }}
@@ -104,6 +106,11 @@ spec:
             secretName: {{ required "sources.keyringSecret.name is required" .Values.sources.keyringSecret.name }}
             defaultMode: 0440
             items: [{key: {{ required "sources.keyringSecret.key is required" .Values.sources.keyringSecret.key }}, path: keyring.json}]
+        - name: trusted-ca
+          secret:
+            secretName: {{ required "api.trustedCASecret.name is required" .Values.api.trustedCASecret.name }}
+            defaultMode: 0440
+            items: [{key: {{ required "api.trustedCASecret.key is required" .Values.api.trustedCASecret.key }}, path: ca.crt}]
       {{- if not .Values.api.smtp.allowInsecureLocal }}
         - {name: smtp-password, emptyDir: {medium: Memory}}
         - name: smtp-source
@@ -155,8 +162,14 @@ spec:
             - {name: AUTO_SYNC_STALE_DAYS, value: {{ .Values.worker.autoSyncStaleDays | quote }}}
             - {name: SCHEDULER_LEASE_DURATION, value: {{ .Values.worker.schedulerLeaseDuration | quote }}}
             - {name: WORKER_STAGING_ROOT, value: {{ .Values.worker.staging.root | quote }}}
+            - {name: OSM_AUTO_ADD_REGIONS, value: {{ .Values.osm.autoAddRegions | quote }}}
+            - {name: OSM_MAX_AUTO_DOWNLOAD_BYTES, value: {{ .Values.osm.maxAutoDownloadBytes | float64 | printf "%.0f" | quote }}}
+            - {name: OSM_DATA_PROVIDERS_JSON, value: {{ mustToJson .Values.osm.dataProviders | quote }}}
+            - {name: OSM_REGIONS_JSON, value: {{ mustToJson .Values.osm.regions | quote }}}
             - name: WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
+            - name: OSM_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ required "worker.osmDatabaseKey is required" .Values.worker.osmDatabaseKey }}}}
           ports: [{name: health, containerPort: 8081}]
           livenessProbe: {httpGet: {path: /health/live, port: health}}
           readinessProbe: {httpGet: {path: /health/ready, port: health}}
@@ -164,6 +177,7 @@ spec:
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
             - {name: staging, mountPath: {{ .Values.worker.staging.root }}}
+            - {name: database-tls, mountPath: /tls/prod-db, readOnly: true}
             {{- if .Values.sources.nfs.enabled }}
             - {name: local-sources, mountPath: {{ .Values.sources.nfs.mountPath }}, readOnly: true}
             {{- end }}
@@ -176,6 +190,10 @@ spec:
             secretName: {{ required "sources.keyringSecret.name is required" .Values.sources.keyringSecret.name }}
             defaultMode: 0440
             items: [{key: {{ required "sources.keyringSecret.key is required" .Values.sources.keyringSecret.key }}, path: keyring.json}]
+        - name: database-tls
+          secret:
+            secretName: {{ required "worker.databaseTLSSecret is required" .Values.worker.databaseTLSSecret }}
+            defaultMode: 0440
         {{- if .Values.sources.nfs.enabled }}
         - name: local-sources
           nfs:

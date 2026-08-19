@@ -34,7 +34,14 @@ spec:
         - name: bootstrap-admin
           image: {{ include "workouts.image" (list . .Values.api.image) }}
           command: [/app/bootstrap-admin]
-          args: ["--username=$(BOOTSTRAP_USERNAME)", "--email=$(BOOTSTRAP_EMAIL)", "--password-file=/private/password", "--password-minimum={{ .Values.api.passwordMinimumLength }}"]
+          args:
+            - --username=$(BOOTSTRAP_USERNAME)
+            - --email=$(BOOTSTRAP_EMAIL)
+            - --password-file=/private/password
+            - --password-minimum={{ .Values.api.passwordMinimumLength }}
+            {{- if .Values.api.bootstrap.rotateExistingPassword }}
+            - --rotate-existing-password
+            {{- end }}
           securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - name: BOOTSTRAP_DATABASE_URL

@@ -133,6 +133,20 @@ make publish-dev-images
 make vcluster-test
 ```
 
+The vCluster test requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and
+`SMTP_PASSWORD`. Set `SMTP_FROM_ADDRESS` when the authenticated username is not a
+valid sender address; otherwise xdev defaults to `workouts@fourteeners.local`.
+It also requires `workouts-explorer-database-tls` in the application namespace
+and either `OSM_DATABASE_URL` or `/tmp/prod-pg-url` containing the shared OSM
+connection URL.
+
+xdev intentionally keeps `workouts-explorer-bootstrap-admin` so
+`scripts/admin-access-token.sh dev` can authenticate the durable `xdev-admin`
+identity. The harness creates that Secret only when absent, uses a generated
+password, and explicitly rotates a matching existing xdev administrator during
+Secret regeneration. This is a development-only exception to the production
+rule that removes one-shot bootstrap credentials after initialization.
+
 The image registry defaults to `CI_REGISTRY_PATH` when
 `WORKOUTS_TEST_IMAGE_REGISTRY` is unset. Both commands default to one
 `dev-YYYYMMDD` tag based on the local date. Repeated builds on the same day
@@ -141,17 +155,20 @@ the updated images. Publication deletes older `dev-*` Harbor tags for these thre
 repositories while preserving commit-SHA and release tags. Set
 `WORKOUTS_TEST_IMAGE_TAG` only when an intentionally different tag is needed.
 
-The test uses kubeconfig context `xdev` by default. It installs Mailpit in
-namespace `mailpit`, persistent PostgreSQL in namespace `postgresql`, and the
-application in namespace `workouts-explorer`. PostgreSQL requests a 5 GiB
+The test uses kubeconfig context `xdev` by default. Persistent PostgreSQL runs in
+namespace `postgresql`, and the application runs in namespace
+`workouts-explorer`. Do not deploy Mailpit to xdev; use the external authenticated
+STARTTLS service configured by `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and
+`SMTP_PASSWORD`. PostgreSQL requests a 5 GiB
 Longhorn volume that is retained across normal redeploys. The test also creates
 development-only rate-limit and bootstrap Secrets and bootstraps an `xdev-admin`
-identity so invite and recovery mail can be inspected without external delivery.
+identity for recovery verification.
 Context `xtest` targets the separate test vCluster and can be selected with
 `VCLUSTER_CONTEXT=xtest`. The database uses trust authentication strictly for
 isolated vCluster testing. Application database URLs use
-`postgresql.postgresql.svc.cluster.local`, and development SMTP uses
-`mailpit.mailpit.svc.cluster.local:1025`.
+`postgresql.postgresql.svc.cluster.local`. The SMTP password belongs only in the
+`workouts-explorer-security` Secret; never put it in Helm values or checked-in
+manifests.
 
 **WARNING: The following fresh-reset procedure permanently destroys all
 development database data.** Stop and delete the StatefulSet before deleting
@@ -173,13 +190,8 @@ The Helm release enables the nginx Ingress at
 Override `VCLUSTER_HOST` only when the vCluster DNS convention differs. The test
 runs the migration Job, waits for the UI, API, worker, and Certificate, probes
 services inside the cluster, and verifies the external HTTPS UI, runtime config,
-Swagger, and Mailpit routes. The development release enables
-`https://workouts.<context>.fourteeners.local/mailpit/`. Mailpit is configured
-with that web root, and ingress-nginx reaches its cross-namespace Service through
-a same-namespace `ExternalName` proxy Service. In a vCluster, the harness points
-that proxy to the host-synced Mailpit Service name because host ingress-nginx
-cannot resolve virtual-cluster DNS. This path and proxy are disabled by default,
-so production renders neither when using real SMTP.
+and Swagger routes. The xdev release keeps the `/mailpit` path and proxy disabled
+and sends invitation/recovery mail through the configured external SMTP service.
 `VCLUSTER_APP_NAMESPACE` and `VCLUSTER_RELEASE` remain available for
 intentionally isolated application releases. Helm and rollout waits default to
 12 minutes because the NFS-backed homelab Harbor registry can take up to 10

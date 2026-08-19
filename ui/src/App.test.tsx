@@ -29,9 +29,10 @@ const preferences = {
   clockFormat: "12h",
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
+  initialized: true,
   dateRange: "last30Days",
 };
-const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" } }, byType: [] };
+const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] };
 const emptyWorkouts = { range: emptySummary.range, pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] };
 const oneWorkout = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", sourceId: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", key: "running", displayName: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", displayTimezone: "America/Denver", originalStartOffsetMinutes: -360, originalEndOffsetMinutes: -360, timezone: "America/Denver", indoor: false, location: null, distance: { value: "10", unit: "km" }, pace: { value: "6", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevation: { value: "100", unit: "m" }, routePointCount: 2, routeAvailable: true };
 const workoutsWithOne = { ...emptyWorkouts, pagination: { ...emptyWorkouts.pagination, totalItems: 1, totalPages: 1 }, items: [oneWorkout] };
@@ -494,7 +495,7 @@ describe("authenticated shell", () => {
     await user.selectOptions(screen.getByLabelText("Workouts per page"), "50");
     await user.click(screen.getByRole("checkbox", { name: "Distance" }));
     await user.click(screen.getByRole("checkbox", { name: "Pace" }));
-    await user.click(screen.getByRole("button", { name: "Save preferences" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(mutations).toHaveLength(2);
     expect(mutations[0]).toEqual({ path: "/api/me", body: { fullName: "Avery Summit" }, csrf: session.csrfToken });
@@ -516,30 +517,60 @@ describe("authenticated shell", () => {
     expect(header).toContainElement(screen.getByText("Set how your routes, dates, and profile appear."));
     expect(header).toContainElement(screen.getByRole("button", { name: "Close Preferences" }));
     expect(body).toContainElement(screen.getByRole("group", { name: "Display" }));
-    expect(body).not.toContainElement(screen.getByRole("button", { name: "Save preferences" }));
-    expect(footer).toContainElement(screen.getByRole("button", { name: "Cancel" }));
-    expect(footer).toContainElement(screen.getByRole("button", { name: "Save preferences" }));
+    expect(body).not.toContainElement(screen.getByRole("button", { name: "Save" }));
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(footer).toContainElement(cancel);
+    expect(footer).toContainElement(save);
+    expect(cancel).toHaveClass("preferences-action");
+    expect(save).toHaveClass("preferences-action");
   });
 
-  test("uses the browser time zone while the stored preference is still UTC", async () => {
+  test("persists every displayed default with the browser time zone before rendering a new account", async () => {
     vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
       locale: "en-US",
       calendar: "gregory",
       numberingSystem: "latn",
       timeZone: "America/Los_Angeles",
     });
-    authenticatedFetch((path, method) => {
-      if (path === "/api/me/preferences" && method === "GET") return json({ ...preferences, timezone: "UTC" });
+    let initialization: { body: unknown; csrf: string | null } | undefined;
+    authenticatedFetch((path, method, init) => {
+      if (path === "/api/me/preferences" && method === "GET") return json({ ...preferences, timezone: "UTC", initialized: false });
+      if (path === "/api/me/preferences?initializeOnly=true" && method === "PATCH") {
+        initialization = { body: JSON.parse(String(init?.body)), csrf: new Headers(init?.headers).get("X-CSRF-Token") };
+        return json({ ...preferences, timezone: "America/Los_Angeles", initialized: true });
+      }
+      return undefined as never;
+    });
+    renderApp();
+    expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
+    expect(initialization).toEqual({
+      body: {
+        theme: "dark", units: "imperial", timezone: "America/Los_Angeles", firstWeekday: "monday",
+        clockFormat: "12h", workoutColumns: ["date", "type", "distance", "duration"], pageSize: 25,
+      },
+      csrf: session.csrfToken,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
+    const timeZone = await screen.findByLabelText("Time zone");
+    expect(timeZone).toHaveValue("America/Los_Angeles");
+    expect(timeZone.tagName).toBe("SELECT");
+    expect(screen.queryByLabelText("IANA timezone")).not.toBeInTheDocument();
+  });
+
+  test("preserves an intentionally initialized UTC time zone", async () => {
+    const fetchMock = authenticatedFetch((path, method) => {
+      if (path === "/api/me/preferences" && method === "GET") return json({ ...preferences, timezone: "UTC", initialized: true });
       return undefined as never;
     });
     renderApp();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
-    const timeZone = await screen.findByLabelText("Time zone");
-    expect(timeZone).toHaveValue("America/Los_Angeles");
-    expect(timeZone.tagName).toBe("SELECT");
-    expect(screen.queryByLabelText("IANA timezone")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Time zone")).toHaveValue("UTC");
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).includes("initializeOnly") && init?.method === "PATCH")).toBe(false);
   });
 
   test("orders time zones west-to-east and labels them with UTC offsets", async () => {

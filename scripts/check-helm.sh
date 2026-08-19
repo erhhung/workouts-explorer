@@ -44,6 +44,12 @@ if [ "$(grep -c 'mountPath: /var/run/secrets/workouts-source' "$rendered")" -ne 
   printf '%s\n' 'API and worker source encryption configuration is incomplete' >&2
   exit 1
 fi
+if ! grep -q 'name: SSL_CERT_FILE' "$rendered" ||
+   ! grep -q 'mountPath: /var/run/secrets/workouts-trust' "$rendered" ||
+   ! grep -q 'key: ca.crt' "$rendered"; then
+  printf '%s\n' 'API private CA trust configuration is incomplete' >&2
+  exit 1
+fi
 if ! grep -q 'name: WORKER_FILE_CONCURRENCY' "$rendered" ||
    ! grep -q 'name: ACCOUNT_FILE_CONCURRENCY' "$rendered" ||
    ! grep -q 'name: GLOBAL_FILE_CONCURRENCY' "$rendered" ||
@@ -52,9 +58,42 @@ if ! grep -q 'name: WORKER_FILE_CONCURRENCY' "$rendered" ||
    ! grep -q 'name: AUTO_SYNC_STALE_DAYS' "$rendered" ||
    ! grep -q 'name: SCHEDULER_LEASE_DURATION' "$rendered" ||
    ! grep -q 'name: WORKER_STAGING_ROOT' "$rendered" ||
+   ! grep -q 'name: OSM_AUTO_ADD_REGIONS' "$rendered" ||
+   ! grep -q 'name: OSM_MAX_AUTO_DOWNLOAD_BYTES' "$rendered" ||
+   ! grep -q 'name: OSM_DATA_PROVIDERS_JSON' "$rendered" ||
+   ! grep -q 'name: OSM_REGIONS_JSON' "$rendered" ||
+   ! grep -q 'name: OSM_DATABASE_URL' "$rendered" ||
+   ! grep -q 'key: osmDatabaseUrl' "$rendered" ||
+   ! grep -q 'mountPath: /tls/prod-db' "$rendered" ||
+   ! grep -q 'secretName: workouts-explorer-database-tls' "$rendered" ||
+   ! grep -Fq '[\"geofabrik:norcal\"]' "$rendered" ||
    ! grep -q 'mountPath: /var/lib/workouts/staging' "$rendered" ||
    ! grep -q 'sizeLimit: 2Gi' "$rendered"; then
   printf '%s\n' 'Worker concurrency or bounded staging configuration is incomplete' >&2
+  exit 1
+fi
+if ! grep -q 'component: osm-migration' "$rendered" ||
+   ! grep -q 'name: OSM_MIGRATION_DATABASE_URL' "$rendered" ||
+   ! grep -q 'command: \[/app/osm-migrate\]' "$rendered"; then
+  printf '%s\n' 'OSM migration job configuration is incomplete' >&2
+  exit 1
+fi
+helm template workouts-explorer helm \
+  --set osm.autoAddRegions=true \
+  --set osm.maxAutoDownloadBytes=2000000000 \
+  --set-string 'osm.dataProviders[0]=geofabrik' \
+  --set-string 'osm.regions[0]=geofabrik:new-york' >"$changed"
+if ! grep -q 'name: OSM_AUTO_ADD_REGIONS' "$changed" ||
+   ! grep -q 'value: "true"' "$changed" ||
+   ! grep -q 'value: "2000000000"' "$changed" ||
+   ! grep -Fq '[\"geofabrik:new-york\"]' "$changed"; then
+  printf '%s\n' 'Worker OSM configuration rendering is incomplete' >&2
+  exit 1
+fi
+if helm template workouts-explorer helm --set osm.maxAutoDownloadBytes=0 >/dev/null 2>&1 ||
+   helm template workouts-explorer helm --set-string 'osm.regions[0]=norcal' >/dev/null 2>&1 ||
+   helm template workouts-explorer helm --set-string 'osm.dataProviders[0]=geofabrik:norcal' >/dev/null 2>&1; then
+  printf '%s\n' 'Worker OSM schema accepted invalid settings' >&2
   exit 1
 fi
 helm template workouts-explorer helm \
@@ -128,6 +167,12 @@ fi
 if ! grep -q 'helm.sh/hook: post-install,post-upgrade' "$rendered" ||
    ! grep -q -- '--password-minimum=12' "$rendered"; then
   printf '%s\n' 'Bootstrap Job lacks controlled upgrade execution or password policy' >&2
+  exit 1
+fi
+helm template workouts-explorer helm --set api.bootstrap.enabled=true \
+  --set api.bootstrap.rotateExistingPassword=true >"$rendered"
+if ! grep -q -- '--rotate-existing-password' "$rendered"; then
+  printf '%s\n' 'Explicit bootstrap password rotation is not rendered' >&2
   exit 1
 fi
 

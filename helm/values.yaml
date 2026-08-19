@@ -25,6 +25,9 @@ api:
     name: workouts-explorer-security
     rateLimitKey: rateLimitKey
     smtpPasswordKey: smtpPassword
+  trustedCASecret:
+    name: workouts-explorer-database-tls
+    key: ca.crt
   passwordMinimumLength: 12
   sessionLifetime: 2h
   pageSizeMaximum: 100
@@ -37,6 +40,7 @@ api:
     allowInsecureLocal: false
   bootstrap:
     enabled: false
+    rotateExistingPassword: false
     secretName: workouts-explorer-bootstrap-admin
     usernameKey: username
     emailKey: email
@@ -78,6 +82,8 @@ worker:
   databaseSecret:
     name: workouts-explorer-database
     key: workerDatabaseUrl
+  osmDatabaseKey: osmDatabaseUrl
+  databaseTLSSecret: workouts-explorer-database-tls
   fileConcurrency: 2
   accountFileConcurrency: 2
   globalFileConcurrency: 4
@@ -89,6 +95,14 @@ worker:
     root: /var/lib/workouts/staging
     sizeLimit: 2Gi
   resources: {}
+
+osm:
+  autoAddRegions: false
+  maxAutoDownloadBytes: 1073741824
+  dataProviders:
+    - geofabrik
+  regions:
+    - geofabrik:norcal
 
 sources:
   keyringSecret:

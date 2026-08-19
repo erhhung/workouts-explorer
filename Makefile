@@ -33,7 +33,7 @@ test-ui:
 	npm --prefix ui test
 
 build:
-	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker
+	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker ./worker/cmd/osm-migrate ./worker/cmd/osm-catalog
 	npm --prefix ui run build
 
 images:

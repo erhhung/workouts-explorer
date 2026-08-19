@@ -584,11 +584,14 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 10. Routes render oldest first and newest last.
 11. Hovering near overlapping routes selects the topmost, most recent route.
 12. The selected route is highlighted bright purple in full.
-13. One compact workout-route list allows any subset within the period. The checkbox area toggles visibility; clicking the remainder of a row makes the route visible, fits it in the viewport, and retains every other checked route.
+13. One compact Workouts list allows any subset within the period. The checkbox area toggles visibility; clicking the remainder of a row makes the route visible, fits it in the viewport, and retains every other checked route.
 14. Private route tiles require authenticated account access.
 15. Changing route visibility replaces the immutable tile capability in the background without removing the map or public base style.
 16. Hovering a route highlights the full route and matching visible list row. After the standard tooltip delay, an auto-sized two-line popup shows workout type and distance, then the start date and compact start/end times.
 17. Workout-log sort column and direction survive Summary, Map, and Data Sync tab changes for the current date range. Changing the range resets sorting to Date descending, and Map orders its workout-route list with the same active sort.
+18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
+19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map, and camera when the mode changes.
+20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
 
 ### Validation
 
@@ -624,32 +627,52 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 
 ### Behavior
 
-1. Coverage matches route points to the nearest eligible public-map path within the accepted threshold.
+1. Coverage generates nearby eligible segment candidates for ordered route points and sequence-decodes connected traversals; it does not independently attribute each point to its nearest segment.
 2. All relevant path classes are candidates, including roads, trails, cycleways, and unnamed paths.
-3. One path segment receives at most one attribution from a workout.
-4. Repeated traversal retains the earliest matching workout timestamp.
-5. Coverage ignores workout type for coloring.
-6. Fixed blue count buckets represent distinct workout counts.
-7. Hover details show selected-period count, all-time count, first visit, latest visit, and path name.
-8. Unnamed paths display N/A.
-9. Path Coverage provides sortable, paginated rows and the description `Roads, trails, and other paths visited.`
+3. Deterministic OSM-derived segments remain the match-evidence and rendered-geometry units; they are not the user-facing counting or table-row identity.
+4. Named segments are grouped into logical paths by normalized name, broad path class, and authoritative locality identity. For example, El Camino Real in Mountain View and El Camino Real in Sunnyvale are separate paths.
+5. Segment-to-locality assignment uses imported administrative boundaries and deterministic geometry rules. Segment derivation splits at locality boundaries where needed rather than assigning a cross-boundary geometry wholly to the wrong locality.
+6. Unnamed segments never collapse into one locality-wide N/A path. Their logical identity uses deterministic source/topology lineage within the locality and remains separately inspectable as N/A.
+7. One logical path receives at most one attribution from a workout, even when the workout matches several member segments or traverses them repeatedly.
+8. The path attribution retains the earliest positive-length decoded member-segment traversal from that workout. Point projections and segment-level traversal evidence remain available for rendering, diagnostics, and rematching.
+9. Only the decoded portions of member segments traversed by at least one selected workout render as covered; unvisited portions of a matched segment or the same logical path do not render as visited.
+10. Every rendered member segment uses its logical path's distinct-workout count and bucket. Coverage ignores workout type for coloring.
+11. Fixed blue count buckets represent distinct workout counts for logical paths.
+12. Hover details show selected-period count, all-time count, all-time first visit date, all-time latest visit date, path name, and locality.
+13. First and latest visit are date-only values derived from all-time extrema and do not change with the current date range or workout subset.
+14. Unnamed paths display N/A while retaining their locality and stable identity.
+15. Coverage stats is always visible in Routes and Coverage modes. It opens a panel that occupies the map stage through its right and bottom edges while leaving the MapLibre instance mounted behind it.
+16. The panel provides sortable, paginated Path Coverage rows and the description `Roads, trails, and other paths visited.` It does not belong to Summary.
+17. Closing Coverage stats reveals the existing map without reconstructing it. The map is not keyboard-interactive while fully covered.
+18. Each row has an actions menu whose Show on map action closes the panel, selects Coverage mode, highlights the path's visited geometry, and fits that geometry without changing the date range or workout subset.
+19. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
 
 ### Validation
 
 - Matching uses route quality information without discarding the source route.
+- Sequence continuity, network connectivity, reliable heading, and later observations disambiguate intersections while preserving genuine turns.
 - Account coverage cannot include another account's attribution.
-- Segment identity and map-data version are retained for refresh diagnostics.
+- Segment identity, logical-path identity, locality identity, derivation version, and map-data version are retained for refresh diagnostics.
+- Distinct-workout counts deduplicate by logical path after applying the active date range and workout subset.
 
 ### Failure cases
 
 - Unmatched points remain part of the raw route and do not create false path coverage.
-- Missing public-map data queues bounded retrieval or reports matching as pending.
+- Ambiguous stretches may remain unmatched, and temporal or network gaps never create inferred connector coverage.
+- Missing public-map data reports coverage pending when automatic region addition has queued an eligible provider region, or unavailable when automatic addition is disabled, no configured provider contains the route, or the smallest region exceeds the download limit.
 
 ### Acceptance criteria
 
-- Given a workout traversing the same segment outbound and inbound, when coverage is calculated, then its count contribution is one.
-- Given a heavily visited segment, when coverage renders, then fixed buckets do not force all low-count segments into one near-zero shade.
+- Given a workout traversing several segments of one locality-scoped path, including outbound and inbound travel, when coverage is calculated, then its path count contribution is one.
+- Given El Camino Real geometry in Mountain View and Sunnyvale, when logical paths are derived, then the table exposes separate locality-scoped rows and attributions.
+- Given only part of a locality-scoped path was visited, when Coverage renders, then only visited member-segment geometry appears.
+- Given two disjoint portions of one locality-scoped path were visited, when Coverage renders, then both portions share path statistics while the unvisited middle remains absent.
+- Given a route proceeds straight through an intersection, when one GPS point is nearer the cross street, then the cross street receives no attribution without positive decoded traversal.
+- Given a route genuinely turns at an intersection, when subsequent points support the connected turn, then both positively traversed roads receive attribution.
+- Given a heavily visited logical path, when coverage renders, then fixed buckets do not force all low-count paths into one near-zero shade.
 - Given an unnamed trail, when inspected, then it appears with N/A rather than being omitted.
+- Given the date range or workout subset changes, when path details render, then first and latest visit remain the all-time date-only extrema.
+- Given Coverage stats is open, when it is closed or Show on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
 
 ## Feature: Delete Workout Data
 
@@ -791,12 +814,16 @@ As an administrator, I want to inspect and refresh public path data without affe
 
 ### Behavior
 
-1. The status API reports loaded regions, source version, last successful refresh, active job, replica readiness, and safe failures.
+1. The status API reports configured and promoted named regions, source versions, last successful refresh, active job, replica readiness, and safe failures.
 2. The administrator can enqueue one bootstrap or refresh operation at a time.
 3. OSM work runs below interactive and ingest priorities.
 4. A successful refresh reconciles copied matched segments and rematches only affected private routes where needed.
 5. A failed refresh leaves the last usable public and copied segment data active.
 6. Status and diagnostics contain no private account routes or coverage details.
+7. Region-update requests are globally coalesced by provider and region while queued or running.
+8. A newly promoted region queues coverage for routed workouts lacking current coverage in that region.
+9. Refreshing an existing region queues reconciliation for all routed workouts in that region, including workouts with existing coverage.
+10. A coverage update skips a workout only when its applied OSM generation and matcher version are already current.
 
 ### Validation
 
@@ -823,7 +850,7 @@ As a user, I want the product to remain usable on desktop and mobile.
 
 1. Desktop shows a bold Workouts Explorer wordmark at upper left.
 2. Summary/Map controls appear at the top left with the date control to their right.
-3. Map mode adds Routes/Coverage beside the view controls.
+3. Map mode uses compact Routes/Coverage radio controls beside the bulk workout checkbox in the Workouts panel.
 4. The upper-right avatar opens Data Sync, Preferences, and Sign out.
 5. An About information control appears beside the avatar.
 6. Mobile omits the wordmark to maximize content space.
@@ -832,7 +859,7 @@ As a user, I want the product to remain usable on desktop and mobile.
 9. Dark and light themes preserve contrast for routes, coverage, controls, and tables.
 10. Desktop Map controls expose the same base-map style families as mobile.
 11. Map date and base-style pickers use the application's shared dropdown treatment; the desktop panel starts directly with those controls and contains no redundant Map hero.
-12. The unified workout-route list consumes the remaining panel height above Fit routes and scrolls independently.
+12. The unified workout list consumes the remaining panel height above Coverage stats and Fit on map and scrolls independently.
 
 ### Validation
 

@@ -27,7 +27,7 @@ API and worker are separate Go binaries and Kubernetes Deployments. They may sha
 | Component | Responsibility |
 |---|---|
 | Application PostgreSQL/PostGIS | Accounts, sessions, sources, jobs, workouts, private routes, copied segments, attribution, rollups, notifications |
-| OSM PostgreSQL/PostGIS | Imported OSM hierarchy, regional boundaries, derived path segments, public fallback cache |
+| Shared `osm` PostgreSQL/PostGIS | Selective hierarchy, municipal boundaries, and derived paths from configured named extracts on the production PostgreSQL server; contains no private account data |
 | OSM read replica | Optional matching reads without adding load to OSM import/refresh primary |
 | `pg_tileserv` | Generates dense private route and coverage vector tiles from the application database |
 | Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
@@ -54,7 +54,7 @@ API --enqueue durable jobs--> Application PostgreSQL
                                   v
                                Worker
                               /   |   \
-                         NFS/rclone |  OSM PostgreSQL/PostGIS
+                         NFS/rclone |  shared `osm` PostgreSQL/PostGIS
                                     |
                                     +--> copied matched segments and rollups
 
@@ -176,21 +176,27 @@ Changed source content updates the current workout transactionally and rebuilds 
 
 The OSM database retains standard public-map hierarchy and derived matching paths. Exact importer schema is an implementation decision constrained by preserving node, way, relation, tag, and version provenance.
 
-The application database intentionally copies only matched segment data required for private queries and rendering:
+The public-data model separates deterministic matching segments from logical paths. Segments are split at intersections, relevant topology changes, and locality boundaries and retain exact OSM provenance. A logical path groups compatible named segments by normalized name, broad path class, and authoritative municipal city/town locality identity derived from OSM administrative boundary relations. The locality identity includes stable administrative provenance rather than postal-city or display text alone, so equally named localities cannot collide. Unnamed paths use deterministic source/topology lineage within a locality instead of collapsing every unnamed segment into one group.
+
+The application database intentionally copies only matched segment and logical-path data required for private queries and rendering:
 
 | Entity | Purpose |
 |---|---|
-| `path_segments` | OSM identity/version, 2D geometry, name, path classification, display tags |
-| `workout_segment_attributions` | Unique workout/segment pair and earliest matched timestamp |
-| `account_segment_daily_rollups` | Count and visit extrema keyed by account, segment, and workout-local start date |
-| `account_segment_all_time` | All-time first/latest visit and distinct workout count |
+| `coverage_paths` | Stable logical-path identity, normalized/display name, broad class, and authoritative locality identity/display name |
+| `path_segments` | Logical-path membership, OSM identity/version, 2D geometry, path classification, and display tags |
+| `workout_segment_matches` | Decoded workout/segment traversal evidence, clipped traversed geometry, positive length, and earliest traversal timestamp |
+| `workout_path_attributions` | Unique workout/logical-path attribution and earliest positive-length member-segment traversal |
+| `account_path_daily_rollups` | Distinct-workout count keyed by account, logical path, and workout-local start date |
+| `account_path_all_time` | All-time first/latest visit dates and distinct-workout count by logical path |
 | `account_data_generations` | Cache-busting generation for private tile URLs after mutations |
 
-The unique workout/segment constraint ensures outbound and inbound traversal counts once.
+The unique workout/logical-path constraint ensures matching multiple member segments and outbound/inbound traversal count once. Segment traversal evidence retains clipped, positive-length geometry so tiles render only portions actually traversed by selected workouts. Every emitted portion receives the containing logical path's count and fixed bucket; unvisited portions and members are not emitted.
+
+Public graph derivation batches source ways to bound PostgreSQL temporary and shared-memory use. Physical segments split at shared OSM nodes and municipal boundaries. Municipal assignment requires geometry coverage within 1 cm; ambiguous complex pieces retain public geometry but no locality rather than receiving a false city attribution. Named roads remove one leading spelled-out cardinal direction for logical identity while preserving the exact OSM display name on physical segments.
 
 Daily rollups support named periods and arbitrary explicit ranges without maintaining separate mutable materializations for each shortcut.
 
-Selections containing all workouts in a date range use daily rollups. Arbitrary workout subsets query the underlying unique workout/segment attribution joined to the selected workout IDs, because an account/day rollup cannot preserve subset membership. Tile functions choose the rollup or attribution path from the authorized map selection.
+Selections containing all workouts in a date range use daily rollups. Arbitrary workout subsets query the underlying unique workout/path attribution joined to the selected workout IDs, because an account/day rollup cannot preserve subset membership. Tile functions choose the rollup or attribution path from the authorized map selection and join selected segment-match evidence to avoid rendering unvisited portions of a logical path. First/latest visit fields always come from all-time date-only extrema.
 
 ### Notifications and announcements
 
@@ -289,9 +295,9 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 - Derive bounds and elevation statistics.
 - Resolve or update workout timezone.
 - Ensure required OSM path data exists for route envelopes.
-- Match points to nearest candidate segments using quality data and an implementation-tested threshold.
-- Upsert unique workout/segment attribution.
-- Rebuild affected daily and all-time rollups.
+- Generate bounded nearby segment candidates and Viterbi-decode sequence-aware connected traversals using distance, quality, topology, timing, and reliable heading evidence.
+- Retain unique workout/segment match evidence and upsert unique workout/logical-path attribution.
+- Rebuild affected logical-path daily and all-time rollups.
 - Advance the account data generation used by private tile URLs.
 
 ## External Interfaces
@@ -335,8 +341,14 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - The browser may request approved public style resources directly. Public provider credentials delivered to the browser are not secrets and require provider-side origin restrictions, minimum privileges, quotas, monitoring, and rotation; Stadia domain authentication is preferred where available.
 - The UI content security policy permits only configured provider resource origins needed for style documents, tiles, glyphs, sprites, and images.
 - The UI permits runtime inline CSS because MapLibre positions controls and popups through element styles; scripts remain self-hosted and hash-restricted, and configured attribution never accepts operator HTML.
-- Regional road/path hierarchy begins with a California extract.
-- Missing regions use bounded public Overpass retrieval and caching, never one request per coordinate.
+- Regional road/path hierarchy comes from an ordered configuration of provider-qualified named extracts, initially Geofabrik `norcal`.
+- Runtime configuration names these datasets regions: `osm.regions` is the explicit initial list, `osm.dataProviders` is the ordered automatic-discovery catalog list, `osm.autoAddRegions` controls discovery, and `osm.maxAutoDownloadBytes` bounds each automatically selected PBF.
+- Development and production use the same public-data-only `osm` database on the production PostgreSQL server; private workout matching results remain isolated in each environment's application database.
+- The updater resolves extract metadata through Geofabrik's versioned index, downloads current PBF files into ephemeral local scratch space, validates and records source metadata, and removes the files after processing.
+- Selective import retains eligible paths, required node/relation lineage, municipal boundaries, and derived matching data while omitting buildings, POIs, addresses, and unrelated rendering features.
+- Routes outside promoted regions remain raw-route-only while coverage is pending or unavailable. When automatic addition is enabled, the worker resolves a containing named provider region from locally cached public catalog polygons, records only its public region ID in the maintenance queue, and never sends route coordinates to the provider.
+- Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
+- Coverage updates are account-owned and single-flight by account/region. Desired and applied OSM-generation watermarks guarantee that a promotion racing an active coverage job produces a successor rather than losing rematch work.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
 - Manual OSM refresh replaces or updates regional data and reconciles copied matched segments.
 
@@ -573,7 +585,7 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 ## Deferred Decisions
 
 - Exact OSM importer and segment derivation toolchain pending the ADR 0008 spike
-- Tested nearest-segment distance and route quality rules pending ADR 0009 experiments
+- Tested sequence-matching candidate, emission, transition, gap, confidence, and route-quality rules pending ADR 0009 experiments
 - Coverage bucket boundaries pending ADR 0010 historical-data analysis
 - Retention limits for job history and owner-visible diagnostic logs
 - Public base-map provider for externally exposed installations

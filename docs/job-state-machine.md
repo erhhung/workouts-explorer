@@ -15,8 +15,8 @@ observable behavior in `functional-spec.md`.
 | `manual_ingest_source` | Account | Child | 80 |
 | `scheduled_ingest` | Account | Parent | 60 |
 | `scheduled_ingest_source` | Account | Child | 60 |
-| `osm_bootstrap` | Administrator | Standalone | 20 |
-| `osm_refresh` | Administrator | Standalone | 20 |
+| `osm_region_update` | Administrator | Standalone | 20 |
+| `coverage_update` | Account | Standalone | 20 |
 
 Account deletion records sanitized administrative progress and never transfers
 private job diagnostics to administrator ownership. Parent ingest jobs are not
@@ -132,9 +132,16 @@ requests return the existing job until it is terminal. The database unique
 constraint is authoritative so concurrent API replicas cannot enqueue duplicate
 work.
 
-OSM bootstrap and refresh share a single-flight scope even though they are
-different kinds. Account deletion and source deletion use their own lifecycle
-identity as the coalescing scope.
+OSM region updates are globally single-flight by provider-qualified region ID,
+independent of administrator identity. Account coverage updates are single-flight
+by account and region. Account deletion and source deletion use their own
+lifecycle identity as the coalescing scope.
+
+OSM-to-coverage chaining does not use `parent_job_id`, which remains reserved for
+same-account ingest aggregation. Region and account/region context retain desired
+and applied generation watermarks. Promotion raises desired generations; if a
+newer generation arrives while coverage work is active, terminalization queues a
+successor for the newer target.
 
 ## Durable Fields
 

@@ -719,13 +719,15 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 
 func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]generated.WorkoutTypeSummary, generated.SummaryTotals, error) {
 	rows, err := tx.Query(ctx, `SELECT wt.id,wt.type_key,wt.provider_label,count(*)::bigint,trim_scale(sum(w.provider_duration))::text,
-		 trim_scale(sum(metrics.distance))::text,trim_scale(sum(metrics.energy))::text
+		 trim_scale(sum(metrics.distance))::text,trim_scale(sum(metrics.energy))::text,count(route.workout_id)::bigint,
+		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
 	 FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
 	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
 	  COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
+	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
 	 WHERE w.local_start_date BETWEEN $1 AND $2 GROUP BY wt.id,wt.type_key,wt.provider_label
- ORDER BY wt.provider_label COLLATE "C",wt.type_key,wt.id`, dateRange.start, dateRange.end)
+	 ORDER BY wt.provider_label COLLATE "C",wt.type_key,wt.id`, dateRange.start, dateRange.end)
 	if err != nil {
 		return nil, generated.SummaryTotals{}, err
 	}
@@ -736,14 +738,15 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 		var id uuid.UUID
 		var item generated.WorkoutTypeSummary
 		var duration string
-		var distance, energy *string
-		if err := rows.Scan(&id, &item.Type.Key, &item.Type.DisplayName, &item.Totals.Count, &duration, &distance, &energy); err != nil {
+		var distance, energy, routedDistance *string
+		if err := rows.Scan(&id, &item.Type.Key, &item.Type.DisplayName, &item.Totals.Count, &duration, &distance, &energy, &item.Totals.RouteCount, &routedDistance); err != nil {
 			return nil, generated.SummaryTotals{}, err
 		}
 		item.Type.Id = compactUUID(id)
 		item.Totals.Duration = duration
 		setMetric(&item.Totals.Distance, distance, stringPointer("km"))
 		setMetric(&item.Totals.Energy, energy, stringPointer("kcal"))
+		setMetric(&item.Totals.RoutedDistance, routedDistance, stringPointer("km"))
 		totalCount += item.Totals.Count
 		items = append(items, item)
 	}
@@ -751,22 +754,28 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 		return nil, generated.SummaryTotals{}, err
 	}
 	// PostgreSQL computes the exact overall sums, avoiding decimal arithmetic in Go.
-	var duration, distance, energy *string
-	err = tx.QueryRow(ctx, `SELECT trim_scale(sum(provider_duration))::text,
-		 (SELECT trim_scale(sum(value))::text FROM app.workout_aggregates a JOIN app.workouts x ON x.id=a.workout_id WHERE x.local_start_date BETWEEN $1 AND $2 AND a.metric='distance' AND a.unit='km'),
-		 (SELECT trim_scale(sum(energy))::text FROM (SELECT COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy
-	  FROM app.workout_aggregates a JOIN app.workouts x ON x.id=a.workout_id WHERE x.local_start_date BETWEEN $1 AND $2 GROUP BY x.id) energies)
-	 FROM app.workouts WHERE local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy)
+	var duration, distance, energy, routedDistance *string
+	var routeCount int64
+	err = tx.QueryRow(ctx, `SELECT trim_scale(sum(w.provider_duration))::text,trim_scale(sum(metrics.distance))::text,
+		 trim_scale(sum(metrics.energy))::text,count(route.workout_id)::bigint,
+		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
+	 FROM app.workouts w
+	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
+	  COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy
+	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
+	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
+	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy, &routeCount, &routedDistance)
 	if err != nil {
 		return nil, generated.SummaryTotals{}, err
 	}
-	totals := generated.SummaryTotals{Count: totalCount}
+	totals := generated.SummaryTotals{Count: totalCount, RouteCount: routeCount}
 	if totalCount == 0 {
-		duration, distance, energy = stringPointer("0"), stringPointer("0"), stringPointer("0")
+		duration, distance, energy, routedDistance = stringPointer("0"), stringPointer("0"), stringPointer("0"), stringPointer("0")
 	}
 	totals.Duration = *duration
 	setMetric(&totals.Distance, distance, stringPointer("km"))
 	setMetric(&totals.Energy, energy, stringPointer("kcal"))
+	setMetric(&totals.RoutedDistance, routedDistance, stringPointer("km"))
 	return items, totals, nil
 }
 

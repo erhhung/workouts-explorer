@@ -92,6 +92,20 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	if err := BootstrapAdmin(context.Background(), adminDB, mismatch); err == nil {
 		t.Fatal("bootstrap accepted mismatched existing credentials")
 	}
+	if err := os.WriteFile(passwordFile, []byte("rotated administrator password"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapAdmin(context.Background(), adminDB, bootstrap); err == nil {
+		t.Fatal("bootstrap rotated an existing password without explicit permission")
+	}
+	rotated := bootstrap
+	rotated.RotateExistingPassword = true
+	if err := BootstrapAdmin(context.Background(), adminDB, rotated); err != nil {
+		t.Fatalf("rotate bootstrap password: %v", err)
+	}
+	if err := BootstrapAdmin(context.Background(), adminDB, bootstrap); err != nil {
+		t.Fatalf("verify rotated bootstrap password: %v", err)
+	}
 	var adminID uuid.UUID
 	if err := db.QueryRow(context.Background(), `SELECT id FROM app.authentication_principals WHERE canonical_email=$1`, adminEmail).Scan(&adminID); err != nil {
 		t.Fatal(err)
@@ -167,6 +181,28 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	userToken := bearerSession.AccessToken
+	initialPreferences := getPreferences(t, server, userToken)
+	if initialPreferences.Initialized || initialPreferences.Theme != "dark" || initialPreferences.Units != "imperial" || initialPreferences.Timezone != "UTC" ||
+		initialPreferences.FirstWeekday != "monday" || initialPreferences.ClockFormat != "12h" || initialPreferences.PageSize != 25 ||
+		len(initialPreferences.WorkoutColumns) != 4 || initialPreferences.WorkoutColumns[0] != "date" || initialPreferences.WorkoutColumns[1] != "type" ||
+		initialPreferences.WorkoutColumns[2] != "duration" || initialPreferences.WorkoutColumns[3] != "distance" {
+		t.Fatalf("new account preferences are not uninitialized defaults: %+v", initialPreferences)
+	}
+	initializeOnly := true
+	initialize := callEndpoint(http.MethodPatch, "/api/me/preferences?initializeOnly=true", `{"theme":"dark","units":"imperial","timezone":"America/Denver","firstWeekday":"monday","clockFormat":"12h","workoutColumns":["date","type","duration","distance"],"pageSize":25}`, userToken, "")
+	server.UpdateMyPreferences(initialize.recorder, initialize.request, generated.UpdateMyPreferencesParams{InitializeOnly: &initializeOnly})
+	if initialize.recorder.Code != http.StatusOK {
+		t.Fatalf("preference initialization: %d %s", initialize.recorder.Code, initialize.recorder.Body.String())
+	}
+	initializedPreferences := getPreferences(t, server, userToken)
+	if !initializedPreferences.Initialized || initializedPreferences.Timezone != "America/Denver" || !initializedPreferences.DateRange.IsSpecified() || !initializedPreferences.DateRange.IsNull() {
+		t.Fatalf("preference initialization was not persisted: %+v", initializedPreferences)
+	}
+	secondInitialize := callEndpoint(http.MethodPatch, "/api/me/preferences?initializeOnly=true", `{"timezone":"America/Los_Angeles"}`, userToken, "")
+	server.UpdateMyPreferences(secondInitialize.recorder, secondInitialize.request, generated.UpdateMyPreferencesParams{InitializeOnly: &initializeOnly})
+	if secondInitialize.recorder.Code != http.StatusOK || !strings.Contains(secondInitialize.recorder.Body.String(), `"timezone":"America/Denver"`) {
+		t.Fatalf("preference initialization was overwritten: %d %s", secondInitialize.recorder.Code, secondInitialize.recorder.Body.String())
+	}
 	adminMe := callEndpoint(http.MethodGet, "/api/me", "", adminToken, "")
 	server.GetMe(adminMe.recorder, adminMe.request)
 	if adminMe.recorder.Code != http.StatusForbidden {

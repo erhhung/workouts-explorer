@@ -13,10 +13,11 @@ const preferences: Preferences = {
   clockFormat: "12h",
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
+  initialized: true,
   dateRange: "last30Days",
 };
 const range = { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" };
-const totals = { count: 2, duration: "3900.5", distance: { value: "10.5", unit: "km" }, energy: { value: "450.25", unit: "kcal" } };
+const totals = { count: 2, duration: "3900.5", distance: { value: "10.5", unit: "km" }, energy: { value: "450.25", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10.5", unit: "km" } };
 const running = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", key: "running", displayName: "Running" };
 const summary = { range, totals, byType: [{ type: running, totals }] };
 const workout: Workout = {
@@ -84,8 +85,8 @@ describe("Summary", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(pacificSummary)) : Promise.resolve(json(workoutPage())));
     renderSummary();
     await vi.runAllTimersAsync();
-    expect(screen.getByText("Jan 1 2026 through Dec 31 2026")).toBeInTheDocument();
-    const metadata = screen.getByText("Jan 1 2026 through Dec 31 2026").closest(".range-metadata")!;
+    expect(screen.getByText("Jan 1, 2026 to Dec 31, 2026")).toBeInTheDocument();
+    const metadata = screen.getByText("Jan 1, 2026 to Dec 31, 2026").closest(".range-metadata")!;
     const badge = within(metadata as HTMLElement).getByLabelText("America/Los_Angeles (UTC-7:00)");
     expect(badge).toHaveTextContent("PDT");
     expect(document.getElementById(badge.getAttribute("aria-describedby")!)).toHaveTextContent("America/Los_Angeles (UTC-7:00)");
@@ -128,7 +129,7 @@ describe("Summary", () => {
     renderSummary();
     const distanceCard = await screen.findByRole("button", { name: /Distance.*By workout type/ });
     expect(distanceCard).toHaveTextContent("275 mi");
-    await userEvent.click(distanceCard);
+    await userEvent.hover(distanceCard);
     expect(document.getElementById(distanceCard.getAttribute("aria-controls")!)).toHaveTextContent("275 mi");
     expect(await within(screen.getByRole("table")).findByText("6.52 mi")).toBeInTheDocument();
   });
@@ -220,16 +221,15 @@ describe("Summary", () => {
     ]);
   });
 
-  test("shows rounded duration tooltips in totals, breakdowns, desktop, and mobile rows", async () => {
+  test("keeps the main duration plain while retaining exact tooltips in breakdowns and workout rows", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
     renderSummary();
     const total = await screen.findByRole("button", { name: /Duration.*By workout type/ });
     expect(total).toHaveTextContent("1h 05m");
     expect(total).not.toHaveAttribute("title");
-    const totalTooltip = document.getElementById(total.getAttribute("aria-describedby")!)!;
-    expect(totalTooltip).toHaveAttribute("role", "tooltip");
-    expect(totalTooltip).toHaveTextContent("1h 05m 01s");
-    fireEvent.click(total);
+    expect(total).not.toHaveAttribute("aria-describedby");
+    expect(total.querySelector(".duration-value, .tooltip-trigger")).toBeNull();
+    fireEvent.pointerEnter(total, { pointerType: "mouse" });
     const breakdown = document.getElementById(total.getAttribute("aria-controls")!)!;
     const byTypeDuration = breakdown.querySelector<HTMLElement>(".duration-value")!;
     const byTypeTrigger = byTypeDuration.querySelector<HTMLElement>(".tooltip-trigger")!;
@@ -280,12 +280,14 @@ describe("Summary", () => {
     await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
     const startDate = await screen.findByLabelText("Start date");
     const endDate = screen.getByLabelText("End date");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("range-dialog-action");
+    expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("range-dialog-action");
     await user.type(startDate, "2026-08-05");
     await user.tab();
     expect(endDate).toHaveValue("2026-08-05");
     await user.clear(endDate);
     await user.type(endDate, "2026-08-01");
-    await user.click(screen.getByRole("button", { name: "Apply range" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("on or before");
     await waitFor(() => expect(alert).toHaveFocus());
@@ -293,8 +295,9 @@ describe("Summary", () => {
     expect(screen.getByLabelText("End date")).toHaveAccessibleDescription("Start date must be on or before end date.");
     await user.clear(screen.getByLabelText("End date"));
     await user.type(screen.getByLabelText("End date"), "2026-08-06");
-    await user.click(screen.getByRole("button", { name: "Apply range" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(patches).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent("Aug 5, 2026 to Aug 6, 2026");
     expect(patches).toEqual([
       { body: { dateRange: "last7Days" }, csrf: "csrf-summary" },
       { body: { dateRange: "2026-08-05/2026-08-06" }, csrf: "csrf-summary" },
@@ -332,7 +335,7 @@ describe("Summary", () => {
     const durationCard = screen.getByRole("button", { name: /Duration.*By workout type/ });
     expect(durationCard).toHaveTextContent("1h 05m");
     expect(durationCard).not.toHaveAttribute("title");
-    expect(document.getElementById(durationCard.getAttribute("aria-describedby")!)).toHaveTextContent("1h 05m 01s");
+    expect(durationCard).not.toHaveAttribute("aria-describedby");
     expect(distanceCard).toHaveAttribute("aria-expanded", "false");
     const user = userEvent.setup();
     await user.hover(distanceCard);
@@ -351,7 +354,81 @@ describe("Summary", () => {
     fireEvent.pointerEnter(distanceCard, { pointerType: "touch" });
     expect(distanceCard).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(distanceCard);
-    expect(distanceCard).toHaveAttribute("aria-expanded", "true");
+    expect(distanceCard).toHaveAttribute("aria-expanded", "false");
+    expect(distanceCard).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Range averages")).toBeInTheDocument();
+    expect(screen.queryByText("+")).not.toBeInTheDocument();
+  });
+
+  test("shows a delayed cursor-positioned mode hint on every aggregate card and auto-hides it", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    renderSummary();
+    const cards = await screen.findAllByRole("button", { name: /By workout type/ });
+    const user = userEvent.setup();
+    for (const [index, card] of cards.entries()) {
+      await user.hover(card);
+      expect(document.querySelector(".aggregate-mode-hint")).toBeNull();
+      await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toBeInTheDocument(), { timeout: 1200 });
+      fireEvent.pointerMove(card, { clientX: 300 + index, clientY: 400 + index });
+      const hint = document.querySelector<HTMLElement>(".aggregate-mode-hint")!;
+      expect(hint).toHaveTextContent("Click to see averages");
+      expect(hint.style.left).not.toBe("");
+      expect(hint.style.top).not.toBe("");
+      if (index === 0) await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toBeNull(), { timeout: 2500 });
+      await user.unhover(card);
+    }
+
+    fireEvent.click(cards[0]);
+    await user.hover(cards[3]);
+    await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toHaveTextContent("Click to see totals"), { timeout: 1200 });
+  }, 10_000);
+
+  test("toggles all cards between totals and correctly ordered per-workout averages", async () => {
+    const climbing = { id: "11111111111111111111111111111111", key: "climbing", displayName: "Climbing" };
+    const outdoorRun = { id: "22222222222222222222222222222222", key: "outdoor-run", displayName: "Outdoor Run" };
+    const outdoorWalk = { id: "33333333333333333333333333333333", key: "outdoor-walk", displayName: "Outdoor Walk" };
+    const variedSummary = {
+      range,
+      totals: { count: 14, duration: "40200", distance: { value: "62", unit: "km" }, energy: { value: "6700", unit: "kcal" }, routeCount: 9, routedDistance: { value: "62", unit: "km" } },
+      byType: [
+        { type: outdoorWalk, totals: { count: 4, duration: "7200", distance: { value: "12", unit: "km" }, energy: { value: "1200", unit: "kcal" }, routeCount: 4, routedDistance: { value: "12", unit: "km" } } },
+        { type: outdoorRun, totals: { count: 5, duration: "15000", distance: { value: "50", unit: "km" }, energy: { value: "3000", unit: "kcal" }, routeCount: 5, routedDistance: { value: "50", unit: "km" } } },
+        { type: climbing, totals: { count: 5, duration: "18000", distance: null, energy: { value: "2500", unit: "kcal" }, routeCount: 0, routedDistance: null } },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(variedSummary)) : Promise.resolve(json(workoutPage())));
+    renderSummary();
+
+    const workoutsCard = await screen.findByRole("button", { name: /Workouts.*By workout type/ });
+    const durationCard = screen.getByRole("button", { name: /Duration.*By workout type/ });
+    const distanceCard = screen.getByRole("button", { name: /Distance.*By workout type/ });
+    const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
+    const breakdownText = (card: HTMLElement) => Array.from(document.getElementById(card.getAttribute("aria-controls")!)!.children, (row) => row.textContent);
+
+    expect(workoutsCard).toHaveTextContent("14");
+    expect(durationCard).toHaveTextContent("11h 10m");
+    expect(distanceCard).toHaveTextContent("38.53 mi");
+    expect(energyCard).toHaveTextContent("6,700 kcal");
+    expect(breakdownText(workoutsCard)).toEqual(["Climbing5 (36%)", "Outdoor Run5 (36%)", "Outdoor Walk4 (28%)"]);
+    expect(breakdownText(distanceCard)).toEqual(["Outdoor Run31.07 mi", "Outdoor Walk7.46 mi"]);
+    expect(breakdownText(distanceCard).join("")).not.toContain("Climbing");
+
+    await userEvent.click(distanceCard);
+    expect(screen.getByText("Range averages")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { pressed: true })).toEqual([workoutsCard, durationCard, distanceCard, energyCard]);
+    expect(workoutsCard).toHaveTextContent("14");
+    expect(durationCard).toHaveTextContent("48m");
+    expect(distanceCard).toHaveTextContent("4.28 mi");
+    expect(energyCard).toHaveTextContent("479 kcal");
+    const durationRows = Array.from(document.getElementById(durationCard.getAttribute("aria-controls")!)!.children, (row) => [row.querySelector("b")?.textContent, row.querySelector(".tooltip-trigger")?.textContent]);
+    expect(durationRows).toEqual([["Climbing", "1h 00m"], ["Outdoor Run", "50m"], ["Outdoor Walk", "30m"]]);
+    expect(breakdownText(distanceCard)).toEqual(["Outdoor Run6.21 mi", "Outdoor Walk1.86 mi"]);
+    expect(breakdownText(distanceCard).join("")).not.toContain("Climbing");
+    expect(breakdownText(energyCard)).toEqual(["Outdoor Run600 kcal", "Climbing500 kcal", "Outdoor Walk300 kcal"]);
+
+    await userEvent.click(workoutsCard);
+    expect(screen.getByText("Range totals")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { pressed: false })).toEqual(expect.arrayContaining([workoutsCard, durationCard, distanceCard, energyCard]));
   });
 
   test("rounds calories everywhere while omitting kcal only from individual workout values", async () => {
@@ -370,7 +447,7 @@ describe("Summary", () => {
 
     const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
     expect(energyCard).toHaveTextContent("451 kcal");
-    fireEvent.click(energyCard);
+    fireEvent.pointerEnter(energyCard, { pointerType: "mouse" });
     expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent("Running451 kcal");
 
     const mobileRow = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
@@ -723,7 +800,7 @@ describe("Summary", () => {
     let deletionRequest: { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined } | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 1, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" } }, byType: [] } : summary));
+      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 1, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] } : summary));
       if (path.startsWith("/api/workouts?")) return Promise.resolve(json(deleted
         ? { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }
         : { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 } }));
@@ -739,7 +816,7 @@ describe("Summary", () => {
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
     const dialog = screen.getByRole("dialog", { name: "Delete workout?" });
-    expect(dialog).toHaveTextContent("Delete Running on Aug 5 2026?");
+    expect(dialog).toHaveTextContent("Delete Running on Aug 5, 2026?");
     expect(dialog).toHaveTextContent("This workout will be hidden from view immediately. All associated data, including route, import history, and derived data, will be purged by a background task. This cannot be undone. Are you sure?");
     expect(dialog).toHaveClass("single-deletion-dialog");
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
@@ -787,7 +864,7 @@ describe("Summary", () => {
     let request: { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined } | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" } }, byType: [] } : summary));
+      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] } : summary));
       if (path === "/api/workouts?startDate=2026-08-01&endDate=2026-08-31") {
         request = { path, method: init?.method, csrf: new Headers(init?.headers).get("X-CSRF-Token"), body: init?.body };
         return deferredDelete;
@@ -805,7 +882,7 @@ describe("Summary", () => {
     await user.click(open);
     const dialog = screen.getByRole("dialog", { name: "Delete workouts in this range?" });
     expect(dialog).toHaveClass("range-deletion-dialog", "single-deletion-dialog");
-    expect(dialog).toHaveTextContent("Delete all workouts from Aug 1 2026 through Aug 31 2026, inclusive?");
+    expect(dialog).toHaveTextContent("Delete all workouts from Aug 1, 2026 to Aug 31, 2026, inclusive?");
     expect(dialog).toHaveTextContent("These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.");
     expect(within(dialog).queryByText("Confirmation")).not.toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
@@ -1000,7 +1077,7 @@ describe("Summary", () => {
       : Promise.resolve(json(workoutPage())));
     renderSummary();
     const card = await screen.findByRole("button", { name: /Workouts.*By workout type/ });
-    fireEvent.click(card);
+    await userEvent.hover(card);
     const panel = document.getElementById(card.getAttribute("aria-controls")!);
     expect(panel).toHaveAttribute("aria-hidden", "false");
     expect(within(panel!).getAllByText(/Workout type \d+/)).toHaveLength(40);

@@ -28,6 +28,7 @@ export interface Preferences {
   clockFormat: "12h" | "24h";
   workoutColumns: WorkoutColumn[];
   pageSize: number;
+  initialized: boolean;
   dateRange?: DateRangePreference | null;
 }
 
@@ -60,6 +61,8 @@ export interface SummaryTotals {
   duration: string;
   distance: ExactMetric | null;
   energy: ExactMetric | null;
+  routeCount: number;
+  routedDistance: ExactMetric | null;
 }
 
 export interface WorkoutSummary {

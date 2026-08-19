@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-func NewHandler(db *pgxpool.Pool, logger *slog.Logger) http.Handler {
+func NewHandler(db, osmDB *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler { return otelhttp.NewHandler(next, "worker.probe") })
 	router.Get("/health/live", func(w http.ResponseWriter, _ *http.Request) {
@@ -22,8 +22,10 @@ func NewHandler(db *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	router.Get("/health/ready", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if !database.Ready(ctx, db) {
-			logger.WarnContext(r.Context(), "worker readiness check failed", "database_ready", false)
+		appReady, osmReady := database.Ready(ctx, db), database.OSMReady(ctx, osmDB)
+		if !appReady || !osmReady {
+			logger.WarnContext(r.Context(), "worker readiness check failed",
+				"application_database_ready", appReady, "osm_database_ready", osmReady)
 			writeHealth(w, http.StatusServiceUnavailable, "unavailable")
 			return
 		}

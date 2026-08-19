@@ -90,6 +90,7 @@ CREATE TABLE app.preferences (
     workout_columns text[] NOT NULL DEFAULT ARRAY['date','type','duration','distance'],
     page_size integer NOT NULL DEFAULT 25 CHECK (page_size >= 10),
     date_range text CHECK (date_range IS NULL OR length(date_range) <= 64),
+    initialized_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp()
 );
 ALTER TABLE app.preferences ENABLE ROW LEVEL SECURITY;

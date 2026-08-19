@@ -100,6 +100,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
+	osmDB, err := database.Open(workerCtx, cfg.OSMDatabaseURL, "workouts-worker-osm")
+	if err != nil {
+		return err
+	}
+	defer osmDB.Close()
 	if err := workerapp.ConfigureFileSlotLimits(workerCtx, db, cfg.AccountConcurrency, cfg.GlobalConcurrency); err != nil {
 		return err
 	}
@@ -108,7 +113,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           workerapp.NewHandler(db, logger),
+		Handler:           workerapp.NewHandler(db, osmDB, logger),
 		ReadHeaderTimeout: config.ReadHeaderTimeout(),
 		ReadTimeout:       config.ReadTimeout(),
 		WriteTimeout:      config.WriteTimeout(),
