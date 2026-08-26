@@ -164,11 +164,12 @@ func TestRouteTimestampOffsetCanDifferFromWorkout(t *testing.T) {
 
 func TestOptionalRouteWarningsUseIndependentFields(t *testing.T) {
 	workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"route":[{"timestamp":"2026-01-02 03:04:06 -0700","latitude":1,"longitude":2,"altitude":1000001,"speed":10001,"course":361,"horizontalAccuracy":1000001,"verticalAccuracy":1000001,"speedAccuracy":1000001,"courseAccuracy":361}]}`
-	warnings := parseOne(t, workout).Warnings
+	parsed := parseOne(t, workout)
+	warnings := parsed.Warnings
 	want := []WarningField{
 		WarningFieldAltitude, WarningFieldRouteSpeed, WarningFieldCourse,
 		WarningFieldHorizontalAccuracy, WarningFieldVerticalAccuracy,
-		WarningFieldSpeedAccuracy, WarningFieldCourseAccuracy,
+		WarningFieldSpeedAccuracy,
 	}
 	counts := make(map[WarningField]int)
 	for _, warning := range warnings {
@@ -183,6 +184,21 @@ func TestOptionalRouteWarningsUseIndependentFields(t *testing.T) {
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("unexpected route warning fields: %v", counts)
+	}
+	point := parsed.Route[0]
+	if point.CourseAccuracy == nil || *point.CourseAccuracy != maximumCourseAccuracy {
+		t.Fatalf("course accuracy = %v", point.CourseAccuracy)
+	}
+}
+
+func TestInvalidCourseAccuracyIsSilentlyNormalized(t *testing.T) {
+	workout := `{"name":"Walk","start":"2026-01-02 03:04:05 -0700","end":"2026-01-02 03:05:05 -0700","duration":60,"route":[{"timestamp":"2026-01-02 03:04:06 -0700","latitude":1,"longitude":2,"courseAccuracy":"unknown"},{"timestamp":"2026-01-02 03:04:07 -0700","latitude":1,"longitude":2,"courseAccuracy":9999}]}`
+	parsed := parseOne(t, workout)
+	if parsed.Route[0].CourseAccuracy != nil || parsed.Route[1].CourseAccuracy == nil || *parsed.Route[1].CourseAccuracy != maximumCourseAccuracy {
+		t.Fatalf("course accuracy values = %v/%v", parsed.Route[0].CourseAccuracy, parsed.Route[1].CourseAccuracy)
+	}
+	if len(parsed.Warnings) != 0 {
+		t.Fatalf("warnings = %#v", parsed.Warnings)
 	}
 }
 

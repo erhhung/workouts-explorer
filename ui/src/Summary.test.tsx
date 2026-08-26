@@ -36,9 +36,14 @@ const workout: Workout = {
   location: "Boulder",
   distance: { value: "10.5", unit: "km" },
   pace: { value: "5.25", unit: "min/km" },
+  splitPaces: { kilometer: { fastestSeconds: "280", slowestSeconds: "390" }, mile: { fastestSeconds: "480", slowestSeconds: "660" } },
   calories: { value: "450.25", unit: "kcal" },
+  activeCalories: { value: "400.1", unit: "kcal" },
   heartRate: null,
-  elevation: { value: "100", unit: "m" },
+  maximumHeartRate: null,
+  elevationGain: { value: "100", unit: "m" },
+  minimumElevation: { value: "1500", unit: "m" },
+  maximumElevation: { value: "1800", unit: "m" },
   routePointCount: 42,
   routeAvailable: true,
 };
@@ -48,7 +53,19 @@ function json(body: unknown, status = 200) {
 }
 
 function workoutPage(page = 1, items = [workout], pageSize = 25) {
-  return { range, pagination: { page, pageSize, totalItems: 26, totalPages: 2 }, items };
+  return {
+    range,
+    pagination: { page, pageSize, totalItems: 26, totalPages: 2 },
+    columnExtents: {
+      duration: "32482.873821020126",
+      distance: { value: "29.20321750640869", unit: "km" },
+      pace: { value: "18.538139", unit: "min/km" },
+      calories: { value: "2502.151788711548", unit: "kcal" },
+      heartRate: { value: "121", unit: "count/min" },
+      elevationGain: { value: "914.05", unit: "m" },
+    },
+    items,
+  };
 }
 
 function renderSummary(overrides: Partial<Preferences> = {}, onDateRangeSaved = vi.fn(), onShowOnMap?: (workoutId: string) => void) {
@@ -102,10 +119,10 @@ describe("Summary", () => {
         : workoutPage()));
     });
     const view = renderSummary();
-    expect(await screen.findByText("26 sessions / Page 1 of 2")).toBeInTheDocument();
+    expect(await screen.findByText("26 sessions | page 1 of 2")).toBeInTheDocument();
     singular = true;
     view.rerenderPreferences({ dateRange: "thisMonth" });
-    expect(await screen.findByText("1 session / Page 1 of 1")).toBeInTheDocument();
+    expect(await screen.findByText("1 session | page 1 of 1")).toBeInTheDocument();
   });
 
   test("rounds duration displays to the nearest whole minute", () => {
@@ -162,7 +179,7 @@ describe("Summary", () => {
     let table = await screen.findByRole("table");
     let date = within(within(table).getAllByRole("row")[1]).getByText("Wed", { selector: ".weekday-badge" }).closest<HTMLElement>(".workout-date")!;
     expect(date).toHaveTextContent("WedAug 5, 2026, 7:30 AMMDT");
-    const badge = within(date).getByLabelText("America/Denver (UTC-6:00)");
+    const badge = within(date).getByLabelText("UTC-6:00 recorded");
     expect(badge).toHaveTextContent("MDT");
     expect(badge).not.toHaveAttribute("title");
     expect(badge).toHaveAttribute("tabindex", "0");
@@ -189,11 +206,13 @@ describe("Summary", () => {
     const offsetOnlyBadge = rows[0].querySelector<HTMLElement>(".timezone-badge .tooltip-trigger")!;
     expect(offsetOnlyBadge).toHaveTextContent("UTC-6");
     expect(offsetOnlyBadge).not.toHaveAttribute("title");
+    expect(document.getElementById(offsetOnlyBadge.getAttribute("aria-describedby")!)).toHaveTextContent("UTC-6:00 recorded | timezone unavailable");
     expect(rows[0]).not.toHaveTextContent("MDT");
 
     const offsetBadge = rows[1].querySelector<HTMLElement>(".timezone-badge .tooltip-trigger")!;
     expect(offsetBadge).toHaveTextContent("UTC-7");
     expect(offsetBadge).not.toHaveAttribute("title");
+    expect(document.getElementById(offsetBadge.getAttribute("aria-describedby")!)).toHaveTextContent("UTC-7:00 recorded | timezone unavailable");
     expect(rows[1]).not.toHaveTextContent("America/Denver");
     expect(rows[1].querySelector(".tooltip-trigger")?.textContent).toBe("UTC-7");
 
@@ -215,9 +234,9 @@ describe("Summary", () => {
     const badges = Array.from((await screen.findByRole("table")).querySelectorAll<HTMLElement>("tbody .timezone-badge .tooltip-trigger"));
     expect(badges.map((badge) => badge.textContent)).toEqual(["PST", "PDT", "GMT+5:30"]);
     expect(badges.map((badge) => document.getElementById(badge.getAttribute("aria-describedby")!)?.textContent)).toEqual([
-      "America/Los_Angeles (UTC-8:00)",
-      "America/Los_Angeles (UTC-7:00)",
-      "Asia/Kolkata (UTC+5:30)",
+      "UTC-8:00 recorded",
+      "UTC-7:00 recorded",
+      "UTC+5:30 recorded",
     ]);
   });
 
@@ -240,9 +259,11 @@ describe("Summary", () => {
 
     const rowDuration = (await screen.findByRole("table")).querySelector<HTMLElement>("tbody .duration-value")!;
     expect(rowDuration).toHaveTextContent("1h 05m");
-    expect(rowDuration.querySelector(".tooltip-trigger")).not.toHaveAttribute("title");
+    const rowDurationTrigger = rowDuration.querySelector<HTMLElement>(".tooltip-trigger")!;
+    expect(rowDurationTrigger).not.toHaveAttribute("title");
+    expect(document.getElementById(rowDurationTrigger.getAttribute("aria-describedby")!)).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
     const mobileRow = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
-    expect(mobileRow).toHaveAttribute("title", "1h 05m 01s");
+    expect(mobileRow).toHaveAttribute("title", "1:05:01 | 7:30a - 8:35a (1:05:00)");
     expect(mobileRow.querySelector(".duration-value")).toHaveTextContent("1h 05m");
     expect(mobileRow.querySelector("[tabindex]")).toBeNull();
     fireEvent.click(mobileRow);
@@ -251,7 +272,7 @@ describe("Summary", () => {
     expect(detailDuration).toHaveTextContent("Duration1h 05m");
     const detailTrigger = detailDuration.querySelector<HTMLElement>(".duration-value .tooltip-trigger")!;
     expect(detailTrigger).toHaveAttribute("tabindex", "0");
-    expect(document.getElementById(detailTrigger.getAttribute("aria-describedby")!)).toHaveTextContent("1h 05m 01s");
+    expect(document.getElementById(detailTrigger.getAttribute("aria-describedby")!)).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
   });
 
   test("persists shortcut and validated custom selections with CSRF while retaining a failed selection", async () => {
@@ -431,6 +452,21 @@ describe("Summary", () => {
     expect(screen.getAllByRole("button", { pressed: false })).toEqual(expect.arrayContaining([workoutsCard, durationCard, distanceCard, energyCard]));
   });
 
+  test("shows total-calorie averages for the range and each workout type", async () => {
+    const outdoorWalk = { id: "33333333333333333333333333333333", key: "outdoor-walk", displayName: "Outdoor Walk" };
+    const totalCalorieSummary = {
+      range,
+      totals: { count: 2, duration: "7200", distance: { value: "10", unit: "km" }, energy: { value: "385", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10", unit: "km" } },
+      byType: [{ type: outdoorWalk, totals: { count: 2, duration: "7200", distance: { value: "10", unit: "km" }, energy: { value: "385", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10", unit: "km" } } }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(totalCalorieSummary)) : Promise.resolve(json(workoutPage())));
+    renderSummary();
+    const energyCard = await screen.findByRole("button", { name: /Energy.*By workout type/ });
+    await userEvent.click(energyCard);
+    expect(energyCard).toHaveTextContent("193 kcal");
+    expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent("Outdoor Walk193 kcal");
+  });
+
   test("rounds calories everywhere while omitting kcal only from individual workout values", async () => {
     const calorieTotals = { ...totals, energy: { value: "450.75", unit: "kcal" } };
     const calorieSummary = { ...summary, totals: calorieTotals, byType: [{ type: running, totals: calorieTotals }] };
@@ -442,8 +478,8 @@ describe("Summary", () => {
 
     const table = await screen.findByRole("table");
     const calorieCell = within(table).getAllByRole("row")[1].querySelector<HTMLElement>(".workout-cell--calories")!;
-    expect(calorieCell).toHaveTextContent("451");
-    expect(calorieCell).not.toHaveTextContent("kcal");
+    expect(calorieCell.querySelector(".tooltip-trigger")).toHaveTextContent("451");
+    expect(calorieCell.querySelector(".tooltip-content")).toHaveTextContent("451 kcal total | 400 kcal active");
 
     const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
     expect(energyCard).toHaveTextContent("451 kcal");
@@ -453,8 +489,77 @@ describe("Summary", () => {
     const mobileRow = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
     fireEvent.click(mobileRow);
     const calorieDetail = within(document.getElementById(mobileRow.getAttribute("aria-controls")!)!).getByText("Calories").closest("div")!;
-    expect(calorieDetail).toHaveTextContent("Calories451");
-    expect(calorieDetail).not.toHaveTextContent("kcal");
+    expect(calorieDetail.querySelector(".tooltip-trigger")).toHaveTextContent("451");
+    expect(calorieDetail.querySelector(".tooltip-content")).toHaveTextContent("451 kcal total | 400 kcal active");
+  });
+
+  test("shows total calories, rounded heart rate, split pace, and elevation details", async () => {
+    const detailed: Workout = {
+      ...workout,
+      duration: "32482.873821020126",
+      startedAt: "2026-08-23T14:36:26Z",
+      endedAt: "2026-08-24T02:47:55Z",
+      originalStartOffsetMinutes: -420,
+      originalEndOffsetMinutes: -420,
+      distance: { value: "17.09", unit: "km" },
+      pace: { value: "18.538139", unit: "min/km" },
+      splitPaces: { kilometer: null, mile: { fastestSeconds: "1145", slowestSeconds: "3320" } },
+      calories: { value: "2317", unit: "kcal" },
+      activeCalories: { value: "1656", unit: "kcal" },
+      heartRate: { value: "116.4", unit: "count/min" },
+      maximumHeartRate: { value: "154.6", unit: "count/min" },
+      elevationGain: { value: "914.05", unit: "m" },
+      minimumElevation: { value: "2171.0904", unit: "m" },
+      maximumElevation: { value: "3304.8264", unit: "m" },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage(1, [detailed]))));
+    renderSummary({ workoutColumns: ["duration", "distance", "pace", "calories", "heartRate", "elevationGain"] });
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: /Elev gain/ })).toBeInTheDocument();
+    expect(table.querySelector(".workout-cell--duration")).toHaveTextContent("9h 01m");
+    expect(table.querySelector(".workout-cell--distance .tooltip-trigger")).toHaveTextContent("10.62 mi");
+    expect(table.querySelector(".workout-cell--pace .tooltip-trigger")).toHaveTextContent("29m 50s");
+    expect(table.querySelector(".workout-cell--calories .tooltip-trigger")).toHaveTextContent("2,317");
+    expect(table.querySelector(".workout-cell--heartRate .tooltip-trigger")).toHaveTextContent("116 bpm");
+    expect(table.querySelector(".workout-cell--elevationGain .tooltip-trigger")).toHaveTextContent("2,999 ft");
+    const tooltips = Array.from(table.querySelectorAll<HTMLElement>("tbody .tooltip-trigger"), (trigger) => document.getElementById(trigger.getAttribute("aria-describedby")!)?.textContent);
+    expect(tooltips).toEqual([
+      "9:01:23 | 7:36a - 7:47p (12:11:29)",
+      "17.09 km",
+      "19'05\"/mi fastest | 55'20\"/mi slowest",
+      "2,317 kcal total | 1,656 kcal active",
+      "116 bpm average | 155 bpm maximum",
+      "7,123 ft lowest | 10,843 ft highest",
+    ]);
+  });
+
+  test("sizes numeric lanes from date-range extents and right-aligns table-only n/a values", async () => {
+    const shortWorkout: Workout = {
+      ...workout,
+      duration: "2340",
+      calories: { value: "144", unit: "kcal" },
+      elevationGain: { value: "52.4256", unit: "m" },
+      heartRate: null,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
+      ? Promise.resolve(json(summary))
+      : Promise.resolve(json(workoutPage(1, [shortWorkout]))));
+    renderSummary({ workoutColumns: ["duration", "calories", "heartRate", "elevationGain"] });
+    const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
+    const durationLane = row.querySelector<HTMLElement>(".workout-cell--duration .workout-value-lane")!;
+    const calorieLane = row.querySelector<HTMLElement>(".workout-cell--calories .workout-value-lane")!;
+    const elevationLane = row.querySelector<HTMLElement>(".workout-cell--elevationGain .workout-value-lane")!;
+    expect(durationLane).toHaveAttribute("data-width-sample", "9h 01m");
+    expect(durationLane).toHaveTextContent("39m");
+    expect(calorieLane).toHaveAttribute("data-width-sample", "2,502");
+    expect(calorieLane.querySelector(".tooltip-trigger")).toHaveTextContent("144");
+    expect(elevationLane).toHaveAttribute("data-width-sample", "2,999 ft");
+    expect(elevationLane.querySelector(".tooltip-trigger")).toHaveTextContent("172 ft");
+    const unavailable = row.querySelector<HTMLElement>(".workout-cell--heartRate")!;
+    expect(unavailable).toHaveTextContent("n/a");
+    expect(unavailable).not.toHaveTextContent("Unavailable");
+    expect(unavailable.querySelector(".workout-value-lane")).toHaveAttribute("data-width-sample", "121 bpm");
+    expect(unavailable.querySelector(".workout-table-na")).toHaveTextContent("n/a");
   });
 
   test("uses canonical preference columns and sends one server sort while resetting the page", async () => {
@@ -633,7 +738,7 @@ describe("Summary", () => {
     expect(details).toHaveTextContent("Local start");
     expect(details).toHaveTextContent("Local end");
     expect(details).toHaveTextContent("8:35 AM");
-    expect(within(details!).getAllByLabelText("America/Denver (UTC-6:00)")).toHaveLength(2);
+    expect(within(details!).getAllByLabelText("UTC-6:00 recorded")).toHaveLength(2);
   });
 
   test("opens full chronological provenance from desktop and mobile action positions", async () => {

@@ -136,6 +136,42 @@ func TestEncodeWarningsUsesDatabaseSchema(t *testing.T) {
 	}
 }
 
+func TestWarningSizeAccountsForJSONBWhitespace(t *testing.T) {
+	warnings := make([]healthautoexport.Warning, 2711)
+	for index := range warnings {
+		warnings[index] = healthautoexport.Warning{
+			Code: healthautoexport.WarningInvalidOptionalRouteValue, Field: healthautoexport.WarningFieldCourseAccuracy, RoutePoint: 12719,
+		}
+	}
+	encoded, err := encodeWarnings(warnings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxWorkoutWarningBytes {
+		t.Fatalf("compact warnings unexpectedly exceed database limit: %d", len(encoded))
+	}
+	if size := warningsDatabaseTextSize(encoded, len(warnings)); size <= maxWorkoutWarningBytes {
+		t.Fatalf("jsonb text size=%d should exceed database limit", size)
+	}
+}
+
+func TestOwnerVisibleFailureSummaries(t *testing.T) {
+	warnings := make([]healthautoexport.Warning, 2711)
+	for index := range warnings {
+		warnings[index] = healthautoexport.Warning{Code: healthautoexport.WarningInvalidOptionalRouteValue, Field: healthautoexport.WarningFieldSpeedAccuracy, RoutePoint: index}
+	}
+	warningFailure := warningLimitFailure(1, warnings, 263086)
+	if warningFailure.summary != "Workout 2 produced 2711 warnings (263086 database bytes); limits are 4096 warnings and 262144 bytes; warning types: invalid_optional_route_value/route_speed_accuracy=2711." {
+		t.Fatalf("warning summary=%q", warningFailure.summary)
+	}
+	parseSummary := parseFailureSummary(&healthautoexport.ParseError{
+		Code: healthautoexport.ErrorInvalidRoute, Workout: 2, RoutePoint: 7,
+	})
+	if parseSummary != "The parser rejected the file at workout 3, route point 8 (invalid_route)." {
+		t.Fatalf("parse summary=%q", parseSummary)
+	}
+}
+
 func TestDiscoverSourceFileBoundsAndOpenFailure(t *testing.T) {
 	write := func(t *testing.T, root, name string) {
 		t.Helper()

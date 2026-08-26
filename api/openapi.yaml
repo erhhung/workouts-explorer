@@ -608,7 +608,7 @@ paths:
         - {$ref: '#/components/parameters/Timezone'}
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1}}
-        - {name: sort, in: query, style: form, explode: true, schema: {type: array, maxItems: 8, items: {type: string, pattern: '^(date|type|duration|distance|pace|calories|heartRate|elevation):(asc|desc)$'}}}
+        - {name: sort, in: query, style: form, explode: true, schema: {type: array, maxItems: 8, items: {type: string, pattern: '^(date|type|duration|distance|pace|calories|heartRate|elevationGain):(asc|desc)$'}}}
       responses:
         '200': {description: Account workouts in the resolved date range, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
@@ -1015,7 +1015,7 @@ components:
         timezone: {type: string, minLength: 1, maxLength: 64}
         firstWeekday: {type: string, enum: [monday, sunday]}
         clockFormat: {type: string, enum: [12h, 24h]}
-        workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevation]}}
+        workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
         initialized: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
@@ -1029,7 +1029,7 @@ components:
         timezone: {type: string, minLength: 1, maxLength: 64}
         firstWeekday: {type: string, enum: [monday, sunday]}
         clockFormat: {type: string, enum: [12h, 24h]}
-        workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevation]}}
+        workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     HealthAutoExportLocalConfig:
@@ -1376,7 +1376,7 @@ components:
     MapSelectionWorkout:
       type: object
       additionalProperties: false
-      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevation]
+      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevationGain]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         type: {$ref: '#/components/schemas/MapSelectionWorkoutType'}
@@ -1390,7 +1390,7 @@ components:
         pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
-        elevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        elevationGain: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
     MapSelection:
       type: object
       additionalProperties: false
@@ -1410,10 +1410,24 @@ components:
       properties:
         value: {type: string, pattern: '^-?[0-9]+(?:\.[0-9]+)?$'}
         unit: {type: string}
+    SplitPaceRange:
+      type: object
+      additionalProperties: false
+      required: [fastestSeconds, slowestSeconds]
+      properties:
+        fastestSeconds: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
+        slowestSeconds: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
+    WorkoutSplitPaces:
+      type: object
+      additionalProperties: false
+      required: [kilometer, mile]
+      properties:
+        kilometer: {allOf: [{$ref: '#/components/schemas/SplitPaceRange'}], nullable: true}
+        mile: {allOf: [{$ref: '#/components/schemas/SplitPaceRange'}], nullable: true}
     Workout:
       type: object
       additionalProperties: false
-      required: [id, sourceId, type, startedAt, endedAt, duration, localStartDate, displayTimezone, originalStartOffsetMinutes, originalEndOffsetMinutes, timezone, indoor, location, distance, pace, calories, heartRate, elevation, routePointCount, routeAvailable]
+      required: [id, sourceId, type, startedAt, endedAt, duration, localStartDate, displayTimezone, originalStartOffsetMinutes, originalEndOffsetMinutes, timezone, indoor, location, distance, pace, splitPaces, calories, activeCalories, heartRate, maximumHeartRate, elevationGain, minimumElevation, maximumElevation, routePointCount, routeAvailable]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         sourceId: {$ref: '#/components/schemas/CompactUUID'}
@@ -1430,9 +1444,14 @@ components:
         location: {type: string, nullable: true}
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        splitPaces: {$ref: '#/components/schemas/WorkoutSplitPaces'}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        activeCalories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
-        elevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        maximumHeartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        elevationGain: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        minimumElevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        maximumElevation: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         routePointCount: {type: integer, minimum: 0}
         routeAvailable: {type: boolean}
     Pagination:
@@ -1444,13 +1463,25 @@ components:
         pageSize: {type: integer, minimum: 1}
         totalItems: {type: integer, format: int64, minimum: 0}
         totalPages: {type: integer, format: int64, minimum: 0}
+    WorkoutColumnExtents:
+      type: object
+      additionalProperties: false
+      required: [duration, distance, pace, calories, heartRate, elevationGain]
+      properties:
+        duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$', nullable: true}
+        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        elevationGain: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
     WorkoutList:
       type: object
       additionalProperties: false
-      required: [range, pagination, items]
+      required: [range, pagination, columnExtents, items]
       properties:
         range: {$ref: '#/components/schemas/ResolvedDateRange'}
         pagination: {$ref: '#/components/schemas/Pagination'}
+        columnExtents: {$ref: '#/components/schemas/WorkoutColumnExtents'}
         items: {type: array, items: {$ref: '#/components/schemas/Workout'}}
     WorkoutProvenanceWarning:
       type: object
@@ -1529,7 +1560,7 @@ components:
     WorkoutGeoJSONProperties:
       type: object
       additionalProperties: false
-      required: [workoutId, workoutType, startedAt, endedAt, pointCount, bounds, elevation]
+      required: [workoutId, workoutType, startedAt, endedAt, pointCount, bounds, elevationSummary]
       properties:
         workoutId: {$ref: '#/components/schemas/CompactUUID'}
         workoutType: {type: string}
@@ -1537,7 +1568,7 @@ components:
         endedAt: {type: string, format: date-time}
         pointCount: {type: integer, minimum: 1}
         bounds: {$ref: '#/components/schemas/RouteBounds'}
-        elevation: {allOf: [{$ref: '#/components/schemas/RouteElevation'}], nullable: true}
+        elevationSummary: {allOf: [{$ref: '#/components/schemas/RouteElevation'}], nullable: true}
     GeoJSONLineString:
       type: object
       additionalProperties: false

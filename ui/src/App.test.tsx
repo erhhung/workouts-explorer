@@ -34,7 +34,7 @@ const preferences = {
 };
 const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] };
 const emptyWorkouts = { range: emptySummary.range, pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] };
-const oneWorkout = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", sourceId: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", key: "running", displayName: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", displayTimezone: "America/Denver", originalStartOffsetMinutes: -360, originalEndOffsetMinutes: -360, timezone: "America/Denver", indoor: false, location: null, distance: { value: "10", unit: "km" }, pace: { value: "6", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevation: { value: "100", unit: "m" }, routePointCount: 2, routeAvailable: true };
+const oneWorkout = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", sourceId: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", key: "running", displayName: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", displayTimezone: "America/Denver", originalStartOffsetMinutes: -360, originalEndOffsetMinutes: -360, timezone: "America/Denver", indoor: false, location: null, distance: { value: "10", unit: "km" }, pace: { value: "6", unit: "min/km" }, splitPaces: { kilometer: null, mile: null }, calories: { value: "500", unit: "kcal" }, activeCalories: { value: "400", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, maximumHeartRate: { value: "160", unit: "count/min" }, elevationGain: { value: "100", unit: "m" }, minimumElevation: null, maximumElevation: null, routePointCount: 2, routeAvailable: true };
 const workoutsWithOne = { ...emptyWorkouts, pagination: { ...emptyWorkouts.pagination, totalItems: 1, totalPages: 1 }, items: [oneWorkout] };
 const publicConfig = {
   productName: "Workouts Explorer",
@@ -487,6 +487,9 @@ describe("authenticated shell", () => {
     const dialog = await screen.findByRole("dialog", { name: "Preferences" });
     expect(screen.getByLabelText("Username", { selector: "input[readonly]" })).toHaveValue("trailrunner");
     expect(screen.getByLabelText("E-mail", { selector: "input[readonly]" })).toHaveValue("avery@example.test");
+    for (const label of ["Theme", "Units", "Time zone", "First weekday", "Clock format", "Workouts per page"]) {
+      expect(screen.getByLabelText(label).parentElement).toHaveClass("select-control");
+    }
     await user.clear(screen.getByLabelText("Full name"));
     await user.type(screen.getByLabelText("Full name"), "Avery Summit");
     await user.selectOptions(screen.getByLabelText("Theme"), "light");

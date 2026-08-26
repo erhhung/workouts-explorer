@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"syscall"
 	"time"
 
@@ -30,6 +31,8 @@ const (
 	maxDirectoryEntries    = 100_000
 	maxEligibleSourceFiles = 10_000
 	maxFailedProcessing    = 100
+	maxWorkoutWarnings     = 4096
+	maxWorkoutWarningBytes = 262144
 )
 
 var (
@@ -720,21 +723,33 @@ func readSourceFile(ctx context.Context, directory *os.File, discovered sourceFi
 			return parsedSourceFile{}, &ingestFailure{"source-file-mutated", "A source file changed while it was being read."}
 		}
 		code := "source-file-invalid"
+		summary := "The file could not be parsed."
 		var parsed *healthautoexport.ParseError
-		if errors.As(err, &parsed) && parsed.Code == healthautoexport.ErrorReadFailure {
-			code = "source-file-unavailable"
+		if errors.As(err, &parsed) {
+			if parsed.Code == healthautoexport.ErrorReadFailure {
+				code = "source-file-unavailable"
+				summary = "The file could not be read completely."
+			} else {
+				summary = parseFailureSummary(parsed)
+			}
 		}
-		return parsedSourceFile{}, &ingestFailure{code, "A source file could not be processed."}
+		return parsedSourceFile{}, &ingestFailure{code, summary}
 	}
 	final, err := file.Stat()
 	if err != nil || !sameFileVersion(discovered, final) || final.Size() != initial.Size() {
 		return parsedSourceFile{}, &ingestFailure{"source-file-mutated", "A source file changed while it was being read."}
 	}
-	for _, workout := range document.Workouts {
+	for workoutIndex, workout := range document.Workouts {
 		warnings, err := encodeWarnings(workout.Warnings)
-		if err != nil || len(workout.Warnings) > 4096 || len(warnings) > 262144 ||
-			(workout.Location != nil && *workout.Location == "") {
-			return parsedSourceFile{}, &ingestFailure{"source-file-invalid", "A source file could not be processed."}
+		if err != nil {
+			return parsedSourceFile{}, &ingestFailure{"source-file-invalid", fmt.Sprintf("Workout %d warnings could not be encoded.", workoutIndex+1)}
+		}
+		warningBytes := warningsDatabaseTextSize(warnings, len(workout.Warnings))
+		if len(workout.Warnings) > maxWorkoutWarnings || warningBytes > maxWorkoutWarningBytes {
+			return parsedSourceFile{}, warningLimitFailure(workoutIndex, workout.Warnings, warningBytes)
+		}
+		if workout.Location != nil && *workout.Location == "" {
+			return parsedSourceFile{}, &ingestFailure{"source-file-invalid", fmt.Sprintf("Workout %d has an empty location value.", workoutIndex+1)}
 		}
 	}
 	return parsedSourceFile{sourceFile: discovered, checksum: hashSum(digest), document: document}, nil
@@ -967,6 +982,13 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 		if !replaced {
 			return "", errors.New("route summary was not replaced")
 		}
+		var splitsReplaced bool
+		if err = tx.QueryRow(ctx, `SELECT app.replace_workout_split_summary($1)`, workoutID).Scan(&splitsReplaced); err != nil {
+			return "", err
+		}
+		if !splitsReplaced {
+			return "", errors.New("route split summary was not replaced")
+		}
 	}
 	warnings, err := encodeWarnings(workout.Warnings)
 	if err != nil {
@@ -1036,6 +1058,55 @@ func encodeWarnings(warnings []healthautoexport.Warning) ([]byte, error) {
 	return json.Marshal(safe)
 }
 
+func warningsDatabaseTextSize(encoded []byte, count int) int {
+	if count == 0 {
+		return len(encoded)
+	}
+	// PostgreSQL's jsonb text form adds spaces after five object separators and
+	// between adjacent array elements, while json.Marshal emits compact JSON.
+	return len(encoded) + 6*count - 1
+}
+
+func warningLimitFailure(workoutIndex int, warnings []healthautoexport.Warning, databaseBytes int) *ingestFailure {
+	type warningGroup struct {
+		key   string
+		count int
+	}
+	counts := make(map[string]int)
+	for _, warning := range warnings {
+		counts[fmt.Sprintf("%s/%s", warning.Code, warning.Field)]++
+	}
+	groups := make([]warningGroup, 0, len(counts))
+	for key, count := range counts {
+		groups = append(groups, warningGroup{key, count})
+	}
+	sort.Slice(groups, func(left, right int) bool {
+		return groups[left].count > groups[right].count || (groups[left].count == groups[right].count && groups[left].key < groups[right].key)
+	})
+	breakdown := ""
+	for index, group := range groups[:min(3, len(groups))] {
+		if index > 0 {
+			breakdown += ", "
+		}
+		breakdown += fmt.Sprintf("%s=%d", group.key, group.count)
+	}
+	return &ingestFailure{"source-file-invalid", fmt.Sprintf(
+		"Workout %d produced %d warnings (%d database bytes); limits are %d warnings and %d bytes; warning types: %s.",
+		workoutIndex+1, len(warnings), databaseBytes, maxWorkoutWarnings, maxWorkoutWarningBytes, breakdown,
+	)}
+}
+
+func parseFailureSummary(failure *healthautoexport.ParseError) string {
+	location := ""
+	if failure.Workout >= 0 {
+		location = fmt.Sprintf(" at workout %d", failure.Workout+1)
+		if failure.RoutePoint >= 0 {
+			location += fmt.Sprintf(", route point %d", failure.RoutePoint+1)
+		}
+	}
+	return fmt.Sprintf("The parser rejected the file%s (%s).", location, failure.Code)
+}
+
 func (r *Runner) persistFailedFile(ctx context.Context, job claimedJob, checkpoint fileCheckpoint, failure ingestFailure) error {
 	tx, _, err := r.beginIngestWrite(ctx, job)
 	if err != nil {
@@ -1057,7 +1128,24 @@ func (r *Runner) persistFailedFile(ctx context.Context, job claimedJob, checkpoi
 	if err := tx.Commit(ctx); err != nil {
 		return ingestCommitError(err)
 	}
+	r.recordSourceFileFailureLogBestEffort(ctx, job, checkpoint.id)
 	return nil
+}
+
+func (r *Runner) recordSourceFileFailureLogBestEffort(ctx context.Context, job claimedJob, fileID uuid.UUID) {
+	tx, err := beginAccount(ctx, r.db, job.accountID)
+	if err == nil {
+		defer tx.Rollback(ctx)
+		var recorded bool
+		err = tx.QueryRow(ctx, `SELECT app.record_source_file_failure_log($1,$2,$3,$4)`,
+			job.id, r.workerID, job.lease, fileID).Scan(&recorded)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+	}
+	if err != nil {
+		r.logger.WarnContext(ctx, "durable source file failure log unavailable", "job_id", job.id, "error", err)
+	}
 }
 
 func (r *Runner) beginIngestWrite(ctx context.Context, job claimedJob) (pgx.Tx, uuid.UUID, error) {

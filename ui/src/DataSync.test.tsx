@@ -56,6 +56,15 @@ function baseFetch(handler?: (path: string, init?: RequestInit) => Response | un
 }
 
 describe("DataSync", () => {
+  test("aligns retrieval states with the first Manual and Automated fields", () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => undefined));
+    renderDataSync();
+    expect(screen.getByText("Retrieving sources...")).toHaveClass("sync-retrieval-state");
+    expect(screen.getByText("Retrieving schedule...")).toHaveClass("sync-retrieval-state");
+    expect(screen.queryByText("Loading sources...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading schedule...")).not.toBeInTheDocument();
+  });
+
   test("defaults once to connected automatic sources and posts the exact incremental body with CSRF", async () => {
     let request: { body: unknown; csrf: string | null } | undefined;
     baseFetch((path, init) => {
@@ -162,16 +171,38 @@ describe("DataSync", () => {
     expect(region).not.toHaveFocus();
   });
 
-  test.each([[1, "First"], [2, "Second"]])("renders retry ordinal %i and intercepts the root job link", async (retryOrdinal, ordinalLabel) => {
+  test.each([[1, "First", ""], [2, "Second", "first"], [5, "Fifth", "fourth"]] as const)("renders retry ordinal %i with root and previous-job navigation", async (retryOrdinal, ordinalLabel, previousLabel) => {
     const rootJobId = "ABCDEF1234567890ABCDEF1234567890";
+    const previousJobId = "1234567890ABCDEF1234567890ABCDEF";
     const navigate = vi.fn();
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({ ...detail, retryRootJobId: rootJobId, retryOrdinal }) : undefined);
+    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({
+      ...detail,
+      retryRootJobId: rootJobId,
+      retryOrdinal,
+      retryOfJobId: retryOrdinal > 1 ? previousJobId : rootJobId,
+      latestRetryJobId: retryOrdinal < 5 ? "FEDCBA0987654321FEDCBA0987654321" : undefined,
+      latestRetryOrdinal: retryOrdinal < 5 ? 5 : undefined,
+    }) : undefined);
     renderDataSync(JOB_ID, navigate);
     const region = await screen.findByRole("region", { name: "Selected run" });
     const link = await within(region).findByRole("link", { name: rootJobId.slice(0, 8) });
     expect(link).toHaveAttribute("href", `/data-sync/jobs/${rootJobId}`);
     expect(link.closest("dt")).toHaveTextContent(`Retry of job ${rootJobId.slice(0, 8)}`);
     expect(link.closest("div")).toHaveTextContent(ordinalLabel);
+    expect(link.closest("div")?.querySelector("dd")).toHaveClass("retry-ordinal");
+    expect(within(region).queryByText(/Retry by job/)).not.toBeInTheDocument();
+    if (retryOrdinal > 1) {
+      const previous = within(region).getByRole("link", { name: previousLabel });
+      expect(previous).toHaveAttribute("href", `/data-sync/jobs/${previousJobId}`);
+      expect(previous).toHaveTextContent(previousLabel);
+      expect(previous).not.toHaveTextContent("view");
+      expect(previous.closest("small")).toHaveClass("retry-previous");
+      expect(previous.closest("small")).toHaveTextContent(`| view ${previousLabel}`);
+      await userEvent.click(previous);
+      expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${previousJobId}`);
+    } else {
+      expect(within(region).queryByRole("link", { name: /view/ })).not.toBeInTheDocument();
+    }
     await userEvent.click(link);
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${rootJobId}`);
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
@@ -529,7 +560,8 @@ describe("DataSync", () => {
     const region = await screen.findByRole("region", { name: "Selected run" });
     const link = await within(region).findByRole("link", { name: latestRetryJobId.slice(0, 8) });
     expect(link.closest("dt")).toHaveTextContent(`Retry by job ${latestRetryJobId.slice(0, 8)}`);
-    expect(link.closest("div")).toHaveTextContent("Second");
+    expect(link.closest("div")?.querySelector("dd")).toHaveClass("visually-hidden");
+    expect(link.closest("div")).not.toHaveTextContent("Second");
     expect(within(region).queryByRole("button", { name: "Retry deletion" })).not.toBeInTheDocument();
     await userEvent.click(link);
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${latestRetryJobId}`);

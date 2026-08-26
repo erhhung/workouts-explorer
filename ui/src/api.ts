@@ -34,7 +34,7 @@ export interface Preferences {
 
 export type DateRangeEnum = "thisWeek" | "lastWeek" | "last7Days" | "last30Days" | "thisMonth" | "lastMonth" | "thisYear" | "lastYear";
 export type DateRangePreference = DateRangeEnum | `${string}/${string}`;
-export type WorkoutColumn = "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevation";
+export type WorkoutColumn = "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevationGain";
 export type WorkoutSortDirection = "asc" | "desc";
 export interface WorkoutSort { field: WorkoutColumn; direction: WorkoutSortDirection }
 export const DEFAULT_WORKOUT_SORT: WorkoutSort = { field: "date", direction: "desc" };
@@ -87,9 +87,17 @@ export interface Workout {
   location: string | null;
   distance: ExactMetric | null;
   pace: ExactMetric | null;
+  splitPaces: {
+    kilometer: { fastestSeconds: string; slowestSeconds: string } | null;
+    mile: { fastestSeconds: string; slowestSeconds: string } | null;
+  };
   calories: ExactMetric | null;
+  activeCalories: ExactMetric | null;
   heartRate: ExactMetric | null;
-  elevation: ExactMetric | null;
+  maximumHeartRate: ExactMetric | null;
+  elevationGain: ExactMetric | null;
+  minimumElevation: ExactMetric | null;
+  maximumElevation: ExactMetric | null;
   routePointCount: number;
   routeAvailable: boolean;
 }
@@ -97,6 +105,14 @@ export interface Workout {
 export interface WorkoutList {
   range: ResolvedDateRange;
   pagination: { page: number; pageSize: number; totalItems: number; totalPages: number };
+  columnExtents: {
+    duration: string | null;
+    distance: ExactMetric | null;
+    pace: ExactMetric | null;
+    calories: ExactMetric | null;
+    heartRate: ExactMetric | null;
+    elevationGain: ExactMetric | null;
+  };
   items: Workout[];
 }
 
@@ -171,7 +187,7 @@ export interface MapSelectionWorkout {
   pace: ExactMetric | null;
   calories: ExactMetric | null;
   heartRate: ExactMetric | null;
-  elevation: ExactMetric | null;
+  elevationGain: ExactMetric | null;
 }
 
 export interface MapSelection {

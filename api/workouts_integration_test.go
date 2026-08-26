@@ -76,9 +76,28 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	if list.Range.Timezone != "UTC" || list.Pagination.TotalItems != 3 || list.Pagination.TotalPages != 2 || len(list.Items) != 2 || list.Items[0].Id != compactUUID(workouts[1]) || list.Items[1].Id != compactUUID(workouts[0]) {
 		t.Fatalf("unexpected first page=%#v", list)
 	}
+	extentDuration, extentDurationErr := list.ColumnExtents.Duration.Get()
+	extentDistance, extentDistanceErr := list.ColumnExtents.Distance.Get()
+	extentPace, extentPaceErr := list.ColumnExtents.Pace.Get()
+	extentCalories, extentCaloriesErr := list.ColumnExtents.Calories.Get()
+	extentHeartRate, extentHeartRateErr := list.ColumnExtents.HeartRate.Get()
+	extentElevationGain, extentElevationGainErr := list.ColumnExtents.ElevationGain.Get()
+	if extentDurationErr != nil || extentDuration != "240.125" || extentDistanceErr != nil || extentDistance.Value != "5.5" ||
+		extentPaceErr != nil || extentPace.Value != "0.72765151515151515152" || extentCaloriesErr != nil || extentCalories.Value != "300.25" ||
+		extentHeartRateErr != nil || extentHeartRate.Value != "123.5" || extentElevationGainErr != nil || extentElevationGain.Value != "42.75" {
+		t.Fatalf("column extents=%#v", list.ColumnExtents)
+	}
 	displayTimezone, _ := list.Items[0].DisplayTimezone.Get()
 	if list.Items[0].Duration != "120.125" || list.Items[0].RoutePointCount != 2 || !list.Items[0].RouteAvailable || displayTimezone != "UTC-07:00" {
 		t.Fatalf("exact/fallback/route fields=%#v", list.Items[0])
+	}
+	totalCalories, totalCaloriesErr := list.Items[0].Calories.Get()
+	activeCalories, activeCaloriesErr := list.Items[0].ActiveCalories.Get()
+	heartRateMaximum, heartRateMaximumErr := list.Items[0].MaximumHeartRate.Get()
+	minimumElevation, minimumElevationErr := list.Items[0].MinimumElevation.Get()
+	if totalCaloriesErr != nil || totalCalories.Value != "150.25" || activeCaloriesErr != nil || activeCalories.Value != "100.25" ||
+		heartRateMaximumErr != nil || heartRateMaximum.Value != "180" || minimumElevationErr != nil || minimumElevation.Value != "1600.25" {
+		t.Fatalf("workout detail metrics=%#v", list.Items[0])
 	}
 	pointsPath := "/api/workouts/" + strings.ToLower(workouts[1].String()) + "/route/points"
 	pointsResponse := routeOwnerRead(handler, pointsPath, bearer)
@@ -111,14 +130,14 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	if err := json.Unmarshal(geoResponse.Body.Bytes(), &geo); err != nil {
 		t.Fatal(err)
 	}
-	elevation, elevationErr := geo.Properties.Elevation.Get()
+	elevation, elevationErr := geo.Properties.ElevationSummary.Get()
 	if geo.Type != generated.Feature || geo.Geometry.Type != generated.LineString || len(geo.Geometry.Coordinates) != 2 || len(geo.Geometry.Coordinates[0]) != 3 ||
 		geo.Geometry.Coordinates[0][0] != -105 || geo.Geometry.Coordinates[0][2] != 1600.25 || elevationErr != nil || elevation.GainMeters != 1 || geo.Properties.Bounds.MaximumLatitude != 40.1 {
 		t.Fatalf("3D GeoJSON=%#v elevation=%#v err=%v", geo, elevation, elevationErr)
 	}
 	twoDimensional := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[0])+"/route", bearer)
 	var twoDimensionalGeo generated.WorkoutGeoJSONFeature
-	if err := json.Unmarshal(twoDimensional.Body.Bytes(), &twoDimensionalGeo); err != nil || twoDimensional.Code != http.StatusOK || len(twoDimensionalGeo.Geometry.Coordinates) != 2 || len(twoDimensionalGeo.Geometry.Coordinates[0]) != 2 || !twoDimensionalGeo.Properties.Elevation.IsNull() {
+	if err := json.Unmarshal(twoDimensional.Body.Bytes(), &twoDimensionalGeo); err != nil || twoDimensional.Code != http.StatusOK || len(twoDimensionalGeo.Geometry.Coordinates) != 2 || len(twoDimensionalGeo.Geometry.Coordinates[0]) != 2 || !twoDimensionalGeo.Properties.ElevationSummary.IsNull() {
 		t.Fatalf("2D GeoJSON status=%d feature=%#v err=%v", twoDimensional.Code, twoDimensionalGeo, err)
 	}
 	noRoute := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[2])+"/route/points", bearer)
@@ -151,7 +170,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	if err := json.Unmarshal(nulls.Body.Bytes(), &nullPage); err != nil || len(nullPage.Items) != 1 || nullPage.Items[0].Id != compactUUID(workouts[2]) || !nullPage.Items[0].Distance.IsNull() {
 		t.Fatalf("null-last page=%#v err=%v", nullPage, err)
 	}
-	if !nullPage.Items[0].Pace.IsNull() || !nullPage.Items[0].Calories.IsNull() || !nullPage.Items[0].HeartRate.IsNull() || !nullPage.Items[0].Elevation.IsNull() || !nullPage.Items[0].DisplayTimezone.IsNull() {
+	if !nullPage.Items[0].Pace.IsNull() || !nullPage.Items[0].Calories.IsNull() || !nullPage.Items[0].ActiveCalories.IsNull() || !nullPage.Items[0].HeartRate.IsNull() || !nullPage.Items[0].MaximumHeartRate.IsNull() || !nullPage.Items[0].ElevationGain.IsNull() || !nullPage.Items[0].DisplayTimezone.IsNull() {
 		t.Fatalf("suspicious units or unknown timezone were exposed: %#v", nullPage.Items[0])
 	}
 	canonical := routeOwnerRead(handler, "/api/workouts?startDate=2026-03-07&endDate=2026-03-09&pageSize=3&sort=pace:asc", bearer)
@@ -160,7 +179,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatalf("canonical metric list=%#v err=%v", canonicalList, err)
 	}
 	pace, paceErr := canonicalList.Items[0].Pace.Get()
-	if paceErr != nil || pace.Unit != "min/km" || pace.Value != "5" || canonicalList.Items[0].Id != compactUUID(workouts[0]) {
+	if paceErr != nil || pace.Unit != "min/km" || pace.Value != "0.66736111111111111111" || canonicalList.Items[0].Id != compactUUID(workouts[1]) {
 		t.Fatalf("canonical pace was not safely derived or sorted: %#v", canonicalList.Items)
 	}
 
@@ -203,12 +222,12 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	distance, _ := aggregate.Totals.Distance.Get()
 	energy, _ := aggregate.Totals.Energy.Get()
 	routedDistance, _ := aggregate.Totals.RoutedDistance.Get()
-	if aggregate.Totals.Count != 3 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "300.5" || aggregate.Totals.RouteCount != 2 || routedDistance.Value != "8.5" || len(aggregate.ByType) != 2 {
+	if aggregate.Totals.Count != 3 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "450.5" || aggregate.Totals.RouteCount != 2 || routedDistance.Value != "8.5" || len(aggregate.ByType) != 2 {
 		t.Fatalf("summary=%#v", aggregate)
 	}
 	runningDistance, _ := aggregate.ByType[1].Totals.Distance.Get()
 	runningEnergy, _ := aggregate.ByType[1].Totals.Energy.Get()
-	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || runningDistance.Value != "5.5" || runningEnergy.Value != "200.25" || aggregate.ByType[1].Totals.RouteCount != 1 {
+	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || runningDistance.Value != "5.5" || runningEnergy.Value != "300.25" || aggregate.ByType[1].Totals.RouteCount != 1 {
 		t.Fatalf("mixed-unit type totals included suspicious values: %#v", aggregate.ByType[1])
 	}
 	unknownSummary := routeOwnerRead(handler, "/api/summary?startDate=2026-03-09&endDate=2026-03-09", bearer)
@@ -418,10 +437,10 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.workout_aggregates(account_id,workout_id,metric,value,unit,origin) VALUES
-		 ($1,$2,'distance',5.5,'km','provider_direct'),($1,$2,'active_energy_burned',200.25,'kcal','provider_direct'),
+		 ($1,$2,'distance',5.5,'km','provider_direct'),($1,$2,'active_energy_burned',200.25,'kcal','provider_direct'),($1,$2,'total_energy',300.25,'kcal','provider_direct'),
 		 ($1,$2,'speed_average',12,'km/hr','provider_direct'),
-		 ($1,$3,'distance',3,'km','provider_direct'),($1,$3,'active_energy_burned',100.25,'kcal','provider_direct'),
-		 ($1,$3,'heart_rate_average',123.5,'count/min','provider_direct'),($1,$3,'elevation_up',42.75,'m','provider_direct'),
+		 ($1,$3,'distance',3,'km','provider_direct'),($1,$3,'active_energy_burned',100.25,'kcal','provider_direct'),($1,$3,'total_energy',150.25,'kcal','provider_direct'),
+		 ($1,$3,'heart_rate_average',123.5,'count/min','provider_direct'),($1,$3,'heart_rate_maximum',180,'count/min','provider_direct'),($1,$3,'elevation_up',42.75,'m','provider_direct'),
 		 ($1,$4,'distance',99,'mi','provider_direct'),($1,$4,'active_energy_burned',999,'kJ','provider_direct'),
 		 ($1,$4,'speed_average',20,'m/s','provider_direct'),($1,$4,'heart_rate_average',170,'bpm','provider_direct'),
 		 ($1,$4,'elevation_up',1000,'ft','provider_direct')`, accountID, workouts[0], workouts[1], workouts[2])
@@ -445,6 +464,15 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 		err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,2,-105.1,39.9,-105,40,NULL,NULL,NULL,false)`, workouts[0]).Scan(&replaced)
 		if err == nil && !replaced {
 			err = errors.New("2D fixture route summary was not replaced")
+		}
+	}
+	if err == nil {
+		for _, workoutID := range workouts[:2] {
+			var replaced bool
+			err = tx.QueryRow(ctx, `SELECT app.replace_workout_split_summary($1)`, workoutID).Scan(&replaced)
+			if err != nil || !replaced {
+				break
+			}
 		}
 	}
 	if err == nil {
