@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  ApiError,
   DEFAULT_WORKOUT_SORT,
   type BaseMapFamily,
   type BaseMapsConfig,
@@ -26,6 +27,7 @@ const ROUTE_MARKERS_LAYER = "private-workout-route-markers";
 const HOVER_MARKERS_LAYER = "private-workout-route-marker-hover";
 const ROUTES_SOURCE = "private-workout-routes";
 const ROUTE_HOVER_DELAY_MS = 250;
+const MAP_SELECTION_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 5000];
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 const COMPACT_UUID = /^[0-9A-F]{32}$/;
 const QUICK_RANGES: ReadonlyArray<[DateRangeEnum, string]> = [
@@ -134,10 +136,10 @@ export function formatRoutePopupDistance(workout: MapSelectionWorkout, units: Pr
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${unit}`;
 }
 
-function MapCanvas({ family, preferences, selection, workouts, fitPadding, hoveredWorkoutId, fitRequest, onHover, onBaseMapError }: {
+function MapCanvas({ family, preferences, selection, workouts, fitPadding, hoveredWorkoutId, fitRequest, onHover, onBaseMapError, onBaseMapReady }: {
   family: BaseMapFamily; preferences: Preferences; selection?: MapSelection; workouts: MapSelectionWorkout[];
   fitPadding: number; hoveredWorkoutId?: string; fitRequest?: { key: number; bounds: RouteBounds };
-  onHover: (id?: string) => void; onBaseMapError: () => void;
+  onHover: (id?: string) => void; onBaseMapError: () => void; onBaseMapReady: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | undefined>(undefined);
@@ -240,6 +242,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const restore = () => {
       styleLoadedRef.current = true;
       syncPrivateLayers(map);
+      if (!fallbackInstalledRef.current) onBaseMapReady();
     };
     const restoreMissedInitialStyle = () => {
       if (!styleLoadedRef.current) restore();
@@ -331,6 +334,11 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   useEffect(() => {
     const map = mapRef.current;
     const bounds = fitRequest?.bounds;
+    if (map && fallbackInstalledRef.current) {
+      styleLoadedRef.current = false;
+      fallbackInstalledRef.current = false;
+      map.setStyle(styleUrlRef.current, { transformStyle: preservePrivateLayers });
+    }
     if (map && bounds) map.fitBounds([[bounds.minimumLongitude, bounds.minimumLatitude], [bounds.maximumLongitude, bounds.maximumLatitude]], { padding: fitPadding, duration: 350 });
   }, [fitRequest?.key]);
 
@@ -431,8 +439,19 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const controller = new AbortController();
     let active = true;
     const removeSelection = (id: string) => api<void>(`/api/map-selections/${encodeURIComponent(id.toUpperCase())}`, { method: "DELETE" }, csrfToken).catch(() => undefined);
+    const createSelection = async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, selectedWorkoutIds)), signal: controller.signal }, csrfToken);
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 503 || attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length) throw error;
+          await new Promise((resolve) => setTimeout(resolve, MAP_SELECTION_RETRY_DELAYS_MS[attempt]));
+          if (!active) throw new DOMException("Map selection cancelled", "AbortError");
+        }
+      }
+    };
     setSelectionPending(true); setSelectionError("");
-    void api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, selectedWorkoutIds)), signal: controller.signal }, csrfToken)
+    void createSelection()
       .then((created) => {
         if (!active) { void removeSelection(created.id); return; }
         const normalizedWorkouts = created.workouts.map((workout) => ({ ...workout, id: workout.id.toUpperCase() }));
@@ -462,6 +481,9 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const preferredHighlightId = hoveredWorkoutId ?? focusedWorkoutId ?? (requestedIds.length === 1 ? requestedIds[0] : undefined);
   const highlightedWorkoutId = preferredHighlightId && visibleWorkoutIds.has(preferredHighlightId) ? preferredHighlightId : undefined;
   const visibleFocusedWorkoutId = focusedWorkoutId && visibleWorkoutIds.has(focusedWorkoutId) ? focusedWorkoutId : undefined;
+  const statusMessage = rangeError || baseMapError || selectionError || (selectionPending ? "Updating routes..." : "");
+  const dismissibleStatusError = !rangeError && Boolean(baseMapError || selectionError);
+  const dismissStatusError = () => { if (baseMapError) setBaseMapError(""); else setSelectionError(""); };
 
   function toggleWorkout(workoutId: string) {
     const current = selectedWorkoutIds ?? availableWorkouts.map((workout) => workout.id);
@@ -513,8 +535,8 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     <CustomDateRangeDialog open={customOpen} onOpenChange={setCustomOpen} range={dateRange} onApply={(next) => void selectRange(next)} />
     <aside className="map-sidebar" aria-label="Map controls"><div className="map-controls">{controls("desktop")}</div></aside>
     <section className="map-stage" aria-live="polite">
-      {(rangeError || baseMapError || selectionError || selectionPending) && <div className="map-banner" role="status">{rangeError || baseMapError || selectionError || "Updating routes..."}</div>}
-      {family && <MapCanvas family={family} preferences={preferences} selection={selection} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} onHover={requestRouteHover} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available.")} />}
+      {statusMessage && <div className="map-banner" role="status"><span>{statusMessage}</span>{dismissibleStatusError && <button type="button" className="map-banner-dismiss" aria-label={baseMapError ? "Dismiss base map warning" : "Dismiss route preparation error"} onClick={dismissStatusError}>&times;</button>}</div>}
+      {family && <MapCanvas family={family} preferences={preferences} selection={selection} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} onHover={requestRouteHover} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available.")} onBaseMapReady={() => setBaseMapError("")} />}
       {family && <div className="map-attribution" aria-label={`Active map attribution for ${family.label}`}><span>{family.attribution.text}</span>{family.attribution.links.map((link) => <a key={`${link.label}-${link.url}`} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>}
       <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}><Dialog.Trigger asChild><button type="button" className="mobile-map-sheet-trigger">Routes and controls</button></Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="map-sheet-overlay" /><Dialog.Content id="mobile-map-sheet" className="mobile-map-sheet"><div className="mobile-sheet-handle" aria-hidden="true" /><div className="mobile-sheet-heading"><div><Dialog.Title>Routes and controls</Dialog.Title><Dialog.Description>Filter visible workouts and choose how the base map is presented.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Routes and controls">&times;</Dialog.Close></div><div className="map-controls">{controls("mobile")}</div></Dialog.Content></Dialog.Portal></Dialog.Root>
     </section>

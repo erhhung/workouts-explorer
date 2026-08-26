@@ -107,13 +107,62 @@ END;
 $$;
 -- +goose StatementEnd
 
+-- Owner-visible source-file failures are recorded through the same worker
+-- identity and lease fence as the job log context.
+-- +goose StatementBegin
+CREATE FUNCTION app.record_source_file_failure_log(target_job_id uuid,claiming_worker text,current_lease_token uuid,
+    target_file_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, app
+AS $$
+DECLARE
+    target_account uuid;
+    target_parent uuid;
+    target_source uuid;
+    target_name text;
+    target_summary text;
+BEGIN
+    SELECT job.account_id,job.parent_job_id,context.source_id,file.relative_name,file.failure_summary
+      INTO target_account,target_parent,target_source,target_name,target_summary
+      FROM app.jobs job
+      JOIN app.job_source_contexts context ON context.job_id=job.id AND context.account_id=job.account_id
+      JOIN app.source_files file ON file.job_id=job.id AND file.account_id=job.account_id AND file.source_id=context.source_id
+     WHERE job.id=target_job_id AND job.account_id=app.current_account_id()
+       AND job.kind IN ('manual_ingest_source','scheduled_ingest_source')
+       AND file.id=target_file_id AND file.state='failed' AND file.failure_summary IS NOT NULL;
+    IF NOT FOUND THEN RETURN false; END IF;
+    PERFORM 1 FROM app.sources source WHERE source.id=target_source AND source.account_id=target_account FOR UPDATE;
+    IF NOT FOUND THEN RETURN false; END IF;
+    PERFORM 1 FROM app.jobs parent WHERE parent.id=target_parent AND parent.account_id=target_account
+       AND parent.kind IN ('manual_ingest','scheduled_ingest') FOR UPDATE;
+    IF NOT FOUND THEN RETURN false; END IF;
+    PERFORM 1 FROM app.jobs job WHERE job.id=target_job_id AND job.account_id=target_account
+       AND job.parent_job_id=target_parent AND job.status='running' AND job.cancel_requested_at IS NULL
+       AND job.worker_id=claiming_worker AND job.lease_token=current_lease_token
+       AND job.lease_expires_at>=clock_timestamp() FOR UPDATE;
+    IF NOT FOUND THEN RETURN false; END IF;
+    IF (SELECT count(*) FROM app.job_logs WHERE job_id=target_job_id AND account_id=target_account)>=2000 THEN RETURN false; END IF;
+    INSERT INTO app.job_logs(account_id,job_id,severity,code,redacted_message,fields)
+    VALUES(target_account,target_job_id,'error','source-file-failed',
+        left(target_name,480)||': '||left(target_summary,512),
+        jsonb_build_object('operation','import','reason','invalid-data'));
+    RETURN true;
+END;
+$$;
+-- +goose StatementEnd
+
 REVOKE ALL ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid)
+    FROM PUBLIC, workouts_api, workouts_worker;
+REVOKE ALL ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid)
     FROM PUBLIC, workouts_api, workouts_worker;
 REVOKE ALL ON FUNCTION app.repair_orphaned_source_jobs()
     FROM PUBLIC, workouts_api, workouts_worker;
 GRANT CREATE ON SCHEMA app TO workouts_security_owner;
 ALTER FUNCTION app.repair_orphaned_source_jobs() OWNER TO workouts_security_owner;
 ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) OWNER TO workouts_security_owner;
 REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 GRANT EXECUTE ON FUNCTION app.repair_orphaned_source_jobs() TO workouts_migration;
 SELECT app.repair_orphaned_source_jobs();
@@ -121,6 +170,7 @@ REVOKE EXECUTE ON FUNCTION app.repair_orphaned_source_jobs() FROM workouts_migra
 ALTER FUNCTION app.repair_orphaned_source_jobs() OWNER TO workouts_migration;
 DROP FUNCTION app.repair_orphaned_source_jobs();
 GRANT EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) TO workouts_worker;
+GRANT EXECUTE ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) TO workouts_worker;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()
@@ -588,3 +638,6 @@ DROP FUNCTION app.assert_no_active_scheduled_ingest();
 REVOKE EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) FROM workouts_worker;
 ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_migration;
 DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid);
+REVOKE EXECUTE ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) FROM workouts_worker;
+ALTER FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) OWNER TO workouts_migration;
+DROP FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid);

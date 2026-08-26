@@ -210,8 +210,9 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
       <div><dt>Queued</dt><dd>{dateTime(job.createdAt, preferences)}</dd></div>
       <div><dt>Started</dt><dd>{dateTime(job.startedAt, preferences)}</dd></div>
       <div><dt>Finished</dt><dd>{dateTime(job.terminalAt, preferences)}</dd></div>
-      {job.retryRootJobId && job.retryOrdinal != null && <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd>{ordinal(job.retryOrdinal)}</dd></div>}
-      {job.latestRetryJobId && job.latestRetryOrdinal != null && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd>{ordinal(job.latestRetryOrdinal)}</dd></div>}
+      {job.retryRootJobId && job.retryOrdinal != null
+        ? <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd className="retry-ordinal"><span>{ordinal(job.retryOrdinal)}</span>{job.retryOrdinal > 1 && job.retryOfJobId && <small className="retry-previous">|&nbsp; view <a href={`/data-sync/jobs/${job.retryOfJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryOfJobId!); }}>{ordinal(job.retryOrdinal - 1).toLowerCase()}</a></small>}</dd></div>
+        : job.latestRetryJobId && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd className="visually-hidden">Latest retry in chain</dd></div>}
     </dl>
     {!deletion && <Progress progress={job.progress} status={job.status} />}
     {!deletion && (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
@@ -393,7 +394,7 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
     <div className="sync-operational-grid">
       <section className="sync-card manual-card" aria-labelledby="manual-sync-heading">
         <div className="sync-card-heading"><div><p className="card-kicker">Manual</p><h2 id="manual-sync-heading">Start a sync</h2></div></div>
-        {snapshot.isPending && <p role="status" aria-busy="true">Loading sources...</p>}
+        {snapshot.isPending && <p className="sync-retrieval-state" role="status" aria-busy="true">Retrieving sources...</p>}
         {snapshot.isError && <QueryError copy="Data Sync status is unavailable." retry={() => void snapshot.refetch()} />}
         {snapshot.data && <form onSubmit={submit} noValidate aria-busy={ingest.isPending}>
           {formError && <div className="error-summary" id={formErrorId} role="alert" tabIndex={-1} ref={formErrorRef}>{formError}</div>}
@@ -415,7 +416,7 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
 
       <section className="sync-card schedule-card" aria-labelledby="schedule-heading">
         <div className="sync-card-heading"><div><p className="card-kicker">Automated</p><h2 id="schedule-heading">Schedule & freshness</h2></div>{snapshot.data && <span className={`schedule-state schedule-state--${snapshot.data.schedule.enabled ? "enabled" : "disabled"}`}>{snapshot.data.schedule.enabled ? "Enabled" : "Disabled"}</span>}</div>
-        {snapshot.isPending && <p role="status">Loading schedule...</p>}
+        {snapshot.isPending && <p className="sync-retrieval-state" role="status">Retrieving schedule...</p>}
         {snapshot.isError && <QueryError copy="Schedule details are unavailable." retry={() => void snapshot.refetch()} />}
         {snapshot.data && <>
           <dl className="schedule-details">

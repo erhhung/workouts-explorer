@@ -5,6 +5,8 @@ import (
 	"math"
 )
 
+const maximumCourseAccuracy = 359.99
+
 func parseRoute(s *tokenStream, warnings []Warning) ([]RoutePoint, []Warning, error) {
 	token, err := s.token()
 	if err != nil {
@@ -82,7 +84,7 @@ func parseRoutePoint(s *tokenStream, sequence int) (RoutePoint, []Warning, error
 		case "speedAccuracy":
 			point.SpeedAccuracy, warnings, err = optionalRouteNumber(s, 0, 1e6, true, WarningFieldSpeedAccuracy, sequence, warnings)
 		case "courseAccuracy":
-			point.CourseAccuracy, warnings, err = optionalRouteNumber(s, 0, 360, true, WarningFieldCourseAccuracy, sequence, warnings)
+			point.CourseAccuracy, err = optionalCourseAccuracy(s)
 		default:
 			err = s.skipValue()
 		}
@@ -97,6 +99,27 @@ func parseRoutePoint(s *tokenStream, sequence int) (RoutePoint, []Warning, error
 		return RoutePoint{}, nil, parseError(ErrorInvalidRoute)
 	}
 	return point, warnings, nil
+}
+
+func optionalCourseAccuracy(s *tokenStream) (*float64, error) {
+	start := s.decoder.InputOffset()
+	token, err := s.token()
+	if err != nil || token == nil {
+		return nil, err
+	}
+	number, ok := token.(json.Number)
+	if !ok {
+		if err := s.skipTokenValue(token, start, 0); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	value, err := number.Float64()
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return nil, nil
+	}
+	value = min(value, maximumCourseAccuracy)
+	return &value, nil
 }
 
 func optionalRouteNumber(s *tokenStream, min, max float64, negativeUnavailable bool, field WarningField, sequence int, warnings []Warning) (*float64, []Warning, error) {

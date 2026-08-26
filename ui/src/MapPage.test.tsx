@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { type BaseMapsConfig, type MapSelection, type Preferences, type PublicConfig } from "./api";
+import { ApiError, type BaseMapsConfig, type MapSelection, type Preferences, type PublicConfig } from "./api";
 import MapPage, { absoluteRouteTileTemplate, formatRoutePopupDetails, formatRoutePopupDistance, requestedWorkoutIds, resolveBaseFamily, routeColor, routeColors, selectionRequest, sortMapWorkouts } from "./MapPage";
 
 const mapInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
@@ -75,8 +75,8 @@ const selection: MapSelection = {
   range: { startDate: "2026-07-10", endDate: "2026-08-08" },
   bounds: { minimumLongitude: -105.3, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40.1 },
   workouts: [
-    { id: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-08T12:00:00Z", endedAt: "2026-08-08T13:45:00Z", duration: "6300", localStartDate: "2026-08-08", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: { value: "8.25", unit: "km" }, pace: { value: "5", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevation: { value: "100", unit: "m" } },
-    { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: true, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: { value: "300", unit: "kcal" }, heartRate: { value: "100", unit: "count/min" }, elevation: { value: "250", unit: "m" } },
+    { id: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-08T12:00:00Z", endedAt: "2026-08-08T13:45:00Z", duration: "6300", localStartDate: "2026-08-08", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: { value: "8.25", unit: "km" }, pace: { value: "5", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevationGain: { value: "100", unit: "m" } },
+    { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: true, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: { value: "300", unit: "kcal" }, heartRate: { value: "100", unit: "count/min" }, elevationGain: { value: "250", unit: "m" } },
   ],
   routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/route-tiles/7/{z}/{x}/{y}.pbf",
 };
@@ -117,7 +117,7 @@ describe("map contract helpers", () => {
     expect(sortMapWorkouts(selection.workouts, { field: "type", direction: "asc" }).map((workout) => workout.type.name)).toEqual(["Hiking", "Running"]);
     expect(sortMapWorkouts(selection.workouts, { field: "duration", direction: "asc" }).map((workout) => workout.id)).toEqual([selection.workouts[1].id, selection.workouts[0].id]);
     expect(sortMapWorkouts(selection.workouts, { field: "distance", direction: "desc" }).map((workout) => workout.id)).toEqual([selection.workouts[0].id, selection.workouts[1].id]);
-    expect(sortMapWorkouts(selection.workouts, { field: "elevation", direction: "desc" }).map((workout) => workout.id)).toEqual([selection.workouts[1].id, selection.workouts[0].id]);
+    expect(sortMapWorkouts(selection.workouts, { field: "elevationGain", direction: "desc" }).map((workout) => workout.id)).toEqual([selection.workouts[1].id, selection.workouts[0].id]);
   });
 });
 
@@ -335,7 +335,26 @@ describe("MapPage", () => {
     fetchMock.mockRejectedValueOnce(new Error("private provider detail"));
     render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
     expect(await screen.findByText("Routes could not be prepared for this map.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss route preparation error" }));
+    expect(screen.queryByText("Routes could not be prepared for this map.")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("private provider detail");
+  });
+
+  test("retries transient map selection failures while retaining the updating state", async () => {
+    let attempts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/map-selections" && init?.method === "POST") {
+        attempts++;
+        return attempts < 3 ? Promise.reject(new ApiError(503)) : Promise.resolve(json(selection));
+      }
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+    render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    expect(screen.getByText("Updating routes...")).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: /Show Running/ }, { timeout: 4000 })).toBeInTheDocument();
+    expect(attempts).toBe(3);
+    expect(screen.queryByText("Routes could not be prepared for this map.")).not.toBeInTheDocument();
   });
 
   test("centers an empty initial map on an available browser location", async () => {
@@ -348,7 +367,7 @@ describe("MapPage", () => {
     expect(map.jumpTo).toHaveBeenCalledWith({ center: [-104.99, 39.74], zoom: 11 });
   });
 
-  test("keeps private routes on a product-owned background when the provider style fails", async () => {
+  test("keeps private routes on a fallback background and clears the warning after a provider style recovers", async () => {
     mapBehavior.emitInitialStyleLoad = false;
     mapBehavior.emitSetStyleLoad = false;
     mapBehavior.styleLoaded = false;
@@ -360,6 +379,16 @@ describe("MapPage", () => {
     expect(await screen.findByText("The public base map could not be loaded. Your private routes remain available.")).toBeInTheDocument();
     expect(map.setStyle).toHaveBeenCalledWith(expect.objectContaining({ version: 8 }));
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl}`] });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Dismiss base map warning" }));
+    expect(screen.queryByText("The public base map could not be loaded. Your private routes remain available.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+    act(() => map.handlers.get("error")?.());
+    expect(await screen.findByText("The public base map could not be loaded. Your private routes remain available.")).toBeInTheDocument();
+    mapBehavior.emitSetStyleLoad = true;
+    await user.click(screen.getByRole("button", { name: "Select base map" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Road/ }));
+    await waitFor(() => expect(screen.queryByText("The public base map could not be loaded. Your private routes remain available.")).not.toBeInTheDocument());
   });
 
   test("installs private routes when an initial style event is missed", async () => {

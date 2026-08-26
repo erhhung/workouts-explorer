@@ -33,7 +33,7 @@ const WORKOUT_COLUMN_CHOICES = [
   ["pace", "Pace"],
   ["calories", "Calories"],
   ["heartRate", "Heart rate"],
-  ["elevation", "Elevation"],
+  ["elevationGain", "Elevation gain"],
 ] as const;
 const FALLBACK_TIME_ZONES = [
   "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles", "America/Denver", "America/Chicago",
@@ -367,11 +367,11 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
             <fieldset><legend>Display</legend><div className="settings-grid">
               <SelectField label="Theme" name="theme" id={`${id}-theme`} value={preferences.theme} options={["dark", "light"]} />
               <SelectField label="Units" name="units" id={`${id}-units`} value={preferences.units} options={["imperial", "metric"]} />
-              <div className="field"><label htmlFor={`${id}-timezone`}>Time zone</label><select id={`${id}-timezone`} name="timezone" defaultValue={initialTimeZone}>{timeZoneOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+              <div className="field"><label htmlFor={`${id}-timezone`}>Time zone</label><span className="select-control"><select id={`${id}-timezone`} name="timezone" defaultValue={initialTimeZone}>{timeZoneOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></span></div>
               <SelectField label="First weekday" name="firstWeekday" id={`${id}-weekday`} value={preferences.firstWeekday} options={["monday", "sunday"]} />
               <SelectField label="Clock format" name="clockFormat" id={`${id}-clock`} value={preferences.clockFormat} options={["12h", "24h"]} />
-              <div className="field"><label htmlFor={`${id}-page-size`}>Workouts per page</label><select id={`${id}-page-size`} name="pageSize" defaultValue={preferences.pageSize}>{pageSizeChoices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></div>
-              <div className="field field--wide"><span className="field-label" id={`${id}-columns`}>Workout columns</span><div className="checkbox-list" role="group" aria-labelledby={`${id}-columns`}>{WORKOUT_COLUMN_CHOICES.map(([value, label]) => <label className="checkbox-option" key={value}><input type="checkbox" name="workoutColumns" value={value} defaultChecked={preferences.workoutColumns.includes(value)} /><span>{label}</span></label>)}</div><span className="field-hint">Choose the columns to show; they appear in this order.</span></div>
+              <div className="field"><label htmlFor={`${id}-page-size`}>Workouts per page</label><span className="select-control"><select id={`${id}-page-size`} name="pageSize" defaultValue={preferences.pageSize}>{pageSizeChoices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></span></div>
+              <div className="field field--wide"><span className="field-label" id={`${id}-columns`}>Workout columns</span><div className="checkbox-list" role="group" aria-labelledby={`${id}-columns`}>{WORKOUT_COLUMN_CHOICES.map(([value, label]) => <label className="checkbox-option" key={value}><input type="checkbox" name="workoutColumns" value={value} defaultChecked={preferences.workoutColumns.includes(value)} /><span>{label}</span></label>)}</div><span className="field-hint">Choose the columns to show in the Workout Log table (they will always appear in this order).</span></div>
             </div></fieldset>
           </div>
           <footer className="dialog-actions"><Dialog.Close type="button" className="secondary preferences-action">Cancel</Dialog.Close><button className="primary preferences-action" disabled={saving}>{saving ? "Saving..." : "Save"}</button></footer>
@@ -382,7 +382,7 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
 }
 
 function SelectField({ label, name, id, value, options }: { label: string; name: string; id: string; value: string; options: string[] }) {
-  return <div className="field"><label htmlFor={id}>{label}</label><select id={id} name={name} defaultValue={value}>{options.map((option) => <option key={option} value={option}>{option === "12h" ? "12-hour" : option === "24h" ? "24-hour" : option[0].toUpperCase() + option.slice(1)}</option>)}</select></div>;
+  return <div className="field"><label htmlFor={id}>{label}</label><span className="select-control"><select id={id} name={name} defaultValue={value}>{options.map((option) => <option key={option} value={option}>{option === "12h" ? "12-hour" : option === "24h" ? "24-hour" : option[0].toUpperCase() + option.slice(1)}</option>)}</select></span></div>;
 }
 
 function Shell({ session, config, path }: { session: Session; config: PublicConfig; path: string }) {

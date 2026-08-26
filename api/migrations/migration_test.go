@@ -29,7 +29,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql"} {
+	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql", "00011_workout_split_paces.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -40,6 +40,41 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 		ends := strings.Count(text, "-- +goose StatementEnd")
 		if starts != proceduralStatements || ends != proceduralStatements {
 			t.Fatalf("%s: procedural statements = %d, StatementBegin = %d, StatementEnd = %d", name, proceduralStatements, starts, ends)
+		}
+	}
+}
+
+func TestWorkoutSplitPaceMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00011_workout_split_paces.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"fastest_kilometer_split_seconds", "slowest_mile_split_seconds",
+		"CREATE FUNCTION app.replace_workout_split_summary", "ST_Distance(", "generate_series(",
+		"capability.transaction_id=txid_current()", "GRANT EXECUTE ON FUNCTION app.replace_workout_split_summary",
+		"schema_version=11,minimum_runtime_version=8", "schema_version=10,minimum_runtime_version=8",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("workout split pace migration is missing %q", required)
+		}
+	}
+}
+
+func TestOwnerFileFailureLogMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00005_worker_job_log_context.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE FUNCTION app.record_source_file_failure_log", "file.state='failed'", "job.status='running'",
+		"job.lease_token=current_lease_token", "'source-file-failed'", "GRANT EXECUTE ON FUNCTION app.record_source_file_failure_log",
+		"ALTER FUNCTION app.record_source_file_failure_log", "DROP FUNCTION app.record_source_file_failure_log",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("owner file failure log migration is missing %q", required)
 		}
 	}
 }

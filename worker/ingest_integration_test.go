@@ -619,17 +619,19 @@ func assertGoldenIngest(t *testing.T, db *pgxpool.Pool, fixture ingestSourceFixt
 	if err := json.Unmarshal(warnings, &warningValues); err != nil {
 		t.Fatal(err)
 	}
-	foundInvalidCourseAccuracy := false
 	for _, warning := range warningValues {
 		if warning["code"] == "unexpected_unit" && (warning["field"] == "speed_average" || warning["field"] == "speed_maximum") {
 			t.Fatalf("valid provider speed unit produced warning: %s", warnings)
 		}
 		if warning["code"] == "invalid_optional_route_value" && warning["field"] == "route_course_accuracy" {
-			foundInvalidCourseAccuracy = true
+			t.Fatalf("course accuracy produced warning: %s", warnings)
 		}
 	}
-	if !foundInvalidCourseAccuracy {
-		t.Fatalf("warnings=%s", warnings)
+	var cappedCourseAccuracy bool
+	if err := tx.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM app.workout_route_points point
+		JOIN app.workouts workout ON workout.id=point.workout_id AND workout.account_id=point.account_id
+		WHERE workout.source_id=$1 AND point.course_accuracy=359.99)`, fixture.sourceID).Scan(&cappedCourseAccuracy); err != nil || !cappedCourseAccuracy {
+		t.Fatalf("capped course accuracy=%t err=%v", cappedCourseAccuracy, err)
 	}
 	assertTerminalIngest(t, tx, job, "succeeded", "succeeded")
 }

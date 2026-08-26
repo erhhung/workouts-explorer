@@ -111,7 +111,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=10 AND minimum_runtime_version=8
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=11 AND minimum_runtime_version=8
 		AND EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL
@@ -126,6 +126,8 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
 			AND attname='route' AND NOT attisdropped)
 		AND to_regprocedure('app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)') IS NOT NULL
+		AND to_regprocedure('app.record_source_file_failure_log(uuid,text,uuid,uuid)') IS NOT NULL
+		AND to_regprocedure('app.replace_workout_split_summary(uuid)') IS NOT NULL
 		AND to_regclass('app.workout_deletion_targets') IS NOT NULL
 		AND to_regclass('app.workout_deletion_capabilities') IS NOT NULL
 		AND to_regclass('app.ingest_write_capabilities') IS NOT NULL

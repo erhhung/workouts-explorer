@@ -812,7 +812,7 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 	if value.DateRange.IsSpecified() && !value.DateRange.IsNull() && !validDateRangePreference(value.DateRange.MustGet()) {
 		return "dateRange", "date range must be a supported shortcut or an inclusive YYYY-MM-DD/YYYY-MM-DD range"
 	}
-	allowed := map[string]bool{"date": true, "type": true, "duration": true, "distance": true, "pace": true, "calories": true, "heartRate": true, "elevation": true}
+	allowed := map[string]bool{"date": true, "type": true, "duration": true, "distance": true, "pace": true, "calories": true, "heartRate": true, "elevationGain": true}
 	seen := map[string]bool{}
 	for _, column := range value.WorkoutColumns {
 		if !allowed[string(column)] || seen[string(column)] {

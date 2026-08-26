@@ -192,7 +192,7 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		setMetric(&item.Pace, paceValue, paceUnit)
 		setMetric(&item.Calories, caloriesValue, caloriesUnit)
 		setMetric(&item.HeartRate, heartRateValue, heartRateUnit)
-		setMetric(&item.Elevation, elevationValue, elevationUnit)
+		setMetric(&item.ElevationGain, elevationValue, elevationUnit)
 		if localStartDate == nil {
 			item.LocalStartDate.SetNull()
 		} else {

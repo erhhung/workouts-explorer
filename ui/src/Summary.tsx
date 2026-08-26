@@ -39,7 +39,7 @@ const DATE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
 
 const COLUMN_LABELS: Record<WorkoutColumn, string> = {
   date: "Date", type: "Type", duration: "Duration", distance: "Distance", pace: "Pace",
-  calories: "Calories", heartRate: "Heart rate", elevation: "Elevation",
+  calories: "Calories", heartRate: "Heart rate", elevationGain: "Elev gain",
 };
 
 const CANONICAL_COLUMNS = Object.keys(COLUMN_LABELS) as WorkoutColumn[];
@@ -114,23 +114,31 @@ function durationTooltip(value: string, aggregate = false) {
   return `${seconds}s`;
 }
 
-function DurationValue({ value, focusable = true, aggregate = false }: { value: string; focusable?: boolean; aggregate?: boolean }) {
+function DurationValue({ value, focusable = true, aggregate = false, detail }: { value: string; focusable?: boolean; aggregate?: boolean; detail?: string }) {
   const display = aggregate ? formatAggregateDuration(value) : formatDuration(value);
-  const exact = durationTooltip(value, aggregate);
+  const exact = detail ?? durationTooltip(value, aggregate);
   if (!focusable) return <span className="duration-value" title={exact} aria-label={`Duration ${display}; rounded to nearest second ${exact}`}>{display}</span>;
   return <Tooltip content={exact} className="duration-value" focusable={focusable} label={`Duration ${display}; rounded to nearest second ${exact}`}>{display}</Tooltip>;
+}
+
+function clockDuration(value: number) {
+  const totalSeconds = Math.max(0, Math.round(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function Unavailable({ children = "Unavailable" }: { children?: ReactNode }) {
   return <span className="unavailable">{children}</span>;
 }
 
-function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "calories" | "heartRate" | "elevation", units: Preferences["units"], includeUnit = true, aggregate = false) {
+function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "calories" | "heartRate" | "elevationGain", units: Preferences["units"], includeUnit = true, aggregate = false) {
   if (!metricValue) return null;
   let value = Number(metricValue.value);
   let unit = metricValue.unit;
   if (units === "imperial" && kind === "distance" && unit === "km") { value *= 0.621371192; unit = "mi"; }
-  if (units === "imperial" && kind === "elevation" && unit === "m") { value *= 3.280839895; unit = "ft"; }
+  if (units === "imperial" && kind === "elevationGain" && unit === "m") { value *= 3.280839895; unit = "ft"; }
   if (units === "imperial" && kind === "pace" && unit === "min/km") { value *= 1.609344; unit = "min/mi"; }
   if (kind === "pace") {
     const roundedSeconds = Math.round(value * 60);
@@ -140,6 +148,13 @@ function metric(metricValue: ExactMetric | null, kind: "distance" | "pace" | "ca
   const maximumFractionDigits = kind === "calories" || (aggregate && kind === "distance" && value >= 100) ? 0 : 2;
   const display = new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value);
   return includeUnit ? `${display} ${label}` : display;
+}
+
+function convertedElevation(metricValue: ExactMetric, units: Preferences["units"]) {
+  let value = Number(metricValue.value);
+  let unit = metricValue.unit;
+  if (units === "imperial" && unit === "m") { value *= 3.280839895; unit = "ft"; }
+  return { value, unit };
 }
 
 function resolveZone(workoutZone: string | null, offset: number | null, instant: Date) {
@@ -178,7 +193,7 @@ function localInstant(value: string, workoutZone: string | null, offset: number 
         dateTime: new Intl.DateTimeFormat("en-US", { ...options, timeZone }).format(instant),
         weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone }).format(instant),
         zoneLabel: zoneAbbreviation(timeZone, instant),
-        zoneTitle: `${timeZone} (${offsetLabel(resolvedOffset)})`,
+        zoneTitle: `${offsetLabel(resolvedOffset)} recorded`,
         unavailable: false,
       };
     }
@@ -188,7 +203,7 @@ function localInstant(value: string, workoutZone: string | null, offset: number 
         dateTime: new Intl.DateTimeFormat("en-US", { ...options, timeZone: "UTC" }).format(shifted),
         weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(shifted),
         zoneLabel: offsetLabel(offset, true),
-        zoneTitle: `Recorded offset (${offsetLabel(offset)}); timezone unavailable`,
+        zoneTitle: `${offsetLabel(offset)} recorded | timezone unavailable`,
         unavailable: false,
       };
     }
@@ -213,6 +228,76 @@ function workoutTimes(workout: Workout, preferences: Preferences) {
   };
 }
 
+function compactWorkoutTime(value: string, workoutZone: string | null, offset: number | null, preferences: Preferences) {
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return "time unavailable";
+  const resolvedZone = resolveZone(workoutZone, offset, instant);
+  const display = resolvedZone || offset == null ? instant : new Date(instant.getTime() + offset * 60_000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric", minute: "2-digit", hour12: preferences.clockFormat === "12h",
+    timeZone: resolvedZone ?? (offset == null ? preferences.timezone : "UTC"),
+  }).formatToParts(display);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("hour").replace(/^0/, "")}:${part("minute")}${preferences.clockFormat === "12h" ? part("dayPeriod").slice(0, 1).toLowerCase() : ""}`;
+}
+
+function workoutDurationDetail(workout: Workout, preferences: Preferences) {
+  const start = compactWorkoutTime(workout.startedAt, workout.timezone, workout.originalStartOffsetMinutes, preferences);
+  const end = compactWorkoutTime(workout.endedAt, workout.timezone, workout.originalEndOffsetMinutes, preferences);
+  const elapsed = (new Date(workout.endedAt).getTime() - new Date(workout.startedAt).getTime()) / 1000;
+  return `${clockDuration(Number(workout.duration))} | ${start} - ${end} (${clockDuration(elapsed)})`;
+}
+
+function metricTooltip(display: string, detail: string, label: string) {
+  return <Tooltip content={detail} className="workout-metric-value" label={`${label} ${display}; ${detail}`}>{display}</Tooltip>;
+}
+
+function alignedMetric(display: string) {
+  return <span className="workout-metric-display">{display}</span>;
+}
+
+function paceDisplay(pace: ExactMetric, preferences: Preferences) {
+  let seconds = Number(pace.value) * 60;
+  if (preferences.units === "imperial" && pace.unit === "min/km") seconds *= 1.609344;
+  const rounded = Math.round(seconds);
+  return `${Math.floor(rounded / 60)}m ${String(rounded % 60).padStart(2, "0")}s`;
+}
+
+function workoutMetricValue(column: Exclude<WorkoutColumn, "date" | "type" | "duration" | "distance">, workout: Workout, preferences: Preferences) {
+  if (column === "calories") {
+    if (!workout.calories) return <Unavailable />;
+    const display = decimal(workout.calories.value, 0);
+    const active = workout.activeCalories ? `${decimal(workout.activeCalories.value, 0)} kcal active` : "active unavailable";
+    return metricTooltip(display, `${decimal(workout.calories.value, 0)} kcal total | ${active}`, "Calories");
+  }
+  if (column === "heartRate") {
+    if (!workout.heartRate) return <Unavailable />;
+    const display = `${decimal(workout.heartRate.value, 0)} bpm`;
+    const maximum = workout.maximumHeartRate ? `${decimal(workout.maximumHeartRate.value, 0)} bpm maximum` : "maximum unavailable";
+    return metricTooltip(display, `${decimal(workout.heartRate.value, 0)} bpm average | ${maximum}`, "Heart rate");
+  }
+  if (column === "pace") {
+    if (!workout.pace) return <Unavailable />;
+    const display = paceDisplay(workout.pace, preferences);
+    const splits = preferences.units === "imperial" ? workout.splitPaces?.mile : workout.splitPaces?.kilometer;
+    if (!splits) return alignedMetric(display);
+    const splitUnit = preferences.units === "imperial" ? "mi" : "km";
+    const splitPace = (value: string) => {
+      const total = Math.round(Number(value));
+      return `${Math.floor(total / 60)}'${String(total % 60).padStart(2, "0")}\"/${splitUnit}`;
+    };
+    return metricTooltip(display, `${splitPace(splits.fastestSeconds)} fastest | ${splitPace(splits.slowestSeconds)} slowest`, "Pace");
+  }
+  if (!workout.elevationGain) return <Unavailable />;
+  const gain = convertedElevation(workout.elevationGain, preferences.units);
+  const display = `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(gain.value)} ${gain.unit}`;
+  if (!workout.minimumElevation || !workout.maximumElevation) return alignedMetric(display);
+  const minimum = convertedElevation(workout.minimumElevation, preferences.units);
+  const maximum = convertedElevation(workout.maximumElevation, preferences.units);
+  const detail = `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(minimum.value)} ${minimum.unit} lowest | ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(maximum.value)} ${maximum.unit} highest`;
+  return metricTooltip(display, detail, "Elevation gain");
+}
+
 function DateTimeValue({ value, focusableHelp = true }: { value: LocalInstant; focusableHelp?: boolean }) {
   return <span className={`workout-date${value.unavailable ? " unavailable" : ""}`}>
     <span className="weekday-badge" aria-hidden="true">{value.weekday}</span>
@@ -227,9 +312,46 @@ function columnValue(column: WorkoutColumn, workout: Workout, preferences: Prefe
     return <DateTimeValue value={times.start} />;
   }
   if (column === "type") return workout.type.displayName;
-  if (column === "duration") return <DurationValue value={workout.duration} />;
-  const value = metric(workout[column], column, preferences.units, column !== "calories");
-  return value ?? <Unavailable />;
+  if (column === "duration") return <DurationValue value={workout.duration} detail={workoutDurationDetail(workout, preferences)} />;
+  if (column === "distance") {
+    if (!workout.distance) return <Unavailable />;
+    const display = metric(workout.distance, "distance", preferences.units)!;
+    if (workout.distance.unit !== "km") return alignedMetric(display);
+    const other = preferences.units === "imperial"
+      ? `${decimal(workout.distance.value)} km`
+      : `${decimal(String(Number(workout.distance.value) * 0.621371192))} mi`;
+    return metricTooltip(display, other, "Distance");
+  }
+  return workoutMetricValue(column, workout, preferences);
+}
+
+function workoutColumnExtent(column: WorkoutColumn, data: WorkoutList, preferences: Preferences) {
+  const extent = data.columnExtents;
+  if (!extent) return undefined;
+  if (column === "duration") return extent.duration ? formatDuration(extent.duration) : undefined;
+  if (column === "distance") return extent.distance ? metric(extent.distance, "distance", preferences.units) ?? undefined : undefined;
+  if (column === "pace") return extent.pace ? paceDisplay(extent.pace, preferences) : undefined;
+  if (column === "calories") return extent.calories ? decimal(extent.calories.value, 0) : undefined;
+  if (column === "heartRate") return extent.heartRate ? `${decimal(extent.heartRate.value, 0)} bpm` : undefined;
+  if (column === "elevationGain" && extent.elevationGain) {
+    const converted = convertedElevation(extent.elevationGain, preferences.units);
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(converted.value)} ${converted.unit}`;
+  }
+  return undefined;
+}
+
+function workoutHasColumnValue(column: WorkoutColumn, workout: Workout) {
+  if (column === "duration") return true;
+  if (column === "distance") return workout.distance != null;
+  if (column === "pace") return workout.pace != null;
+  if (column === "calories") return workout.calories != null;
+  if (column === "heartRate") return workout.heartRate != null;
+  if (column === "elevationGain") return workout.elevationGain != null;
+  return false;
+}
+
+function isWorkoutMetricColumn(column: WorkoutColumn) {
+  return column !== "date" && column !== "type";
 }
 
 function QueryError({ message, retry }: { message: string; retry: () => void }) {
@@ -440,7 +562,14 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
             const selected = sort.field === column;
             return <th key={column} aria-sort={selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"} scope="col"><button onClick={() => onSort(column)} disabled={!SORTABLE_COLUMNS.has(column)}><span className="column-label">{COLUMN_LABELS[column]}</span><span className="sort-indicator" aria-hidden="true">{selected ? (sort.direction === "asc" ? <>&#9650;</> : <>&#9660;</>) : <>&#9650; &#9660;</>}</span></button></th>;
           })}<th className="workout-actions-heading" scope="col"><span className="visually-hidden">Actions</span></th></tr></thead>
-          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => <td key={column}><div className={`workout-cell workout-cell--${column}`}>{columnValue(column, workout, preferences)}</div></td>)}<td className="workout-actions-cell"><WorkoutActions workout={workout} onShowOnMap={onShowOnMap} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} /></td></tr>)}</tbody>
+          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => {
+            const hasValue = workoutHasColumnValue(column, workout);
+            const value = isWorkoutMetricColumn(column) && !hasValue ? <span className="workout-table-na">n/a</span> : columnValue(column, workout, preferences);
+            const extent = workoutColumnExtent(column, data, preferences);
+            return <td key={column}><div className={`workout-cell workout-cell--${column}`}>{isWorkoutMetricColumn(column)
+              ? <span className="workout-value-lane" data-width-sample={extent ?? "n/a"}><span className="workout-value-content">{value}</span></span>
+              : value}</div></td>;
+          })}<td className="workout-actions-cell"><WorkoutActions workout={workout} onShowOnMap={onShowOnMap} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} /></td></tr>)}</tbody>
         </table>
       </div>
       <div className="mobile-workouts">
@@ -450,9 +579,9 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
           const times = workoutTimes(workout, preferences);
           return <article className={`mobile-workout${isExpanded ? " is-expanded" : ""}`} key={workout.id}>
             <div className="mobile-workout-summary">
-              <button aria-expanded={isExpanded} aria-controls={detailsId} title={durationTooltip(workout.duration)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(workout.id)) next.delete(workout.id); else next.add(workout.id); return next; })}>
+              <button aria-expanded={isExpanded} aria-controls={detailsId} title={workoutDurationDetail(workout, preferences)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(workout.id)) next.delete(workout.id); else next.add(workout.id); return next; })}>
                 <DateTimeValue value={times.start} focusableHelp={false} />
-                <strong>{workout.type.displayName}</strong><DurationValue value={workout.duration} focusable={false} />
+                <strong>{workout.type.displayName}</strong><DurationValue value={workout.duration} focusable={false} detail={workoutDurationDetail(workout, preferences)} />
               </button>
               <WorkoutActions workout={workout} onShowOnMap={onShowOnMap} onViewProvenance={onViewProvenance} onExportGeoJSON={onExportGeoJSON} onExportPoints={onExportPoints} onDelete={onDelete} />
             </div>
@@ -460,8 +589,8 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
               <dl>
                  <div><dt>Local start</dt><dd><DateTimeValue value={times.start} /></dd></div>
                  <div><dt>Local end</dt><dd><DateTimeValue value={times.end} /></dd></div>
-                 <div><dt>Duration</dt><dd><DurationValue value={workout.duration} /></dd></div>
-                {(["distance", "pace", "calories", "heartRate", "elevation"] as const).map((column) => <div key={column}><dt>{COLUMN_LABELS[column]}</dt><dd>{columnValue(column, workout, preferences)}</dd></div>)}
+                 <div><dt>Duration</dt><dd><DurationValue value={workout.duration} detail={workoutDurationDetail(workout, preferences)} /></dd></div>
+                {(["distance", "pace", "calories", "heartRate", "elevationGain"] as const).map((column) => <div key={column}><dt>{COLUMN_LABELS[column]}</dt><dd>{columnValue(column, workout, preferences)}</dd></div>)}
               </dl>
               <p>{workout.location ?? "Location unavailable"} / {workout.routeAvailable ? "Route available" : "Route unavailable"}</p>
             </div>
@@ -810,7 +939,7 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
       </section>
 
       <section className="workouts-section" aria-labelledby="workouts-heading">
-        <div className="section-line"><h2 id="workouts-heading" tabIndex={-1}>Workout log</h2><div className="workout-log-actions">{explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && <button type="button" className="range-delete-trigger" aria-label="Delete workouts in this range" title="Delete workouts in this range" onClick={() => { setRangeConfirmation(""); setRangeDeletionError(""); setRangeDeletionOpen(true); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></svg></button>}{displayedWorkouts && <span>{displayedWorkouts.pagination.totalItems} {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} / Page {displayedWorkouts.pagination.page} of {Math.max(1, displayedWorkouts.pagination.totalPages)}</span>}</div></div>
+        <div className="section-line"><h2 id="workouts-heading" tabIndex={-1}>Workout log</h2><div className="workout-log-actions">{explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && <button type="button" className="range-delete-trigger" aria-label="Delete workouts in this range" title="Delete workouts in this range" onClick={() => { setRangeConfirmation(""); setRangeDeletionError(""); setRangeDeletionOpen(true); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></svg></button>}{displayedWorkouts && <span>{displayedWorkouts.pagination.totalItems} {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} | page {displayedWorkouts.pagination.page} of {Math.max(1, displayedWorkouts.pagination.totalPages)}</span>}</div></div>
         {(workoutsQuery.isPending || pageNeedsCorrection) && <p className="summary-loading" role="status">Loading workouts...</p>}
         {workoutsQuery.isError && <QueryError message="Workouts are unavailable." retry={() => void workoutsQuery.refetch()} />}
         {displayedWorkouts && displayedWorkouts.items.length === 0 && <div className="summary-empty"><strong>No workouts in this range.</strong><span>Choose another date range to continue tracing your archive.</span></div>}

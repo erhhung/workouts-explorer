@@ -31,7 +31,7 @@ func TestSampleFixtures(t *testing.T) {
 	}
 	// Hashes pin the v2 normalized model and intentionally exclude ignored samples/extensions.
 	wantHashes := map[string]string{
-		"0ACE8792-3C73-4554-83A4-724434A75279": "6fab705b041c827aa62024da74c16be202ed1e91656a69b31b9387f8c70a9c22",
+		"0ACE8792-3C73-4554-83A4-724434A75279": "1fbe3442d2d347c1a016f617406531ef21b96ed1541f00011198a40b8f756f21",
 		"3191EA2A-D556-4986-B169-46FF66CB42E1": "8e52a4215568472f78684ed2bbb32cee3dc793a77ab392ec0a4e5632763dbffc",
 		"495C8ABF-1C7C-4C8F-A8DF-9AC2E3E96C1F": "7296762caa8369ea60cf368cc0207b30c039abc1f89746bf1d1874d1b0d667df",
 		"AF30D204-3343-4E43-901A-7A793CD29D64": "f2988db85dd632d829c2bc6131523ce9ca7950e87a2acf3ccafc0b95a66d7e4f",
@@ -100,7 +100,7 @@ func TestSampleFixtures(t *testing.T) {
 		typeKeyCounts["outdoor-walk-d382cfff87408643a86b7a842d85134a"] != 1 {
 		t.Fatalf("normalized type-key counts = %v", typeKeyCounts)
 	}
-	if routeCount != 788 || duplicateTimestampGroups != 6 || invalidQualityValues != 81 {
+	if routeCount != 788 || duplicateTimestampGroups != 6 || invalidQualityValues != 0 {
 		t.Fatalf("route count/duplicate groups/invalid quality = %d/%d/%d", routeCount, duplicateTimestampGroups, invalidQualityValues)
 	}
 
@@ -120,7 +120,7 @@ func TestSampleFixtures(t *testing.T) {
 			qualityWarnings++
 		}
 	}
-	if qualityWarnings != 81 {
+	if qualityWarnings != 0 {
 		t.Fatalf("quality warning count = %d", qualityWarnings)
 	}
 	firstPoint := walk.Route[0]
@@ -143,7 +143,7 @@ func TestSampleFixtures(t *testing.T) {
 	}
 }
 
-func TestCyclingSampleWarningClassification(t *testing.T) {
+func TestCyclingSampleCourseAccuracyNormalization(t *testing.T) {
 	path := filepath.Join("..", "..", "data", "samples", "HealthAutoExport-2026-04-26.json")
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -164,13 +164,17 @@ func TestCyclingSampleWarningClassification(t *testing.T) {
 		t.Fatalf("workouts/route points = %d/%d", len(document.Workouts), len(document.Workouts[0].Route))
 	}
 	warnings := document.Workouts[0].Warnings
-	if len(warnings) != 952 {
-		t.Fatalf("warnings = %d", len(warnings))
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
 	}
-	for _, warning := range warnings {
-		if warning.Code != WarningInvalidOptionalRouteValue || warning.Field != WarningFieldCourseAccuracy || warning.RoutePoint < 0 {
-			t.Fatalf("unexpected warning = %#v", warning)
+	capped := 0
+	for _, point := range document.Workouts[0].Route {
+		if point.CourseAccuracy != nil && *point.CourseAccuracy == maximumCourseAccuracy {
+			capped++
 		}
+	}
+	if capped != 952 {
+		t.Fatalf("capped course accuracy values = %d", capped)
 	}
 }
 

@@ -40,14 +40,14 @@ type workoutSort struct {
 }
 
 var workoutSortExpressions = map[string]string{
-	"date":      "w.started_at",
-	"type":      "wt.provider_label COLLATE \"C\"",
-	"duration":  "w.provider_duration",
-	"distance":  "metrics.distance_value",
-	"pace":      "CASE WHEN metrics.speed_value > 0 THEN 60 / metrics.speed_value END",
-	"calories":  "metrics.energy_value",
-	"heartRate": "metrics.heart_rate_value",
-	"elevation": "metrics.elevation_value",
+	"date":          "w.started_at",
+	"type":          "wt.provider_label COLLATE \"C\"",
+	"duration":      "w.provider_duration",
+	"distance":      "metrics.distance_value",
+	"pace":          "CASE WHEN metrics.distance_value > 0 THEN w.provider_duration / (60 * metrics.distance_value) END",
+	"calories":      "metrics.total_energy_value",
+	"heartRate":     "metrics.heart_rate_value",
+	"elevationGain": "metrics.elevation_value",
 }
 
 func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params generated.ListWorkoutsParams) {
@@ -104,8 +104,8 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		return
 	}
 
-	var total int64
-	if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM app.workouts WHERE local_start_date BETWEEN $1 AND $2`, resolved.start, resolved.end).Scan(&total); err != nil {
+	total, columnExtents, err := queryWorkoutColumnExtents(r.Context(), tx, resolved)
+	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
 	}
@@ -119,10 +119,41 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		totalPages = (total + int64(pageSize) - 1) / int64(pageSize)
 	}
 	writeJSON(w, http.StatusOK, generated.WorkoutList{
-		Range:      rangeResponse(resolved),
-		Pagination: generated.Pagination{Page: page, PageSize: pageSize, TotalItems: total, TotalPages: totalPages},
-		Items:      items,
+		Range:         rangeResponse(resolved),
+		Pagination:    generated.Pagination{Page: page, PageSize: pageSize, TotalItems: total, TotalPages: totalPages},
+		ColumnExtents: columnExtents,
+		Items:         items,
 	})
+}
+
+func queryWorkoutColumnExtents(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) (int64, generated.WorkoutColumnExtents, error) {
+	var total int64
+	var duration, distance, pace, calories, heartRate, elevationGain *string
+	err := tx.QueryRow(ctx, `SELECT count(*)::bigint,trim_scale(max(w.provider_duration))::text,
+		trim_scale(max(metrics.distance_value))::text,
+		trim_scale(max(CASE WHEN metrics.distance_value>0 THEN w.provider_duration/(60*metrics.distance_value) END))::text,
+		trim_scale(max(metrics.calories_value))::text,trim_scale(max(metrics.heart_rate_value))::text,
+		trim_scale(max(metrics.elevation_gain_value))::text
+	 FROM app.workouts w
+	 LEFT JOIN LATERAL (SELECT
+		max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,
+		max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS calories_value,
+		max(value) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_value,
+		max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_gain_value
+		FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=w.id) metrics ON true
+	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).
+		Scan(&total, &duration, &distance, &pace, &calories, &heartRate, &elevationGain)
+	if err != nil {
+		return 0, generated.WorkoutColumnExtents{}, err
+	}
+	result := generated.WorkoutColumnExtents{}
+	setNullable(&result.Duration, duration)
+	setMetric(&result.Distance, distance, stringPointer("km"))
+	setMetric(&result.Pace, pace, stringPointer("min/km"))
+	setMetric(&result.Calories, calories, stringPointer("kcal"))
+	setMetric(&result.HeartRate, heartRate, stringPointer("count/min"))
+	setMetric(&result.ElevationGain, elevationGain, stringPointer("m"))
+	return total, result, nil
 }
 
 func (s *Server) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutID generated.WorkoutID) {
@@ -390,9 +421,9 @@ func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 	if minimumAltitude != nil && maximumAltitude != nil && elevationGain != nil {
-		result.Properties.Elevation.Set(generated.RouteElevation{MinimumMeters: *minimumAltitude, MaximumMeters: *maximumAltitude, GainMeters: *elevationGain})
+		result.Properties.ElevationSummary.Set(generated.RouteElevation{MinimumMeters: *minimumAltitude, MaximumMeters: *maximumAltitude, GainMeters: *elevationGain})
 	} else {
-		result.Properties.Elevation.SetNull()
+		result.Properties.ElevationSummary.SetNull()
 	}
 	if result.Properties.PointCount < 2 {
 		writeProblem(w, r, http.StatusConflict, "Conflict", "workout route needs at least two points for GeoJSON")
@@ -646,19 +677,26 @@ func parseWorkoutSort(raw *[]string) ([]workoutSort, error) {
 const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_label,w.started_at,w.ended_at,
  w.provider_duration::text,w.local_start_date,w.timezone_name,w.start_offset_minutes,w.end_offset_minutes,
  w.is_indoor,w.location,metrics.distance_value::text,metrics.distance_unit,
-	 CASE WHEN metrics.speed_value > 0 THEN trim_scale(60 / metrics.speed_value)::text END,
- CASE WHEN metrics.speed_value > 0 THEN 'min/km' END,metrics.energy_value::text,metrics.energy_unit,
- metrics.heart_rate_value::text,metrics.heart_rate_unit,metrics.elevation_value::text,metrics.elevation_unit,
- (SELECT count(*)::integer FROM app.workout_route_points point WHERE point.workout_id=w.id) AS route_count
+	 CASE WHEN metrics.distance_value > 0 THEN trim_scale(w.provider_duration / (60 * metrics.distance_value))::text END,
+	 CASE WHEN metrics.distance_value > 0 THEN 'min/km' END,
+	 metrics.total_energy_value::text,metrics.total_energy_unit,metrics.active_energy_value::text,metrics.active_energy_unit,
+	 metrics.heart_rate_value::text,metrics.heart_rate_unit,metrics.maximum_heart_rate_value::text,metrics.maximum_heart_rate_unit,
+	 metrics.elevation_value::text,metrics.elevation_unit,route.minimum_altitude::text,
+	 CASE WHEN route.minimum_altitude IS NOT NULL THEN 'm' END,route.maximum_altitude::text,
+	 CASE WHEN route.maximum_altitude IS NOT NULL THEN 'm' END,
+	 trim_scale(route.fastest_kilometer_split_seconds::numeric)::text,trim_scale(route.slowest_kilometer_split_seconds::numeric)::text,
+	 trim_scale(route.fastest_mile_split_seconds::numeric)::text,trim_scale(route.slowest_mile_split_seconds::numeric)::text,
+	 COALESCE(route.point_count,0)::integer
  FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
  LEFT JOIN LATERAL (SELECT
-  max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
-  max(value) FILTER (WHERE metric='speed_average' AND unit='km/hr') AS speed_value,max(unit) FILTER (WHERE metric='speed_average' AND unit='km/hr') AS speed_unit,
-  COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy_value,
-  COALESCE(max(unit) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(unit) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy_unit,
-  max(value) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_value,max(unit) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_unit,
-  max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_value,max(unit) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_unit
- FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=w.id) metrics ON true`
+   max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
+	 max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS total_energy_value,max(unit) FILTER (WHERE metric='total_energy' AND unit='kcal') AS total_energy_unit,
+	 max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal') AS active_energy_value,max(unit) FILTER (WHERE metric='active_energy_burned' AND unit='kcal') AS active_energy_unit,
+   max(value) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_value,max(unit) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_unit,
+	 max(value) FILTER (WHERE metric='heart_rate_maximum' AND unit='count/min') AS maximum_heart_rate_value,max(unit) FILTER (WHERE metric='heart_rate_maximum' AND unit='count/min') AS maximum_heart_rate_unit,
+   max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_value,max(unit) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_unit
+  FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=w.id) metrics ON true
+ LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id`
 
 func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page, pageSize int, sorts []workoutSort) ([]generated.Workout, error) {
 	order := make([]string, 0, len(sorts)+1)
@@ -691,12 +729,16 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 	var startOffset, endOffset *int
 	var indoor *bool
 	var location *string
-	var distanceValue, distanceUnit, paceValue, paceUnit, energyValue, energyUnit *string
-	var heartValue, heartUnit, elevationValue, elevationUnit *string
+	var distanceValue, distanceUnit, paceValue, paceUnit, energyValue, energyUnit, activeEnergyValue, activeEnergyUnit *string
+	var heartValue, heartUnit, maximumHeartValue, maximumHeartUnit *string
+	var elevationValue, elevationUnit, minimumElevationValue, minimumElevationUnit, maximumElevationValue, maximumElevationUnit *string
+	var fastestKilometer, slowestKilometer, fastestMile, slowestMile *string
 	err := row.Scan(&id, &sourceID, &typeID, &item.Type.Key, &item.Type.DisplayName, &item.StartedAt, &item.EndedAt,
 		&item.Duration, &localDate, &timezone, &startOffset, &endOffset, &indoor, &location,
-		&distanceValue, &distanceUnit, &paceValue, &paceUnit, &energyValue, &energyUnit,
-		&heartValue, &heartUnit, &elevationValue, &elevationUnit, &item.RoutePointCount)
+		&distanceValue, &distanceUnit, &paceValue, &paceUnit, &energyValue, &energyUnit, &activeEnergyValue, &activeEnergyUnit,
+		&heartValue, &heartUnit, &maximumHeartValue, &maximumHeartUnit,
+		&elevationValue, &elevationUnit, &minimumElevationValue, &minimumElevationUnit, &maximumElevationValue, &maximumElevationUnit,
+		&fastestKilometer, &slowestKilometer, &fastestMile, &slowestMile, &item.RoutePointCount)
 	if err != nil {
 		return item, err
 	}
@@ -710,8 +752,18 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 	setMetric(&item.Distance, distanceValue, distanceUnit)
 	setMetric(&item.Pace, paceValue, paceUnit)
 	setMetric(&item.Calories, energyValue, energyUnit)
+	setMetric(&item.ActiveCalories, activeEnergyValue, activeEnergyUnit)
 	setMetric(&item.HeartRate, heartValue, heartUnit)
-	setMetric(&item.Elevation, elevationValue, elevationUnit)
+	setMetric(&item.MaximumHeartRate, maximumHeartValue, maximumHeartUnit)
+	setMetric(&item.ElevationGain, elevationValue, elevationUnit)
+	setMetric(&item.MinimumElevation, minimumElevationValue, minimumElevationUnit)
+	setMetric(&item.MaximumElevation, maximumElevationValue, maximumElevationUnit)
+	if fastestKilometer != nil && slowestKilometer != nil {
+		setNullable(&item.SplitPaces.Kilometer, &generated.SplitPaceRange{FastestSeconds: *fastestKilometer, SlowestSeconds: *slowestKilometer})
+	}
+	if fastestMile != nil && slowestMile != nil {
+		setNullable(&item.SplitPaces.Mile, &generated.SplitPaceRange{FastestSeconds: *fastestMile, SlowestSeconds: *slowestMile})
+	}
 	item.RouteAvailable = item.RoutePointCount > 0
 	setNullable(&item.DisplayTimezone, displayTimezone(timezone, startOffset))
 	return item, nil
@@ -723,7 +775,7 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
 	 FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
 	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
-	  COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy
+	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
 	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
 	 WHERE w.local_start_date BETWEEN $1 AND $2 GROUP BY wt.id,wt.type_key,wt.provider_label
@@ -761,7 +813,7 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
 	 FROM app.workouts w
 	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
-	  COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy
+	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
 	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
 	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy, &routeCount, &routedDistance)

@@ -79,7 +79,7 @@ func TestWorkoutSortValidation(t *testing.T) {
 	if err != nil || len(got) != 3 {
 		t.Fatalf("valid sort: %#v %v", got, err)
 	}
-	for _, value := range [][]string{{"unknown:asc"}, {"date:up"}, {"date:asc", "date:desc"}, {"date"}, {"date:asc", "type:asc", "duration:asc", "distance:asc", "pace:asc", "calories:asc", "heartRate:asc", "elevation:asc", "date:desc"}} {
+	for _, value := range [][]string{{"unknown:asc"}, {"date:up"}, {"date:asc", "date:desc"}, {"date"}, {"date:asc", "type:asc", "duration:asc", "distance:asc", "pace:asc", "calories:asc", "heartRate:asc", "elevationGain:asc", "date:desc"}} {
 		if _, err := parseWorkoutSort(&value); err == nil {
 			t.Fatalf("accepted invalid sort %v", value)
 		}
