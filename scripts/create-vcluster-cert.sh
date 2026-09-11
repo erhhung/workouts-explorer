@@ -5,8 +5,9 @@ vcluster_name="${1:-dev}"
 
 HOST_KUBE_CONTEXT=homelab
 INGRESS_NAME=workouts-explorer-ingress
-HOMELAB_DOMAIN=fourteeners.local
 WORKOUTS_UI_SUBDOMAIN=workouts
+HOMELAB_DOMAIN=fourteeners.local
+PUBLIC_DOMAIN=erhhungyuan.com
 
 kubectl --context ${HOST_KUBE_CONTEXT} \
   create --dry-run=server -o yaml -f - <<EOF | \
@@ -23,6 +24,7 @@ metadata:
 spec:
   dnsNames:
     - ${WORKOUTS_UI_SUBDOMAIN}.x${vcluster_name}.${HOMELAB_DOMAIN}
+    - ${WORKOUTS_UI_SUBDOMAIN}.${PUBLIC_DOMAIN}
   secretName: ${INGRESS_NAME}-tls
   duration: 2160h
   renewBefore: 168h

@@ -20,6 +20,7 @@ import (
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
+	"github.com/erhhung/workouts-explorer/internal/workouttimezone"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -147,6 +148,9 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 
 	results := newIngestResults()
 	err := r.ingest(opCtx, job, &results)
+	if err == nil {
+		err = r.reconcileAccountTimezones(opCtx, job)
+	}
 	execution := executionResult{ingest: &results}
 	cancelOperation()
 	heartbeatErr := <-heartbeatDone
@@ -187,6 +191,15 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 		return execution, err
 	}
 	return execution, nil
+}
+
+func (r *Runner) reconcileAccountTimezones(ctx context.Context, job claimedJob) error {
+	var changed int
+	if err := r.db.QueryRow(ctx, `SELECT app.reconcile_account_workout_timezones($1,$2,$3,$4)`,
+		job.accountID, job.id, r.workerID, job.lease).Scan(&changed); err != nil {
+		return fmt.Errorf("reconcile workout timezones: %w", err)
+	}
+	return nil
 }
 
 func (r *Runner) finishCancellationPending(ctx context.Context, job claimedJob) (bool, error) {
@@ -298,6 +311,9 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		if err := r.recordIngestProgress(ctx, job, *results); err != nil {
 			return err
 		}
+	}
+	if err := r.repairCoverageReadiness(ctx, job); err != nil {
+		return fmt.Errorf("repair workout coverage readiness: %w", err)
 	}
 	status := "succeeded"
 	var finalFailure *ingestFailure
@@ -853,7 +869,7 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 	}
 	result := persistedFileResult{}
 	for _, workout := range file.document.Workouts {
-		kind, err := persistWorkout(ctx, tx, job, sourceID, checkpoint.id, workout)
+		kind, err := r.persistWorkout(ctx, tx, job, sourceID, checkpoint.id, workout)
 		if err != nil {
 			return persistedFileResult{}, err
 		}
@@ -885,7 +901,7 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 	return result, nil
 }
 
-func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fileID uuid.UUID, workout healthautoexport.Workout) (string, error) {
+func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fileID uuid.UUID, workout healthautoexport.Workout) (string, error) {
 	var providerID *string
 	var fallbackVersion *string
 	var fallbackHash []byte
@@ -902,6 +918,10 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 	if suppressed {
 		return "suppressed", nil
 	}
+	zone, err := workouttimezone.ResolveRoute(ctx, r.osmDB, workout.Start, &workout.StartOffsetMins, workout.Route)
+	if err != nil {
+		return "", fmt.Errorf("resolve workout timezone: %w", err)
+	}
 	typeID := uuid.Must(uuid.NewV7())
 	if err := tx.QueryRow(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
 		VALUES($1,$2,$3,$4) ON CONFLICT(account_id,type_key) DO UPDATE SET provider_label=EXCLUDED.provider_label
@@ -910,7 +930,7 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 	}
 	var workoutID uuid.UUID
 	var priorHash []byte
-	var err error
+	err = nil
 	if workout.ProviderID != "" {
 		err = tx.QueryRow(ctx, `SELECT id,content_sha256 FROM app.workouts
 			WHERE source_id=$1 AND provider_id=$2 FOR UPDATE`, sourceID, workout.ProviderID).Scan(&workoutID, &priorHash)
@@ -925,11 +945,12 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 		workoutID = uuid.Must(uuid.NewV7())
 		_, err = tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
 			provider_id,fallback_fingerprint_version,fallback_sha256,content_sha256,provider_label,started_at,ended_at,
-			start_offset_minutes,end_offset_minutes,local_start_date,provider_duration,is_indoor,location)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::numeric,$17,$18)`, workoutID,
+			start_offset_minutes,end_offset_minutes,local_start_date,timezone_name,timezone_source,timezone_dataset_release,
+			provider_duration,is_indoor,location)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::numeric,$20,$21)`, workoutID,
 			job.accountID, sourceID, fileID, typeID, providerID, fallbackVersion, fallbackHash, workout.ContentSHA256[:],
 			workout.ProviderLabel, workout.Start, workout.End, workout.StartOffsetMins, workout.EndOffsetMins,
-			workout.LocalStartDate, workout.ProviderDuration.String(), workout.IsIndoor, workout.Location)
+			workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(), workout.IsIndoor, workout.Location)
 	} else if err == nil {
 		changed = !bytes.Equal(priorHash, workout.ContentSHA256[:])
 		if !changed {
@@ -938,9 +959,10 @@ func persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fi
 			kind = "updated"
 			_, err = tx.Exec(ctx, `UPDATE app.workouts SET source_file_id=$2,workout_type_id=$3,content_sha256=$4,
 				provider_label=$5,started_at=$6,ended_at=$7,start_offset_minutes=$8,end_offset_minutes=$9,
-				local_start_date=$10,provider_duration=$11::numeric,is_indoor=$12,location=$13 WHERE id=$1`, workoutID,
+				local_start_date=$10,timezone_name=$11,timezone_source=$12,timezone_reference_workout_id=NULL,
+				timezone_dataset_release=$13,provider_duration=$14::numeric,is_indoor=$15,location=$16 WHERE id=$1`, workoutID,
 				fileID, typeID, workout.ContentSHA256[:], workout.ProviderLabel, workout.Start, workout.End,
-				workout.StartOffsetMins, workout.EndOffsetMins, workout.LocalStartDate, workout.ProviderDuration.String(),
+				workout.StartOffsetMins, workout.EndOffsetMins, workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(),
 				workout.IsIndoor, workout.Location)
 		}
 	}

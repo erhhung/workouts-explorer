@@ -6,6 +6,7 @@ registry_path="${CI_REGISTRY_PATH:?CI_REGISTRY_PATH is required}"
 registry_user="${CI_REGISTRY_USER:?CI_REGISTRY_USER is required}"
 registry_password="${CI_REGISTRY_PASSWORD:?CI_REGISTRY_PASSWORD is required}"
 tag="${WORKOUTS_TEST_IMAGE_TAG:-dev-$(date +%Y%m%d)}"
+components=(api worker osm ui)
 
 registry_path="${registry_path%/}"
 project="${registry_path#*/}"
@@ -18,7 +19,7 @@ cleanup_stale_dev_tags() {
   local component repository page payload artifact_count stale_tag
   local -a page_tags=() stale_tags=()
 
-  for component in api worker ui; do
+  for component in "${components[@]}"; do
     repository="workouts-${component}"
     stale_tags=()
     page=1
@@ -52,10 +53,12 @@ printf '%s' "$registry_password" | buildah login "$registry" \
 
 cleanup_stale_dev_tags
 
-for component in api worker ui; do
+for component in "${components[@]}"; do
   image="${registry_path}/workouts-${component}:${tag}"
-  buildah build --file "${component}/Dockerfile" --tag "$image" .
+  dockerfile="${component}/Dockerfile"
+  if [[ "$component" == "osm" ]]; then dockerfile="worker/osm-update.Dockerfile"; fi
+  buildah build --file "$dockerfile" --tag "$image" .
   buildah push "$image"
 done
 
-printf 'Published workouts API, worker, and UI images with tag %s\n' "$tag"
+printf 'Published workouts API, worker, OSM, and UI images with tag %s\n' "$tag"

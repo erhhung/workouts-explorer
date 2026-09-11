@@ -115,6 +115,9 @@ if kubectl --context "$context" -n "$app_namespace" get deployment/workouts-expl
     deployment/workouts-explorer-api \
     deployment/workouts-explorer-worker
 fi
+if kubectl --context "$context" -n "$app_namespace" get deployment/workouts-explorer-tiles >/dev/null 2>&1; then
+  kubectl --context "$context" -n "$app_namespace" rollout restart deployment/workouts-explorer-tiles
+fi
 
 helm_args=(
   upgrade --install "$release" helm
@@ -135,7 +138,6 @@ helm_args=(
   --set-string ingress.className=nginx
   --set-string "ingress.host=${host}"
   --set-string "ingress.certificateSecretName=${certificate_secret}"
-  --set ingress.mailpit.enabled=false
   --set sources.nfs.enabled=true
   --set-string sources.nfs.server=qnap.fourteeners.local
   --set-string sources.nfs.path=/k8s_data/datasets/workouts
@@ -163,6 +165,7 @@ helm "${helm_args[@]}"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-ui --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-api --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-worker --timeout="$timeout"
+kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-tiles --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" wait \
   --for=condition=Ready certificate/workouts-explorer-ingress --timeout="$timeout"
 

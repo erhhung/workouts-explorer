@@ -6,6 +6,8 @@ ui/*.tsbuildinfo
 ui/vite.config.js
 ui/vite.config.d.ts
 coverage/
+!internal/coverage/
+!internal/coverage/**
 *.out
 *.log
 NOTES

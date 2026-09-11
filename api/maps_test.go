@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestMapTileUpstreamURLUsesOnlyValidatedScope(t *testing.T) {
 	selectionID := uuid.MustParse("018f1d0a-4b2c-7a5e-8f90-123456789abc")
 	accountID := uuid.MustParse("018f1d0a-4b2c-7a5e-8f90-123456789abd")
 	sessionID := uuid.MustParse("018f1d0a-4b2c-7a5e-8f90-123456789abe")
-	raw, err := mapTileUpstreamURL("http://pg-tileserv:7800/internal", selectionID, accountID, sessionID, 42, 12, 655, 1582)
+	raw, err := mapTileUpstreamURL("http://workouts-explorer-tiles:3000/internal", selectionID, accountID, sessionID, 42, 12, 655, 1582)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestMapTileUpstreamURLUsesOnlyValidatedScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Host != "pg-tileserv:7800" || parsed.Path != "/internal/app.raw_route_mvt/12/655/1582.pbf" {
+	if parsed.Host != "workouts-explorer-tiles:3000" || parsed.Path != "/internal/app.raw_route_mvt/12/655/1582" {
 		t.Fatalf("unexpected upstream route: %s", raw)
 	}
 	want := map[string]string{
@@ -68,4 +69,38 @@ func TestValidMVTContentType(t *testing.T) {
 			t.Errorf("expected %q to be rejected", value)
 		}
 	}
+}
+
+func TestValidMVTResponseAcceptsMartinEmptyTile(t *testing.T) {
+	if !validMVTResponse(http.StatusNoContent, "") {
+		t.Fatal("Martin empty tile response was rejected")
+	}
+	if validMVTResponse(http.StatusOK, "") || validMVTResponse(http.StatusBadGateway, "application/x-protobuf") {
+		t.Fatal("invalid populated or upstream error response was accepted")
+	}
+}
+
+func TestMapCoverageReadinessUsesConservativePublicEnums(t *testing.T) {
+	pointer := func(value string) *string { return &value }
+	tests := []struct {
+		state, processing, reason *string
+		want                      generated.CoverageReadinessState
+		wantReason                *generated.CoverageReadinessReason
+	}{
+		{nil, nil, nil, generated.CoverageReadinessStatePending, nil},
+		{pointer("unresolved"), pointer("not_started"), nil, generated.CoverageReadinessStatePending, nil},
+		{pointer("pending"), pointer("not_started"), pointer("region_not_active"), generated.CoverageReadinessStatePending, reasonPointer(generated.RegionNotActive)},
+		{pointer("map_data_ready"), pointer("not_started"), nil, generated.CoverageReadinessStateNotProcessed, nil},
+		{pointer("unavailable"), pointer("not_started"), pointer("no_provider_region"), generated.CoverageReadinessStateUnavailable, reasonPointer(generated.NoProviderRegion)},
+	}
+	for _, test := range tests {
+		got := mapCoverageReadiness(test.state, test.processing, test.reason)
+		if got.State != test.want || (got.Reason == nil) != (test.wantReason == nil) || (got.Reason != nil && *got.Reason != *test.wantReason) {
+			t.Fatalf("readiness=%+v want=%s reason=%v", got, test.want, test.wantReason)
+		}
+	}
+}
+
+func reasonPointer(value generated.CoverageReadinessReason) *generated.CoverageReadinessReason {
+	return &value
 }

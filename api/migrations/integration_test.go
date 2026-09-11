@@ -63,6 +63,43 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if database.Ready(db.ctx, db.migration) {
 		t.Fatal("migration role unexpectedly passed runtime readiness")
 	}
+	var apiRead, apiWrite, workerRead, workerWrite, apiExecute, workerInitialize, workerSet bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT
+		has_table_privilege('workouts_api','app.workout_coverage_states','SELECT'),
+		has_table_privilege('workouts_api','app.workout_coverage_states','INSERT,UPDATE,DELETE'),
+		has_table_privilege('workouts_worker','app.workout_coverage_states','SELECT'),
+		has_table_privilege('workouts_worker','app.workout_coverage_states','INSERT,UPDATE,DELETE'),
+		has_function_privilege('workouts_api','app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)','EXECUTE'),
+		has_function_privilege('workouts_worker','app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)','EXECUTE'),
+		has_function_privilege('workouts_worker','app.set_workout_coverage_readiness(uuid,uuid,bigint,text,text,jsonb,uuid,text,uuid)','EXECUTE')`).Scan(
+		&apiRead, &apiWrite, &workerRead, &workerWrite, &apiExecute, &workerInitialize, &workerSet); err != nil {
+		t.Fatal(err)
+	}
+	if !apiRead || apiWrite || workerRead || workerWrite || apiExecute || !workerInitialize || !workerSet {
+		t.Fatalf("unsafe coverage readiness privileges: api read/write/exec=%t/%t/%t worker read/write/init/set=%t/%t/%t/%t",
+			apiRead, apiWrite, apiExecute, workerRead, workerWrite, workerInitialize, workerSet)
+	}
+	var diagnosticRead, diagnosticWrite, diagnosticPersist, diagnosticLabels, workerDiagnosticRead, workerDiagnosticExecute bool
+	if err := db.migration.QueryRow(db.ctx, `SELECT
+		has_table_privilege('workouts_api','app.coverage_diagnostic_runs','SELECT')
+		AND has_table_privilege('workouts_api','app.coverage_diagnostic_generations','SELECT')
+		AND has_table_privilege('workouts_api','app.coverage_diagnostic_evidence','SELECT')
+		AND has_table_privilege('workouts_api','app.coverage_diagnostic_overall_labels','SELECT')
+		AND has_table_privilege('workouts_api','app.coverage_diagnostic_segment_labels','SELECT'),
+		has_table_privilege('workouts_api','app.coverage_diagnostic_runs','INSERT,UPDATE,DELETE')
+		OR has_table_privilege('workouts_api','app.coverage_diagnostic_evidence','INSERT,UPDATE,DELETE')
+		OR has_table_privilege('workouts_api','app.coverage_diagnostic_overall_labels','INSERT,UPDATE,DELETE'),
+		has_function_privilege('workouts_api','app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb)','EXECUTE'),
+		has_function_privilege('workouts_api','app.set_coverage_diagnostic_labels(uuid,uuid,boolean,text,jsonb)','EXECUTE'),
+		has_table_privilege('workouts_worker','app.coverage_diagnostic_runs','SELECT'),
+		has_function_privilege('workouts_worker','app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb)','EXECUTE')`).Scan(
+		&diagnosticRead, &diagnosticWrite, &diagnosticPersist, &diagnosticLabels, &workerDiagnosticRead, &workerDiagnosticExecute); err != nil {
+		t.Fatal(err)
+	}
+	if !diagnosticRead || diagnosticWrite || !diagnosticPersist || !diagnosticLabels || workerDiagnosticRead || workerDiagnosticExecute {
+		t.Fatalf("unsafe diagnostic privileges: api read/write/persist/labels=%t/%t/%t/%t worker read/execute=%t/%t",
+			diagnosticRead, diagnosticWrite, diagnosticPersist, diagnosticLabels, workerDiagnosticRead, workerDiagnosticExecute)
+	}
 	if _, err := db.worker.Exec(db.ctx, `SELECT app.request_job_cancellation($1,$2)`, uuid.New(), uuid.New()); err == nil {
 		t.Fatal("worker retained direct cancellation authority")
 	}
@@ -341,7 +378,7 @@ func TestRawRouteMapRoleAndPostGISContract(t *testing.T) {
 			AND NOT rolreplication AND NOT rolbypassrls)
 		AND has_schema_privilege('workouts_tiles','app','USAGE')
 		AND has_function_privilege('workouts_tiles',
-			'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+			'app.raw_route_mvt(integer,integer,integer,json)','EXECUTE')
 		AND NOT has_table_privilege('workouts_tiles','app.workout_routes','SELECT')
 		AND NOT has_table_privilege('workouts_tiles','app.map_selections','SELECT')
 		AND NOT has_table_privilege('workouts_tiles','app.map_selection_workouts','SELECT')
@@ -357,7 +394,7 @@ func TestRawRouteMapRoleAndPostGISContract(t *testing.T) {
 		AND has_table_privilege('workouts_api','app.map_selection_workouts','DELETE')
 		AND NOT has_table_privilege('workouts_api','app.map_selection_workouts','UPDATE')
 		AND NOT has_function_privilege('workouts_api',
-			'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+			'app.raw_route_mvt(integer,integer,integer,json)','EXECUTE')
 		AND EXISTS(SELECT 1 FROM pg_attribute
 			WHERE attrelid='app.workout_routes'::regclass AND attname='route'
 			  AND postgis_typmod_type(atttypmod)='MultiLineString'
@@ -1752,6 +1789,66 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 	}
 	if err := tx.Commit(db.ctx); err != nil {
 		t.Fatal(err)
+	}
+	coverageTx := beginAccount(t, db.ctx, db.worker, account)
+	var revision int64
+	var digestChanged, readinessChanged bool
+	if err := coverageTx.QueryRow(db.ctx, `SELECT route_input_revision,digest_changed
+		FROM app.initialize_workout_coverage($1,$2,$3,$4,'import-worker',$5)`, account, workoutID, hash, jobID, uuid.New()).Scan(&revision, &digestChanged); err == nil {
+		_ = coverageTx.Rollback(db.ctx)
+		t.Fatal("coverage readiness accepted a stale ingest lease")
+	}
+	_ = coverageTx.Rollback(db.ctx)
+	coverageTx = beginAccount(t, db.ctx, db.worker, account)
+	if err := coverageTx.QueryRow(db.ctx, `SELECT route_input_revision,digest_changed
+		FROM app.initialize_workout_coverage($1,$2,$3,$4,'import-worker',$5)`, account, workoutID, hash, jobID, lease).Scan(&revision, &digestChanged); err != nil || revision != 1 || !digestChanged {
+		_ = coverageTx.Rollback(db.ctx)
+		t.Fatalf("initial coverage revision=%d changed=%t err=%v", revision, digestChanged, err)
+	}
+	if err := coverageTx.QueryRow(db.ctx, `SELECT app.set_workout_coverage_readiness($1,$2,$3,'map_data_ready',NULL,
+		'[{"regionId":"geofabrik:test","generation":7}]'::jsonb,$4,'import-worker',$5)`, account, workoutID, revision, jobID, lease).Scan(&readinessChanged); err != nil || !readinessChanged {
+		_ = coverageTx.Rollback(db.ctx)
+		t.Fatalf("map-data readiness changed=%t err=%v", readinessChanged, err)
+	}
+	if err := coverageTx.QueryRow(db.ctx, `SELECT route_input_revision,digest_changed
+		FROM app.initialize_workout_coverage($1,$2,$3,$4,'import-worker',$5)`, account, workoutID, hash, jobID, lease).Scan(&revision, &digestChanged); err != nil || revision != 1 || digestChanged {
+		_ = coverageTx.Rollback(db.ctx)
+		t.Fatalf("stable coverage revision=%d changed=%t err=%v", revision, digestChanged, err)
+	}
+	changedHash := bytes.Repeat([]byte{0x43}, 32)
+	if err := coverageTx.QueryRow(db.ctx, `SELECT route_input_revision,digest_changed
+		FROM app.initialize_workout_coverage($1,$2,$3,$4,'import-worker',$5)`, account, workoutID, changedHash, jobID, lease).Scan(&revision, &digestChanged); err != nil || revision != 2 || !digestChanged {
+		_ = coverageTx.Rollback(db.ctx)
+		t.Fatalf("changed coverage revision=%d changed=%t err=%v", revision, digestChanged, err)
+	}
+	if err := coverageTx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	coverageReadTx := beginAccount(t, db.ctx, db.api, account)
+	var readinessState string
+	var regionCount int
+	if err := coverageReadTx.QueryRow(db.ctx, `SELECT state.readiness_state,
+		(SELECT count(*) FROM app.workout_coverage_regions region WHERE region.account_id=state.account_id AND region.workout_id=state.workout_id)
+		FROM app.workout_coverage_states state WHERE state.account_id=$1 AND state.workout_id=$2`, account, workoutID).Scan(&readinessState, &regionCount); err != nil || readinessState != "unresolved" || regionCount != 0 {
+		t.Fatalf("reset readiness=%s regions=%d err=%v", readinessState, regionCount, err)
+	}
+	if err := coverageReadTx.Rollback(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, visibility := range []struct {
+		account uuid.UUID
+		want    int
+	}{{account, 1}, {foreignAccount, 0}} {
+		readTx := beginAccount(t, db.ctx, db.api, visibility.account)
+		var count int
+		if err := readTx.QueryRow(db.ctx, `SELECT count(*) FROM app.workout_coverage_states WHERE workout_id=$1`, workoutID).Scan(&count); err != nil {
+			_ = readTx.Rollback(db.ctx)
+			t.Fatal(err)
+		}
+		_ = readTx.Rollback(db.ctx)
+		if count != visibility.want {
+			t.Fatalf("coverage RLS account=%s count=%d want=%d", visibility.account, count, visibility.want)
+		}
 	}
 	var capabilityCount int
 	if err := db.migration.QueryRow(db.ctx, `SELECT count(*) FROM app.ingest_write_capabilities`).Scan(&capabilityCount); err != nil {

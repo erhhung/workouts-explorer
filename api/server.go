@@ -36,14 +36,15 @@ import (
 var openAPIDocument []byte
 
 type Server struct {
-	config     config.API
-	db         *pgxpool.Pool
-	tileClient *http.Client
-	swagger    http.Handler
-	passwords  *passwordHasher
-	delivery   *deliveryService
-	avatars    *avatarService
-	sourceKeys *sourcecrypto.Keyring
+	config      config.API
+	db          *pgxpool.Pool
+	tileClient  *http.Client
+	swagger     http.Handler
+	passwords   *passwordHasher
+	delivery    *deliveryService
+	avatars     *avatarService
+	sourceKeys  *sourcecrypto.Keyring
+	diagnostics *coverageDiagnosticService
 }
 
 func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
@@ -72,11 +73,16 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 		delivery.close()
 		return nil, fmt.Errorf("configure source encryption: %w", err)
 	}
+	diagnostics, err := newCoverageDiagnosticService(ctx, cfg.CoverageDiagnostics)
+	if err != nil {
+		delivery.close()
+		return nil, err
+	}
 	tileClient := &http.Client{
 		Timeout:       5 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	server := &Server{config: cfg, db: db, tileClient: tileClient, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys}
+	server := &Server{config: cfg, db: db, tileClient: tileClient, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys, diagnostics: diagnostics}
 	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {
@@ -169,6 +175,7 @@ func (s *Server) GetPublicConfig(w http.ResponseWriter, _ *http.Request) {
 		PasswordMinimumLength:  passwordMinimum,
 		PageSizeMaximum:        pageSizeMaximum,
 		BaseMaps:               publicBaseMaps(s.config.BaseMaps),
+		Features:               generated.PublicFeatures{CoverageMatcherDiagnostics: s.config.CoverageDiagnostics.Enabled},
 	}
 	writeJSON(w, http.StatusOK, response)
 }

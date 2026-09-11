@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed - requires an OSM toolchain spike before Milestone 7 schema and
-bootstrap work.
+Accepted. The canonical multi-region promotion slice described here is
+implemented. External download, build, validation policy, job orchestration, and
+application reconciliation remain the next delivery slice.
 
 ## Context
 
@@ -58,7 +59,7 @@ importer, derivation tools, schema, or stable segment identity.
   application uses Geofabrik's stable provider and extract IDs directly and does
   not add Pyrosm solely for downloading.
 
-## Proposed Decision Process
+## Decision Process
 
 Evaluate importer and derivation toolchains against the configured Northern
 California extract and a subsequent full refresh. The spike must prove:
@@ -155,6 +156,13 @@ provenance rather than postal-city or display text alone. Thus `El Camino Real, 
 Real, Sunnyvale` are distinct logical paths even when their source geometry is
 part of one continuous road.
 
+When no authoritative municipality contains a named segment, logical identity is
+scoped by provider region ID, normalized path name, and broad path class instead
+of the former global `outside` bucket. This prevents disconnected same-name roads
+in different extracts from collapsing into one path while retaining useful
+regional aggregation. Derivation version 2 introduces this fallback; municipality-
+scoped logical IDs remain stable.
+
 Segment geometry crossing a locality boundary is split deterministically at that
 boundary before logical-path assignment. The spike must define behavior for
 boundary roads, disputed or overlapping boundaries, unincorporated areas, missing
@@ -166,11 +174,14 @@ deterministic source and topology lineage within the locality. The spike must
 measure whether connected-component derivation or retained source-way/relation
 lineage provides the most stable useful grouping.
 
-Decoded positive-length segment traversals remain the evidence and rendering
-geometry. A workout contributes at most once to the containing logical path,
-using its earliest accepted member-segment traversal. Only traversed portions
-from selected workouts render as visited; every emitted portion uses the logical
-path count and bucket.
+Decoded positive-length segment traversals remain the source evidence for rendering
+geometry. Durable evidence has one row per workout and physical segment: overlapping
+or contiguous traversal spans are dissolved regardless of direction, while truly
+disjoint spans remain separate components of one `MultiLineString`. Dissolution
+must not fill an untraversed gap. A workout contributes at most once to the
+containing logical path, using its earliest accepted member-segment traversal.
+Only traversed geometry from selected workouts renders as visited; every emitted
+span uses the logical path count and bucket.
 
 ### Refresh and promotion constraints
 
@@ -183,6 +194,44 @@ path count and bucket.
   reconciled.
 - Keep OSM diagnostics free of private route or account details.
 
+### Canonical multi-region promotion
+
+Generation schemas are mutable only during build and preparation. After clipping,
+preparation adds fixed region and generation provenance, replaces candidate keys,
+validates partition-bound constraints, builds indexes matching the canonical
+parents, and renames `ways`, `localities`, and `path_segments` with their
+generation ID. Canonical contribution tables are `LIST (region_id)` partitioned
+parents. Promotion moves those prepared tables into `osm_canonical`, detaches the
+old leaves for that region, and attaches the new leaves; it never performs a
+full-table `INSERT SELECT`. A transaction-scoped advisory lock serializes
+promotion per stable region ID. The invoker-security function verifies catalog
+and schema identity, prepared relation names, validated provenance constraints,
+required indexes, nonempty source and segment sets, segment/source-way and
+derivation versions, logical-path equality, and exact JSON preparation gates.
+Leaf replacement and catalog retirement/activation occur in one transaction, so
+readers see either the old or new complete region contribution.
+
+Stable `osm_active` views preserve the original generation-table reader columns.
+For overlapping regions, ways select the highest OSM way version; localities
+select the highest relation version. Equal source versions use highest generation
+ID and then lexicographically highest region ID as deterministic tie-breaks.
+Segments are eligible only when their source way and source version won way
+selection, and duplicate segment UUIDs use the same generation/region precedence.
+`logical_paths` is aggregated from that deduplicated segment view rather than
+copied from any individual region.
+
+Schema 4 preflights the expected deployed schema-3 shape: nonempty canonical
+heaps require exactly one active region, and every canonical tuple must match its
+region and generation. The migration renames those heaps into generation leaves,
+creates partitioned parents and indexes, and attaches the leaves without copying
+tuples. A fresh empty database follows the same migration without requiring an
+active generation. `region_storage` records each attached generation and its
+three leaves. Replacement detaches rather than drops prior leaves, while
+`storage_gc` queues those leaves and the now-unneeded build schema for bounded,
+out-of-transaction cleanup. This foundation does not yet add worker GC execution.
+Downgrade must not copy data and explicitly refuses once a schema-4 replacement
+has queued retired leaves; the legacy schema cannot safely recover after GC.
+
 ### Regional and fallback constraints
 
 Configured named regions define the initial loaded region set. Overlapping regions
@@ -192,6 +241,10 @@ coverage pending when automatic addition has queued an eligible named region, or
 unavailable when automatic addition is disabled, no provider region contains it,
 or the smallest region exceeds the byte ceiling. The worker never performs public
 OSM or Overpass lookups per point.
+Automatic named-region addition is deferred from the current implementation. Until
+it is implemented, a no-evidence diagnostic reports cataloged regions covering route
+points that lack an active configured generation; the UI presents those regions as
+unavailable and retains the raw route.
 
 Refresh downloads complete current PBFs and rebuilds selective candidate tables
 containing eligible paths, required node and relation lineage, municipal
@@ -226,9 +279,20 @@ matching for the MVP.
 
 ## Acceptance Evidence
 
-Change this ADR to Accepted only after recording the selected versions, schemas,
-derivation rules, stable segment algorithm, measured import/query behavior,
-refresh failure behavior, rejected alternatives, and operational commands. The
-spike must include named roads, unnamed trails, relations, parallel paths, path
-splits, deleted ways, overlapping regional data, same-name roads crossing city
-boundaries, boundary roads, unincorporated paths, aliases, and renamed localities.
+The selected Osmium and osm2pgsql versions, measured import/query/storage results,
+derivation and stable identity rules, locality behavior, and failure-safe refresh
+model are recorded above. Migration contract tests cover partition conversion,
+preparation gates, overlap precedence, source-version filtering, exact segment
+deduplication, per-region replacement, GC state, rollback, downgrade refusal,
+and delegation through the thin promotion script. The executable PostGIS fixture
+attaches overlapping regions, verifies source-version and exact-segment
+deduplication, replaces one region without hiding the other, forces a promotion
+rollback, and checks queued GC metadata. On the 2,020,900-way,
+4,467,193-segment xdev generation,
+the canonical 50-meter candidate plan starts from the geography GiST index and
+measured 225 ms cold and 7.3 ms warm. The manual regional updater now implements
+the external lifecycle with digest-pinned Osmium 1.19.0 and osm2pgsql 2.3.1,
+transactional single-flight generation reservation, bounded download provenance,
+an injectable validation-gated pipeline, schema-4 promotion, and retryable
+post-promotion storage GC. It intentionally remains an operator-run command;
+automatic API/job and UI contracts are deferred.

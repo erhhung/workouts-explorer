@@ -42,12 +42,13 @@ implementation that depends on an unresolved choice.
 | Before Milestone 2 authentication implementation | ADR 0005 | Identity canonicalization, password/token policy, distributed throttling, SMTP failure behavior, and administrator bootstrap are accepted. |
 | Before Milestone 2 interface implementation | ADR 0006 | The focused UI spike records the selected styling primitives, theme bootstrap, font, responsive conventions, and accessibility checks. |
 | Before Milestone 3 source persistence | ADR 0007 | The reviewed envelope format, key lifecycle, snapshot encryption, and credential compare-and-swap behavior are accepted. |
+| Before private vector-tile deployment | ADR 0012 | Martin function publication, API proxying, least-privilege database access, and cluster-only routing are accepted. |
 | Before Milestone 6 Map implementation | ADR 0011 | Theme-aware style families, workout-type defaults, fallback and override behavior, provider access, and private-overlay restoration are accepted. |
 | Before Milestone 7 OSM schema/bootstrap | ADR 0008 | The measured importer, derivation schema, segment identity, refresh, and promotion design are accepted. |
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
 | Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
 
-ADRs 0001 through 0007 and ADR 0011 are accepted. ADRs 0008 through 0010 remain
+ADRs 0001 through 0007 and ADRs 0011 through 0012 are accepted. ADRs 0008 through 0010 remain
 Proposed until their stated acceptance evidence is recorded. A proposed record's
 status must change before dependent application work begins.
 
@@ -300,7 +301,7 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 - Import route geometry into private vector-tile functions.
 - Split persisted route geometry when a positive point-to-point timestamp gap is at least three times the running average for its current segment, so paused and resumed workouts do not render false connecting lines.
 - Emit zero-length route components as point features in private vector tiles so repeated resumed coordinates remain visible and hoverable instead of disappearing from line rendering.
-- Deploy cluster-internal `pg_tileserv` with least-privilege database access.
+- Deploy cluster-internal Martin as `workouts-explorer-tiles` with least-privilege database access and function-only publication.
 - Implement the authenticated API tile proxy and private cache policy.
 - Add account data-generation cache busting.
 - Replace the singleton base-map settings with validated, extensible style-family runtime configuration, paired light and dark variants, structured attribution, provider resource origins, a fallback family, and provider-label workout mappings.
@@ -333,7 +334,7 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 ### Verification focus
 
 - Tile-function account isolation
-- Direct `pg_tileserv` network exposure check
+- Direct Martin network exposure check
 - Browser map interaction and mobile layout tests
 - Tile cache-generation invalidation
 - Representative multi-year rendering benchmark
@@ -350,11 +351,13 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 
 ### Vertical slice
 
-- Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract.
+- Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract. ADR 0008 is accepted with canonical multi-region promotion, executable overlap/replacement fixtures, and indexed xdev candidate-query evidence; external update orchestration remains next.
 - Provision the public-data-only `osm` database on the production PostgreSQL server for shared development and production reads.
-- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF.
+- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The manual schema-4 updater, pinned importer image, failure-safe generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented; administrator API/job integration and the next live refresh remain pending.
 - Import authoritative locality boundaries and derive deterministic locality-scoped logical paths above matching segments.
-- Add offline IANA timezone boundaries.
+- Add offline IANA timezone boundaries. Completed with a pinned, checksummed,
+  versioned `timezone-boundary-builder` import, direct route-start lookup,
+  offset-safe nearest-workout inference, and restartable ingest/deletion backfill.
 - Implement named-region coverage detection, bounded provider-catalog auto-addition, globally coalesced region updates, and raw-route-only pending/unavailable behavior outside promoted regions.
 - Chain successful promotions to account/region coverage updates using desired/applied generation watermarks; refresh every intersecting routed workout after an existing region changes.
 - Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
@@ -362,7 +365,8 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning.
 - Choose fixed coverage bucket boundaries from historical distribution and accept ADR 0010 before accepting Coverage rendering.
 - Copy matched segment and logical-path identity, geometry, name, locality, class, and version into the application database.
-- Retain clipped segment-traversal evidence and enforce one workout/logical-path attribution using the earliest positive-length member-segment traversal.
+- Persist one match per workout and physical segment by dissolving overlapping or contiguous traversal spans regardless of direction, retaining disjoint spans as one `MultiLineString`, and computing unique covered length without filling gaps.
+- Enforce one workout/logical-path attribution using the earliest positive-length member-segment traversal.
 - Implement logical-path daily rollups plus all-time counts and date-only first/latest extrema.
 - Implement Coverage vector tiles, fixed blue buckets, hover properties, and legend.
 - Implement sortable, paginated Path Coverage in a full-map-area panel that preserves the mounted map and supports Show on map.
@@ -371,6 +375,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 ### Acceptance
 
 - Repeated traversal and multiple matched segments of one logical path in one workout contribute exactly one count.
+- Repeated or jittering traversal of one physical segment produces one match with no duplicated covered length; disjoint visited spans remain separate `MultiLineString` components.
 - Equally named roads in different localities produce separate rows; compatible same-name segments within one locality produce one row.
 - Unnamed paths appear as N/A.
 - Unmatched points remain visible in Routes but create no false coverage.

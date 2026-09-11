@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestReadPrivateRegularFileSafety(t *testing.T) {
@@ -47,6 +49,23 @@ func TestReadPrivateRegularFileSafety(t *testing.T) {
 
 	if _, err := readPrivateRegularFile(directory, 512); err == nil {
 		t.Fatal("directory was accepted as password file")
+	}
+}
+
+func TestPrivateFileModeAllowsKubernetesSecretGroupProjection(t *testing.T) {
+	projected := unix.Stat_t{Uid: 0, Gid: 65532, Mode: unix.S_IFREG | 0o440}
+	if !privateFileModeAllowed(&projected, 65532, []int{65532}) {
+		t.Fatal("root-owned group-readable Secret projection was rejected")
+	}
+	for _, mode := range []uint32{0o460, 0o450, 0o444, 0o400} {
+		projected.Mode = unix.S_IFREG | mode
+		if privateFileModeAllowed(&projected, 65532, []int{65532}) {
+			t.Errorf("unsafe or unreadable projected mode %#o was accepted", mode)
+		}
+	}
+	projected.Mode = unix.S_IFREG | 0o440
+	if privateFileModeAllowed(&projected, 65532, []int{12345}) {
+		t.Fatal("Secret projection owned by an unrelated group was accepted")
 	}
 }
 

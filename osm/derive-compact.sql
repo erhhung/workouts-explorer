@@ -5,6 +5,7 @@ SET work_mem = '64MB';
 SET maintenance_work_mem = '512MB';
 SET max_parallel_workers_per_gather = 0;
 SELECT set_config('workouts_explorer.osm_derivation_version', :'OSM_DERIVATION_VERSION', false);
+SELECT set_config('workouts_explorer.osm_region_id', :'OSM_REGION_ID', false);
 SET search_path TO :"OSM_BUILD_SCHEMA", public;
 
 DROP TABLE IF EXISTS :"OSM_BUILD_SCHEMA".path_segments CASCADE;
@@ -138,9 +139,15 @@ SELECT
     geom, locality_relation_id,
     CASE
         WHEN normalized_name IS NOT NULL THEN md5(
-            format('workouts-explorer/osm-logical-path/v1:%s:%s:%s:%s',
-                coalesce(locality_relation_id::text, 'outside'),
-                length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            CASE WHEN locality_relation_id IS NOT NULL THEN
+                format('workouts-explorer/osm-logical-path/v1:%s:%s:%s:%s',
+                    locality_relation_id, length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            ELSE
+                format('workouts-explorer/osm-logical-path/v2:region:%s:%s:%s:%s:%s:',
+                    length(current_setting('workouts_explorer.osm_region_id')),
+                    current_setting('workouts_explorer.osm_region_id'),
+                    length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            END
         )::uuid
         ELSE md5(format('workouts-explorer/osm-unnamed-path/v1:%s:%s:%s:%s:1',
             source_way_id, source_way_version, start_node_index, end_node_index))::uuid

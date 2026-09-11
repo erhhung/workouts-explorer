@@ -112,7 +112,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 	sessionID := uuid.Must(uuid.NewV7())
 	lifetime := s.config.SessionLifetime
 	if lifetime == 0 {
-		lifetime = 2 * time.Hour
+		lifetime = 6 * time.Hour
 	}
 	expiresAt := time.Now().UTC().Add(lifetime)
 	tx, err := s.db.Begin(r.Context())
@@ -848,9 +848,21 @@ func (s *Server) validBrowserSigninOrigin(r *http.Request) bool {
 	if origin == "" {
 		return true
 	}
-	public, err := url.Parse(s.config.PublicURL)
 	provided, providedErr := url.Parse(origin)
-	return err == nil && providedErr == nil && provided.User == nil && provided.Scheme == public.Scheme && strings.EqualFold(provided.Host, public.Host) && provided.Path == "" && provided.RawQuery == "" && provided.Fragment == ""
+	if providedErr != nil || provided.User != nil || provided.Path != "" || provided.RawQuery != "" || provided.Fragment != "" {
+		return false
+	}
+	allowedOrigins := s.config.BrowserSigninOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{s.config.PublicURL}
+	}
+	for _, allowedOrigin := range allowedOrigins {
+		allowed, err := url.Parse(allowedOrigin)
+		if err == nil && provided.Scheme == allowed.Scheme && strings.EqualFold(provided.Host, allowed.Host) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) secureCookie() bool {

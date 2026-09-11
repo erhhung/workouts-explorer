@@ -28,5 +28,6 @@ spec:
           command: [/app/migrate]
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
+            - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: MIGRATION_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.migrationDatabaseKey }}}}

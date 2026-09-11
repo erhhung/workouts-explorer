@@ -79,7 +79,7 @@ func TestPublicConfigExposesEffectiveValidationPolicy(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &public); err != nil {
 		t.Fatal(err)
 	}
-	if public.PasswordMinimumLength != 12 || public.PageSizeMaximum != 100 {
+	if public.PasswordMinimumLength != 12 || public.PageSizeMaximum != 100 || public.Features.CoverageMatcherDiagnostics {
 		t.Fatalf("public policy passwordMinimum=%d pageMaximum=%d", public.PasswordMinimumLength, public.PageSizeMaximum)
 	}
 }

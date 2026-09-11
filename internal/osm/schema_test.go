@@ -9,6 +9,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestSupportedSchemaVersion(t *testing.T) {
+	if SupportedSchemaVersion != 6 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 6", SupportedSchemaVersion)
+	}
+}
+
 func TestSharedOSMReadiness(t *testing.T) {
 	databaseURL := os.Getenv("OSM_DATABASE_URL")
 	if databaseURL == "" {

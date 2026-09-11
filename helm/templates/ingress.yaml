@@ -1,4 +1,6 @@
 {{- if .Values.ingress.enabled }}
+{{- $primaryHost := required "ingress.host is required" .Values.ingress.host }}
+{{- $hosts := concat (list $primaryHost) .Values.ingress.additionalHosts }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -9,23 +11,25 @@ spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
   {{- end }}
-  tls: [{hosts: [{{ required "ingress.host is required" .Values.ingress.host }}], secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}}]
+  tls:
+    - hosts:
+      {{- range $hosts }}
+        - {{ . }}
+      {{- end }}
+      secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}
   rules:
-    - host: {{ required "ingress.host is required" .Values.ingress.host }}
+  {{- range $hosts }}
+    - host: {{ . }}
       http:
         paths:
-          {{- if .Values.ingress.mailpit.enabled }}
-          - path: /mailpit
-            pathType: Prefix
-            backend: {service: {name: {{ include "workouts.fullname" . }}-mailpit-proxy, port: {name: http}}}
-          {{- end }}
           - path: /api
             pathType: Prefix
-            backend: {service: {name: {{ include "workouts.fullname" . }}-api, port: {name: http}}}
+            backend: {service: {name: {{ include "workouts.fullname" $ }}-api, port: {name: http}}}
           - path: /swagger
             pathType: Prefix
-            backend: {service: {name: {{ include "workouts.fullname" . }}-api, port: {name: http}}}
+            backend: {service: {name: {{ include "workouts.fullname" $ }}-api, port: {name: http}}}
           - path: /
             pathType: Prefix
-            backend: {service: {name: {{ include "workouts.fullname" . }}-ui, port: {name: http}}}
+            backend: {service: {name: {{ include "workouts.fullname" $ }}-ui, port: {name: http}}}
+  {{- end }}
 {{- end }}

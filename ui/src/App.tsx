@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { ApiError, DEFAULT_WORKOUT_SORT, SESSION_EXPIRED_EVENT, type DateRangePreference, type Preferences, type Profile, type PublicConfig, type Session, type WorkoutSort, api } from "./api";
+import { ApiError, DEFAULT_WORKOUT_SORT, SESSION_EXPIRED_EVENT, type DateRangePreference, type MapSelectionWorkout, type Preferences, type Profile, type PublicConfig, type Session, type WorkoutSort, api } from "./api";
 import { DataSync } from "./DataSync";
 import { initialRange, Summary } from "./Summary";
 import { applyTheme } from "./theme";
@@ -23,6 +23,7 @@ const LOADING_CONFIG: PublicConfig = {
   baseMaps: { families: [], fallbackFamilyId: "", workoutTypeMappings: [] },
   passwordMinimumLength: 12,
   pageSizeMaximum: 100,
+  features: { coverageMatcherDiagnostics: false },
 };
 const PAGE_SIZE_CHOICES = [25, 50, 75, 100];
 const WORKOUT_COLUMN_CHOICES = [
@@ -173,12 +174,12 @@ function TextField({ label, name, id = name, type = "text", placeholder, autoCom
   );
 }
 
-function Login() {
+function Login({ returnTo = "/" }: { returnTo?: string }) {
   const queryClient = useQueryClient();
   const summaryRef = useRef<HTMLDivElement>(null);
   const mutation = useMutation({
     mutationFn: (credentials: { username: string; password: string }) => api<Session>("/api/session", { method: "POST", body: JSON.stringify(credentials) }),
-    onSuccess: (session) => { queryClient.setQueryData(["session"], session); navigate("/"); },
+    onSuccess: (session) => { queryClient.setQueryData(["session"], session); navigate(returnTo, true); },
     onError: () => focusSummary(summaryRef),
   });
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -392,6 +393,10 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [visitRange, setVisitRange] = useState<DateRangePreference>();
   const [workoutSort, setWorkoutSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
+	const [summaryPage, setSummaryPage] = useState(1);
+  const [mapWorkoutIds, setMapWorkoutIds] = useState<string[] | undefined>();
+  const [mapAvailableWorkouts, setMapAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
+  const [mapFocusedWorkoutId, setMapFocusedWorkoutId] = useState<string>();
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -426,7 +431,13 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
   if (!data) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Restoring your route preferences...</p></main>;
   const selectedRange = visitRange ?? initialRange(data.preferences.dateRange);
   const selectDateRange = (next: DateRangePreference) => {
-    if (next !== selectedRange) setWorkoutSort(DEFAULT_WORKOUT_SORT);
+    if (next !== selectedRange) {
+      setWorkoutSort(DEFAULT_WORKOUT_SORT);
+		setSummaryPage(1);
+      setMapWorkoutIds(undefined);
+      setMapAvailableWorkouts([]);
+      setMapFocusedWorkoutId(undefined);
+    }
     setVisitRange(next);
   };
   const initials = data.profile.fullName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || data.profile.username.slice(0, 2).toUpperCase();
@@ -470,8 +481,8 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
         <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 6 &middot; Raw Route Map</p></div>
       </Modal>
       {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={config.pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> : mapRoute ?
-        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} /></Suspense> :
-        <Summary preferences={data.preferences} csrfToken={session.csrfToken} selectedDateRange={visitRange} onDateRangeSelected={selectDateRange} selectedSort={workoutSort} onSortChange={setWorkoutSort} onShowOnMap={(workoutId) => navigate(`/map?workoutId=${encodeURIComponent(workoutId.toUpperCase())}`)} onDateRangeSaved={(dateRange) => { setVisitRange(dateRange); setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current); }} />}
+        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} persistedWorkoutIds={mapWorkoutIds} onWorkoutSelectionChange={setMapWorkoutIds} persistedAvailableWorkouts={mapAvailableWorkouts} onAvailableWorkoutsChange={setMapAvailableWorkouts} persistedFocusedWorkoutId={mapFocusedWorkoutId} onFocusedWorkoutChange={setMapFocusedWorkoutId} /></Suspense> :
+        <Summary preferences={data.preferences} csrfToken={session.csrfToken} selectedDateRange={visitRange} onDateRangeSelected={selectDateRange} selectedSort={workoutSort} onSortChange={setWorkoutSort} selectedPage={summaryPage} onPageChange={setSummaryPage} onShowOnMap={(workoutId) => { const canonicalID = workoutId.toUpperCase(); setMapWorkoutIds((current) => current === undefined || current.includes(canonicalID) ? current : [...current, canonicalID].sort()); setMapFocusedWorkoutId(canonicalID); navigate(`/map?workoutId=${encodeURIComponent(canonicalID)}`); }} onDateRangeSaved={(dateRange) => { setVisitRange(dateRange); setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current); }} />}
     </div>
   );
 }
@@ -479,6 +490,15 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
 function isPublicPath(path: string) {
   const pathname = path.split("?")[0];
   return pathname === "/login" || pathname === "/forgot-password" || pathname === "/reset-password" || pathname === "/register" || pathname.startsWith("/password-resets/") || pathname.startsWith("/invitations/");
+}
+
+export function protectedReturnPath(path: string) {
+	const pathname = path.split("?")[0];
+	if (pathname === "/login") {
+		const candidate = new URLSearchParams(path.split("?")[1] ?? "").get("returnTo") ?? "";
+		return candidate.startsWith("/") && !candidate.startsWith("//") && !isPublicPath(candidate) ? candidate : "/";
+	}
+	return path.startsWith("/") && !path.startsWith("//") && !isPublicPath(path) ? path : "/";
 }
 
 export function App() {
@@ -502,12 +522,25 @@ export function App() {
         if (!active) return;
         queryClient.removeQueries({ predicate: authenticatedQuery });
         queryClient.setQueryData(["session"], null);
-        navigate("/login", true);
+		const returnTo = protectedReturnPath(window.location.pathname + window.location.search);
+		navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, true);
       })();
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, expireSession);
     return () => { active = false; window.removeEventListener(SESSION_EXPIRED_EVENT, expireSession); };
   }, [queryClient]);
+	useEffect(() => {
+		if (!session.data) return;
+		const expiresAt = Date.parse(session.data.expiresAt);
+		const expireIfNeeded = () => {
+			if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+		};
+		const timer = window.setTimeout(expireIfNeeded, Math.min(2_147_483_647, Math.max(0, expiresAt - Date.now())));
+		const visibility = () => { if (document.visibilityState === "visible") expireIfNeeded(); };
+		window.addEventListener("focus", expireIfNeeded);
+		document.addEventListener("visibilitychange", visibility);
+		return () => { window.clearTimeout(timer); window.removeEventListener("focus", expireIfNeeded); document.removeEventListener("visibilitychange", visibility); };
+	}, [session.data?.id, session.data?.expiresAt]);
   const config = publicConfig.data ?? LOADING_CONFIG;
   if (publicConfig.isPending) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Loading application settings...</p></main>;
   if (publicConfig.isError) return <main className="center-state"><Mark /><h1>Workouts Explorer is unavailable.</h1><p role="alert">Application settings could not be loaded. Please try again later.</p></main>;
@@ -517,9 +550,9 @@ export function App() {
     if (path.startsWith("/forgot-password")) return <ForgotPassword />;
     if (path.startsWith("/reset-password") || path.startsWith("/password-resets/")) return <ResetPassword path={path} passwordMinimumLength={config.passwordMinimumLength} />;
     if (path.startsWith("/register") || path.startsWith("/invitations/")) return <Registration path={path} passwordMinimumLength={config.passwordMinimumLength} />;
-    return <Login />;
+    return <Login returnTo={protectedReturnPath(path)} />;
   }
   if (session.isPending) return <main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your explorer...</p></main>;
   if (session.data) return <Shell session={session.data} config={config} path={path} />;
-  return <Login />;
+  return <Login returnTo={protectedReturnPath(path)} />;
 }

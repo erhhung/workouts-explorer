@@ -111,7 +111,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=11 AND minimum_runtime_version=8
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=22 AND minimum_runtime_version=21
 		AND EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL
@@ -119,13 +119,19 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND to_regclass('app.workouts') IS NOT NULL
 		AND to_regclass('app.workout_import_events') IS NOT NULL
 		AND to_regclass('app.workout_routes') IS NOT NULL
+		AND to_regclass('app.workout_coverage_states') IS NOT NULL
+		AND to_regclass('app.workout_coverage_regions') IS NOT NULL
+		AND to_regclass('app.coverage_diagnostic_runs') IS NOT NULL
+		AND to_regclass('app.coverage_diagnostic_evidence') IS NOT NULL
+		AND to_regprocedure('app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)') IS NOT NULL
+		AND to_regprocedure('app.set_workout_coverage_readiness(uuid,uuid,bigint,text,text,jsonb,uuid,text,uuid)') IS NOT NULL
 		AND to_regclass('app.account_data_generations') IS NOT NULL
 		AND to_regclass('app.map_selections') IS NOT NULL
 		AND to_regclass('app.map_selection_workouts') IS NOT NULL
 		AND to_regclass('app.workout_routes_route_gist_idx') IS NOT NULL
 		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
 			AND attname='route' AND NOT attisdropped)
-		AND to_regprocedure('app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)') IS NOT NULL
+		AND to_regprocedure('app.raw_route_mvt(integer,integer,integer,json)') IS NOT NULL
 		AND to_regprocedure('app.record_source_file_failure_log(uuid,text,uuid,uuid)') IS NOT NULL
 		AND to_regprocedure('app.replace_workout_split_summary(uuid)') IS NOT NULL
 		AND to_regclass('app.workout_deletion_targets') IS NOT NULL

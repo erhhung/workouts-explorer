@@ -39,17 +39,19 @@ func (e loggedExecutionError) Error() string { return e.err.Error() }
 func (e loggedExecutionError) Unwrap() error { return e.err }
 
 type Runner struct {
-	db                *pgxpool.Pool
-	logger            *slog.Logger
-	keys              *sourcecrypto.Keyring
-	localRoots        []string
-	workerID          string
-	pollInterval      time.Duration
-	leaseDuration     time.Duration
-	heartbeatInterval time.Duration
-	outcomeReader     func(context.Context, claimedJob) (jobOutcome, error)
-	beforeProcessFile func(sourceFile)
-	fileSlots         chan struct{}
+	db                         *pgxpool.Pool
+	osmDB                      *pgxpool.Pool
+	coverageMinTraversalMeters float64
+	logger                     *slog.Logger
+	keys                       *sourcecrypto.Keyring
+	localRoots                 []string
+	workerID                   string
+	pollInterval               time.Duration
+	leaseDuration              time.Duration
+	heartbeatInterval          time.Duration
+	outcomeReader              func(context.Context, claimedJob) (jobOutcome, error)
+	beforeProcessFile          func(sourceFile)
+	fileSlots                  chan struct{}
 }
 
 type claimedJob struct {
@@ -67,7 +69,9 @@ type claimedJob struct {
 }
 
 type RunnerOptions struct {
-	FileConcurrency int
+	FileConcurrency            int
+	OSMDatabase                *pgxpool.Pool
+	CoverageMinTraversalMeters float64
 }
 
 type ingestMode string
@@ -96,15 +100,17 @@ func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecry
 		options.FileConcurrency = 2
 	}
 	return &Runner{
-		db:                db,
-		logger:            logger,
-		keys:              keys,
-		localRoots:        append([]string(nil), localRoots...),
-		workerID:          "source-worker-" + uuid.NewString(),
-		pollInterval:      defaultPollInterval,
-		leaseDuration:     defaultLease,
-		heartbeatInterval: defaultHeartbeat,
-		fileSlots:         make(chan struct{}, options.FileConcurrency),
+		db:                         db,
+		osmDB:                      options.OSMDatabase,
+		coverageMinTraversalMeters: options.CoverageMinTraversalMeters,
+		logger:                     logger,
+		keys:                       keys,
+		localRoots:                 append([]string(nil), localRoots...),
+		workerID:                   "source-worker-" + uuid.NewString(),
+		pollInterval:               defaultPollInterval,
+		leaseDuration:              defaultLease,
+		heartbeatInterval:          defaultHeartbeat,
+		fileSlots:                  make(chan struct{}, options.FileConcurrency),
 	}
 }
 
@@ -421,6 +427,11 @@ func (r *Runner) purgeWorkoutDeletion(ctx context.Context, job claimedJob) error
 	}
 	if totalCompleted != fenced || targetsCompleted < 0 {
 		return errLeaseLost
+	}
+	var reconciled int
+	if err = tx.QueryRow(ctx, `SELECT app.reconcile_account_workout_timezones($1,$2,$3,$4)`,
+		job.accountID, job.id, r.workerID, job.lease).Scan(&reconciled); err != nil {
+		return fmt.Errorf("reconcile workout timezones after deletion: %w", err)
 	}
 	return tx.Commit(ctx)
 }

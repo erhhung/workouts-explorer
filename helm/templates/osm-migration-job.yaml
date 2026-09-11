@@ -33,6 +33,7 @@ spec:
           command: [/app/osm-migrate]
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
+            - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: OSM_MIGRATION_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ required "worker.osmDatabaseKey is required" .Values.worker.osmDatabaseKey }}}}
           volumeMounts:

@@ -1,0 +1,48 @@
+{{- if .Values.osm.timezoneBoundaries.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "workouts.fullname" . }}-timezone-import-{{ .Release.Revision }}
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: timezone-import}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: timezone-import
+          image: {{ include "workouts.image" (list . .Values.worker.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/app/timezone-import]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          env:
+            - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
+            - {name: TIMEZONE_BOUNDARY_ARCHIVE, value: /tmp/timezones.geojson.zip}
+            - {name: TIMEZONE_BOUNDARY_RELEASE, value: {{ .Values.osm.timezoneBoundaries.release | quote }}}
+            - {name: TIMEZONE_BOUNDARY_SOURCE_URL, value: {{ .Values.osm.timezoneBoundaries.sourceUrl | quote }}}
+            - {name: TIMEZONE_BOUNDARY_SHA256, value: {{ .Values.osm.timezoneBoundaries.sha256 | quote }}}
+            - name: OSM_MIGRATION_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ required "worker.osmDatabaseKey is required" .Values.worker.osmDatabaseKey }}}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: database-tls, mountPath: /tls/prod-db, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - name: database-tls
+          secret:
+            secretName: {{ required "worker.databaseTLSSecret is required" .Values.worker.databaseTLSSecret }}
+            defaultMode: 0440
+{{- end }}

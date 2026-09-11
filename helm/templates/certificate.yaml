@@ -1,13 +1,17 @@
 {{- if .Values.ingress.enabled }}
+{{- $primaryHost := required "ingress.host is required" .Values.ingress.host }}
+{{- $hosts := concat (list $primaryHost) .Values.ingress.additionalHosts }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: workouts-explorer-ingress
   labels: {{- include "workouts.labels" . | nindent 4 }}
 spec:
-  commonName: {{ required "ingress.host is required" .Values.ingress.host }}
+  commonName: {{ $primaryHost }}
   dnsNames:
-    - {{ .Values.ingress.host }}
+  {{- range $hosts }}
+    - {{ . }}
+  {{- end }}
   duration: 2160h
   isCA: false
   issuerRef:

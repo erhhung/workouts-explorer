@@ -4,6 +4,9 @@ image:
   pullSecrets: []
   tag: "0.1.0"
 
+logging:
+  format: json
+
 ui:
   image: workouts-ui
   replicas: 1
@@ -13,6 +16,7 @@ api:
   image: workouts-api
   replicas: 1
   publicUrl: https://localhost
+  browserSigninOrigins: []
   databaseSecret:
     name: workouts-explorer-database
     key: apiDatabaseUrl
@@ -29,10 +33,22 @@ api:
     name: workouts-explorer-database-tls
     key: ca.crt
   passwordMinimumLength: 12
-  sessionLifetime: 2h
+  sessionLifetime: 6h
   pageSizeMaximum: 100
   trustedProxyCidrs: ""
   localDevelopment: false
+  coverageDiagnostics:
+    enabled: false
+    timeout: 120s
+    concurrency: 1
+    osmDatabaseKey: osmDatabaseUrl
+    databaseTLSSecret: workouts-explorer-database-tls
+    motorLaneWidthMeters: 3
+    bicycleLaneWidthMeters: 1.5
+    parkingLaneWidthMeters: 2.1
+    sidewalkSetbackMeters: 3
+    directionalDriftMeters: 7
+    deadEndEndpointAllowanceMeters: 3
   smtp:
     address: smtp.example.invalid:587
     username: workouts-explorer
@@ -68,8 +84,8 @@ api:
 # MapTiler style URLs may contain a browser-restricted public key. Stadia can
 # use domain authentication. Put either provider's HTTPS origins in each
 # family's resourceOrigins; never put private credentials in this file.
-pgTileserv:
-  image: docker.io/pramsey/pg_tileserv:20250131@sha256:e390325edd16061a4486142f08c18ee12fa22f9c5ab72928c9b36e6f79ed84be
+tileServer:
+  image: ghcr.io/maplibre/martin:1.15.0@sha256:84f406ac96839aad3ea06ddaa68ef7617ed55305c21038c182d59f100e48dd6d
   replicas: 1
   databaseSecret:
     name: workouts-explorer-database
@@ -91,6 +107,7 @@ worker:
   autoSyncPollInterval: 30s
   autoSyncStaleDays: 3
   schedulerLeaseDuration: 2m
+  coverageMinTraversalMeters: 5
   staging:
     root: /var/lib/workouts/staging
     sizeLimit: 2Gi
@@ -103,6 +120,11 @@ osm:
     - geofabrik
   regions:
     - geofabrik:norcal
+  timezoneBoundaries:
+    enabled: true
+    release: 2026c
+    sourceUrl: https://github.com/evansiroky/timezone-boundary-builder/releases/download/2026c/timezones.geojson.zip
+    sha256: 7d3f0c5a33b6acd891335c0ad5ba767736b6914cb1a1d68c71921c17ce358948
 
 sources:
   keyringSecret:
@@ -125,9 +147,6 @@ ingress:
   className: ""
   annotations: {}
   host: ""
+  additionalHosts: []
   tlsSecretName: workouts-explorer-ingress-tls
   certificateSecretName: workouts-explorer-ingress-tls
-  mailpit:
-    enabled: false
-    externalName: mailpit.mailpit.svc.cluster.local
-    port: 8025

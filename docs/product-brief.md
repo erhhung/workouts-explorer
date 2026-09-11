@@ -128,6 +128,7 @@ Each user owns one personal workout account. Users cannot access another account
 - Newest route rendered on top
 - Nearest-path matching against all relevant public map paths
 - Deterministic OSM-derived segments for matching and visited geometry
+- One dissolved traversed geometry per workout and physical segment, preserving disjoint visited spans without filling gaps
 - Locality-scoped logical roads and paths for distinct-workout attribution
 - One attribution per workout and logical path using the earliest accepted segment match
 - Fixed blue count buckets for coverage

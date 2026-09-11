@@ -73,7 +73,7 @@ Kubernetes Secret values.
 
 ### Private tiles and public maps
 
-`pg_tileserv` remains cluster-internal and is never routed through public
+Martin remains cluster-internal and is never routed through public
 ingress. The API authenticates private tile requests and proxies only approved
 account and selection parameters.
 
@@ -93,9 +93,9 @@ make independent UI deployment less meaningful.
 Separate origins could preserve independent services but require CORS and more
 complex cookie, CSRF, and deployment policy without providing a product benefit.
 
-### Browser calls `pg_tileserv` directly
+### Browser calls Martin directly
 
-`pg_tileserv` does not implement end-user authentication. Direct access would
+Martin does not implement product end-user authentication. Direct access would
 expose private route and coverage data and is prohibited by the product security
 boundary.
 

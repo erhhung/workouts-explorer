@@ -120,7 +120,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		IdleTimeout:       config.IdleTimeout(),
 	}
 	runner := workerapp.NewRunnerWithOptions(db, logger, keys, cfg.LocalSourceRoots, workerapp.RunnerOptions{
-		FileConcurrency: cfg.FileConcurrency,
+		FileConcurrency:            cfg.FileConcurrency,
+		OSMDatabase:                osmDB,
+		CoverageMinTraversalMeters: cfg.CoverageMinTraversalMeters,
 	})
 	scheduler := workerapp.NewScheduler(db, logger, keys, cfg.LocalSourceRoots, workerapp.SchedulerOptions{
 		PollInterval: cfg.AutoSyncPollInterval,

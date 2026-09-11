@@ -29,7 +29,7 @@ API and worker are separate Go binaries and Kubernetes Deployments. They may sha
 | Application PostgreSQL/PostGIS | Accounts, sessions, sources, jobs, workouts, private routes, copied segments, attribution, rollups, notifications |
 | Shared `osm` PostgreSQL/PostGIS | Selective hierarchy, municipal boundaries, and derived paths from configured named extracts on the production PostgreSQL server; contains no private account data |
 | OSM read replica | Optional matching reads without adding load to OSM import/refresh primary |
-| `pg_tileserv` | Generates dense private route and coverage vector tiles from the application database |
+| Martin (`workouts-explorer-tiles`) | Generates dense private route and coverage vector tiles from the application database |
 | Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
 | NFS archive | Immediately usable source archive for Health Auto Export JSON |
 | Rclone/iCloud Drive | Preferred remote source transport when upstream ADP support permits |
@@ -47,7 +47,7 @@ UI SPA -----> API ----------------------> Application PostgreSQL/PostGIS
                |                                      ^
                | authenticated MVT proxy              |
                v                                      |
-          pg_tileserv --------------------------------+
+          Martin -------------------------------------+
 
 API --enqueue durable jobs--> Application PostgreSQL
                                   |
@@ -75,7 +75,7 @@ Browser    --> public base-map tiles
 - Optimistically removes UI-created deletions while accepting eventual consistency for other sessions.
 - Uses MapLibre for selectable, theme-aware public base-map styles and authenticated private vector layers.
 - Reinstalls product-owned private sources and layers after a public style change without resetting current map state.
-- Never receives source credentials, database topology, or internal `pg_tileserv` URLs.
+- Never receives source credentials, database topology, or the internal tile-server URL.
 
 ### API
 
@@ -88,7 +88,7 @@ Browser    --> public base-map tiles
 - Stores encrypted current source configuration and creates encrypted job-scoped snapshots.
 - Enqueues durable jobs and coalesces equivalent queued or running jobs.
 - Serves Summary, workout, provenance, coverage, preference, job, and notification queries.
-- Authenticates private tile requests and proxies them to internal `pg_tileserv`.
+- Authenticates private tile requests and proxies them to internal Martin.
 - Redacts errors and diagnostics before returning them.
 
 ### Worker
@@ -104,13 +104,14 @@ Browser    --> public base-map tiles
 - Runs source checks, deletion, OSM import, and OSM refresh work.
 - Emits safe structured logs, job events, OTel metrics, and traces.
 
-### `pg_tileserv`
+### Martin (`workouts-explorer-tiles`)
 
 - Connects only to the application database using a least-privilege database role.
-- Can execute only approved private tile functions or views.
+- Auto-publishes only approved tile functions from the `app` schema and publishes no tables.
 - Is reachable only inside the cluster.
 - Does not implement end-user authentication itself.
-- Receives only API-authorized account and selection parameters.
+- Receives API-authorized account and selection parameters as one validated JSON function argument.
+- Disables its internal tile cache because private selections expire and API responses are `private, no-store`.
 
 ## Data Model
 
@@ -172,6 +173,15 @@ Changed source content updates the current workout transactionally and rebuilds 
 - When no IANA name can be inferred, leave the IANA field null and derive a display label such as `UTC-08:00` from the preserved offset.
 - Recompute affected inferred timezones after ingest or deletion.
 
+The route's first provider-sequenced coordinate is the definitive lookup point.
+`route_boundary` derivations record the promoted boundary release; only those
+direct results can seed `nearest_route_boundary` derivations. Nearest lookup is
+account-scoped, requires the same recorded start offset, and uses timestamp then
+workout ID as deterministic tie-breakers. Inferred rows retain the source workout
+ID so deletion and changed-route reconciliation can replace stale derivations.
+An IANA result is discarded when its historical offset at workout start conflicts
+with the provider's preserved offset.
+
 ### OSM and coverage
 
 The OSM database retains standard public-map hierarchy and derived matching paths. Exact importer schema is an implementation decision constrained by preserving node, way, relation, tag, and version provenance.
@@ -184,13 +194,13 @@ The application database intentionally copies only matched segment and logical-p
 |---|---|
 | `coverage_paths` | Stable logical-path identity, normalized/display name, broad class, and authoritative locality identity/display name |
 | `path_segments` | Logical-path membership, OSM identity/version, 2D geometry, path classification, and display tags |
-| `workout_segment_matches` | Decoded workout/segment traversal evidence, clipped traversed geometry, positive length, and earliest traversal timestamp |
+| `workout_segment_matches` | One row per workout/physical segment with dissolved traversed `MultiLineString`, unique covered length, and earliest traversal timestamp |
 | `workout_path_attributions` | Unique workout/logical-path attribution and earliest positive-length member-segment traversal |
 | `account_path_daily_rollups` | Distinct-workout count keyed by account, logical path, and workout-local start date |
 | `account_path_all_time` | All-time first/latest visit dates and distinct-workout count by logical path |
 | `account_data_generations` | Cache-busting generation for private tile URLs after mutations |
 
-The unique workout/logical-path constraint ensures matching multiple member segments and outbound/inbound traversal count once. Segment traversal evidence retains clipped, positive-length geometry so tiles render only portions actually traversed by selected workouts. Every emitted portion receives the containing logical path's count and fixed bucket; unvisited portions and members are not emitted.
+The unique workout/physical-segment constraint collapses repeated passes and GPS-jitter spans into one segment match. Persistence dissolves overlapping or contiguous spans regardless of direction, computes length from the dissolved geometry, and stores disjoint visited spans as separate components of one `MultiLineString`; it never fills gaps between them. The unique workout/logical-path constraint ensures matching multiple member segments and outbound/inbound traversal count once. Segment evidence therefore retains only clipped, positive-length geometry actually traversed by selected workouts. Every emitted span receives the containing logical path's count and fixed bucket; unvisited spans and members are not emitted.
 
 Public graph derivation batches source ways to bound PostgreSQL temporary and shared-memory use. Physical segments split at shared OSM nodes and municipal boundaries. Municipal assignment requires geometry coverage within 1 cm; ambiguous complex pieces retain public geometry but no locality rather than receiving a false city attribution. Named roads remove one leading spelled-out cardinal direction for logical identity while preserving the exact OSM display name on physical segments.
 
@@ -296,7 +306,7 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 - Resolve or update workout timezone.
 - Ensure required OSM path data exists for route envelopes.
 - Generate bounded nearby segment candidates and Viterbi-decode sequence-aware connected traversals using distance, quality, topology, timing, and reliable heading evidence.
-- Retain unique workout/segment match evidence and upsert unique workout/logical-path attribution.
+- Dissolve decoded spans into one unique workout/physical-segment match geometry and upsert unique workout/logical-path attribution.
 - Rebuild affected logical-path daily and all-time rollups.
 - Advance the account data generation used by private tile URLs.
 
@@ -319,12 +329,12 @@ The complete route inventory and observable rules are in `functional-spec.md` an
 
 ### Private vector tiles
 
-The API owns the public private-tile route. A browser never calls `pg_tileserv` directly.
+The API owns the public private-tile route. A browser never calls Martin directly.
 
 1. Browser requests a route or coverage tile using a session-scoped map selection.
 2. API authenticates the session and verifies account ownership.
-3. API supplies approved selection and account context to internal `pg_tileserv`.
-4. `pg_tileserv` queries copied segment geometry and private attribution in the application database.
+3. API supplies approved selection and account context to internal Martin.
+4. Martin invokes the approved security-definer tile function, which revalidates scope before querying copied segment geometry and private attribution.
 5. API returns the tile with private caching headers.
 
 Tile URLs include an account data generation so a redraw after ingest or deletion does not reuse stale private data.
@@ -347,6 +357,13 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - The updater resolves extract metadata through Geofabrik's versioned index, downloads current PBF files into ephemeral local scratch space, validates and records source metadata, and removes the files after processing.
 - Selective import retains eligible paths, required node/relation lineage, municipal boundaries, and derived matching data while omitting buildings, POIs, addresses, and unrelated rendering features.
 - Routes outside promoted regions remain raw-route-only while coverage is pending or unavailable. When automatic addition is enabled, the worker resolves a containing named provider region from locally cached public catalog polygons, records only its public region ID in the maintenance queue, and never sends route coordinates to the provider.
+- Automatic region addition remains deferred. A no-evidence diagnostic resolves its route against the local provider catalog and reports each required but inactive region so the UI can present coverage as unavailable rather than as a successful zero-match review.
+- The unavailable-region fallback samples at most 256 evenly distributed route points, including both endpoints. The diagnostic response lists stable provider-qualified region IDs and display names; the Coverage UI shows its alert/retry state and suppresses normal review controls while preserving the raw route.
+- Diagnostic clipping discards non-positive or degenerate LineStrings before persistence, logs their count, and recomputes portion/segment totals and generation provenance from valid evidence. One unusable OSM substring cannot abort an otherwise valid diagnostic run.
+- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; in Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels and regenerated after map movement; each bearing is averaged from three GPS points before and after the marker so loops remain readable without depending on physical-distance spacing.
+- Clicking a visible route feature in Routes mode immediately focuses and fits that workout, ensures it is checked, and issues a one-time centered scroll for its route-list row. Clicking a route-list row performs the same focus/fit selection without automatic list scrolling.
+- In Routes mode, start/finish markers use the same cached raw-route owner as the direction arrows: delayed hover takes precedence over persistent focus, and both endpoint markers are moved above the magenta route and direction-marker layers.
+- Before matching exists, the application stores a canonical route-input digest and monotonic revision plus pre-matcher readiness only. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; this records only region generation provenance and truthfully remains processing `not_started`, with no covered-path claim.
 - Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
 - Coverage updates are account-owned and single-flight by account/region. Desired and applied OSM-generation watermarks guarantee that a promotion racing an active coverage job produces a successor rather than losing rematch work.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
@@ -572,7 +589,7 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 
 - Use separate least-privilege roles for API, worker, migration, OSM import, OSM read, and tile service.
 - Application and OSM databases remain separate.
-- `pg_tileserv` can access only approved application schemas/functions.
+- Martin connects as `workouts_tiles`, can execute only approved application tile functions, and has no private-table `SELECT` privileges.
 - Source encryption key is not stored in PostgreSQL.
 
 ### Operational boundary

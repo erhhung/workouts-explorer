@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/mail"
 	"net/url"
@@ -35,10 +36,11 @@ type Common struct {
 type API struct {
 	Common
 	PublicURL              string
+	BrowserSigninOrigins   []string
 	PollingIntervalSeconds int
 	MapFitPaddingPixels    int
 	BaseMaps               BaseMaps
-	PGTileServURL          string
+	TileServerURL          string
 	SessionLifetime        time.Duration
 	PasswordMinimum        int
 	PageSizeMaximum        int
@@ -46,20 +48,36 @@ type API struct {
 	TrustedProxyCIDRs      []*net.IPNet
 	LocalDevelopment       bool
 	SMTP                   SMTP
+	CoverageDiagnostics    CoverageDiagnostics
+}
+
+type CoverageDiagnostics struct {
+	Enabled                        bool
+	OSMDatabaseURL                 string
+	Timeout                        time.Duration
+	Concurrency                    int
+	MinimumTraversalMeters         float64
+	MotorLaneWidthMeters           float64
+	BicycleLaneWidthMeters         float64
+	ParkingLaneWidthMeters         float64
+	SidewalkSetbackMeters          float64
+	DirectionalDriftMeters         float64
+	DeadEndEndpointAllowanceMeters float64
 }
 
 type Worker struct {
 	Common
-	OSMDatabaseURL       string
-	FileConcurrency      int
-	AccountConcurrency   int
-	GlobalConcurrency    int
-	StagingRoot          string
-	AutoSyncInterval     time.Duration
-	AutoSyncPollInterval time.Duration
-	AutoSyncStaleDays    int
-	SchedulerLease       time.Duration
-	OSM                  OSM
+	OSMDatabaseURL             string
+	FileConcurrency            int
+	AccountConcurrency         int
+	GlobalConcurrency          int
+	StagingRoot                string
+	AutoSyncInterval           time.Duration
+	AutoSyncPollInterval       time.Duration
+	AutoSyncStaleDays          int
+	SchedulerLease             time.Duration
+	CoverageMinTraversalMeters float64
+	OSM                        OSM
 }
 
 type OSM struct {
@@ -118,17 +136,67 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
-	sessionLifetime, err := durationRange("SESSION_LIFETIME", 2*time.Hour, 5*time.Minute, 24*time.Hour)
+	diagnosticsEnabled, err := boolean("COVERAGE_DIAGNOSTICS_ENABLED", false)
+	if err != nil {
+		return API{}, err
+	}
+	diagnosticsTimeout, err := durationRange("COVERAGE_DIAGNOSTICS_TIMEOUT", 120*time.Second, 5*time.Second, 120*time.Second)
+	if err != nil {
+		return API{}, err
+	}
+	diagnosticsConcurrency, err := integerRange("COVERAGE_DIAGNOSTICS_CONCURRENCY", 1, 1, 4)
+	if err != nil {
+		return API{}, err
+	}
+	diagnosticsMinimum, err := float64Range("COVERAGE_MIN_TRAVERSAL_METERS", 5, 0.1, 100)
+	if err != nil {
+		return API{}, err
+	}
+	motorLaneWidth, err := float64Range("COVERAGE_MOTOR_LANE_WIDTH_METERS", 3, 2.5, 4)
+	if err != nil {
+		return API{}, err
+	}
+	bicycleLaneWidth, err := float64Range("COVERAGE_BICYCLE_LANE_WIDTH_METERS", 1.5, 1, 2.5)
+	if err != nil {
+		return API{}, err
+	}
+	parkingLaneWidth, err := float64Range("COVERAGE_PARKING_LANE_WIDTH_METERS", 2.1, 1.5, 3)
+	if err != nil {
+		return API{}, err
+	}
+	sidewalkSetback, err := float64Range("COVERAGE_SIDEWALK_SETBACK_METERS", 3, 1, 5)
+	if err != nil {
+		return API{}, err
+	}
+	directionalDrift, err := float64Range("COVERAGE_DIRECTIONAL_DRIFT_METERS", 7, 0, 10)
+	if err != nil {
+		return API{}, err
+	}
+	deadEndEndpointAllowance, err := float64Range("COVERAGE_DEAD_END_ENDPOINT_ALLOWANCE_METERS", 3, 0, 10)
+	if err != nil {
+		return API{}, err
+	}
+	diagnosticsOSMURL := os.Getenv("API_OSM_DATABASE_URL")
+	if diagnosticsEnabled && diagnosticsOSMURL == "" {
+		return API{}, fmt.Errorf("API_OSM_DATABASE_URL is required when COVERAGE_DIAGNOSTICS_ENABLED is true")
+	}
+	sessionLifetime, err := durationRange("SESSION_LIFETIME", 6*time.Hour, 5*time.Minute, 24*time.Hour)
+	if err != nil {
+		return API{}, err
+	}
+	publicURL := env("PUBLIC_URL", "http://localhost:5173")
+	browserSigninOrigins, err := loadBrowserSigninOrigins(publicURL, localDevelopment)
 	if err != nil {
 		return API{}, err
 	}
 	result := API{
 		Common:                 c,
-		PublicURL:              env("PUBLIC_URL", "http://localhost:5173"),
+		PublicURL:              publicURL,
+		BrowserSigninOrigins:   browserSigninOrigins,
 		PollingIntervalSeconds: polling,
 		MapFitPaddingPixels:    padding,
 		BaseMaps:               baseMaps,
-		PGTileServURL:          env("PG_TILESERV_URL", "http://127.0.0.1:7800"),
+		TileServerURL:          env("TILE_SERVER_URL", "http://127.0.0.1:3000"),
 		SessionLifetime:        sessionLifetime,
 		PasswordMinimum:        passwordMinimum,
 		PageSizeMaximum:        pageMaximum,
@@ -142,11 +210,18 @@ func LoadAPI() (API, error) {
 			FromAddress:        os.Getenv("SMTP_FROM_ADDRESS"),
 			AllowInsecureLocal: allowInsecureSMTP,
 		},
+		CoverageDiagnostics: CoverageDiagnostics{
+			Enabled: diagnosticsEnabled, OSMDatabaseURL: diagnosticsOSMURL, Timeout: diagnosticsTimeout,
+			Concurrency: diagnosticsConcurrency, MinimumTraversalMeters: diagnosticsMinimum,
+			MotorLaneWidthMeters: motorLaneWidth, BicycleLaneWidthMeters: bicycleLaneWidth,
+			ParkingLaneWidthMeters: parkingLaneWidth, SidewalkSetbackMeters: sidewalkSetback,
+			DirectionalDriftMeters: directionalDrift, DeadEndEndpointAllowanceMeters: deadEndEndpointAllowance,
+		},
 	}
 	if err := validatePublicOrigin(result.PublicURL, result.LocalDevelopment); err != nil {
 		return API{}, err
 	}
-	if err := validateHTTPURL("PG_TILESERV_URL", result.PGTileServURL, false); err != nil {
+	if err := validateHTTPURL("TILE_SERVER_URL", result.TileServerURL, false); err != nil {
 		return API{}, err
 	}
 	if err := validateSMTP(result.SMTP, result.LocalDevelopment); err != nil {
@@ -193,9 +268,8 @@ func validateSMTP(cfg SMTP, localDevelopment bool) error {
 		return fmt.Errorf("SMTP_FROM_ADDRESS must be one addr-spec without a display name")
 	}
 	if cfg.AllowInsecureLocal {
-		mailpitHost := strings.EqualFold(host, "mailpit") || strings.HasPrefix(strings.ToLower(host), "mailpit.")
-		if !localDevelopment || port != "1025" || (!isLoopbackHost(host) && !mailpitHost) || cfg.Username != "" || cfg.PasswordFile != "" {
-			return fmt.Errorf("SMTP_ALLOW_INSECURE_LOCAL requires LOCAL_DEVELOPMENT and a loopback or Mailpit host on port 1025 without credentials")
+		if !localDevelopment || port != "1025" || !isLoopbackHost(host) || cfg.Username != "" || cfg.PasswordFile != "" {
+			return fmt.Errorf("SMTP_ALLOW_INSECURE_LOCAL requires LOCAL_DEVELOPMENT and a loopback host on port 1025 without credentials")
 		}
 		return nil
 	}
@@ -217,6 +291,38 @@ func validatePublicOrigin(raw string, localDevelopment bool) error {
 		return fmt.Errorf("PUBLIC_URL must use https except for explicit loopback local development")
 	}
 	return nil
+}
+
+func loadBrowserSigninOrigins(publicURL string, localDevelopment bool) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("BROWSER_SIGNIN_ORIGINS"))
+	if raw == "" {
+		return []string{publicURL}, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > 16 {
+		return nil, fmt.Errorf("BROWSER_SIGNIN_ORIGINS must contain at most 16 origins")
+	}
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	includesPublicURL := false
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin == "" || validatePublicOrigin(origin, localDevelopment) != nil {
+			return nil, fmt.Errorf("BROWSER_SIGNIN_ORIGINS must contain only valid public origins")
+		}
+		parsed, _ := url.Parse(origin)
+		canonical := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
+		if _, exists := seen[canonical]; exists {
+			return nil, fmt.Errorf("BROWSER_SIGNIN_ORIGINS must not contain duplicate origins")
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, canonical)
+		includesPublicURL = includesPublicURL || strings.EqualFold(canonical, publicURL)
+	}
+	if !includesPublicURL {
+		return nil, fmt.Errorf("BROWSER_SIGNIN_ORIGINS must include PUBLIC_URL")
+	}
+	return result, nil
 }
 
 func LoadWorker() (Worker, error) {
@@ -262,6 +368,10 @@ func LoadWorker() (Worker, error) {
 	if schedulerLease <= autoSyncPollInterval {
 		return Worker{}, fmt.Errorf("SCHEDULER_LEASE_DURATION must exceed AUTO_SYNC_POLL_INTERVAL")
 	}
+	coverageMinimum, err := float64Range("COVERAGE_MIN_TRAVERSAL_METERS", 5, 0.1, 100)
+	if err != nil {
+		return Worker{}, err
+	}
 	osm, err := loadOSM()
 	if err != nil {
 		return Worker{}, err
@@ -274,7 +384,8 @@ func LoadWorker() (Worker, error) {
 		Common: common, OSMDatabaseURL: osmDatabaseURL, FileConcurrency: fileConcurrency, AccountConcurrency: accountConcurrency,
 		GlobalConcurrency: globalConcurrency, StagingRoot: stagingRoot, AutoSyncInterval: autoSyncInterval,
 		AutoSyncPollInterval: autoSyncPollInterval, AutoSyncStaleDays: autoSyncStaleDays, SchedulerLease: schedulerLease,
-		OSM: osm,
+		CoverageMinTraversalMeters: coverageMinimum,
+		OSM:                        osm,
 	}, nil
 }
 
@@ -398,6 +509,18 @@ func int64Range(name string, fallback, minimum, maximum int64) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < minimum || value > maximum {
 		return 0, fmt.Errorf("%s must be an integer from %d through %d", name, minimum, maximum)
+	}
+	return value, nil
+}
+
+func float64Range(name string, fallback, minimum, maximum float64) (float64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be a number between %g and %g", name, minimum, maximum)
 	}
 	return value, nil
 }

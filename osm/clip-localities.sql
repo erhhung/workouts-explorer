@@ -5,6 +5,7 @@ SET work_mem = '64MB';
 SET maintenance_work_mem = '512MB';
 SET max_parallel_workers_per_gather = 0;
 SELECT set_config('workouts_explorer.osm_derivation_version', :'OSM_DERIVATION_VERSION', false);
+SELECT set_config('workouts_explorer.osm_region_id', :'OSM_REGION_ID', false);
 SET search_path TO :"OSM_BUILD_SCHEMA", public;
 
 DROP TABLE IF EXISTS locality_clip_candidates;
@@ -110,9 +111,15 @@ SELECT
     clipped_locality_id AS locality_relation_id,
     CASE
         WHEN normalized_name IS NOT NULL THEN md5(
-            format('workouts-explorer/osm-logical-path/v1:%s:%s:%s:%s',
-                coalesce(clipped_locality_id::text, 'outside'),
-                length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            CASE WHEN clipped_locality_id IS NOT NULL THEN
+                format('workouts-explorer/osm-logical-path/v1:%s:%s:%s:%s',
+                    clipped_locality_id, length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            ELSE
+                format('workouts-explorer/osm-logical-path/v2:region:%s:%s:%s:%s:%s:',
+                    length(current_setting('workouts_explorer.osm_region_id')),
+                    current_setting('workouts_explorer.osm_region_id'),
+                    length(broad_class), broad_class, length(normalized_name)) || normalized_name
+            END
         )::uuid
         ELSE md5(format('workouts-explorer/osm-unnamed-path/v1:%s:%s:%s:%s:%s',
             source_way_id, source_way_version, start_node_index, end_node_index,
@@ -132,7 +139,9 @@ UPDATE path_segments AS segment
 SET locality_relation_id = NULL,
     logical_path_id = CASE
         WHEN segment.normalized_name IS NOT NULL THEN md5(
-            format('workouts-explorer/osm-logical-path/v1:outside:%s:%s:%s',
+            format('workouts-explorer/osm-logical-path/v2:region:%s:%s:%s:%s:%s:',
+                length(current_setting('workouts_explorer.osm_region_id')),
+                current_setting('workouts_explorer.osm_region_id'),
                 length(segment.broad_class), segment.broad_class,
                 length(segment.normalized_name)) || segment.normalized_name
         )::uuid
