@@ -574,9 +574,33 @@ describe("Summary", () => {
     let table = await screen.findByRole("table");
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Date▼", "Duration▲ ▼", "Calories▲ ▼", "Actions"]);
     await userEvent.click(within(table).getByRole("button", { name: /Duration/ }));
-    await waitFor(() => expect(workoutRequests.some((path) => new URL(path, "https://test").searchParams.get("sort") === "duration:asc")).toBe(true));
+    await waitFor(() => expect(workoutRequests.some((path) => new URL(path, "https://test").searchParams.get("sort") === "duration:desc")).toBe(true));
     table = await screen.findByRole("table");
-    expect(within(table).getByText("Duration").closest("th")).toHaveAttribute("aria-sort", "ascending");
+    expect(within(table).getByText("Duration").closest("th")).toHaveAttribute("aria-sort", "descending");
+  });
+
+  test("uses each column's preferred initial direction and toggles the active column", async () => {
+    const workoutRequests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const path = String(input);
+      if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
+      if (path.startsWith("/api/workouts?")) { workoutRequests.push(path); return Promise.resolve(json(workoutPage())); }
+      throw new Error(`Unhandled ${path}`);
+    });
+    renderSummary({ workoutColumns: ["date", "type", "duration", "distance", "pace", "calories", "heartRate", "elevationGain"] });
+    const expected = [
+      ["Type", "type:asc"], ["Duration", "duration:desc"], ["Distance", "distance:desc"], ["Pace", "pace:asc"],
+      ["Calories", "calories:desc"], ["Heart rate", "heartRate:desc"], ["Elev gain", "elevationGain:desc"],
+    ] as const;
+    const latestSort = () => new URL(workoutRequests.at(-1)!, "https://test").searchParams.get("sort");
+    for (const [label, requestedSort] of expected) {
+      await userEvent.click(await screen.findByRole("button", { name: label }));
+      await waitFor(() => expect(latestSort()).toBe(requestedSort));
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Elev gain" }));
+    await waitFor(() => expect(latestSort()).toBe("elevationGain:asc"));
+    await userEvent.click(screen.getByRole("button", { name: "Date" }));
+    await waitFor(() => expect(latestSort()).toBe("date:desc"));
   });
 
   test("uses exact sort glyphs and keeps fixed weighted columns stable across sorting", async () => {

@@ -633,19 +633,21 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 4. Named segments are grouped into logical paths by normalized name, broad path class, and authoritative locality identity. For example, El Camino Real in Mountain View and El Camino Real in Sunnyvale are separate paths.
 5. Segment-to-locality assignment uses imported administrative boundaries and deterministic geometry rules. Segment derivation splits at locality boundaries where needed rather than assigning a cross-boundary geometry wholly to the wrong locality.
 6. Unnamed segments never collapse into one locality-wide N/A path. Their logical identity uses deterministic source/topology lineage within the locality and remains separately inspectable as N/A.
-7. One logical path receives at most one attribution from a workout, even when the workout matches several member segments or traverses them repeatedly.
-8. The path attribution retains the earliest positive-length decoded member-segment traversal from that workout. Point projections and segment-level traversal evidence remain available for rendering, diagnostics, and rematching.
-9. Only the decoded portions of member segments traversed by at least one selected workout render as covered; unvisited portions of a matched segment or the same logical path do not render as visited.
-10. Every rendered member segment uses its logical path's distinct-workout count and bucket. Coverage ignores workout type for coloring.
-11. Fixed blue count buckets represent distinct workout counts for logical paths.
-12. Hover details show selected-period count, all-time count, all-time first visit date, all-time latest visit date, path name, and locality.
-13. First and latest visit are date-only values derived from all-time extrema and do not change with the current date range or workout subset.
-14. Unnamed paths display N/A while retaining their locality and stable identity.
-15. Coverage stats is always visible in Routes and Coverage modes. It opens a panel that occupies the map stage through its right and bottom edges while leaving the MapLibre instance mounted behind it.
-16. The panel provides sortable, paginated Path Coverage rows and the description `Roads, trails, and other paths visited.` It does not belong to Summary.
-17. Closing Coverage stats reveals the existing map without reconstructing it. The map is not keyboard-interactive while fully covered.
-18. Each row has an actions menu whose Show on map action closes the panel, selects Coverage mode, highlights the path's visited geometry, and fits that geometry without changing the date range or workout subset.
-19. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
+7. Durable segment evidence contains at most one match per workout and physical segment. Overlapping or contiguous decoded traversal spans are dissolved regardless of direction, so repeated passes and GPS jitter neither create duplicate matches nor inflate covered length.
+8. Genuinely disjoint visited spans on one physical segment remain separate components of that match's `MultiLineString`; persistence never fills the untraversed gap between them.
+9. One logical path receives at most one attribution from a workout, even when the workout matches several member segments or traverses them repeatedly.
+10. The path attribution retains the earliest positive-length decoded member-segment traversal from that workout. Point projections and detailed traversals remain available in diagnostics, raw routes support rematching, and dissolved segment evidence supports durable rendering.
+11. Only the decoded spans of member segments traversed by at least one selected workout render as covered; unvisited spans of a matched segment or the same logical path do not render as visited.
+12. Every rendered member segment uses its logical path's distinct-workout count and bucket. Coverage ignores workout type for coloring.
+13. Fixed blue count buckets represent distinct workout counts for logical paths.
+14. Hover details show selected-period count, all-time count, all-time first visit date, all-time latest visit date, path name, and locality.
+15. First and latest visit are date-only values derived from all-time extrema and do not change with the current date range or workout subset.
+16. Unnamed paths display N/A while retaining their locality and stable identity.
+17. Coverage stats is always visible in Routes and Coverage modes. It opens a panel that occupies the map stage through its right and bottom edges while leaving the MapLibre instance mounted behind it.
+18. The panel provides sortable, paginated Path Coverage rows and the description `Roads, trails, and other paths visited.` It does not belong to Summary.
+19. Closing Coverage stats reveals the existing map without reconstructing it. The map is not keyboard-interactive while fully covered.
+20. Each row has an actions menu whose Show on map action closes the panel, selects Coverage mode, highlights the path's visited geometry, and fits that geometry without changing the date range or workout subset.
+21. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
 
 ### Validation
 
@@ -667,6 +669,8 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Given El Camino Real geometry in Mountain View and Sunnyvale, when logical paths are derived, then the table exposes separate locality-scoped rows and attributions.
 - Given only part of a locality-scoped path was visited, when Coverage renders, then only visited member-segment geometry appears.
 - Given two disjoint portions of one locality-scoped path were visited, when Coverage renders, then both portions share path statistics while the unvisited middle remains absent.
+- Given a workout traverses the same physical segment repeatedly in either direction, when segment evidence is persisted, then one workout/physical-segment match contains the dissolved geometry and unique covered length.
+- Given a workout traverses two disjoint spans of one physical segment, when segment evidence is persisted, then one `MultiLineString` retains both components without covering the gap.
 - Given a route proceeds straight through an intersection, when one GPS point is nearer the cross street, then the cross street receives no attribution without positive decoded traversal.
 - Given a route genuinely turns at an intersection, when subsequent points support the connected turn, then both positively traversed roads receive attribution.
 - Given a heavily visited logical path, when coverage renders, then fixed buckets do not force all low-count paths into one near-zero shade.

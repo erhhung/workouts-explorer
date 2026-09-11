@@ -27,3 +27,13 @@ git_root() {
   }
   echo "$root"
 }
+
+# use VSCode to open general files
+command -v open &> /dev/null || {
+  alias open=code o=open
+}
+
+# use latest version of GNU Make
+command -v gmake &> /dev/null && {
+  alias make='gmake'
+}

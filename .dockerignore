@@ -4,4 +4,6 @@ data
 ui/node_modules
 ui/dist
 coverage
+!internal/coverage
+!internal/coverage/**
 *.out

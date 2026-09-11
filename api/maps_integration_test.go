@@ -67,6 +67,16 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	if len(selection.Workouts) != 2 || selection.Workouts[0].Id != compactUUID(fixture.workouts[0]) || selection.Workouts[1].Id != compactUUID(fixture.workouts[1]) || selection.Bounds.IsNull() {
 		t.Fatalf("unexpected selection: %#v", selection)
 	}
+	firstCalories, firstCaloriesErr := selection.Workouts[0].Calories.Get()
+	secondCalories, secondCaloriesErr := selection.Workouts[1].Calories.Get()
+	if firstCaloriesErr != nil || firstCalories.Value != "300.25" || secondCaloriesErr != nil || secondCalories.Value != "150.25" {
+		t.Fatalf("map calories must match Summary total calories: first=%+v/%v second=%+v/%v", firstCalories, firstCaloriesErr, secondCalories, secondCaloriesErr)
+	}
+	for _, workout := range selection.Workouts {
+		if workout.CoverageReadiness.State != generated.CoverageReadinessStatePending || workout.CoverageReadiness.Reason != nil {
+			t.Fatalf("legacy workout readiness=%+v", workout.CoverageReadiness)
+		}
+	}
 	if !strings.Contains(selection.RouteTileUrl, "/route-tiles/") || !strings.HasSuffix(selection.RouteTileUrl, "/{z}/{x}/{y}.pbf") {
 		t.Fatalf("unexpected tile URL %q", selection.RouteTileUrl)
 	}
@@ -75,11 +85,18 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tile []byte
-	if err := tileDB.QueryRow(ctx, `SELECT app.raw_route_mvt(0,0,0,$1,$2,$3,$4)`, accountID, sessionID, selection.Id, selection.DataGeneration).Scan(&tile); err != nil {
+	if err := tileDB.QueryRow(ctx, `SELECT app.raw_route_mvt(0,0,0,json_build_object(
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4))`,
+		accountID, sessionID, selection.Id, selection.DataGeneration).Scan(&tile); err != nil {
 		t.Fatalf("tile role could not execute the approved MVT function: %v", err)
 	}
 	if len(tile) == 0 {
 		t.Fatal("approved world tile did not contain selected route features")
+	}
+	if _, err := tileDB.Exec(ctx, `SELECT app.raw_route_mvt(0,0,0,json_build_object(
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,
+		'target_generation',$4,'unexpected','value'))`, accountID, sessionID, selection.Id, selection.DataGeneration); err == nil {
+		t.Fatal("tile function accepted an additional Martin query parameter")
 	}
 
 	selectionPath := "/api/map-selections/" + selection.Id

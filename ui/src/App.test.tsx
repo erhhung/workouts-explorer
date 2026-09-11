@@ -4,13 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { type ReactNode } from "react";
 import { describe, expect, test, vi } from "vitest";
 import indexHtml from "../index.html?raw";
-import { App } from "./App";
+import { App, protectedReturnPath } from "./App";
 import { SESSION_EXPIRED_EVENT, api } from "./api";
 import { applyTheme } from "./theme";
 
 const session = {
   id: "11111111111111111111111111111111",
-  expiresAt: "2026-08-03T15:00:00Z",
+  expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   csrfToken: "ccccccccccccccccccccccccccccccccccccccccccc",
   identity: { id: "22222222222222222222222222222222", username: "trailrunner", fullName: "Avery Stone", role: "user" },
 };
@@ -43,6 +43,7 @@ const publicConfig = {
   baseMaps: { families: [], fallbackFamilyId: "", workoutTypeMappings: [] },
   passwordMinimumLength: 12,
   pageSizeMaximum: 100,
+  features: { coverageMatcherDiagnostics: false },
 };
 const dataSync = {
   schedule: { enabled: true, sourceCount: 0, cadence: null, cadenceSeconds: 86400, staleDays: 3 },
@@ -99,6 +100,13 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("public authentication", () => {
+	test("accepts only internal protected return locations", () => {
+		expect(protectedReturnPath("/login?returnTo=%2Fmap%3FworkoutId%3DAAAA")).toBe("/map?workoutId=AAAA");
+		expect(protectedReturnPath("/data-sync/jobs/ABC")).toBe("/data-sync/jobs/ABC");
+		expect(protectedReturnPath("/login?returnTo=https%3A%2F%2Fevil.example")).toBe("/");
+		expect(protectedReturnPath("/login?returnTo=%2F%2Fevil.example")).toBe("/");
+	});
+
   test("does not expire a session for normalized public endpoint 401s", async () => {
     const expired = vi.fn();
     window.addEventListener(SESSION_EXPIRED_EVENT, expired);
@@ -143,6 +151,23 @@ describe("public authentication", () => {
     expect(location.pathname).toBe("/");
     expect(posted).toEqual({ username: "avery@example.test", password: "correct horse battery" });
   });
+
+	test("returns to the selected Map workout after reauthentication", async () => {
+		const workoutID = "A".repeat(32);
+		routeFetch((path, method) => {
+			if (path === "/api/session" && method === "POST") return json(session, 201);
+			if (path === "/api/me") return json(profile);
+			if (path === "/api/me/preferences") return json(preferences);
+			if (path === "/api/map-selections" && method === "POST") return json({ id: "B".repeat(32), expiresAt: session.expiresAt, dataGeneration: 1, range: emptySummary.range, bounds: null, workouts: [], routeTileUrl: `/api/map-selections/${"B".repeat(32)}/route-tiles/1/{z}/{x}/{y}.pbf` });
+			return undefined as never;
+		});
+		renderApp(`/login?returnTo=${encodeURIComponent(`/map?workoutId=${workoutID}`)}`);
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText("Username"), "trailrunner");
+		await user.type(screen.getByLabelText("Password"), "correct horse battery");
+		await user.click(screen.getByRole("button", { name: "Sign in" }));
+		await waitFor(() => expect(location.pathname + location.search).toBe(`/map?workoutId=${workoutID}`));
+	});
 
   test("failed login stays public, uses safe copy, and focuses the summary", async () => {
     const expired = vi.fn();
@@ -343,7 +368,7 @@ describe("authenticated shell", () => {
       if (path === "/api/me/preferences" && method === "PATCH") return json({ ...preferences, dateRange: "last7Days" });
       if (path === "/api/map-selections" && method === "POST") {
         selectionBody = JSON.parse(String(init?.body));
-        return json({ id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2026-08-10T00:00:00Z", dataGeneration: 1, range: { startDate: "2026-08-03", endDate: "2026-08-09" }, bounds: null, workouts: [], routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/routes/{z}/{x}/{y}" });
+        return json({ id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-08-03", endDate: "2026-08-09" }, bounds: null, workouts: [], routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/routes/{z}/{x}/{y}" });
       }
       if (path === "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && method === "DELETE") return new Response(null, { status: 204 });
       return undefined as never;
@@ -366,6 +391,148 @@ describe("authenticated shell", () => {
     expect(screen.getByRole("link", { name: "Map" })).toHaveAttribute("aria-current", "page");
     expect(selectionBody).toEqual({ dateRangeEnum: "last7Days", tz: "America/Denver" });
   });
+
+  test("propagates the diagnostic feature flag to Map while still requiring a focused route", async () => {
+    const routeWorkout = {
+      id: "D".repeat(32), type: { id: "1".repeat(32), key: "running", name: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", partialRoute: false,
+      bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: null, pace: null, calories: null, heartRate: null, elevationGain: null, coverageReadiness: { state: "notProcessed" },
+    };
+    authenticatedFetch((path, method) => {
+      if (path === "/api/config" && method === "GET") return json({ ...publicConfig, features: { coverageMatcherDiagnostics: true } });
+      if (path === "/api/map-selections" && method === "POST") return json({ id: "A".repeat(32), expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: routeWorkout.bounds, workouts: [routeWorkout], routeTileUrl: `/api/map-selections/${"A".repeat(32)}/routes/{z}/{x}/{y}` });
+      if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
+      return undefined as never;
+    });
+    renderApp("/map");
+    const coverage = await screen.findByRole("button", { name: "Coverage" });
+    expect(coverage).toBeDisabled();
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/05\/2026/ }));
+    await waitFor(() => expect(coverage).toBeEnabled());
+  });
+
+	test("keeps every route checked when first opening Map through Show on map", async () => {
+		const routeWorkouts = [
+			{ id: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: null, pace: null, calories: null, heartRate: null, elevationGain: null, coverageReadiness: { state: "pending" } },
+			{ id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: false, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: null, heartRate: null, elevationGain: null, coverageReadiness: { state: "pending" } },
+		];
+		const summaryWorkout = { ...oneWorkout, id: routeWorkouts[1].id, type: { id: routeWorkouts[1].type.id, key: "hiking", displayName: "Hiking" }, startedAt: routeWorkouts[1].startedAt, endedAt: routeWorkouts[1].endedAt, localStartDate: routeWorkouts[1].localStartDate };
+		const selectionBodies: Array<{ workoutIds?: string[] }> = [];
+		authenticatedFetch((path, method, init) => {
+			if (path.startsWith("/api/workouts?") && method === "GET") return json({ ...workoutsWithOne, items: [summaryWorkout] });
+			if (path === "/api/map-selections" && method === "POST") {
+				const body = JSON.parse(String(init?.body)); selectionBodies.push(body);
+				return json({ id: "A".repeat(32), expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: emptySummary.range, bounds: routeWorkouts[1].bounds, workouts: routeWorkouts, routeTileUrl: `/api/map-selections/${"A".repeat(32)}/routes/{z}/{x}/{y}` });
+			}
+			if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
+			return undefined as never;
+		});
+		renderApp();
+		const user = userEvent.setup();
+		await user.click((await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0]);
+		await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+		expect(await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
+		expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+		expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
+		expect(selectionBodies.at(-1)?.workoutIds).toBeUndefined();
+		await user.click(screen.getByRole("link", { name: "Summary" }));
+		await user.click(screen.getByRole("link", { name: "Map" }));
+		expect(await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
+		expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+		expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
+	});
+
+  test("preserves selected map routes across tabs and sorting until the date range changes", async () => {
+    const routeWorkouts = [
+      { id: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-05T12:00:00Z", endedAt: "2026-08-05T13:00:00Z", duration: "3600", localStartDate: "2026-08-05", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: null, pace: null, calories: null, heartRate: null, elevationGain: null, coverageReadiness: { state: "pending" } },
+      { id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: false, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: null, heartRate: null, elevationGain: null, coverageReadiness: { state: "pending" } },
+    ];
+    const summaryWorkout = { ...oneWorkout, id: routeWorkouts[1].id, type: { id: routeWorkouts[1].type.id, key: "hiking", displayName: "Hiking" }, startedAt: routeWorkouts[1].startedAt, endedAt: routeWorkouts[1].endedAt, localStartDate: routeWorkouts[1].localStartDate };
+    const summaryWorkouts = { ...workoutsWithOne, items: [summaryWorkout] };
+    const selectionBodies: Array<{ workoutIds?: string[]; dateRangeEnum?: string }> = [];
+    authenticatedFetch((path, method, init) => {
+      if (path.startsWith("/api/workouts?") && method === "GET") return json(summaryWorkouts);
+      if (path === "/api/me/preferences" && method === "PATCH") return json({ ...preferences, dateRange: "last7Days" });
+      if (path === "/api/map-selections" && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { workoutIds?: string[]; dateRangeEnum?: string };
+        selectionBodies.push(body);
+        const selected = body.workoutIds === undefined ? routeWorkouts : routeWorkouts.filter((workout) => body.workoutIds?.includes(workout.id));
+        const id = selectionBodies.length.toString(16).toUpperCase().padStart(32, "A");
+        return json({ id, expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: null, workouts: selected, routeTileUrl: `/api/map-selections/${id}/routes/{z}/{x}/{y}` });
+      }
+      if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
+      return undefined as never;
+    });
+    renderApp("/map");
+    const user = userEvent.setup();
+    const hiking = await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" });
+    await user.click(hiking);
+    await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual([routeWorkouts[0].id]));
+
+    await user.click(screen.getByRole("link", { name: "Summary" }));
+    await user.click(await screen.findByRole("button", { name: "Duration" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Duration" }).closest("th")).toHaveAttribute("aria-sort", "descending"));
+    await user.click(screen.getByRole("link", { name: "Map" }));
+
+    expect(await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).not.toBeChecked();
+    await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual([routeWorkouts[0].id]));
+
+    await user.click(screen.getByRole("link", { name: "Summary" }));
+    await user.click((await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    expect(await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+    await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual(routeWorkouts.map((workout) => workout.id)));
+    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
+
+		await user.click(screen.getByRole("link", { name: "Summary" }));
+		await screen.findByRole("button", { name: "Duration" });
+		await user.click(screen.getByRole("link", { name: "Map" }));
+		expect(await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+		expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
+		await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual(routeWorkouts.map((workout) => workout.id)));
+
+    await user.click(screen.getByRole("button", { name: "Select date range" }));
+    await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
+    await waitFor(() => expect(selectionBodies.at(-1)).toMatchObject({ dateRangeEnum: "last7Days" }));
+    expect(selectionBodies.at(-1)?.workoutIds).toBeUndefined();
+    expect(await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+
+    await user.click(screen.getByRole("link", { name: "Summary" }));
+    await user.click((await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+		await waitFor(() => expect(selectionBodies).toContainEqual({ dateRangeEnum: "last7Days", tz: "America/Denver" }));
+		await waitFor(() => expect(selectionBodies.at(-1)).toMatchObject({ dateRangeEnum: "last7Days" }));
+		expect(selectionBodies.at(-1)?.workoutIds).toBeUndefined();
+		expect(screen.getByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
+		expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+		expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
+  });
+
+	test("preserves the Summary workout page across tabs and resets it for a new date range", async () => {
+		authenticatedFetch((path, method) => {
+			if (path.startsWith("/api/workouts?") && method === "GET") {
+				const page = Number(new URL(path, "https://test").searchParams.get("page"));
+				return json({ ...workoutsWithOne, pagination: { page, pageSize: 25, totalItems: 51, totalPages: 3 } });
+			}
+			if (path === "/api/map-selections" && method === "POST") return json({ id: "A".repeat(32), expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: emptySummary.range, bounds: null, workouts: [], routeTileUrl: `/api/map-selections/${"A".repeat(32)}/routes/{z}/{x}/{y}` });
+			if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
+			if (path === "/api/me/preferences" && method === "PATCH") return json({ ...preferences, dateRange: "last7Days" });
+			return undefined as never;
+		});
+		renderApp();
+		const user = userEvent.setup();
+		expect(await screen.findByText("Page 1 of 3", { selector: ".pagination span" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Next" }));
+		expect(await screen.findByText("Page 2 of 3", { selector: ".pagination span" })).toBeInTheDocument();
+		await user.click(screen.getByRole("link", { name: "Map" }));
+		await screen.findByRole("group", { name: "Map mode" });
+		await user.click(screen.getByRole("link", { name: "Summary" }));
+		expect(await screen.findByText("Page 2 of 3", { selector: ".pagination span" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Select date range" }));
+		await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
+		expect(await screen.findByText("Page 1 of 3", { selector: ".pagination span" })).toBeInTheDocument();
+	});
 
   test("loads a Data Sync deep link and the wordmark returns to Summary", async () => {
     const jobId = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
@@ -417,10 +584,19 @@ describe("authenticated shell", () => {
     resolveWorkouts(json({ title: "Unauthorized", detail: "different private detail", status: 401 }, 401));
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(location.pathname).toBe("/login");
+		expect(new URLSearchParams(location.search).get("returnTo")).toBe("/");
     expect(replace).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Retry")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("private expiry detail");
   });
+
+	test("expires an advertised browser session deadline without waiting for another API request", async () => {
+		authenticatedFetch((path, method) => path === "/api/session" && method === "GET" ? json({ ...session, expiresAt: "2000-01-01T00:00:00Z" }) : undefined as never);
+		renderApp("/data-sync");
+		expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+		expect(location.pathname).toBe("/login");
+		expect(new URLSearchParams(location.search).get("returnTo")).toBe("/data-sync");
+	});
 
   test("cancels a deferred session refetch before a protected 401 can clear the shell", async () => {
     let sessionRequests = 0;

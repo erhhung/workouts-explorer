@@ -68,16 +68,6 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
-      {{- if not .Values.api.smtp.allowInsecureLocal }}
-      initContainers:
-        - name: prepare-smtp-password
-          image: {{ include "workouts.image" (list . .Values.api.image) }}
-          command: [/bin/sh, -ec, "cp /secret/password /private/password && chmod 0400 /private/password && chown 65532:65532 /private/password"]
-          securityContext: {runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [CHOWN]}, readOnlyRootFilesystem: true}
-          volumeMounts:
-            - {name: smtp-source, mountPath: /secret, readOnly: true}
-            - {name: smtp-password, mountPath: /private}
-      {{- end }}
       containers:
         - name: api
           image: {{ include "workouts.image" (list . .Values.api.image) }}
@@ -89,6 +79,11 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
             - name: RATE_LIMIT_KEY
               valueFrom: {secretKeyRef: {name: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}, key: {{ .Values.api.securitySecret.rateLimitKey }}}}
+            {{- if .Values.api.coverageDiagnostics.enabled }}
+            # Temporary shared OSM credential; replace after issuing a dedicated reader client certificate.
+            - name: API_OSM_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ required "api.coverageDiagnostics.osmDatabaseKey is required" .Values.api.coverageDiagnostics.osmDatabaseKey }}}}
+            {{- end }}
             - {name: SSL_CERT_FILE, value: /var/run/secrets/workouts-trust/ca.crt}
           ports: [{name: http, containerPort: 8080}]
           livenessProbe: {httpGet: {path: /health/live, port: http}}
@@ -97,8 +92,11 @@ spec:
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
             - {name: trusted-ca, mountPath: /var/run/secrets/workouts-trust, readOnly: true}
+            {{- if .Values.api.coverageDiagnostics.enabled }}
+            - {name: diagnostics-database-tls, mountPath: /tls/prod-db, readOnly: true}
+            {{- end }}
           {{- if not .Values.api.smtp.allowInsecureLocal }}
-            - {name: smtp-password, mountPath: /var/run/secrets/workouts-smtp, readOnly: true}
+            - {name: smtp-password, mountPath: /var/run/secrets/workouts-smtp/password, subPath: password, readOnly: true}
           {{- end }}
       volumes:
         - name: source-keyring
@@ -111,12 +109,17 @@ spec:
             secretName: {{ required "api.trustedCASecret.name is required" .Values.api.trustedCASecret.name }}
             defaultMode: 0440
             items: [{key: {{ required "api.trustedCASecret.key is required" .Values.api.trustedCASecret.key }}, path: ca.crt}]
+        {{- if .Values.api.coverageDiagnostics.enabled }}
+        - name: diagnostics-database-tls
+          secret:
+            secretName: {{ required "api.coverageDiagnostics.databaseTLSSecret is required" .Values.api.coverageDiagnostics.databaseTLSSecret }}
+            defaultMode: 0440
+        {{- end }}
       {{- if not .Values.api.smtp.allowInsecureLocal }}
-        - {name: smtp-password, emptyDir: {medium: Memory}}
-        - name: smtp-source
+        - name: smtp-password
           secret:
             secretName: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}
-            defaultMode: 0400
+            defaultMode: 0440
             items: [{key: {{ .Values.api.securitySecret.smtpPasswordKey }}, path: password}]
       {{- end }}
 ---
@@ -151,6 +154,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
+            - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
             - {name: SOURCE_KEYRING_FILE, value: /var/run/secrets/workouts-source/keyring.json}
             - {name: LOCAL_SOURCE_ROOTS, value: {{ join "," .Values.sources.localRoots | quote }}}
@@ -161,6 +165,7 @@ spec:
             - {name: AUTO_SYNC_POLL_INTERVAL, value: {{ .Values.worker.autoSyncPollInterval | quote }}}
             - {name: AUTO_SYNC_STALE_DAYS, value: {{ .Values.worker.autoSyncStaleDays | quote }}}
             - {name: SCHEDULER_LEASE_DURATION, value: {{ .Values.worker.schedulerLeaseDuration | quote }}}
+            - {name: COVERAGE_MIN_TRAVERSAL_METERS, value: {{ .Values.worker.coverageMinTraversalMeters | quote }}}
             - {name: WORKER_STAGING_ROOT, value: {{ .Values.worker.staging.root | quote }}}
             - {name: OSM_AUTO_ADD_REGIONS, value: {{ .Values.osm.autoAddRegions | quote }}}
             - {name: OSM_MAX_AUTO_DOWNLOAD_BYTES, value: {{ .Values.osm.maxAutoDownloadBytes | float64 | printf "%.0f" | quote }}}
@@ -205,34 +210,38 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "workouts.fullname" . }}-pg-tileserv
+  name: workouts-explorer-tiles
   labels: {{- include "workouts.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.pgTileserv.replicas }}
+  replicas: {{ .Values.tileServer.replicas }}
   selector:
-    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: pg-tileserv}
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: tiles}
   template:
     metadata:
-      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: pg-tileserv}
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: tiles}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/tile-server-configmap.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
-        - name: pg-tileserv
-          image: {{ .Values.pgTileserv.image }}
+        - name: martin
+          image: {{ .Values.tileServer.image }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          args: [--config, /etc/martin/config.yaml]
           env:
-            - name: DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "pgTileserv.databaseSecret.name is required" .Values.pgTileserv.databaseSecret.name }}, key: {{ required "pgTileserv.databaseSecret.key is required" .Values.pgTileserv.databaseSecret.key }}}}
-          ports: [{name: http, containerPort: 7800}]
-          livenessProbe: {tcpSocket: {port: http}}
-          readinessProbe: {tcpSocket: {port: http}}
-          resources: {{- toYaml .Values.pgTileserv.resources | nindent 12 }}
+            - name: MARTIN_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "tileServer.databaseSecret.name is required" .Values.tileServer.databaseSecret.name }}, key: {{ required "tileServer.databaseSecret.key is required" .Values.tileServer.databaseSecret.key }}}}
+          ports: [{name: http, containerPort: 3000}]
+          livenessProbe: {httpGet: {path: /health, port: http}}
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          resources: {{- toYaml .Values.tileServer.resources | nindent 12 }}
           volumeMounts:
-            - {name: tmp, mountPath: /tmp}
+            - {name: config, mountPath: /etc/martin, readOnly: true}
       volumes:
-        - {name: tmp, emptyDir: {sizeLimit: 32Mi}}
+        - name: config
+          configMap: {name: workouts-explorer-tiles}

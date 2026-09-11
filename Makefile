@@ -33,13 +33,14 @@ test-ui:
 	npm --prefix ui test
 
 build:
-	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker ./worker/cmd/osm-migrate ./worker/cmd/osm-catalog
+	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker ./worker/cmd/osm-migrate ./worker/cmd/osm-catalog ./worker/cmd/osm-update ./worker/cmd/timezone-import ./worker/cmd/timezone-backfill ./worker/cmd/coverage-evaluate
 	npm --prefix ui run build
 
 images:
 	./scripts/prune-workouts-images.sh
 	buildah build --file api/Dockerfile --tag workouts-api:$(SHORT_SHA) --tag workouts-api:$(APP_VERSION) .
 	buildah build --file worker/Dockerfile --tag workouts-worker:$(SHORT_SHA) --tag workouts-worker:$(APP_VERSION) .
+	buildah build --file worker/osm-update.Dockerfile --tag workouts-osm:$(SHORT_SHA) --tag workouts-osm:$(APP_VERSION) .
 	buildah build --file ui/Dockerfile --tag workouts-ui:$(SHORT_SHA) --tag workouts-ui:$(APP_VERSION) .
 
 publish-dev-images:

@@ -153,6 +153,9 @@ export interface PublicConfig {
   baseMaps: BaseMapsConfig;
   passwordMinimumLength: number;
   pageSizeMaximum: number;
+  features: {
+    coverageMatcherDiagnostics: boolean;
+  };
 }
 
 export interface BaseMapAttribution {
@@ -188,6 +191,7 @@ export interface MapSelectionWorkout {
   calories: ExactMetric | null;
   heartRate: ExactMetric | null;
   elevationGain: ExactMetric | null;
+  coverageReadiness: { state: "pending" | "unavailable" | "notProcessed"; reason?: "region_not_active" | "no_provider_region" };
 }
 
 export interface MapSelection {
@@ -199,6 +203,96 @@ export interface MapSelection {
   workouts: MapSelectionWorkout[];
   routeTileUrl: string;
 }
+
+export type CoverageDiagnosticOverallLabel = "correct" | "incorrect" | "uncertain";
+export type CoverageDiagnosticSegmentLabelValue = "expected" | "unexpected" | "uncertain";
+
+export interface CoverageDiagnosticGeneration {
+  regionId: string;
+  generation: number;
+  sourceUrl: string;
+  sourceSha256: string;
+  sourceHeaderTimestamp: string | null;
+  importerVersion: number;
+  derivationVersion: number;
+  promotedAt: string;
+}
+
+export interface CoverageDiagnosticCounts {
+  originalPoints: number;
+  sampledPoints: number;
+  matchedPoints: number;
+  ambiguousPoints: number;
+  unmatchedPoints: number;
+  rejectedPoints: number;
+  traversals: number;
+  portions: number;
+  uniqueSegments: number;
+  durationMilliseconds: number;
+}
+
+export interface CoverageDiagnosticEvidenceProperties {
+  portionOrdinal: number;
+  physicalSegmentId: string;
+  direction: "forward" | "reverse";
+  regionId: string;
+  generation: number;
+  traversedMeters: number;
+  evidenceClass: "matched" | "ambiguous";
+}
+
+export interface CoverageDiagnosticEvidenceFeature {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: number[][] };
+  properties: CoverageDiagnosticEvidenceProperties;
+}
+
+export interface CoverageDiagnosticEvidenceCollection {
+  type: "FeatureCollection";
+  features: CoverageDiagnosticEvidenceFeature[];
+}
+
+export interface CoverageDiagnosticSegmentLabel {
+  portionOrdinal: number;
+  label: CoverageDiagnosticSegmentLabelValue;
+}
+
+export interface CoverageDiagnosticLabelsPatch {
+  overall?: CoverageDiagnosticOverallLabel;
+  segments: CoverageDiagnosticSegmentLabel[];
+}
+
+export interface CoverageDiagnosticLabels {
+  overall?: CoverageDiagnosticOverallLabel | null;
+  segments: CoverageDiagnosticSegmentLabel[];
+}
+
+export interface CoverageDiagnosticUnavailableRegion {
+  regionId: string;
+  displayName: string;
+}
+
+interface CoverageDiagnosticRunThroughV60 {
+  id: string;
+  workoutId: string;
+  routeRevision: number;
+  rulesVersion: "coverage-experimental-v1";
+  samplingVersion: "coverage-sampling-experimental-v1";
+  pathPolicyVersion: "coverage-path-policy-experimental-v1" | "coverage-path-policy-experimental-v2" | "coverage-path-policy-experimental-v3" | "coverage-path-policy-experimental-v4" | "coverage-path-policy-experimental-v5" | "coverage-path-policy-experimental-v6" | "coverage-path-policy-experimental-v7" | "coverage-path-policy-experimental-v8" | "coverage-path-policy-experimental-v9" | "coverage-path-policy-experimental-v10" | "coverage-path-policy-experimental-v11" | "coverage-path-policy-experimental-v12" | "coverage-path-policy-experimental-v13" | "coverage-path-policy-experimental-v14" | "coverage-path-policy-experimental-v15" | "coverage-path-policy-experimental-v16" | "coverage-path-policy-experimental-v17" | "coverage-path-policy-experimental-v18" | "coverage-path-policy-experimental-v19" | "coverage-path-policy-experimental-v20" | "coverage-path-policy-experimental-v21" | "coverage-path-policy-experimental-v22" | "coverage-path-policy-experimental-v23" | "coverage-path-policy-experimental-v24" | "coverage-path-policy-experimental-v25" | "coverage-path-policy-experimental-v26" | "coverage-path-policy-experimental-v27" | "coverage-path-policy-experimental-v28" | "coverage-path-policy-experimental-v29" | "coverage-path-policy-experimental-v30" | "coverage-path-policy-experimental-v31" | "coverage-path-policy-experimental-v32" | "coverage-path-policy-experimental-v33" | "coverage-path-policy-experimental-v34" | "coverage-path-policy-experimental-v35" | "coverage-path-policy-experimental-v36" | "coverage-path-policy-experimental-v37" | "coverage-path-policy-experimental-v38" | "coverage-path-policy-experimental-v39" | "coverage-path-policy-experimental-v40" | "coverage-path-policy-experimental-v41" | "coverage-path-policy-experimental-v42" | "coverage-path-policy-experimental-v43" | "coverage-path-policy-experimental-v44" | "coverage-path-policy-experimental-v45" | "coverage-path-policy-experimental-v46" | "coverage-path-policy-experimental-v47" | "coverage-path-policy-experimental-v48" | "coverage-path-policy-experimental-v49" | "coverage-path-policy-experimental-v50" | "coverage-path-policy-experimental-v51" | "coverage-path-policy-experimental-v52" | "coverage-path-policy-experimental-v53" | "coverage-path-policy-experimental-v54" | "coverage-path-policy-experimental-v55" | "coverage-path-policy-experimental-v56" | "coverage-path-policy-experimental-v57" | "coverage-path-policy-experimental-v58" | "coverage-path-policy-experimental-v59" | "coverage-path-policy-experimental-v60";
+  movementMode: "foot" | "bicycle" | "shared_public";
+  minimumTraversalMeters: number;
+  outcome: "evaluated" | "no_evidence";
+  counts: CoverageDiagnosticCounts;
+  generations: CoverageDiagnosticGeneration[];
+  unavailableRegions: CoverageDiagnosticUnavailableRegion[];
+  overlay: CoverageDiagnosticEvidenceCollection;
+  labels: CoverageDiagnosticLabels;
+  createdAt: string;
+}
+
+export type CoverageDiagnosticRun = Omit<CoverageDiagnosticRunThroughV60, "pathPolicyVersion"> & {
+  pathPolicyVersion: CoverageDiagnosticRunThroughV60["pathPolicyVersion"] | "coverage-path-policy-experimental-v61" | "coverage-path-policy-experimental-v62" | "coverage-path-policy-experimental-v63" | "coverage-path-policy-experimental-v64" | "coverage-path-policy-experimental-v65" | "coverage-path-policy-experimental-v66" | "coverage-path-policy-experimental-v67" | "coverage-path-policy-experimental-v68" | "coverage-path-policy-experimental-v69" | "coverage-path-policy-experimental-v70" | "coverage-path-policy-experimental-v71" | "coverage-path-policy-experimental-v72" | "coverage-path-policy-experimental-v73" | "coverage-path-policy-experimental-v74" | "coverage-path-policy-experimental-v75" | "coverage-path-policy-experimental-v76" | "coverage-path-policy-experimental-v77" | "coverage-path-policy-experimental-v78" | "coverage-path-policy-experimental-v79" | "coverage-path-policy-experimental-v80" | "coverage-path-policy-experimental-v81" | "coverage-path-policy-experimental-v82";
+};
 
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
 export type JobStatus = "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";

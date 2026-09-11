@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -83,6 +84,26 @@ func TestWorkoutSortValidation(t *testing.T) {
 		if _, err := parseWorkoutSort(&value); err == nil {
 			t.Fatalf("accepted invalid sort %v", value)
 		}
+	}
+}
+
+func TestWorkoutSortUsesDateDescendingAsSecondaryOrder(t *testing.T) {
+	tests := []struct {
+		name  string
+		sorts []workoutSort
+		want  []string
+	}{
+		{"default date", []workoutSort{{"date", "desc"}}, []string{"w.started_at desc NULLS LAST", "w.id ASC"}},
+		{"non-date primary", []workoutSort{{"duration", "asc"}}, []string{"w.provider_duration asc NULLS LAST", "w.started_at desc NULLS LAST", "w.id ASC"}},
+		{"date remains secondary", []workoutSort{{"type", "asc"}, {"distance", "desc"}, {"date", "asc"}}, []string{"wt.provider_label COLLATE \"C\" asc NULLS LAST", "w.started_at desc NULLS LAST", "metrics.distance_value desc NULLS LAST", "w.id ASC"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := workoutOrderExpressions(test.sorts)
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("order=%q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

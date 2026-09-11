@@ -31,6 +31,9 @@ npm --prefix ui run dev
 Vite proxies `/api` and `/swagger` to the API at `localhost:8080`. The public UI
 configuration is an allowlist and never includes database or cluster-internal
 settings. OTel export is disabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is empty.
+Application logs default to JSON. Set `LOG_FORMAT=text` directly, or
+`logging.format: text` in Helm, to use plain text consistently for direct and
+package-level `slog` calls.
 Public base-map templates must use HTTP(S), cannot contain user information, and
 reject loopback, private, `.local`, and `.internal` hosts. Local development may
 set `ALLOW_LOCAL_BASE_MAP=true` only while `PUBLIC_URL` is itself local.
@@ -43,11 +46,16 @@ The API requires `RATE_LIMIT_KEY` as unpadded base64 for at least 32 random
 bytes, authenticated STARTTLS SMTP settings, and a private regular file selected
 by `SMTP_PASSWORD_FILE`. Only explicit local development may set
 `LOCAL_DEVELOPMENT=true` and `SMTP_ALLOW_INSECURE_LOCAL=true`; plaintext SMTP is
-then limited to loopback or the development Mailpit service on port 1025 with no
+then limited to loopback on port 1025 with no
 credentials. `PUBLIC_URL` is an HTTPS origin with no path, query, or fragment;
 only explicit local development may use HTTP, and then only on loopback.
+`BROWSER_SIGNIN_ORIGINS` optionally contains up to 16 comma-separated origins,
+must include `PUBLIC_URL`, and permits the same deployment to accept browser
+sign-in from explicit alternate hosts. Cookies remain host-only and are not
+shared between those origins.
 `PASSWORD_MINIMUM_LENGTH` accepts 12 through 64, `PAGE_SIZE_MAXIMUM` accepts 25
-through 1000, `SESSION_LIFETIME` accepts 5 minutes through 24 hours, and
+through 1000, and `SESSION_LIFETIME` accepts 5 minutes through 24 hours and
+defaults to 6 hours. The browser session has a fixed expiry and no refresh token.
 `TRUSTED_PROXY_CIDRS` defaults to empty. Invitation and reset
 links use `PUBLIC_URL`; authentication never infers its origin from forwarding
 headers.
@@ -123,7 +131,7 @@ before migration on install/upgrade and Argo CD PreSync. Enable it for initial
 provisioning and upgrades that introduce a role, including M1-to-M2 and M5-to-M6,
 then disable it and remove the external CREATEROLE credential Secret. The
 operator remains responsible for configuring the tile role's database
-authentication to match `pgTileserv.databaseSecret`.
+authentication to match `tileServer.databaseSecret`.
 
 For a development container without a local container runtime, the same topology
 can run in a dedicated vCluster. Publish the three images and run the test with:
@@ -157,8 +165,8 @@ repositories while preserving commit-SHA and release tags. Set
 
 The test uses kubeconfig context `xdev` by default. Persistent PostgreSQL runs in
 namespace `postgresql`, and the application runs in namespace
-`workouts-explorer`. Do not deploy Mailpit to xdev; use the external authenticated
-STARTTLS service configured by `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and
+`workouts-explorer`. Use the externally provisioned authenticated STARTTLS service
+at `smtp.fourteeners.local`, configured by `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and
 `SMTP_PASSWORD`. PostgreSQL requests a 5 GiB
 Longhorn volume that is retained across normal redeploys. The test also creates
 development-only rate-limit and bootstrap Secrets and bootstraps an `xdev-admin`
@@ -184,14 +192,13 @@ VCLUSTER_CONTEXT="$context" make vcluster-test
 Set `context` to the intended vCluster before running the destructive procedure.
 Normal `make vcluster-test` runs never delete the StatefulSet PVC.
 
-The Helm release enables the nginx Ingress at
-`workouts.<context>.fourteeners.local`, so the defaults produce
+The Helm release enables the nginx Ingress at `ingress.host` and every explicit
+`ingress.additionalHosts` entry. The test defaults produce
 `workouts.xdev.fourteeners.local` and `workouts.xtest.fourteeners.local`.
 Override `VCLUSTER_HOST` only when the vCluster DNS convention differs. The test
 runs the migration Job, waits for the UI, API, worker, and Certificate, probes
 services inside the cluster, and verifies the external HTTPS UI, runtime config,
-and Swagger routes. The xdev release keeps the `/mailpit` path and proxy disabled
-and sends invitation/recovery mail through the configured external SMTP service.
+and Swagger routes. Invitation and recovery mail use the configured external SMTP service.
 `VCLUSTER_APP_NAMESPACE` and `VCLUSTER_RELEASE` remain available for
 intentionally isolated application releases. Helm and rollout waits default to
 12 minutes because the NFS-backed homelab Harbor registry can take up to 10

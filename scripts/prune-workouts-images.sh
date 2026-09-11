@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for component in api worker ui; do
+for component in api worker osm ui; do
   while IFS= read -r image; do
     case "$image" in
       workouts-${component}:*|*/workouts-${component}:*)

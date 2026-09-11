@@ -20,8 +20,7 @@ require_harness() {
 
 require_manifest '^kind: StatefulSet$' 'Development PostgreSQL must use a StatefulSet'
 require_manifest '^  name: postgresql$' 'Development PostgreSQL resources must be named postgresql'
-require_manifest '^  clusterIP: None$' 'Development PostgreSQL governing Service must be headless'
-require_manifest '^  publishNotReadyAddresses: true$' 'Development PostgreSQL DNS must remain stable during pod restarts'
+require_manifest '^  type: ClusterIP$' 'Development PostgreSQL Service must provide a stable client ClusterIP'
 require_manifest '^  replicas: 1$' 'Development PostgreSQL StatefulSet must have one replica'
 require_manifest '^  serviceName: postgresql$' 'Development PostgreSQL StatefulSet has the wrong governing Service'
 require_manifest '^        app\.kubernetes\.io/name: postgresql$' 'Development PostgreSQL pods must use the postgresql label'
@@ -44,6 +43,10 @@ if grep -Eq '^kind: Deployment$|emptyDir:' "$manifest"; then
   printf '%s\n' 'Development PostgreSQL must not use a Deployment or emptyDir' >&2
   exit 1
 fi
+if grep -Eq '^  clusterIP: None$|^  publishNotReadyAddresses: true$' "$manifest"; then
+  printf '%s\n' 'Development PostgreSQL client Service must not be headless' >&2
+  exit 1
+fi
 if [ "$(grep -Ec '^              command: \[pg_isready, -U, postgres, -d, workouts\]$' "$manifest")" -ne 2 ]; then
   printf '%s\n' 'Both development PostgreSQL probes must use postgres' >&2
   exit 1
@@ -63,18 +66,16 @@ require_harness '^database_host="postgresql\.\$\{database_namespace\}\.svc\.clus
 
 delete_line=$(grep -n 'deployment/workouts-postgres service/postgres --ignore-not-found' "$harness" | cut -d: -f1)
 pod_list_line=$(grep -n 'get pods$' "$harness" | cut -d: -f1)
-for marker in 'helm "${helm_args\[@\]}"' 'rollout status deployment/workouts-explorer-worker' 'certificate/workouts-explorer-ingress' 'run workouts-smoke'; do
+for marker in 'helm "${helm_args\[@\]}"' 'rollout status deployment/workouts-explorer-worker' 'rollout status deployment/workouts-explorer-tiles' 'certificate/workouts-explorer-ingress' 'run workouts-smoke'; do
   marker_line=$(grep -n "$marker" "$harness" | cut -d: -f1)
   if [ "$delete_line" -le "$marker_line" ]; then
     printf '%s\n' 'Legacy PostgreSQL resources must only be removed after Helm, rollout, certificate, and smoke checks' >&2
     exit 1
   fi
 done
-if grep -q 'deploy/dev/mailpit.yaml' "$harness" ||
-   ! grep -q 'osmDatabaseUrl="$osm_database_url"' "$harness" ||
-   ! grep -q 'api.smtp.address=${SMTP_HOST}:${SMTP_PORT}' "$harness" ||
-   ! grep -q 'ingress.mailpit.enabled=false' "$harness"; then
-  printf '%s\n' 'vCluster harness must use external SMTP and the shared OSM database without Mailpit' >&2
+if ! grep -q 'osmDatabaseUrl="$osm_database_url"' "$harness" ||
+   ! grep -q 'api.smtp.address=${SMTP_HOST}:${SMTP_PORT}' "$harness"; then
+  printf '%s\n' 'vCluster harness must use external SMTP and the shared OSM database' >&2
   exit 1
 fi
 if [ "$pod_list_line" -ne $((delete_line + 1)) ]; then

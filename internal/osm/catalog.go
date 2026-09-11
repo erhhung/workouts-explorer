@@ -9,6 +9,7 @@ import (
 
 func SyncCatalog(ctx context.Context, pool *pgxpool.Pool, regions []Region, configured []string) error {
 	configuredSet := make(map[string]struct{}, len(configured))
+	configuredFound := make(map[string]struct{}, len(configured))
 	for _, id := range configured {
 		configuredSet[id] = struct{}{}
 	}
@@ -22,6 +23,9 @@ func SyncCatalog(ctx context.Context, pool *pgxpool.Pool, regions []Region, conf
 	}
 	for _, region := range regions {
 		_, isConfigured := configuredSet[region.ID]
+		if isConfigured {
+			configuredFound[region.ID] = struct{}{}
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO osm_catalog.regions (
 				id,provider,provider_region_id,display_name,catalog_url,source_url,
@@ -42,11 +46,7 @@ func SyncCatalog(ctx context.Context, pool *pgxpool.Pool, regions []Region, conf
 		}
 	}
 	for id := range configuredSet {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM osm_catalog.regions WHERE id=$1 AND configured)`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("validate configured OSM region %s: %w", id, err)
-		}
-		if !exists {
+		if _, exists := configuredFound[id]; !exists {
 			return fmt.Errorf("configured OSM region %s is unavailable from its provider", id)
 		}
 	}

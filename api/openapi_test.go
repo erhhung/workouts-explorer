@@ -30,7 +30,7 @@ func TestOpenAPIContract(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation", "/api/jobs/{jobId}/retry", "/api/jobs/{jobId}/files", "/api/jobs/{jobId}/events", "/api/jobs/{jobId}/logs", "/api/data-sync", "/api/notifications", "/api/notifications/{notificationId}/dismissal", "/api/map-selections", "/api/map-selections/{mapSelectionId}", "/api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf", "/api/workouts", "/api/workouts/{workoutId}", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workout-types", "/api/summary"} {
+	for _, path := range []string{"/api/config", "/api/openapi.yaml", "/swagger", "/health/live", "/health/ready", "/api/session", "/api/session-tokens", "/api/admin/invitations", "/api/invitations/{token}", "/api/registrations", "/api/password-reset-requests", "/api/password-resets", "/api/me", "/api/me/preferences", "/api/me/avatar", "/api/sources", "/api/sources/{sourceId}", "/api/ingest", "/api/jobs", "/api/jobs/{jobId}", "/api/jobs/{jobId}/cancellation", "/api/jobs/{jobId}/retry", "/api/jobs/{jobId}/files", "/api/jobs/{jobId}/events", "/api/jobs/{jobId}/logs", "/api/data-sync", "/api/notifications", "/api/notifications/{notificationId}/dismissal", "/api/map-selections", "/api/map-selections/{mapSelectionId}", "/api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf", "/api/workouts", "/api/workouts/{workoutId}", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workouts/{workoutId}/coverage-diagnostic-runs", "/api/coverage-diagnostic-runs/{runId}/labels", "/api/workout-types", "/api/summary"} {
 		if document.Paths.Find(path) == nil {
 			t.Errorf("missing path %s", path)
 		}
@@ -96,7 +96,7 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Errorf("owner read route %s lacks GET or security alternatives", route)
 		}
 	}
-	for _, name := range []string{"BaseMapAttributionLink", "BaseMapAttribution", "BaseMapStyles", "BaseMapFamily", "BaseMapWorkoutTypeMapping", "BaseMapsConfig", "ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "MapSelectionWorkoutType", "MapSelectionWorkout", "MapSelection", "ExactMetric", "Workout", "WorkoutColumnExtents", "Pagination", "WorkoutList", "WorkoutProvenanceWarning", "WorkoutProvenanceEvent", "WorkoutProvenance", "NormalizedRoutePoint", "WorkoutPointsExport", "RouteBounds", "RouteElevation", "WorkoutGeoJSONProperties", "GeoJSONLineString", "WorkoutGeoJSONFeature", "WorkoutDeletionAccepted", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
+	for _, name := range []string{"BaseMapAttributionLink", "BaseMapAttribution", "BaseMapStyles", "BaseMapFamily", "BaseMapWorkoutTypeMapping", "BaseMapsConfig", "ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "MapSelectionWorkoutType", "CoverageReadiness", "MapSelectionWorkout", "MapSelection", "ExactMetric", "Workout", "WorkoutColumnExtents", "Pagination", "WorkoutList", "WorkoutProvenanceWarning", "WorkoutProvenanceEvent", "WorkoutProvenance", "NormalizedRoutePoint", "WorkoutPointsExport", "RouteBounds", "RouteElevation", "WorkoutGeoJSONProperties", "GeoJSONLineString", "WorkoutGeoJSONFeature", "WorkoutDeletionAccepted", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
 		schema := document.Components.Schemas[name].Value
 		if schema.AdditionalProperties.Has == nil || *schema.AdditionalProperties.Has {
 			t.Errorf("owner response schema %s is not closed", name)
@@ -176,6 +176,16 @@ func TestOpenAPIContract(t *testing.T) {
 	rateResponse := document.Components.Responses["RateLimited"].Value
 	if rateResponse.Headers["Retry-After"] == nil {
 		t.Fatal("rate-limited response lacks Retry-After")
+	}
+	diagnostic := document.Paths.Find("/api/workouts/{workoutId}/coverage-diagnostic-runs").Post
+	for _, status := range []string{"201", "400", "401", "403", "404", "409", "413", "429", "503", "504"} {
+		if diagnostic.Responses.Value(status) == nil {
+			t.Errorf("coverage diagnostic operation lacks %s response", status)
+		}
+	}
+	properties := document.Components.Schemas["CoverageDiagnosticEvidenceProperties"].Value
+	if len(properties.Properties) != 7 {
+		t.Fatalf("diagnostic evidence exposes %d properties, want 7", len(properties.Properties))
 	}
 	lower := strings.ToLower(string(openAPIDocument))
 	for _, forbidden := range []string{"database_url", "authorization: bearer", "set-cookie: workouts_session=", "configenvelope", "wrappedkeynonce", "payloadnonce"} {

@@ -10,22 +10,36 @@ if ! grep -q 'checksum/config:' "$rendered"; then
   printf '%s\n' 'API Deployment is missing the ConfigMap checksum rollout annotation' >&2
   exit 1
 fi
-if ! grep -q 'name: workouts-explorer-pg-tileserv' "$rendered" ||
+if [ "$(grep -c 'name: LOG_FORMAT' "$rendered")" -lt 3 ] ||
+   ! grep -q 'LOG_FORMAT: "json"' "$rendered" ||
+   helm template workouts-explorer helm --set-string logging.format=console >/dev/null 2>&1; then
+  printf '%s\n' 'Global application log format configuration is incomplete' >&2
+  exit 1
+fi
+if ! grep -q 'name: workouts-explorer-tiles' "$rendered" ||
    ! grep -q 'type: ClusterIP' "$rendered" ||
-   ! grep -q 'image: docker.io/pramsey/pg_tileserv:20250131@sha256:' "$rendered" ||
-   ! grep -q 'PG_TILESERV_URL:' "$rendered" ||
+   ! grep -q 'image: ghcr.io/maplibre/martin:1.15.0@sha256:' "$rendered" ||
+   ! grep -q 'TILE_SERVER_URL:' "$rendered" ||
+   ! grep -q 'source_id_format: "{schema}.{function}"' "$rendered" ||
+   ! grep -q 'cache: disable' "$rendered" ||
    ! grep -q 'key: tilesDatabaseUrl' "$rendered"; then
-  printf '%s\n' 'Internal pg_tileserv deployment, service, or credential wiring is incomplete' >&2
+  printf '%s\n' 'Internal Martin deployment, service, or credential wiring is incomplete' >&2
   exit 1
 fi
 if ! grep -q 'kind: NetworkPolicy' "$rendered" ||
-   ! grep -q 'app.kubernetes.io/component: pg-tileserv' "$rendered" ||
+   ! grep -q 'app.kubernetes.io/component: tiles' "$rendered" ||
    ! grep -q 'app.kubernetes.io/component: api' "$rendered"; then
-  printf '%s\n' 'pg_tileserv is not restricted to API ingress' >&2
+  printf '%s\n' 'Martin is not restricted to API ingress' >&2
   exit 1
 fi
-if grep -Eq 'path: .*pg-tileserv|type: (NodePort|LoadBalancer)' "$rendered"; then
-  printf '%s\n' 'pg_tileserv must never receive public ingress or an external Service type' >&2
+if grep -Eq 'path: .*workouts-explorer-tiles|type: (NodePort|LoadBalancer)' "$rendered"; then
+  printf '%s\n' 'Martin must never receive public ingress or an external Service type' >&2
+  exit 1
+fi
+if grep -q 'prepare-smtp-password' "$rendered" ||
+   ! grep -q 'mountPath: /var/run/secrets/workouts-smtp' "$rendered" ||
+   ! grep -q 'defaultMode: 0440' "$rendered"; then
+  printf '%s\n' 'SMTP password must be mounted directly with group-read-only permissions' >&2
   exit 1
 fi
 if ! grep -q 'name: workouts-explorer-ui-nginx' "$rendered" ||
@@ -34,8 +48,8 @@ if ! grep -q 'name: workouts-explorer-ui-nginx' "$rendered" ||
   printf '%s\n' 'UI provider CSP configuration is not mounted from validated map origins' >&2
   exit 1
 fi
-if grep -q '/mailpit' "$rendered" || grep -q 'kind: ExternalName' "$rendered"; then
-  printf '%s\n' 'Default production rendering unexpectedly exposes Mailpit' >&2
+if grep -q 'kind: ExternalName' "$rendered"; then
+  printf '%s\n' 'Production rendering unexpectedly contains an ExternalName proxy' >&2
   exit 1
 fi
 if [ "$(grep -c 'mountPath: /var/run/secrets/workouts-source' "$rendered")" -ne 2 ] ||
@@ -70,6 +84,15 @@ if ! grep -q 'name: WORKER_FILE_CONCURRENCY' "$rendered" ||
    ! grep -q 'mountPath: /var/lib/workouts/staging' "$rendered" ||
    ! grep -q 'sizeLimit: 2Gi' "$rendered"; then
   printf '%s\n' 'Worker concurrency or bounded staging configuration is incomplete' >&2
+  exit 1
+fi
+if ! grep -q 'COVERAGE_DEAD_END_ENDPOINT_ALLOWANCE_METERS:' "$rendered" ||
+   ! grep -q 'value: "3"' "$rendered"; then
+  printf '%s\n' 'Coverage dead-end endpoint allowance configuration is incomplete' >&2
+  exit 1
+fi
+if ! grep -q 'COVERAGE_DIAGNOSTICS_TIMEOUT: "120s"' "$rendered"; then
+  printf '%s\n' 'Coverage diagnostic timeout must allow large focused routes to finish' >&2
   exit 1
 fi
 if ! grep -q 'component: osm-migration' "$rendered" ||
@@ -138,23 +161,15 @@ done
 
 helm template workouts-explorer helm \
   --set ingress.enabled=true \
-  --set-string ingress.host=workouts.xdev.fourteeners.local \
-  --set ingress.mailpit.enabled=true >"$rendered"
-if ! grep -q 'path: /mailpit' "$rendered" ||
-   ! grep -q 'type: ExternalName' "$rendered" ||
-   ! grep -q 'externalName: mailpit.mailpit.svc.cluster.local' "$rendered"; then
-  printf '%s\n' 'Development Mailpit proxy path or ExternalName Service is missing' >&2
-  exit 1
-fi
-helm template workouts-explorer helm \
-  --set ingress.enabled=true \
   --set-string ingress.className=nginx \
   --set-string ingress.host=workouts.xdev.fourteeners.local \
+  --set-string ingress.additionalHosts[0]=workouts.erhhungyuan.com \
   --set-string ingress.tlsSecretName=virtual-ingress-tls \
   --set-string ingress.certificateSecretName=translated-host-certificate >"$rendered"
 if ! grep -q 'kind: Certificate' "$rendered" ||
    ! grep -q 'secretName: virtual-ingress-tls' "$rendered" ||
-   ! grep -q 'secretName: translated-host-certificate' "$rendered"; then
+   ! grep -q 'secretName: translated-host-certificate' "$rendered" ||
+   ! grep -q 'host: workouts.erhhungyuan.com' "$rendered"; then
   printf '%s\n' 'Ingress and Certificate Secret targets are not independently rendered' >&2
   exit 1
 fi

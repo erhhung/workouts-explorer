@@ -200,7 +200,7 @@ func TestMalformedTrustedProxyReturnsBadRequest(t *testing.T) {
 }
 
 func TestBrowserSigninOriginAndFetchMetadata(t *testing.T) {
-	server := &Server{config: config.API{PublicURL: "https://workouts.example.test"}}
+	server := &Server{config: config.API{PublicURL: "https://workouts.example.test", BrowserSigninOrigins: []string{"https://workouts.example.test", "https://workouts.internal.test"}}}
 	for _, test := range []struct {
 		origin, site string
 		valid        bool
@@ -208,6 +208,7 @@ func TestBrowserSigninOriginAndFetchMetadata(t *testing.T) {
 		{"", "", true},
 		{"https://workouts.example.test", "same-origin", true},
 		{"https://workouts.example.test", "none", true},
+		{"https://workouts.internal.test", "same-origin", true},
 		{"https://evil.example.test", "same-origin", false},
 		{"https://workouts.example.test", "cross-site", false},
 		{"https://workouts.example.test/path", "same-origin", false},

@@ -148,16 +148,18 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		       CASE WHEN metrics.speed_value>0 THEN trim_scale(60/metrics.speed_value)::text END,
 		       CASE WHEN metrics.speed_value>0 THEN 'min/km' END,
 		       metrics.energy_value::text,metrics.energy_unit,metrics.heart_rate_value::text,metrics.heart_rate_unit,
-		       metrics.elevation_value::text,metrics.elevation_unit
+		       metrics.elevation_value::text,metrics.elevation_unit,
+		       coverage.readiness_state,coverage.processing_state,coverage.reason
 		  FROM app.map_selection_workouts selected
 		  JOIN app.workouts workout ON workout.id=selected.workout_id AND workout.account_id=selected.account_id
 		  JOIN app.workout_types workout_type ON workout_type.id=workout.workout_type_id AND workout_type.account_id=workout.account_id
 		  JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
+		  LEFT JOIN app.workout_coverage_states coverage ON coverage.workout_id=workout.id AND coverage.account_id=workout.account_id
 		  LEFT JOIN LATERAL (SELECT
 		    max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
 		    max(value) FILTER (WHERE metric='speed_average' AND unit='km/hr') AS speed_value,
-		    COALESCE(max(value) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(value) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy_value,
-		    COALESCE(max(unit) FILTER (WHERE metric='active_energy_burned' AND unit='kcal'),max(unit) FILTER (WHERE metric='total_energy' AND unit='kcal')) AS energy_unit,
+		    max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy_value,
+		    max(unit) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy_unit,
 		    max(value) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_value,max(unit) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_unit,
 		    max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_value,max(unit) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_unit
 		    FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=workout.id AND aggregate.account_id=workout.account_id) metrics ON true
@@ -176,17 +178,20 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		var localStartDate *time.Time
 		var distanceValue, distanceUnit, paceValue, paceUnit, caloriesValue, caloriesUnit *string
 		var heartRateValue, heartRateUnit, elevationValue, elevationUnit *string
+		var coverageState, processingState, coverageReason *string
 		var minimumLongitude, minimumLatitude, maximumLongitude, maximumLatitude float64
 		if err := rows.Scan(&workoutID, &typeID, &typeKey, &typeName, &startedAt, &endedAt, &duration, &localStartDate,
 			&minimumLongitude, &minimumLatitude, &maximumLongitude, &maximumLatitude,
 			&distanceValue, &distanceUnit, &paceValue, &paceUnit, &caloriesValue, &caloriesUnit,
-			&heartRateValue, &heartRateUnit, &elevationValue, &elevationUnit); err != nil {
+			&heartRateValue, &heartRateUnit, &elevationValue, &elevationUnit,
+			&coverageState, &processingState, &coverageReason); err != nil {
 			return generated.MapSelection{}, err
 		}
 		item := generated.MapSelectionWorkout{
 			Id: compactUUID(workoutID), StartedAt: startedAt, EndedAt: endedAt, Duration: duration, PartialRoute: false,
-			Type:   generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: typeName},
-			Bounds: generated.RouteBounds{MinimumLongitude: minimumLongitude, MinimumLatitude: minimumLatitude, MaximumLongitude: maximumLongitude, MaximumLatitude: maximumLatitude},
+			Type:              generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: typeName},
+			Bounds:            generated.RouteBounds{MinimumLongitude: minimumLongitude, MinimumLatitude: minimumLatitude, MaximumLongitude: maximumLongitude, MaximumLatitude: maximumLatitude},
+			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, coverageReason),
 		}
 		setMetric(&item.Distance, distanceValue, distanceUnit)
 		setMetric(&item.Pace, paceValue, paceUnit)
@@ -217,6 +222,35 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		result.Bounds.Set(*bounds)
 	}
 	return result, nil
+}
+
+func mapCoverageReadiness(state, processing, reason *string) generated.CoverageReadiness {
+	result := generated.CoverageReadiness{State: generated.CoverageReadinessStatePending}
+	if state == nil || *state == "unresolved" || *state == "pending" {
+		if state != nil && *state == "pending" {
+			setCoverageReadinessReason(&result, reason)
+		}
+		return result
+	}
+	if *state == "map_data_ready" && processing != nil && *processing == "not_started" {
+		result.State = generated.CoverageReadinessStateNotProcessed
+		return result
+	}
+	if *state == "unavailable" {
+		result.State = generated.CoverageReadinessStateUnavailable
+		setCoverageReadinessReason(&result, reason)
+	}
+	return result
+}
+
+func setCoverageReadinessReason(result *generated.CoverageReadiness, reason *string) {
+	if reason == nil {
+		return
+	}
+	value := generated.CoverageReadinessReason(*reason)
+	if value.Valid() {
+		result.Reason = &value
+	}
 }
 
 func (s *Server) DeleteMapSelection(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, params generated.DeleteMapSelectionParams) {
@@ -280,7 +314,7 @@ func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "map selection is unavailable")
 		return
 	}
-	upstream, err := mapTileUpstreamURL(s.config.PGTileServURL, id, *session.accountID, session.sessionID, generation, z, x, y)
+	upstream, err := mapTileUpstreamURL(s.config.TileServerURL, id, *session.accountID, session.sessionID, generation, z, x, y)
 	if err != nil {
 		writeMapUnavailable(w, r)
 		return
@@ -300,7 +334,7 @@ func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK || !validMVTContentType(response.Header.Get("Content-Type")) {
+	if !validMVTResponse(response.StatusCode, response.Header.Get("Content-Type")) {
 		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
 		return
 	}
@@ -322,7 +356,7 @@ func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
 		return "", fmt.Errorf("invalid tile service URL")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/app.raw_route_mvt/" + strconv.Itoa(z) + "/" + strconv.Itoa(x) + "/" + strconv.Itoa(y) + ".pbf"
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/app.raw_route_mvt/" + strconv.Itoa(z) + "/" + strconv.Itoa(x) + "/" + strconv.Itoa(y)
 	query := url.Values{}
 	query.Set("target_account_id", accountID.String())
 	query.Set("target_session_id", sessionID.String())
@@ -335,6 +369,10 @@ func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID
 func validMVTContentType(value string) bool {
 	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
 	return mediaType == "application/vnd.mapbox-vector-tile" || mediaType == "application/x-protobuf" || mediaType == "application/octet-stream"
+}
+
+func validMVTResponse(status int, contentType string) bool {
+	return status == http.StatusNoContent || status == http.StatusOK && validMVTContentType(contentType)
 }
 
 func writeMapUnavailable(w http.ResponseWriter, r *http.Request) {

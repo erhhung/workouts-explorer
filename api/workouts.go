@@ -388,7 +388,7 @@ func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 	defer tx.Rollback(r.Context())
-	result := generated.WorkoutGeoJSONFeature{Type: generated.Feature, Geometry: generated.GeoJSONLineString{Type: generated.LineString}}
+	result := generated.WorkoutGeoJSONFeature{Type: generated.WorkoutGeoJSONFeatureTypeFeature, Geometry: generated.GeoJSONLineString{Type: generated.LineString}}
 	result.Properties.WorkoutId = compactUUID(id)
 	var localDate *time.Time
 	var minimumAltitude, maximumAltitude, elevationGain *float64
@@ -699,11 +699,7 @@ const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_lab
  LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id`
 
 func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page, pageSize int, sorts []workoutSort) ([]generated.Workout, error) {
-	order := make([]string, 0, len(sorts)+1)
-	for _, sort := range sorts {
-		order = append(order, workoutSortExpressions[sort.field]+" "+sort.direction+" NULLS LAST")
-	}
-	order = append(order, "w.id ASC")
+	order := workoutOrderExpressions(sorts)
 	query := workoutSelect + ` WHERE w.local_start_date BETWEEN $1 AND $2 ORDER BY ` + strings.Join(order, ",") + ` LIMIT $3 OFFSET $4`
 	rows, err := tx.Query(ctx, query, dateRange.start, dateRange.end, pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -719,6 +715,20 @@ func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func workoutOrderExpressions(sorts []workoutSort) []string {
+	order := make([]string, 0, len(sorts)+2)
+	for index, sort := range sorts {
+		if index > 0 && sort.field == "date" {
+			continue
+		}
+		order = append(order, workoutSortExpressions[sort.field]+" "+sort.direction+" NULLS LAST")
+		if index == 0 && sort.field != "date" {
+			order = append(order, workoutSortExpressions["date"]+" desc NULLS LAST")
+		}
+	}
+	return append(order, "w.id ASC")
 }
 
 func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error) {
@@ -758,10 +768,12 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 	setMetric(&item.ElevationGain, elevationValue, elevationUnit)
 	setMetric(&item.MinimumElevation, minimumElevationValue, minimumElevationUnit)
 	setMetric(&item.MaximumElevation, maximumElevationValue, maximumElevationUnit)
-	if fastestKilometer != nil && slowestKilometer != nil {
+	item.SplitPaces.Kilometer.SetNull()
+	item.SplitPaces.Mile.SetNull()
+	if fastestKilometer != nil && *fastestKilometer != "" && slowestKilometer != nil && *slowestKilometer != "" {
 		setNullable(&item.SplitPaces.Kilometer, &generated.SplitPaceRange{FastestSeconds: *fastestKilometer, SlowestSeconds: *slowestKilometer})
 	}
-	if fastestMile != nil && slowestMile != nil {
+	if fastestMile != nil && *fastestMile != "" && slowestMile != nil && *slowestMile != "" {
 		setNullable(&item.SplitPaces.Mile, &generated.SplitPaceRange{FastestSeconds: *fastestMile, SlowestSeconds: *slowestMile})
 	}
 	item.RouteAvailable = item.RoutePointCount > 0

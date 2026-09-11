@@ -601,9 +601,21 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
   );
 }
 
-export function Summary({ preferences, csrfToken, selectedDateRange, onDateRangeSelected, selectedSort, onSortChange, onShowOnMap, onDateRangeSaved }: {
+const INITIAL_WORKOUT_SORT_DIRECTIONS: Record<WorkoutColumn, WorkoutSortDirection> = {
+  date: "desc",
+  type: "asc",
+  duration: "desc",
+  distance: "desc",
+  pace: "asc",
+  calories: "desc",
+  heartRate: "desc",
+  elevationGain: "desc",
+};
+
+export function Summary({ preferences, csrfToken, selectedDateRange, onDateRangeSelected, selectedSort, onSortChange, selectedPage, onPageChange, onShowOnMap, onDateRangeSaved }: {
   preferences: Preferences; csrfToken: string; selectedDateRange?: DateRangePreference; onDateRangeSelected?: (dateRange: DateRangePreference) => void;
   selectedSort?: WorkoutSort; onSortChange?: (sort: WorkoutSort) => void;
+	selectedPage?: number; onPageChange?: (page: number) => void;
   onShowOnMap?: (workoutId: string) => void; onDateRangeSaved: (dateRange: DateRangePreference) => void;
 }) {
   const queryClient = useQueryClient();
@@ -611,7 +623,7 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const [averages, setAverages] = useState(false);
   const rangeRef = useRef(range);
   const latestSelection = useRef(0);
-  const [pageState, setPageState] = useState({ page: 1, pageSize: preferences.pageSize });
+	const [pageState, setPageState] = useState({ page: selectedPage ?? 1, pageSize: preferences.pageSize });
   const page = pageState.pageSize === preferences.pageSize ? pageState.page : 1;
   const [localSort, setLocalSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
   const sort = selectedSort ?? localSort;
@@ -633,6 +645,10 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const rangeDeletionCancelRef = useRef<HTMLButtonElement>(null);
   const rangeDeletionErrorRef = useRef<HTMLParagraphElement>(null);
   const explicit = EXPLICIT_RANGE.exec(range);
+	useEffect(() => { onPageChange?.(page); }, [onPageChange, page]);
+	useEffect(() => {
+		if (selectedPage !== undefined && selectedPage !== pageState.page) setPageState((current) => ({ ...current, page: selectedPage }));
+	}, [selectedPage]);
   useEffect(() => {
     const next = selectedDateRange ?? initialRange(preferences.dateRange);
     if (next !== rangeRef.current) {
@@ -815,7 +831,9 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
     }
   }
   const updateSort = (field: WorkoutColumn) => {
-    const next = sort.field === field ? { field, direction: sort.direction === "asc" ? "desc" as const : "asc" as const } : { field, direction: field === "date" ? "desc" as const : "asc" as const };
+    const next = sort.field === field
+      ? { field, direction: sort.direction === "asc" ? "desc" as const : "asc" as const }
+      : { field, direction: INITIAL_WORKOUT_SORT_DIRECTIONS[field] };
     if (onSortChange) onSortChange(next); else setLocalSort(next);
     setSortActivity({ ...next, state: "sorting" });
     setPageState({ page: 1, pageSize: preferences.pageSize });

@@ -65,7 +65,7 @@ func startPlainSMTPServer(t *testing.T) (string, func() string) {
 			return
 		}
 		defer connection.Close()
-		_, _ = connection.Write([]byte("220 mailpit.test ESMTP\r\n"))
+		_, _ = connection.Write([]byte("220 smtp.test ESMTP\r\n"))
 		reader := bufio.NewReader(connection)
 		inData := false
 		for {
@@ -86,7 +86,7 @@ func startPlainSMTPServer(t *testing.T) (string, func() string) {
 			}
 			switch {
 			case strings.HasPrefix(trimmed, "EHLO"):
-				_, _ = connection.Write([]byte("250-mailpit.test\r\n250 OK\r\n"))
+				_, _ = connection.Write([]byte("250-smtp.test\r\n250 OK\r\n"))
 			case strings.HasPrefix(trimmed, "HELO"), strings.HasPrefix(trimmed, "MAIL FROM"), strings.HasPrefix(trimmed, "RCPT TO"):
 				_, _ = connection.Write([]byte("250 OK\r\n"))
 			case trimmed == "DATA":

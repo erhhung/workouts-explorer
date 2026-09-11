@@ -131,7 +131,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	elevation, elevationErr := geo.Properties.ElevationSummary.Get()
-	if geo.Type != generated.Feature || geo.Geometry.Type != generated.LineString || len(geo.Geometry.Coordinates) != 2 || len(geo.Geometry.Coordinates[0]) != 3 ||
+	if geo.Type != generated.WorkoutGeoJSONFeatureTypeFeature || geo.Geometry.Type != generated.LineString || len(geo.Geometry.Coordinates) != 2 || len(geo.Geometry.Coordinates[0]) != 3 ||
 		geo.Geometry.Coordinates[0][0] != -105 || geo.Geometry.Coordinates[0][2] != 1600.25 || elevationErr != nil || elevation.GainMeters != 1 || geo.Properties.Bounds.MaximumLatitude != 40.1 {
 		t.Fatalf("3D GeoJSON=%#v elevation=%#v err=%v", geo, elevation, elevationErr)
 	}
@@ -188,8 +188,8 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	if err := json.Unmarshal(tie.Body.Bytes(), &tieList); err != nil || len(tieList.Items) != 3 {
 		t.Fatalf("tie list=%#v err=%v", tieList, err)
 	}
-	if tieList.Items[0].Id > tieList.Items[1].Id && tieList.Items[0].Duration == tieList.Items[1].Duration {
-		t.Fatal("equal sort values did not use ascending UUID tie-break")
+	if tieList.Items[0].Duration == tieList.Items[1].Duration && tieList.Items[0].StartedAt.Before(tieList.Items[1].StartedAt) {
+		t.Fatal("equal sort values did not use descending workout date as the secondary order")
 	}
 
 	tooLarge := routeOwnerRead(handler, "/api/workouts?dateRangeEnum=thisMonth&pageSize=101", bearer)

@@ -1,15 +1,15 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "workouts.fullname" . }}-pg-tileserv
+  name: workouts-explorer-tiles
   labels: {{- include "workouts.labels" . | nindent 4 }}
 spec:
   podSelector:
-    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: pg-tileserv}
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: tiles}
   policyTypes: [Ingress]
   ingress:
     - from:
         - podSelector:
             matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api}
       ports:
-        - {protocol: TCP, port: 7800}
+        - {protocol: TCP, port: 3000}

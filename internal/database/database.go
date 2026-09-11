@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 11
+const SupportedSchemaVersion = 22
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
@@ -70,6 +70,20 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND to_regclass('app.workout_aggregates') IS NOT NULL
 		   AND to_regclass('app.workout_route_points') IS NOT NULL
 		   AND to_regclass('app.workout_routes') IS NOT NULL
+		   AND to_regclass('app.timezone_migration_function_backup') IS NOT NULL
+		   AND to_regclass('app.workout_timezone_write_capabilities') IS NOT NULL
+		   AND to_regclass('app.workout_coverage_states') IS NOT NULL
+		   AND to_regclass('app.workout_coverage_regions') IS NOT NULL
+		   AND to_regclass('app.coverage_diagnostic_runs') IS NOT NULL
+		   AND to_regclass('app.coverage_diagnostic_generations') IS NOT NULL
+		   AND to_regclass('app.coverage_diagnostic_evidence') IS NOT NULL
+		   AND to_regclass('app.coverage_diagnostic_overall_labels') IS NOT NULL
+		   AND to_regclass('app.coverage_diagnostic_segment_labels') IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgrelid='app.workout_coverage_states'::regclass
+		         AND tgname='workout_coverage_states_data_generation_after_write' AND NOT tgisinternal)
+		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.workouts'::regclass
+		       AND attname='timezone_dataset_release' AND NOT attisdropped)
 		   AND to_regclass('app.workout_import_events') IS NOT NULL
 		   AND to_regclass('app.ingest_write_capabilities') IS NOT NULL
 		   AND to_regclass('app.workout_deletion_targets') IS NOT NULL
@@ -149,6 +163,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		             ,'app.notify_failed_workout_deletion()'::regprocedure
 		             ,'app.enforce_workout_deletion_target_lifecycle()'::regprocedure
 		             ,'app.require_ingest_write_capability()'::regprocedure
+		             ,'app.clear_workout_timezone_write_capability()'::regprocedure
 		             ,'app.reject_workout_import_event_mutation()'::regprocedure
 		             ,'app.advance_account_data_generation()'::regprocedure
 		             ,'app.current_session_id()'::regprocedure
@@ -157,12 +172,30 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		             ,'app.validate_map_selection_workout()'::regprocedure
 		             ,'app.cleanup_expired_map_selections()'::regprocedure
 		             ,'app.lock_account_data_generation()'::regprocedure
-		             ,'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)'::regprocedure
+		             ,'app.raw_route_mvt(integer,integer,integer,json)'::regprocedure
+		             ,'app.set_workout_route_timezone(uuid,uuid,text,text)'::regprocedure
+		             ,'app.reconcile_account_workout_timezones(uuid,uuid,text,uuid)'::regprocedure
+		             ,'app.read_workout_timezone_backfill(uuid,uuid,integer)'::regprocedure
+		             ,'app.reconcile_all_workout_timezones()'::regprocedure
+		             ,'app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)'::regprocedure
+		             ,'app.set_workout_coverage_readiness(uuid,uuid,bigint,text,text,jsonb,uuid,text,uuid)'::regprocedure
+		             ,'app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb)'::regprocedure
+		             ,'app.set_coverage_diagnostic_labels(uuid,uuid,boolean,text,jsonb)'::regprocedure
 		         ))
 		   AND EXISTS (SELECT 1 FROM pg_trigger
 		       WHERE tgname='job_config_snapshots_ingest_compatibility_after_insert' AND NOT tgisinternal)
 		   AND EXISTS (SELECT 1 FROM pg_policy WHERE polname='workouts_api_not_deleted_policy'
 		       AND polrelid='app.workouts'::regclass AND NOT polpermissive)
+		   AND EXISTS (SELECT 1 FROM pg_policy WHERE polname='workout_timezone_capabilities_owner_policy'
+		       AND polrelid='app.workout_timezone_write_capabilities'::regclass)
+		   AND EXISTS (SELECT 1 FROM pg_trigger
+		       WHERE tgname='workout_timezone_write_capability_cleanup' AND NOT tgisinternal)
+		   AND has_table_privilege('workouts_security_owner','app.workout_timezone_write_capabilities','SELECT')
+		   AND has_table_privilege('workouts_security_owner','app.workout_timezone_write_capabilities','INSERT')
+		   AND has_table_privilege('workouts_security_owner','app.workout_timezone_write_capabilities','DELETE')
+		   AND NOT has_table_privilege(current_user,'app.workout_timezone_write_capabilities','SELECT')
+		   AND NOT has_table_privilege(current_user,'app.workout_timezone_write_capabilities','INSERT')
+		   AND NOT has_table_privilege(current_user,'app.workout_timezone_write_capabilities','DELETE')
 		   AND EXISTS (SELECT 1 FROM pg_trigger
 		       WHERE tgname='workout_deletion_capability_cleanup' AND NOT tgisinternal)
 		   AND EXISTS (SELECT 1 FROM pg_trigger
@@ -185,7 +218,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
 		       AND NOT rolreplication AND NOT rolbypassrls)
 		   AND has_schema_privilege('workouts_tiles','app','USAGE')
-		   AND has_function_privilege('workouts_tiles','app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)','EXECUTE')
+		   AND has_function_privilege('workouts_tiles','app.raw_route_mvt(integer,integer,integer,json)','EXECUTE')
 		   AND NOT has_table_privilege('workouts_tiles','app.workout_routes','SELECT')
 		   AND NOT has_table_privilege('workouts_tiles','app.workouts','SELECT')
 		   AND NOT has_table_privilege('workouts_tiles','app.map_selections','SELECT')
@@ -238,6 +271,19 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND has_function_privilege(current_user, 'app.count_owned_job_rows(uuid,text)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.workouts', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.workout_routes', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.workout_coverage_states', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.workout_coverage_states', 'INSERT')
+		       AND NOT has_table_privilege(current_user, 'app.workout_coverage_states', 'UPDATE')
+		       AND has_table_privilege(current_user, 'app.coverage_diagnostic_runs', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.coverage_diagnostic_generations', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.coverage_diagnostic_evidence', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.coverage_diagnostic_overall_labels', 'SELECT')
+		       AND has_table_privilege(current_user, 'app.coverage_diagnostic_segment_labels', 'SELECT')
+		       AND NOT has_table_privilege(current_user, 'app.coverage_diagnostic_runs', 'INSERT,UPDATE,DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.coverage_diagnostic_evidence', 'INSERT,UPDATE,DELETE')
+		       AND NOT has_table_privilege(current_user, 'app.coverage_diagnostic_overall_labels', 'INSERT,UPDATE,DELETE')
+		       AND has_function_privilege(current_user, 'app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb)', 'EXECUTE')
+		       AND has_function_privilege(current_user, 'app.set_coverage_diagnostic_labels(uuid,uuid,boolean,text,jsonb)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.account_data_generations', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.map_selections', 'SELECT')
 		       AND has_table_privilege(current_user, 'app.map_selections', 'INSERT')
@@ -249,7 +295,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND NOT has_table_privilege(current_user, 'app.map_selection_workouts', 'UPDATE')
 		       AND has_function_privilege(current_user, 'app.cleanup_expired_map_selections()', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.lock_account_data_generation()', 'EXECUTE')
-		       AND NOT has_function_privilege(current_user, 'app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint)', 'EXECUTE')
+		       AND NOT has_function_privilege(current_user, 'app.raw_route_mvt(integer,integer,integer,json)', 'EXECUTE')
 		       AND has_table_privilege(current_user, 'app.workout_import_events', 'SELECT')
 		       AND has_column_privilege(current_user, 'app.workout_import_events', 'warnings', 'SELECT')
 		       AND NOT has_table_privilege(current_user, 'app.workouts', 'INSERT')
@@ -317,6 +363,8 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       AND has_table_privilege(current_user, 'app.workout_import_events', 'INSERT')
 		       AND has_column_privilege(current_user, 'app.workout_import_events', 'warnings', 'INSERT')
 		       AND has_function_privilege(current_user, 'app.valid_workout_warnings(jsonb)', 'EXECUTE')
+		   AND has_function_privilege(current_user, 'app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)', 'EXECUTE')
+		   AND has_function_privilege(current_user, 'app.set_workout_coverage_readiness(uuid,uuid,bigint,text,text,jsonb,uuid,text,uuid)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.read_worker_job_log_context(uuid,text,uuid)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.record_ingest_progress(uuid,text,uuid,bigint,bigint,bigint,bigint,bigint,bigint,bigint,bigint)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.record_job_event(uuid,text,uuid,text,jsonb)', 'EXECUTE')

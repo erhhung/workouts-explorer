@@ -1,6 +1,7 @@
 apiVersion: v2
 name: workouts-explorer
-description: Workouts Explorer UI, API, worker, and migration job
+description: Workouts Explorer UI, API, worker, and migration jobs
+icon: https://raw.githubusercontent.com/erhhung/workouts-explorer/refs/heads/main/ui/public/favicon.svg
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

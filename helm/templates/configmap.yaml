@@ -5,16 +5,28 @@ metadata:
   labels:
     {{- include "workouts.labels" . | nindent 4 }}
 data:
+  LOG_FORMAT: {{ .Values.logging.format | quote }}
   PUBLIC_URL: {{ .Values.api.publicUrl | quote }}
+  BROWSER_SIGNIN_ORIGINS: {{ join "," .Values.api.browserSigninOrigins | quote }}
   UI_POLLING_INTERVAL_SECONDS: {{ .Values.api.publicConfig.pollingIntervalSeconds | quote }}
   MAP_FIT_PADDING_PIXELS: {{ .Values.api.publicConfig.mapFitPaddingPixels | quote }}
   BASE_MAPS_JSON: {{ mustToJson .Values.api.publicConfig.baseMaps | quote }}
-  PG_TILESERV_URL: {{ printf "http://%s-pg-tileserv:7800" (include "workouts.fullname" .) | quote }}
+  TILE_SERVER_URL: "http://workouts-explorer-tiles:3000"
   PASSWORD_MINIMUM_LENGTH: {{ .Values.api.passwordMinimumLength | quote }}
   SESSION_LIFETIME: {{ .Values.api.sessionLifetime | quote }}
   PAGE_SIZE_MAXIMUM: {{ .Values.api.pageSizeMaximum | quote }}
   TRUSTED_PROXY_CIDRS: {{ .Values.api.trustedProxyCidrs | quote }}
   LOCAL_DEVELOPMENT: {{ .Values.api.localDevelopment | quote }}
+  COVERAGE_DIAGNOSTICS_ENABLED: {{ .Values.api.coverageDiagnostics.enabled | quote }}
+  COVERAGE_DIAGNOSTICS_TIMEOUT: {{ .Values.api.coverageDiagnostics.timeout | quote }}
+  COVERAGE_DIAGNOSTICS_CONCURRENCY: {{ .Values.api.coverageDiagnostics.concurrency | quote }}
+  COVERAGE_MIN_TRAVERSAL_METERS: {{ .Values.worker.coverageMinTraversalMeters | quote }}
+  COVERAGE_MOTOR_LANE_WIDTH_METERS: {{ .Values.api.coverageDiagnostics.motorLaneWidthMeters | quote }}
+  COVERAGE_BICYCLE_LANE_WIDTH_METERS: {{ .Values.api.coverageDiagnostics.bicycleLaneWidthMeters | quote }}
+  COVERAGE_PARKING_LANE_WIDTH_METERS: {{ .Values.api.coverageDiagnostics.parkingLaneWidthMeters | quote }}
+  COVERAGE_SIDEWALK_SETBACK_METERS: {{ .Values.api.coverageDiagnostics.sidewalkSetbackMeters | quote }}
+  COVERAGE_DIRECTIONAL_DRIFT_METERS: {{ .Values.api.coverageDiagnostics.directionalDriftMeters | quote }}
+  COVERAGE_DEAD_END_ENDPOINT_ALLOWANCE_METERS: {{ .Values.api.coverageDiagnostics.deadEndEndpointAllowanceMeters | quote }}
   SMTP_ADDRESS: {{ required "api.smtp.address is required" .Values.api.smtp.address | quote }}
   SMTP_USERNAME: {{ .Values.api.smtp.username | quote }}
   SMTP_FROM_ADDRESS: {{ required "api.smtp.fromAddress is required" .Values.api.smtp.fromAddress | quote }}

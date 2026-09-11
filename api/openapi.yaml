@@ -694,6 +694,53 @@ paths:
         '404': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/workouts/{workoutId}/coverage-diagnostic-runs:
+    parameters: [{$ref: '#/components/parameters/WorkoutID'}]
+    post:
+      operationId: createCoverageDiagnosticRun
+      description: Owner-only experimental matcher diagnostic. The required body is an empty object; cookie authentication also requires `X-CSRF-Token`.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, additionalProperties: false, maxProperties: 0}}}
+      responses:
+        '201': {description: Persisted diagnostic and clipped public evidence overlay, content: {application/json: {schema: {$ref: '#/components/schemas/CoverageDiagnosticRun'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Problem'}
+        '504': {$ref: '#/components/responses/Problem'}
+  /api/coverage-diagnostic-runs/{runId}/labels:
+    parameters:
+      - name: runId
+        in: path
+        required: true
+        schema: {$ref: '#/components/schemas/UUIDInput'}
+    patch:
+      operationId: updateCoverageDiagnosticLabels
+      description: Replaces bounded evidence labels and optionally updates the overall owner label. Cookie authentication also requires `X-CSRF-Token`.
+      tags: [workouts]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CoverageDiagnosticLabelsPatch'}}}
+      responses:
+        '200': {description: Current labels, content: {application/json: {schema: {$ref: '#/components/schemas/CoverageDiagnosticLabels'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/workouts/{workoutId}/route:
     parameters: [{$ref: '#/components/parameters/WorkoutID'}]
     get:
@@ -838,7 +885,7 @@ components:
     PublicConfig:
       type: object
       additionalProperties: false
-      required: [productName, pollingIntervalSeconds, mapFitPaddingPixels, passwordMinimumLength, pageSizeMaximum, baseMaps]
+      required: [productName, pollingIntervalSeconds, mapFitPaddingPixels, passwordMinimumLength, pageSizeMaximum, baseMaps, features]
       properties:
         productName: {type: string}
         pollingIntervalSeconds: {type: integer, minimum: 1, maximum: 3600}
@@ -846,6 +893,13 @@ components:
         passwordMinimumLength: {type: integer, minimum: 12, maximum: 64}
         pageSizeMaximum: {type: integer, minimum: 25, maximum: 1000}
         baseMaps: {$ref: '#/components/schemas/BaseMapsConfig'}
+        features: {$ref: '#/components/schemas/PublicFeatures'}
+    PublicFeatures:
+      type: object
+      additionalProperties: false
+      required: [coverageMatcherDiagnostics]
+      properties:
+        coverageMatcherDiagnostics: {type: boolean}
     BaseMapAttributionLink:
       type: object
       additionalProperties: false
@@ -1376,7 +1430,7 @@ components:
     MapSelectionWorkout:
       type: object
       additionalProperties: false
-      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevationGain]
+      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevationGain, coverageReadiness]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         type: {$ref: '#/components/schemas/MapSelectionWorkoutType'}
@@ -1391,6 +1445,14 @@ components:
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         elevationGain: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        coverageReadiness: {$ref: '#/components/schemas/CoverageReadiness'}
+    CoverageReadiness:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, enum: [pending, unavailable, notProcessed]}
+        reason: {type: string, enum: [region_not_active, no_provider_region]}
     MapSelection:
       type: object
       additionalProperties: false
@@ -1597,6 +1659,193 @@ components:
         status: {$ref: '#/components/schemas/JobStatus'}
         reused: {type: boolean}
         targetCount: {type: integer, minimum: 1}
+    CoverageDiagnosticGeneration:
+      type: object
+      additionalProperties: false
+      required: [regionId, generation, sourceUrl, sourceSha256, importerVersion, derivationVersion, promotedAt]
+      properties:
+        regionId: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        sourceUrl: {type: string, format: uri}
+        sourceSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        sourceHeaderTimestamp: {type: string, format: date-time, nullable: true}
+        importerVersion: {type: integer, minimum: 1}
+        derivationVersion: {type: integer, minimum: 1}
+        promotedAt: {type: string, format: date-time}
+    CoverageDiagnosticUnavailableRegion:
+      type: object
+      additionalProperties: false
+      required: [regionId, displayName]
+      properties:
+        regionId: {type: string, minLength: 1}
+        displayName: {type: string, minLength: 1}
+    CoverageDiagnosticCounts:
+      type: object
+      additionalProperties: false
+      required: [originalPoints, sampledPoints, matchedPoints, ambiguousPoints, unmatchedPoints, rejectedPoints, traversals, portions, uniqueSegments, durationMilliseconds]
+      properties:
+        originalPoints: {type: integer, minimum: 0, maximum: 25000}
+        sampledPoints: {type: integer, minimum: 0, maximum: 10000}
+        matchedPoints: {type: integer, minimum: 0}
+        ambiguousPoints: {type: integer, minimum: 0}
+        unmatchedPoints: {type: integer, minimum: 0}
+        rejectedPoints: {type: integer, minimum: 0}
+        traversals: {type: integer, minimum: 0}
+        portions: {type: integer, minimum: 0, maximum: 10000}
+        uniqueSegments: {type: integer, minimum: 0, maximum: 4096}
+        durationMilliseconds: {type: integer, minimum: 0}
+    CoverageDiagnosticEvidenceProperties:
+      type: object
+      additionalProperties: false
+      required: [portionOrdinal, physicalSegmentId, direction, regionId, generation, traversedMeters, evidenceClass]
+      properties:
+        portionOrdinal: {type: integer, minimum: 0, maximum: 9999}
+        physicalSegmentId: {$ref: '#/components/schemas/CompactUUID'}
+        direction: {type: string, enum: [forward, reverse]}
+        regionId: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        traversedMeters: {type: number, format: double, exclusiveMinimum: true, minimum: 0}
+        evidenceClass: {type: string, enum: [matched, ambiguous]}
+    CoverageDiagnosticEvidenceFeature:
+      type: object
+      additionalProperties: false
+      required: [type, geometry, properties]
+      properties:
+        type: {type: string, enum: [Feature]}
+        geometry: {$ref: '#/components/schemas/GeoJSONLineString'}
+        properties: {$ref: '#/components/schemas/CoverageDiagnosticEvidenceProperties'}
+    CoverageDiagnosticEvidenceCollection:
+      type: object
+      additionalProperties: false
+      required: [type, features]
+      properties:
+        type: {type: string, enum: [FeatureCollection]}
+        features: {type: array, maxItems: 10000, items: {$ref: '#/components/schemas/CoverageDiagnosticEvidenceFeature'}}
+    CoverageDiagnosticSegmentLabel:
+      type: object
+      additionalProperties: false
+      required: [portionOrdinal, label]
+      properties:
+        portionOrdinal: {type: integer, minimum: 0, maximum: 9999}
+        label: {type: string, enum: [expected, unexpected, uncertain]}
+    CoverageDiagnosticLabelsPatch:
+      type: object
+      additionalProperties: false
+      required: [segments]
+      properties:
+        overall: {type: string, enum: [correct, incorrect, uncertain]}
+        segments: {type: array, maxItems: 4096, uniqueItems: true, items: {$ref: '#/components/schemas/CoverageDiagnosticSegmentLabel'}}
+    CoverageDiagnosticLabels:
+      type: object
+      additionalProperties: false
+      required: [segments]
+      properties:
+        overall: {type: string, enum: [correct, incorrect, uncertain], nullable: true}
+        segments: {type: array, maxItems: 4096, items: {$ref: '#/components/schemas/CoverageDiagnosticSegmentLabel'}}
+    CoverageDiagnosticRun:
+      type: object
+      additionalProperties: false
+      required: [id, workoutId, routeRevision, rulesVersion, samplingVersion, pathPolicyVersion, movementMode, minimumTraversalMeters, outcome, counts, generations, unavailableRegions, overlay, labels, createdAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        workoutId: {$ref: '#/components/schemas/CompactUUID'}
+        routeRevision: {type: integer, format: int64, minimum: 1}
+        rulesVersion: {type: string, enum: [coverage-experimental-v1]}
+        samplingVersion: {type: string, enum: [coverage-sampling-experimental-v1]}
+        pathPolicyVersion:
+          type: string
+          enum:
+            - coverage-path-policy-experimental-v1
+            - coverage-path-policy-experimental-v2
+            - coverage-path-policy-experimental-v3
+            - coverage-path-policy-experimental-v4
+            - coverage-path-policy-experimental-v5
+            - coverage-path-policy-experimental-v6
+            - coverage-path-policy-experimental-v7
+            - coverage-path-policy-experimental-v8
+            - coverage-path-policy-experimental-v9
+            - coverage-path-policy-experimental-v10
+            - coverage-path-policy-experimental-v11
+            - coverage-path-policy-experimental-v12
+            - coverage-path-policy-experimental-v13
+            - coverage-path-policy-experimental-v14
+            - coverage-path-policy-experimental-v15
+            - coverage-path-policy-experimental-v16
+            - coverage-path-policy-experimental-v17
+            - coverage-path-policy-experimental-v18
+            - coverage-path-policy-experimental-v19
+            - coverage-path-policy-experimental-v20
+            - coverage-path-policy-experimental-v21
+            - coverage-path-policy-experimental-v22
+            - coverage-path-policy-experimental-v23
+            - coverage-path-policy-experimental-v24
+            - coverage-path-policy-experimental-v25
+            - coverage-path-policy-experimental-v26
+            - coverage-path-policy-experimental-v27
+            - coverage-path-policy-experimental-v28
+            - coverage-path-policy-experimental-v29
+            - coverage-path-policy-experimental-v30
+            - coverage-path-policy-experimental-v31
+            - coverage-path-policy-experimental-v32
+            - coverage-path-policy-experimental-v33
+            - coverage-path-policy-experimental-v34
+            - coverage-path-policy-experimental-v35
+            - coverage-path-policy-experimental-v36
+            - coverage-path-policy-experimental-v37
+            - coverage-path-policy-experimental-v38
+            - coverage-path-policy-experimental-v39
+            - coverage-path-policy-experimental-v40
+            - coverage-path-policy-experimental-v41
+            - coverage-path-policy-experimental-v42
+            - coverage-path-policy-experimental-v43
+            - coverage-path-policy-experimental-v44
+            - coverage-path-policy-experimental-v45
+            - coverage-path-policy-experimental-v46
+            - coverage-path-policy-experimental-v47
+            - coverage-path-policy-experimental-v48
+            - coverage-path-policy-experimental-v49
+            - coverage-path-policy-experimental-v50
+            - coverage-path-policy-experimental-v51
+            - coverage-path-policy-experimental-v52
+            - coverage-path-policy-experimental-v53
+            - coverage-path-policy-experimental-v54
+            - coverage-path-policy-experimental-v55
+            - coverage-path-policy-experimental-v56
+            - coverage-path-policy-experimental-v57
+            - coverage-path-policy-experimental-v58
+            - coverage-path-policy-experimental-v59
+            - coverage-path-policy-experimental-v60
+            - coverage-path-policy-experimental-v61
+            - coverage-path-policy-experimental-v62
+            - coverage-path-policy-experimental-v63
+            - coverage-path-policy-experimental-v64
+            - coverage-path-policy-experimental-v65
+            - coverage-path-policy-experimental-v66
+            - coverage-path-policy-experimental-v67
+            - coverage-path-policy-experimental-v68
+            - coverage-path-policy-experimental-v69
+            - coverage-path-policy-experimental-v70
+            - coverage-path-policy-experimental-v71
+            - coverage-path-policy-experimental-v72
+            - coverage-path-policy-experimental-v73
+            - coverage-path-policy-experimental-v74
+            - coverage-path-policy-experimental-v75
+            - coverage-path-policy-experimental-v76
+            - coverage-path-policy-experimental-v77
+            - coverage-path-policy-experimental-v78
+            - coverage-path-policy-experimental-v79
+            - coverage-path-policy-experimental-v80
+            - coverage-path-policy-experimental-v81
+            - coverage-path-policy-experimental-v82
+        movementMode: {type: string, enum: [foot, bicycle, shared_public]}
+        minimumTraversalMeters: {type: number, format: double, minimum: 0.1, maximum: 100}
+        outcome: {type: string, enum: [evaluated, no_evidence]}
+        counts: {$ref: '#/components/schemas/CoverageDiagnosticCounts'}
+        generations: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/CoverageDiagnosticGeneration'}}
+        unavailableRegions: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CoverageDiagnosticUnavailableRegion'}}
+        overlay: {$ref: '#/components/schemas/CoverageDiagnosticEvidenceCollection'}
+        labels: {$ref: '#/components/schemas/CoverageDiagnosticLabels'}
+        createdAt: {type: string, format: date-time}
     SummaryTotals:
       type: object
       additionalProperties: false

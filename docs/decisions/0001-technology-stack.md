@@ -91,11 +91,11 @@ Use:
 - PostGIS for route, path, matching, and coverage queries
 - A separate OSM PostgreSQL/PostGIS database
 - Copied matched segment geometry in the application database
-- `pg_tileserv` for dense private vector tiles
+- Martin for dense private vector tiles
 - MapLibre GL JS for browser rendering
 - A configurable public base-map tile provider
 
-Keep `pg_tileserv` cluster-internal and proxy all private tiles through authenticated API routes.
+Keep Martin cluster-internal and proxy all private tiles through authenticated API routes. ADR 0012 supersedes the original `pg_tileserv` choice.
 
 ### Database migrations
 
@@ -168,7 +168,7 @@ Atlas offers declarative schema management, and startup migration can simplify s
 - Go supports efficient streaming and explicit concurrency with a small operational footprint.
 - The stack reuses existing homelab services.
 - Design-first OpenAPI gives the UI, Swagger, tests, and Go handlers one durable contract.
-- Private vector tiles can remain dense and performant without exposing `pg_tileserv`.
+- Private vector tiles can remain dense and performant without exposing Martin.
 - The modular monorepo avoids distributed-system overhead while preserving clear components.
 
 ### Negative
@@ -176,7 +176,7 @@ Atlas offers declarative schema management, and startup migration can simplify s
 - The owner must learn Go and its SQL/code-generation tooling.
 - PostgreSQL job-queue semantics, leases, and fairness are application responsibilities.
 - Copied OSM segment geometry requires reconciliation after OSM refresh.
-- `pg_tileserv` needs an authenticated proxy and least-privilege SQL functions.
+- Martin needs an authenticated proxy and least-privilege SQL functions.
 - The separate OSM database increases bootstrap and backup complexity.
 - A design-first API requires CI discipline to keep generated code synchronized.
 - One main environment makes migration and release tests especially important.

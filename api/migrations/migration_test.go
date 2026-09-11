@@ -29,7 +29,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql", "00011_workout_split_paces.sql"} {
+	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql", "00011_workout_split_paces.sql", "00012_workout_timezones.sql", "00013_workout_coverage_readiness.sql", "00014_coverage_matcher_diagnostics.sql", "00015_coverage_reconciliation_reads.sql", "00016_sidewalk_road_attribution_policy.sql", "00017_road_accessory_attribution_policy.sql", "00018_offset_road_candidate_policy.sql", "00019_policy_filtered_candidate_overfetch.sql", "00020_versioned_path_policy_contract.sql", "00021_martin_tile_contract.sql", "00022_martin_runtime_floor.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -41,6 +41,239 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 		if starts != proceduralStatements || ends != proceduralStatements {
 			t.Fatalf("%s: procedural statements = %d, StatementBegin = %d, StatementEnd = %d", name, proceduralStatements, starts, ends)
 		}
+	}
+}
+
+func TestVersionedPathPolicyContractMigration(t *testing.T) {
+	source, err := Files.ReadFile("00020_versioned_path_policy_contract.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"^coverage-path-policy-experimental-v[1-9][0-9]*$", "schema_version=20,minimum_runtime_version=19",
+		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=19,minimum_runtime_version=18",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("versioned path-policy migration is missing %q", required)
+		}
+	}
+}
+
+func TestMartinTileContractMigration(t *testing.T) {
+	source, err := Files.ReadFile("00021_martin_tile_contract.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE FUNCTION app.raw_route_mvt(z integer,x integer,y integer,query_params json)",
+		"json_typeof(query_params) IS DISTINCT FROM 'object'", "json_object_keys(query_params)",
+		"target_account_id:=(query_params->>'target_account_id')::uuid",
+		"target_generation:=(query_params->>'target_generation')::bigint",
+		"selection.session_id=target_session_id", "data_generation.generation=target_generation",
+		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,json) TO workouts_tiles",
+		"GRANT CREATE ON SCHEMA app TO workouts_security_owner", "REVOKE CREATE ON SCHEMA app FROM workouts_security_owner",
+		"schema_version=21,minimum_runtime_version=20", "schema_version=20,minimum_runtime_version=19",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Martin tile migration is missing %q", required)
+		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	for _, forbidden := range []string{
+		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,json) TO workouts_api",
+		"GRANT SELECT ON app.workout_routes TO workouts_tiles",
+	} {
+		if strings.Contains(up, forbidden) {
+			t.Fatalf("Martin tile migration contains unsafe contract %q", forbidden)
+		}
+	}
+}
+
+func TestMartinRuntimeFloorMigration(t *testing.T) {
+	source, err := Files.ReadFile("00022_martin_runtime_floor.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"schema_version=22,minimum_runtime_version=21", "schema_version=21,minimum_runtime_version=20"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Martin runtime floor migration is missing %q", required)
+		}
+	}
+}
+
+func TestPolicyFilteredCandidateOverfetchMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00019_policy_filtered_candidate_overfetch.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"coverage-path-policy-experimental-v5", "schema_version=19,minimum_runtime_version=18",
+		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=18,minimum_runtime_version=17",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("candidate overfetch migration is missing %q", required)
+		}
+	}
+}
+
+func TestOffsetRoadCandidatePolicyMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00018_offset_road_candidate_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"coverage-path-policy-experimental-v4", "schema_version=18,minimum_runtime_version=17",
+		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=17,minimum_runtime_version=16",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("offset road candidate migration is missing %q", required)
+		}
+	}
+}
+
+func TestRoadAccessoryAttributionPolicyMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00017_road_accessory_attribution_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"coverage-path-policy-experimental-v3", "schema_version=17,minimum_runtime_version=16",
+		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=16,minimum_runtime_version=15",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("road accessory attribution migration is missing %q", required)
+		}
+	}
+}
+
+func TestSidewalkRoadAttributionPolicyMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00016_sidewalk_road_attribution_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"coverage-path-policy-experimental-v2", "schema_version=16,minimum_runtime_version=15",
+		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=15,minimum_runtime_version=14",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("sidewalk road-attribution migration is missing %q", required)
+		}
+	}
+}
+
+func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00014_coverage_matcher_diagnostics.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.coverage_diagnostic_runs", "CREATE TABLE app.coverage_diagnostic_generations",
+		"CREATE TABLE app.coverage_diagnostic_evidence", "CREATE TABLE app.coverage_diagnostic_overall_labels",
+		"CREATE TABLE app.coverage_diagnostic_segment_labels", "ON DELETE CASCADE", "FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION app.persist_coverage_diagnostic", "CREATE FUNCTION app.set_coverage_diagnostic_labels",
+		"state.route_input_revision=target_revision", "state.route_input_sha256=target_digest",
+		"minimum_traversal_meters BETWEEN 0.1 AND 100", "evidence_class IN ('matched','ambiguous')",
+		"label IN ('correct','incorrect','uncertain')", "label IN ('expected','unexpected','uncertain')",
+		"GRANT EXECUTE ON FUNCTION app.persist_coverage_diagnostic", "schema_version=14,minimum_runtime_version=13",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("diagnostic migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT INSERT ON app.coverage_diagnostic", "GRANT UPDATE ON app.coverage_diagnostic", "advance_account_data_generation"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("diagnostic migration contains forbidden behavior %q", forbidden)
+		}
+	}
+}
+
+func TestCoverageReconciliationReadMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00015_coverage_reconciliation_reads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"GRANT SELECT(account_id,workout_id) ON app.workout_routes TO workouts_worker",
+		"GRANT SELECT(account_id,workout_id,readiness_state) ON app.workout_coverage_states TO workouts_worker",
+		"GRANT SELECT(account_id,workout_id,region_id,desired_osm_generation) ON app.workout_coverage_regions TO workouts_worker",
+		"schema_version=15,minimum_runtime_version=14", "schema_version=14,minimum_runtime_version=13",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("coverage reconciliation read migration is missing %q", required)
+		}
+	}
+}
+
+func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00013_workout_coverage_readiness.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.workout_coverage_states", "CREATE TABLE app.workout_coverage_regions",
+		"route_input_revision", "octet_length(route_input_sha256)=32", "processing_state='not_started'",
+		"'unresolved','pending','unavailable','map_data_ready'", "'region_not_active','no_provider_region'",
+		"ON DELETE CASCADE", "FORCE ROW LEVEL SECURITY", "CREATE FUNCTION app.initialize_workout_coverage",
+		"CREATE FUNCTION app.assert_workout_coverage_job_lease", "coverage readiness requires a live ingest lease",
+		"prior_digest=new_route_input_sha256", "route_input_revision=prior_revision+1",
+		"DELETE FROM app.workout_coverage_regions", "CREATE FUNCTION app.set_workout_coverage_readiness",
+		"desired_osm_generation", "TO workouts_worker", "GRANT SELECT ON app.workout_coverage_states,app.workout_coverage_regions TO workouts_api",
+		"schema_version=13,minimum_runtime_version=12", "schema_version=12,minimum_runtime_version=11",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("coverage readiness migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT INSERT ON app.workout_coverage", "GRANT UPDATE ON app.workout_coverage", "TO workouts_api,workouts_worker"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("coverage readiness migration contains unsafe grant %q", forbidden)
+		}
+	}
+}
+
+func TestWorkoutTimezoneMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("00012_workout_timezones.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"timezone_reference_workout_id", "timezone_dataset_release", "route_boundary", "nearest_route_boundary",
+		"CREATE TABLE app.timezone_migration_function_backup", "pg_get_functiondef('app.require_ingest_write_capability()'::regprocedure)",
+		"CREATE TABLE app.workout_timezone_write_capabilities", "workout_timezone_capabilities_owner_policy",
+		"CREATE CONSTRAINT TRIGGER workout_timezone_write_capability_cleanup", "capability.workout_id=NEW.id",
+		"CREATE OR REPLACE FUNCTION app.require_ingest_write_capability", "OLD.timezone_reference_workout_id,OLD.timezone_dataset_release",
+		"CREATE FUNCTION app.apply_workout_timezone", "INSERT INTO app.workout_timezone_write_capabilities",
+		"CREATE FUNCTION app.set_workout_route_timezone", "CREATE FUNCTION app.reconcile_account_workout_timezones",
+		"CREATE FUNCTION app.read_workout_timezone_backfill", "CREATE FUNCTION app.reconcile_all_workout_timezones",
+		"timezone reconciliation requires a live job lease", "TO workouts_migration",
+		"abs(extract(epoch FROM candidate.started_at-target.started_at))", "candidate.start_offset_minutes=target.start_offset_minutes",
+		"timezone trigger backup is unavailable", "DROP TRIGGER workout_timezone_write_capability_cleanup",
+		"DROP POLICY workout_timezone_capabilities_owner_policy", "DROP TABLE app.timezone_migration_function_backup",
+		"schema_version=12,minimum_runtime_version=11", "schema_version=11,minimum_runtime_version=8",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("workout timezone migration is missing %q", required)
+		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	applyTimezone := functionBody(t, up, "CREATE FUNCTION app.apply_workout_timezone")
+	if strings.Contains(applyTimezone, "app.ingest_write_capabilities") ||
+		!strings.Contains(applyTimezone, "app.workout_timezone_write_capabilities") {
+		t.Fatal("timezone writer does not use its dedicated transaction capability")
+	}
+	if strings.Contains(text, "schema_version=13") || strings.Contains(text, "minimum_runtime_version=12") {
+		t.Fatal("folded timezone migration still advertises schema 13")
 	}
 }
 

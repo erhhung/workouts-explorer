@@ -38,6 +38,501 @@ func (e AcceptedStatus) Valid() bool {
 	}
 }
 
+// Defines values for CoverageDiagnosticEvidenceCollectionType.
+const (
+	FeatureCollection CoverageDiagnosticEvidenceCollectionType = "FeatureCollection"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticEvidenceCollectionType enum.
+func (e CoverageDiagnosticEvidenceCollectionType) Valid() bool {
+	switch e {
+	case FeatureCollection:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticEvidenceFeatureType.
+const (
+	CoverageDiagnosticEvidenceFeatureTypeFeature CoverageDiagnosticEvidenceFeatureType = "Feature"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticEvidenceFeatureType enum.
+func (e CoverageDiagnosticEvidenceFeatureType) Valid() bool {
+	switch e {
+	case CoverageDiagnosticEvidenceFeatureTypeFeature:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticEvidencePropertiesDirection.
+const (
+	Forward CoverageDiagnosticEvidencePropertiesDirection = "forward"
+	Reverse CoverageDiagnosticEvidencePropertiesDirection = "reverse"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticEvidencePropertiesDirection enum.
+func (e CoverageDiagnosticEvidencePropertiesDirection) Valid() bool {
+	switch e {
+	case Forward:
+		return true
+	case Reverse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticEvidencePropertiesEvidenceClass.
+const (
+	Ambiguous CoverageDiagnosticEvidencePropertiesEvidenceClass = "ambiguous"
+	Matched   CoverageDiagnosticEvidencePropertiesEvidenceClass = "matched"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticEvidencePropertiesEvidenceClass enum.
+func (e CoverageDiagnosticEvidencePropertiesEvidenceClass) Valid() bool {
+	switch e {
+	case Ambiguous:
+		return true
+	case Matched:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticLabelsOverall.
+const (
+	CoverageDiagnosticLabelsOverallCorrect   CoverageDiagnosticLabelsOverall = "correct"
+	CoverageDiagnosticLabelsOverallIncorrect CoverageDiagnosticLabelsOverall = "incorrect"
+	CoverageDiagnosticLabelsOverallUncertain CoverageDiagnosticLabelsOverall = "uncertain"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticLabelsOverall enum.
+func (e CoverageDiagnosticLabelsOverall) Valid() bool {
+	switch e {
+	case CoverageDiagnosticLabelsOverallCorrect:
+		return true
+	case CoverageDiagnosticLabelsOverallIncorrect:
+		return true
+	case CoverageDiagnosticLabelsOverallUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticLabelsPatchOverall.
+const (
+	CoverageDiagnosticLabelsPatchOverallCorrect   CoverageDiagnosticLabelsPatchOverall = "correct"
+	CoverageDiagnosticLabelsPatchOverallIncorrect CoverageDiagnosticLabelsPatchOverall = "incorrect"
+	CoverageDiagnosticLabelsPatchOverallUncertain CoverageDiagnosticLabelsPatchOverall = "uncertain"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticLabelsPatchOverall enum.
+func (e CoverageDiagnosticLabelsPatchOverall) Valid() bool {
+	switch e {
+	case CoverageDiagnosticLabelsPatchOverallCorrect:
+		return true
+	case CoverageDiagnosticLabelsPatchOverallIncorrect:
+		return true
+	case CoverageDiagnosticLabelsPatchOverallUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticRunMovementMode.
+const (
+	Bicycle      CoverageDiagnosticRunMovementMode = "bicycle"
+	Foot         CoverageDiagnosticRunMovementMode = "foot"
+	SharedPublic CoverageDiagnosticRunMovementMode = "shared_public"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticRunMovementMode enum.
+func (e CoverageDiagnosticRunMovementMode) Valid() bool {
+	switch e {
+	case Bicycle:
+		return true
+	case Foot:
+		return true
+	case SharedPublic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticRunOutcome.
+const (
+	Evaluated  CoverageDiagnosticRunOutcome = "evaluated"
+	NoEvidence CoverageDiagnosticRunOutcome = "no_evidence"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticRunOutcome enum.
+func (e CoverageDiagnosticRunOutcome) Valid() bool {
+	switch e {
+	case Evaluated:
+		return true
+	case NoEvidence:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticRunPathPolicyVersion.
+const (
+	CoveragePathPolicyExperimentalV1  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v1"
+	CoveragePathPolicyExperimentalV10 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v10"
+	CoveragePathPolicyExperimentalV11 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v11"
+	CoveragePathPolicyExperimentalV12 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v12"
+	CoveragePathPolicyExperimentalV13 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v13"
+	CoveragePathPolicyExperimentalV14 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v14"
+	CoveragePathPolicyExperimentalV15 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v15"
+	CoveragePathPolicyExperimentalV16 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v16"
+	CoveragePathPolicyExperimentalV17 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v17"
+	CoveragePathPolicyExperimentalV18 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v18"
+	CoveragePathPolicyExperimentalV19 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v19"
+	CoveragePathPolicyExperimentalV2  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v2"
+	CoveragePathPolicyExperimentalV20 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v20"
+	CoveragePathPolicyExperimentalV21 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v21"
+	CoveragePathPolicyExperimentalV22 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v22"
+	CoveragePathPolicyExperimentalV23 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v23"
+	CoveragePathPolicyExperimentalV24 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v24"
+	CoveragePathPolicyExperimentalV25 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v25"
+	CoveragePathPolicyExperimentalV26 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v26"
+	CoveragePathPolicyExperimentalV27 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v27"
+	CoveragePathPolicyExperimentalV28 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v28"
+	CoveragePathPolicyExperimentalV29 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v29"
+	CoveragePathPolicyExperimentalV3  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v3"
+	CoveragePathPolicyExperimentalV30 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v30"
+	CoveragePathPolicyExperimentalV31 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v31"
+	CoveragePathPolicyExperimentalV32 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v32"
+	CoveragePathPolicyExperimentalV33 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v33"
+	CoveragePathPolicyExperimentalV34 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v34"
+	CoveragePathPolicyExperimentalV35 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v35"
+	CoveragePathPolicyExperimentalV36 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v36"
+	CoveragePathPolicyExperimentalV37 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v37"
+	CoveragePathPolicyExperimentalV38 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v38"
+	CoveragePathPolicyExperimentalV39 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v39"
+	CoveragePathPolicyExperimentalV4  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v4"
+	CoveragePathPolicyExperimentalV40 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v40"
+	CoveragePathPolicyExperimentalV41 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v41"
+	CoveragePathPolicyExperimentalV42 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v42"
+	CoveragePathPolicyExperimentalV43 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v43"
+	CoveragePathPolicyExperimentalV44 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v44"
+	CoveragePathPolicyExperimentalV45 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v45"
+	CoveragePathPolicyExperimentalV46 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v46"
+	CoveragePathPolicyExperimentalV47 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v47"
+	CoveragePathPolicyExperimentalV48 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v48"
+	CoveragePathPolicyExperimentalV49 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v49"
+	CoveragePathPolicyExperimentalV5  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v5"
+	CoveragePathPolicyExperimentalV50 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v50"
+	CoveragePathPolicyExperimentalV51 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v51"
+	CoveragePathPolicyExperimentalV52 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v52"
+	CoveragePathPolicyExperimentalV53 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v53"
+	CoveragePathPolicyExperimentalV54 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v54"
+	CoveragePathPolicyExperimentalV55 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v55"
+	CoveragePathPolicyExperimentalV56 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v56"
+	CoveragePathPolicyExperimentalV57 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v57"
+	CoveragePathPolicyExperimentalV58 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v58"
+	CoveragePathPolicyExperimentalV59 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v59"
+	CoveragePathPolicyExperimentalV6  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v6"
+	CoveragePathPolicyExperimentalV60 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v60"
+	CoveragePathPolicyExperimentalV61 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v61"
+	CoveragePathPolicyExperimentalV62 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v62"
+	CoveragePathPolicyExperimentalV63 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v63"
+	CoveragePathPolicyExperimentalV64 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v64"
+	CoveragePathPolicyExperimentalV65 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v65"
+	CoveragePathPolicyExperimentalV66 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v66"
+	CoveragePathPolicyExperimentalV67 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v67"
+	CoveragePathPolicyExperimentalV68 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v68"
+	CoveragePathPolicyExperimentalV69 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v69"
+	CoveragePathPolicyExperimentalV7  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v7"
+	CoveragePathPolicyExperimentalV70 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v70"
+	CoveragePathPolicyExperimentalV71 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v71"
+	CoveragePathPolicyExperimentalV72 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v72"
+	CoveragePathPolicyExperimentalV73 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v73"
+	CoveragePathPolicyExperimentalV74 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v74"
+	CoveragePathPolicyExperimentalV75 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v75"
+	CoveragePathPolicyExperimentalV76 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v76"
+	CoveragePathPolicyExperimentalV77 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v77"
+	CoveragePathPolicyExperimentalV78 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v78"
+	CoveragePathPolicyExperimentalV79 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v79"
+	CoveragePathPolicyExperimentalV8  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v8"
+	CoveragePathPolicyExperimentalV80 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v80"
+	CoveragePathPolicyExperimentalV81 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v81"
+	CoveragePathPolicyExperimentalV82 CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v82"
+	CoveragePathPolicyExperimentalV9  CoverageDiagnosticRunPathPolicyVersion = "coverage-path-policy-experimental-v9"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticRunPathPolicyVersion enum.
+func (e CoverageDiagnosticRunPathPolicyVersion) Valid() bool {
+	switch e {
+	case CoveragePathPolicyExperimentalV1:
+		return true
+	case CoveragePathPolicyExperimentalV10:
+		return true
+	case CoveragePathPolicyExperimentalV11:
+		return true
+	case CoveragePathPolicyExperimentalV12:
+		return true
+	case CoveragePathPolicyExperimentalV13:
+		return true
+	case CoveragePathPolicyExperimentalV14:
+		return true
+	case CoveragePathPolicyExperimentalV15:
+		return true
+	case CoveragePathPolicyExperimentalV16:
+		return true
+	case CoveragePathPolicyExperimentalV17:
+		return true
+	case CoveragePathPolicyExperimentalV18:
+		return true
+	case CoveragePathPolicyExperimentalV19:
+		return true
+	case CoveragePathPolicyExperimentalV2:
+		return true
+	case CoveragePathPolicyExperimentalV20:
+		return true
+	case CoveragePathPolicyExperimentalV21:
+		return true
+	case CoveragePathPolicyExperimentalV22:
+		return true
+	case CoveragePathPolicyExperimentalV23:
+		return true
+	case CoveragePathPolicyExperimentalV24:
+		return true
+	case CoveragePathPolicyExperimentalV25:
+		return true
+	case CoveragePathPolicyExperimentalV26:
+		return true
+	case CoveragePathPolicyExperimentalV27:
+		return true
+	case CoveragePathPolicyExperimentalV28:
+		return true
+	case CoveragePathPolicyExperimentalV29:
+		return true
+	case CoveragePathPolicyExperimentalV3:
+		return true
+	case CoveragePathPolicyExperimentalV30:
+		return true
+	case CoveragePathPolicyExperimentalV31:
+		return true
+	case CoveragePathPolicyExperimentalV32:
+		return true
+	case CoveragePathPolicyExperimentalV33:
+		return true
+	case CoveragePathPolicyExperimentalV34:
+		return true
+	case CoveragePathPolicyExperimentalV35:
+		return true
+	case CoveragePathPolicyExperimentalV36:
+		return true
+	case CoveragePathPolicyExperimentalV37:
+		return true
+	case CoveragePathPolicyExperimentalV38:
+		return true
+	case CoveragePathPolicyExperimentalV39:
+		return true
+	case CoveragePathPolicyExperimentalV4:
+		return true
+	case CoveragePathPolicyExperimentalV40:
+		return true
+	case CoveragePathPolicyExperimentalV41:
+		return true
+	case CoveragePathPolicyExperimentalV42:
+		return true
+	case CoveragePathPolicyExperimentalV43:
+		return true
+	case CoveragePathPolicyExperimentalV44:
+		return true
+	case CoveragePathPolicyExperimentalV45:
+		return true
+	case CoveragePathPolicyExperimentalV46:
+		return true
+	case CoveragePathPolicyExperimentalV47:
+		return true
+	case CoveragePathPolicyExperimentalV48:
+		return true
+	case CoveragePathPolicyExperimentalV49:
+		return true
+	case CoveragePathPolicyExperimentalV5:
+		return true
+	case CoveragePathPolicyExperimentalV50:
+		return true
+	case CoveragePathPolicyExperimentalV51:
+		return true
+	case CoveragePathPolicyExperimentalV52:
+		return true
+	case CoveragePathPolicyExperimentalV53:
+		return true
+	case CoveragePathPolicyExperimentalV54:
+		return true
+	case CoveragePathPolicyExperimentalV55:
+		return true
+	case CoveragePathPolicyExperimentalV56:
+		return true
+	case CoveragePathPolicyExperimentalV57:
+		return true
+	case CoveragePathPolicyExperimentalV58:
+		return true
+	case CoveragePathPolicyExperimentalV59:
+		return true
+	case CoveragePathPolicyExperimentalV6:
+		return true
+	case CoveragePathPolicyExperimentalV60:
+		return true
+	case CoveragePathPolicyExperimentalV61:
+		return true
+	case CoveragePathPolicyExperimentalV62:
+		return true
+	case CoveragePathPolicyExperimentalV63:
+		return true
+	case CoveragePathPolicyExperimentalV64:
+		return true
+	case CoveragePathPolicyExperimentalV65:
+		return true
+	case CoveragePathPolicyExperimentalV66:
+		return true
+	case CoveragePathPolicyExperimentalV67:
+		return true
+	case CoveragePathPolicyExperimentalV68:
+		return true
+	case CoveragePathPolicyExperimentalV69:
+		return true
+	case CoveragePathPolicyExperimentalV7:
+		return true
+	case CoveragePathPolicyExperimentalV70:
+		return true
+	case CoveragePathPolicyExperimentalV71:
+		return true
+	case CoveragePathPolicyExperimentalV72:
+		return true
+	case CoveragePathPolicyExperimentalV73:
+		return true
+	case CoveragePathPolicyExperimentalV74:
+		return true
+	case CoveragePathPolicyExperimentalV75:
+		return true
+	case CoveragePathPolicyExperimentalV76:
+		return true
+	case CoveragePathPolicyExperimentalV77:
+		return true
+	case CoveragePathPolicyExperimentalV78:
+		return true
+	case CoveragePathPolicyExperimentalV79:
+		return true
+	case CoveragePathPolicyExperimentalV8:
+		return true
+	case CoveragePathPolicyExperimentalV80:
+		return true
+	case CoveragePathPolicyExperimentalV81:
+		return true
+	case CoveragePathPolicyExperimentalV82:
+		return true
+	case CoveragePathPolicyExperimentalV9:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticRunRulesVersion.
+const (
+	CoverageExperimentalV1 CoverageDiagnosticRunRulesVersion = "coverage-experimental-v1"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticRunRulesVersion enum.
+func (e CoverageDiagnosticRunRulesVersion) Valid() bool {
+	switch e {
+	case CoverageExperimentalV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticRunSamplingVersion.
+const (
+	CoverageSamplingExperimentalV1 CoverageDiagnosticRunSamplingVersion = "coverage-sampling-experimental-v1"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticRunSamplingVersion enum.
+func (e CoverageDiagnosticRunSamplingVersion) Valid() bool {
+	switch e {
+	case CoverageSamplingExperimentalV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageDiagnosticSegmentLabelLabel.
+const (
+	CoverageDiagnosticSegmentLabelLabelExpected   CoverageDiagnosticSegmentLabelLabel = "expected"
+	CoverageDiagnosticSegmentLabelLabelUncertain  CoverageDiagnosticSegmentLabelLabel = "uncertain"
+	CoverageDiagnosticSegmentLabelLabelUnexpected CoverageDiagnosticSegmentLabelLabel = "unexpected"
+)
+
+// Valid indicates whether the value is a known member of the CoverageDiagnosticSegmentLabelLabel enum.
+func (e CoverageDiagnosticSegmentLabelLabel) Valid() bool {
+	switch e {
+	case CoverageDiagnosticSegmentLabelLabelExpected:
+		return true
+	case CoverageDiagnosticSegmentLabelLabelUncertain:
+		return true
+	case CoverageDiagnosticSegmentLabelLabelUnexpected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageReadinessReason.
+const (
+	NoProviderRegion CoverageReadinessReason = "no_provider_region"
+	RegionNotActive  CoverageReadinessReason = "region_not_active"
+)
+
+// Valid indicates whether the value is a known member of the CoverageReadinessReason enum.
+func (e CoverageReadinessReason) Valid() bool {
+	switch e {
+	case NoProviderRegion:
+		return true
+	case RegionNotActive:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoverageReadinessState.
+const (
+	CoverageReadinessStateNotProcessed CoverageReadinessState = "notProcessed"
+	CoverageReadinessStatePending      CoverageReadinessState = "pending"
+	CoverageReadinessStateUnavailable  CoverageReadinessState = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the CoverageReadinessState enum.
+func (e CoverageReadinessState) Valid() bool {
+	switch e {
+	case CoverageReadinessStateNotProcessed:
+		return true
+	case CoverageReadinessStatePending:
+		return true
+	case CoverageReadinessStateUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DataSyncSourceStatus.
 const (
 	DataSyncSourceStatusCheckingConnection DataSyncSourceStatus = "checking-connection"
@@ -742,13 +1237,13 @@ func (e TokenSessionTokenType) Valid() bool {
 
 // Defines values for WorkoutGeoJSONFeatureType.
 const (
-	Feature WorkoutGeoJSONFeatureType = "Feature"
+	WorkoutGeoJSONFeatureTypeFeature WorkoutGeoJSONFeatureType = "Feature"
 )
 
 // Valid indicates whether the value is a known member of the WorkoutGeoJSONFeatureType enum.
 func (e WorkoutGeoJSONFeatureType) Valid() bool {
 	switch e {
-	case Feature:
+	case WorkoutGeoJSONFeatureTypeFeature:
 		return true
 	default:
 		return false
@@ -892,6 +1387,147 @@ type BrowserSession struct {
 
 // CompactUUID defines model for CompactUUID.
 type CompactUUID = string
+
+// CoverageDiagnosticCounts defines model for CoverageDiagnosticCounts.
+type CoverageDiagnosticCounts struct {
+	AmbiguousPoints      int `json:"ambiguousPoints"`
+	DurationMilliseconds int `json:"durationMilliseconds"`
+	MatchedPoints        int `json:"matchedPoints"`
+	OriginalPoints       int `json:"originalPoints"`
+	Portions             int `json:"portions"`
+	RejectedPoints       int `json:"rejectedPoints"`
+	SampledPoints        int `json:"sampledPoints"`
+	Traversals           int `json:"traversals"`
+	UniqueSegments       int `json:"uniqueSegments"`
+	UnmatchedPoints      int `json:"unmatchedPoints"`
+}
+
+// CoverageDiagnosticEvidenceCollection defines model for CoverageDiagnosticEvidenceCollection.
+type CoverageDiagnosticEvidenceCollection struct {
+	Features []CoverageDiagnosticEvidenceFeature      `json:"features"`
+	Type     CoverageDiagnosticEvidenceCollectionType `json:"type"`
+}
+
+// CoverageDiagnosticEvidenceCollectionType defines model for CoverageDiagnosticEvidenceCollection.Type.
+type CoverageDiagnosticEvidenceCollectionType string
+
+// CoverageDiagnosticEvidenceFeature defines model for CoverageDiagnosticEvidenceFeature.
+type CoverageDiagnosticEvidenceFeature struct {
+	Geometry   GeoJSONLineString                     `json:"geometry"`
+	Properties CoverageDiagnosticEvidenceProperties  `json:"properties"`
+	Type       CoverageDiagnosticEvidenceFeatureType `json:"type"`
+}
+
+// CoverageDiagnosticEvidenceFeatureType defines model for CoverageDiagnosticEvidenceFeature.Type.
+type CoverageDiagnosticEvidenceFeatureType string
+
+// CoverageDiagnosticEvidenceProperties defines model for CoverageDiagnosticEvidenceProperties.
+type CoverageDiagnosticEvidenceProperties struct {
+	Direction         CoverageDiagnosticEvidencePropertiesDirection     `json:"direction"`
+	EvidenceClass     CoverageDiagnosticEvidencePropertiesEvidenceClass `json:"evidenceClass"`
+	Generation        int64                                             `json:"generation"`
+	PhysicalSegmentId CompactUUID                                       `json:"physicalSegmentId"`
+	PortionOrdinal    int                                               `json:"portionOrdinal"`
+	RegionId          string                                            `json:"regionId"`
+	TraversedMeters   float64                                           `json:"traversedMeters"`
+}
+
+// CoverageDiagnosticEvidencePropertiesDirection defines model for CoverageDiagnosticEvidenceProperties.Direction.
+type CoverageDiagnosticEvidencePropertiesDirection string
+
+// CoverageDiagnosticEvidencePropertiesEvidenceClass defines model for CoverageDiagnosticEvidenceProperties.EvidenceClass.
+type CoverageDiagnosticEvidencePropertiesEvidenceClass string
+
+// CoverageDiagnosticGeneration defines model for CoverageDiagnosticGeneration.
+type CoverageDiagnosticGeneration struct {
+	DerivationVersion     int                          `json:"derivationVersion"`
+	Generation            int64                        `json:"generation"`
+	ImporterVersion       int                          `json:"importerVersion"`
+	PromotedAt            time.Time                    `json:"promotedAt"`
+	RegionId              string                       `json:"regionId"`
+	SourceHeaderTimestamp nullable.Nullable[time.Time] `json:"sourceHeaderTimestamp,omitempty"`
+	SourceSha256          string                       `json:"sourceSha256"`
+	SourceUrl             string                       `json:"sourceUrl"`
+}
+
+// CoverageDiagnosticLabels defines model for CoverageDiagnosticLabels.
+type CoverageDiagnosticLabels struct {
+	Overall  nullable.Nullable[CoverageDiagnosticLabelsOverall] `json:"overall,omitempty"`
+	Segments []CoverageDiagnosticSegmentLabel                   `json:"segments"`
+}
+
+// CoverageDiagnosticLabelsOverall defines model for CoverageDiagnosticLabels.Overall.
+type CoverageDiagnosticLabelsOverall string
+
+// CoverageDiagnosticLabelsPatch defines model for CoverageDiagnosticLabelsPatch.
+type CoverageDiagnosticLabelsPatch struct {
+	Overall  *CoverageDiagnosticLabelsPatchOverall `json:"overall,omitempty"`
+	Segments []CoverageDiagnosticSegmentLabel      `json:"segments"`
+}
+
+// CoverageDiagnosticLabelsPatchOverall defines model for CoverageDiagnosticLabelsPatch.Overall.
+type CoverageDiagnosticLabelsPatchOverall string
+
+// CoverageDiagnosticRun defines model for CoverageDiagnosticRun.
+type CoverageDiagnosticRun struct {
+	Counts                 CoverageDiagnosticCounts               `json:"counts"`
+	CreatedAt              time.Time                              `json:"createdAt"`
+	Generations            []CoverageDiagnosticGeneration         `json:"generations"`
+	Id                     CompactUUID                            `json:"id"`
+	Labels                 CoverageDiagnosticLabels               `json:"labels"`
+	MinimumTraversalMeters float64                                `json:"minimumTraversalMeters"`
+	MovementMode           CoverageDiagnosticRunMovementMode      `json:"movementMode"`
+	Outcome                CoverageDiagnosticRunOutcome           `json:"outcome"`
+	Overlay                CoverageDiagnosticEvidenceCollection   `json:"overlay"`
+	PathPolicyVersion      CoverageDiagnosticRunPathPolicyVersion `json:"pathPolicyVersion"`
+	RouteRevision          int64                                  `json:"routeRevision"`
+	RulesVersion           CoverageDiagnosticRunRulesVersion      `json:"rulesVersion"`
+	SamplingVersion        CoverageDiagnosticRunSamplingVersion   `json:"samplingVersion"`
+	UnavailableRegions     []CoverageDiagnosticUnavailableRegion  `json:"unavailableRegions"`
+	WorkoutId              CompactUUID                            `json:"workoutId"`
+}
+
+// CoverageDiagnosticRunMovementMode defines model for CoverageDiagnosticRun.MovementMode.
+type CoverageDiagnosticRunMovementMode string
+
+// CoverageDiagnosticRunOutcome defines model for CoverageDiagnosticRun.Outcome.
+type CoverageDiagnosticRunOutcome string
+
+// CoverageDiagnosticRunPathPolicyVersion defines model for CoverageDiagnosticRun.PathPolicyVersion.
+type CoverageDiagnosticRunPathPolicyVersion string
+
+// CoverageDiagnosticRunRulesVersion defines model for CoverageDiagnosticRun.RulesVersion.
+type CoverageDiagnosticRunRulesVersion string
+
+// CoverageDiagnosticRunSamplingVersion defines model for CoverageDiagnosticRun.SamplingVersion.
+type CoverageDiagnosticRunSamplingVersion string
+
+// CoverageDiagnosticSegmentLabel defines model for CoverageDiagnosticSegmentLabel.
+type CoverageDiagnosticSegmentLabel struct {
+	Label          CoverageDiagnosticSegmentLabelLabel `json:"label"`
+	PortionOrdinal int                                 `json:"portionOrdinal"`
+}
+
+// CoverageDiagnosticSegmentLabelLabel defines model for CoverageDiagnosticSegmentLabel.Label.
+type CoverageDiagnosticSegmentLabelLabel string
+
+// CoverageDiagnosticUnavailableRegion defines model for CoverageDiagnosticUnavailableRegion.
+type CoverageDiagnosticUnavailableRegion struct {
+	DisplayName string `json:"displayName"`
+	RegionId    string `json:"regionId"`
+}
+
+// CoverageReadiness defines model for CoverageReadiness.
+type CoverageReadiness struct {
+	Reason *CoverageReadinessReason `json:"reason,omitempty"`
+	State  CoverageReadinessState   `json:"state"`
+}
+
+// CoverageReadinessReason defines model for CoverageReadiness.Reason.
+type CoverageReadinessReason string
+
+// CoverageReadinessState defines model for CoverageReadiness.State.
+type CoverageReadinessState string
 
 // DataSync defines model for DataSync.
 type DataSync struct {
@@ -1208,19 +1844,20 @@ type MapSelectionCreate struct {
 
 // MapSelectionWorkout defines model for MapSelectionWorkout.
 type MapSelectionWorkout struct {
-	Bounds         RouteBounds                           `json:"bounds"`
-	Calories       nullable.Nullable[ExactMetric]        `json:"calories"`
-	Distance       nullable.Nullable[ExactMetric]        `json:"distance"`
-	Duration       string                                `json:"duration"`
-	ElevationGain  nullable.Nullable[ExactMetric]        `json:"elevationGain"`
-	EndedAt        time.Time                             `json:"endedAt"`
-	HeartRate      nullable.Nullable[ExactMetric]        `json:"heartRate"`
-	Id             CompactUUID                           `json:"id"`
-	LocalStartDate nullable.Nullable[openapi_types.Date] `json:"localStartDate"`
-	Pace           nullable.Nullable[ExactMetric]        `json:"pace"`
-	PartialRoute   bool                                  `json:"partialRoute"`
-	StartedAt      time.Time                             `json:"startedAt"`
-	Type           MapSelectionWorkoutType               `json:"type"`
+	Bounds            RouteBounds                           `json:"bounds"`
+	Calories          nullable.Nullable[ExactMetric]        `json:"calories"`
+	CoverageReadiness CoverageReadiness                     `json:"coverageReadiness"`
+	Distance          nullable.Nullable[ExactMetric]        `json:"distance"`
+	Duration          string                                `json:"duration"`
+	ElevationGain     nullable.Nullable[ExactMetric]        `json:"elevationGain"`
+	EndedAt           time.Time                             `json:"endedAt"`
+	HeartRate         nullable.Nullable[ExactMetric]        `json:"heartRate"`
+	Id                CompactUUID                           `json:"id"`
+	LocalStartDate    nullable.Nullable[openapi_types.Date] `json:"localStartDate"`
+	Pace              nullable.Nullable[ExactMetric]        `json:"pace"`
+	PartialRoute      bool                                  `json:"partialRoute"`
+	StartedAt         time.Time                             `json:"startedAt"`
+	Type              MapSelectionWorkoutType               `json:"type"`
 }
 
 // MapSelectionWorkoutType defines model for MapSelectionWorkoutType.
@@ -1389,11 +2026,17 @@ type ProfilePatch struct {
 // PublicConfig defines model for PublicConfig.
 type PublicConfig struct {
 	BaseMaps               BaseMapsConfig `json:"baseMaps"`
+	Features               PublicFeatures `json:"features"`
 	MapFitPaddingPixels    int            `json:"mapFitPaddingPixels"`
 	PageSizeMaximum        int            `json:"pageSizeMaximum"`
 	PasswordMinimumLength  int            `json:"passwordMinimumLength"`
 	PollingIntervalSeconds int            `json:"pollingIntervalSeconds"`
 	ProductName            string         `json:"productName"`
+}
+
+// PublicFeatures defines model for PublicFeatures.
+type PublicFeatures struct {
+	CoverageMatcherDiagnostics bool `json:"coverageMatcherDiagnostics"`
 }
 
 // PublicInvitation defines model for PublicInvitation.
@@ -1753,6 +2396,11 @@ type CreateInvitationParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
+// UpdateCoverageDiagnosticLabelsParams defines parameters for UpdateCoverageDiagnosticLabels.
+type UpdateCoverageDiagnosticLabelsParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
 // CreateIngestParams defines parameters for CreateIngest.
 type CreateIngestParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
@@ -1886,8 +2534,19 @@ type DeleteWorkoutParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
+// CreateCoverageDiagnosticRunJSONBody defines parameters for CreateCoverageDiagnosticRun.
+type CreateCoverageDiagnosticRunJSONBody = map[string]interface{}
+
+// CreateCoverageDiagnosticRunParams defines parameters for CreateCoverageDiagnosticRun.
+type CreateCoverageDiagnosticRunParams struct {
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
 type CreateInvitationJSONRequestBody = InvitationCreate
+
+// UpdateCoverageDiagnosticLabelsJSONRequestBody defines body for UpdateCoverageDiagnosticLabels for application/json ContentType.
+type UpdateCoverageDiagnosticLabelsJSONRequestBody = CoverageDiagnosticLabelsPatch
 
 // CreateIngestJSONRequestBody defines body for CreateIngest for application/json ContentType.
 type CreateIngestJSONRequestBody = IngestCreate
@@ -1930,6 +2589,9 @@ type CreateSourceJSONRequestBody = SourceCreate
 
 // UpdateSourceJSONRequestBody defines body for UpdateSource for application/json ContentType.
 type UpdateSourceJSONRequestBody = SourcePatch
+
+// CreateCoverageDiagnosticRunJSONRequestBody defines body for CreateCoverageDiagnosticRun for application/json ContentType.
+type CreateCoverageDiagnosticRunJSONRequestBody = CreateCoverageDiagnosticRunJSONBody
 
 // AsSafeFields0 returns the union data inside the SafeFields_AdditionalProperties as a SafeFields0
 func (t SafeFields_AdditionalProperties) AsSafeFields0() (SafeFields0, error) {
@@ -2129,6 +2791,9 @@ type ServerInterface interface {
 	// (GET /api/config)
 	GetPublicConfig(w http.ResponseWriter, r *http.Request)
 
+	// (PATCH /api/coverage-diagnostic-runs/{runId}/labels)
+	UpdateCoverageDiagnosticLabels(w http.ResponseWriter, r *http.Request, runId UUIDInput, params UpdateCoverageDiagnosticLabelsParams)
+
 	// (GET /api/data-sync)
 	GetDataSync(w http.ResponseWriter, r *http.Request)
 
@@ -2243,6 +2908,9 @@ type ServerInterface interface {
 	// (DELETE /api/workouts/{workoutId})
 	DeleteWorkout(w http.ResponseWriter, r *http.Request, workoutId WorkoutID, params DeleteWorkoutParams)
 
+	// (POST /api/workouts/{workoutId}/coverage-diagnostic-runs)
+	CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Request, workoutId WorkoutID, params CreateCoverageDiagnosticRunParams)
+
 	// (GET /api/workouts/{workoutId}/provenance)
 	GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutId WorkoutID)
 
@@ -2273,6 +2941,11 @@ func (_ Unimplemented) CreateInvitation(w http.ResponseWriter, r *http.Request, 
 
 // (GET /api/config)
 func (_ Unimplemented) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /api/coverage-diagnostic-runs/{runId}/labels)
+func (_ Unimplemented) UpdateCoverageDiagnosticLabels(w http.ResponseWriter, r *http.Request, runId UUIDInput, params UpdateCoverageDiagnosticLabelsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2466,6 +3139,11 @@ func (_ Unimplemented) DeleteWorkout(w http.ResponseWriter, r *http.Request, wor
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (POST /api/workouts/{workoutId}/coverage-diagnostic-runs)
+func (_ Unimplemented) CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Request, workoutId WorkoutID, params CreateCoverageDiagnosticRunParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/workouts/{workoutId}/provenance)
 func (_ Unimplemented) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, workoutId WorkoutID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -2551,6 +3229,56 @@ func (siw *ServerInterfaceWrapper) GetPublicConfig(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPublicConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateCoverageDiagnosticLabels operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCoverageDiagnosticLabels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId UUIDInput
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateCoverageDiagnosticLabelsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCoverageDiagnosticLabels(w, r, runId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4037,6 +4765,56 @@ func (siw *ServerInterfaceWrapper) DeleteWorkout(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// CreateCoverageDiagnosticRun operation middleware
+func (siw *ServerInterfaceWrapper) CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workoutId" -------------
+	var workoutId WorkoutID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workoutId", chi.URLParam(r, "workoutId"), &workoutId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workoutId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateCoverageDiagnosticRunParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCoverageDiagnosticRun(w, r, workoutId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWorkoutProvenance operation middleware
 func (siw *ServerInterfaceWrapper) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request) {
 
@@ -4400,6 +5178,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/workouts/{workoutId}/route/points", wrapper.ExportWorkoutPoints)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/workouts/{workoutId}/coverage-diagnostic-runs", wrapper.CreateCoverageDiagnosticRun)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/coverage-diagnostic-runs/{runId}/labels", wrapper.UpdateCoverageDiagnosticLabels)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/workouts/{workoutId}/route", wrapper.ExportWorkoutGeoJSON)
 	})
 	r.Group(func(r chi.Router) {
@@ -4417,181 +5201,204 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"gN9fbrBRjeJebGmZTsbi0f5oInnK/wsAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

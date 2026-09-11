@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workouts-explorer-tiles
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    listen_addresses: 0.0.0.0:3000
+    cache: disable
+    cors: false
+    web_ui: disable
+    postgres:
+      connection_string: ${MARTIN_DATABASE_URL}
+      auto_bounds: skip
+      auto_publish:
+        tables: false
+        functions:
+          from_schemas: [app]
+          source_id_format: "{schema}.{function}"
+      pool_size: 4
+      reload_interval: 0s

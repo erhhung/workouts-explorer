@@ -128,15 +128,36 @@ func readPrivateRegularFile(path string, maximum int64) ([]byte, error) {
 	}
 	defer file.Close()
 	var stat unix.Stat_t
-	if err := unix.Fstat(descriptor, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o077 != 0 {
+	if err := unix.Fstat(descriptor, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return nil, errors.New("file is not private and regular")
 	}
-	if int(stat.Uid) != os.Geteuid() {
-		return nil, errors.New("file is not owned by the current user")
+	groups, err := os.Getgroups()
+	if err != nil {
+		return nil, errors.New("file groups are unavailable")
+	}
+	groups = append(groups, os.Getegid())
+	if !privateFileModeAllowed(&stat, os.Geteuid(), groups) {
+		return nil, errors.New("file is not private to the current user or groups")
 	}
 	value, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil || int64(len(value)) > maximum {
 		return nil, errors.New("file exceeds the allowed size")
 	}
 	return value, nil
+}
+
+func privateFileModeAllowed(stat *unix.Stat_t, userID int, groupIDs []int) bool {
+	mode := stat.Mode
+	if int(stat.Uid) == userID {
+		return mode&0o077 == 0
+	}
+	if mode&0o037 != 0 || mode&0o040 == 0 {
+		return false
+	}
+	for _, groupID := range groupIDs {
+		if int(stat.Gid) == groupID {
+			return true
+		}
+	}
+	return false
 }
