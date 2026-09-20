@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -67,6 +68,9 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	if len(selection.Workouts) != 2 || selection.Workouts[0].Id != compactUUID(fixture.workouts[0]) || selection.Workouts[1].Id != compactUUID(fixture.workouts[1]) || selection.Bounds.IsNull() {
 		t.Fatalf("unexpected selection: %#v", selection)
 	}
+	if !selection.FocusedWorkoutId.IsNull() {
+		t.Fatalf("omitted focus was not returned as null: %#v", selection.FocusedWorkoutId)
+	}
 	firstCalories, firstCaloriesErr := selection.Workouts[0].Calories.Get()
 	secondCalories, secondCaloriesErr := selection.Workouts[1].Calories.Get()
 	if firstCaloriesErr != nil || firstCalories.Value != "300.25" || secondCaloriesErr != nil || secondCalories.Value != "150.25" {
@@ -80,13 +84,23 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	if !strings.Contains(selection.RouteTileUrl, "/route-tiles/") || !strings.HasSuffix(selection.RouteTileUrl, "/{z}/{x}/{y}.pbf") {
 		t.Fatalf("unexpected tile URL %q", selection.RouteTileUrl)
 	}
+	if !strings.Contains(selection.CoverageTileUrl, "/coverage-tiles/") || !strings.HasSuffix(selection.CoverageTileUrl, "/{z}/{x}/{y}.pbf") {
+		t.Fatalf("unexpected coverage tile URL %q", selection.CoverageTileUrl)
+	}
+	pathsResponse := routeMapRequest(handler, http.MethodGet, "/api/map-selections/"+selection.Id+"/coverage/paths?generation="+
+		strconv.FormatInt(selection.DataGeneration, 10), "", firstBearer)
+	var paths generated.RoadCoverageList
+	if pathsResponse.Code != http.StatusOK || json.Unmarshal(pathsResponse.Body.Bytes(), &paths) != nil ||
+		len(paths.Items) != 0 || paths.Pagination.TotalItems != 0 {
+		t.Fatalf("empty coverage paths status=%d body=%s", pathsResponse.Code, pathsResponse.Body.String())
+	}
 	var sessionID string
 	if err := adminDB.QueryRow(ctx, `SELECT session_id::text FROM app.map_selections WHERE account_id=$1 AND id=$2`, accountID, selection.Id).Scan(&sessionID); err != nil {
 		t.Fatal(err)
 	}
 	var tile []byte
 	if err := tileDB.QueryRow(ctx, `SELECT app.raw_route_mvt(0,0,0,json_build_object(
-		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4))`,
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint))`,
 		accountID, sessionID, selection.Id, selection.DataGeneration).Scan(&tile); err != nil {
 		t.Fatalf("tile role could not execute the approved MVT function: %v", err)
 	}
@@ -95,7 +109,7 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	}
 	if _, err := tileDB.Exec(ctx, `SELECT app.raw_route_mvt(0,0,0,json_build_object(
 		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,
-		'target_generation',$4,'unexpected','value'))`, accountID, sessionID, selection.Id, selection.DataGeneration); err == nil {
+		'target_generation',$4::bigint,'unexpected','value'))`, accountID, sessionID, selection.Id, selection.DataGeneration); err == nil {
 		t.Fatal("tile function accepted an additional Martin query parameter")
 	}
 
@@ -119,6 +133,11 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	missing := routeMapRequest(handler, http.MethodPost, "/api/map-selections", `{"startDate":"2026-03-07","endDate":"2026-03-09","workoutIds":["FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"]}`, firstBearer)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing workout status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	focusOutsideSubset := routeMapRequest(handler, http.MethodPost, "/api/map-selections", `{"startDate":"2026-03-07","endDate":"2026-03-09","workoutIds":["`+
+		compactUUID(fixture.workouts[0])+`"],"focusedWorkoutId":"`+compactUUID(fixture.workouts[1])+`"}`, firstBearer)
+	if focusOutsideSubset.Code != http.StatusBadRequest {
+		t.Fatalf("focus outside subset status=%d body=%s", focusOutsideSubset.Code, focusOutsideSubset.Body.String())
 	}
 }
 

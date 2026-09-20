@@ -4,7 +4,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY internal ./internal
 COPY worker/cmd/osm-update ./worker/cmd/osm-update
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-update ./worker/cmd/osm-update
+COPY worker/cmd/osm-identity-eval ./worker/cmd/osm-identity-eval
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-update ./worker/cmd/osm-update && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-identity-eval ./worker/cmd/osm-identity-eval
 
 FROM --platform=linux/amd64 docker.io/iboates/osmium:1.19.0@sha256:65b753a3df8aa693e369b9d776e980337ac50c4f9d19514f26b100c9d1d249f5 AS osmium
 
@@ -16,6 +18,7 @@ RUN for attempt in 1 2 3; do apk add --no-cache ca-certificates postgresql18-cli
     install -d -o 65532 -g 65532 -m 0700 /scratch
 COPY --from=osmium /usr/local/bin/osmium /usr/local/bin/osmium
 COPY --from=build /out/osm-update /app/osm-update
+COPY --from=build /out/osm-identity-eval /app/osm-identity-eval
 COPY osm /app/osm
 USER 65532:65532
 ENV OSM_PIPELINE_ROOT=/app/osm OSM_UPDATE_SCRATCH=/scratch

@@ -126,6 +126,62 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: {{ include "workouts.fullname" . }}-coverage-worker
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.coverageWorker.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: coverage-worker}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: coverage-worker}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: coverage-worker
+          image: {{ include "workouts.image" (list . .Values.coverageWorker.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/app/coverage-worker]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          env:
+            - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - {name: COVERAGE_WORKER_POLL_INTERVAL, value: {{ .Values.coverageWorker.pollInterval | quote }}}
+            - {name: COVERAGE_WORKER_ADMISSION_INTERVAL, value: {{ .Values.coverageWorker.admissionInterval | quote }}}
+            - {name: COVERAGE_WORKER_LEASE_DURATION, value: {{ .Values.coverageWorker.leaseDuration | quote }}}
+            - {name: COVERAGE_WORKER_HEARTBEAT_INTERVAL, value: {{ .Values.coverageWorker.heartbeatInterval | quote }}}
+            - {name: COVERAGE_WORKER_ROUTE_TIMEOUT, value: {{ .Values.coverageWorker.routeTimeout | quote }}}
+            - {name: COVERAGE_RECONCILIATION_POLL_INTERVAL, value: {{ .Values.coverageWorker.reconciliationPollInterval | quote }}}
+            - {name: COVERAGE_RECONCILIATION_SCAN_INTERVAL, value: {{ .Values.coverageWorker.reconciliationScanInterval | quote }}}
+            - {name: COVERAGE_RECONCILIATION_PAGE_SIZE, value: {{ .Values.coverageWorker.reconciliationPageSize | quote }}}
+            - {name: COVERAGE_MIN_TRAVERSAL_METERS, value: {{ .Values.worker.coverageMinTraversalMeters | quote }}}
+            - name: COVERAGE_WORKER_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.databaseSecret.key is required" .Values.coverageWorker.databaseSecret.key }}}}
+            - name: COVERAGE_WORKER_OSM_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.osmDatabaseKey is required" .Values.coverageWorker.osmDatabaseKey }}}}
+          ports: [{name: health, containerPort: 8082}]
+          livenessProbe: {httpGet: {path: /health/live, port: health}}
+          readinessProbe: {httpGet: {path: /health/ready, port: health}}
+          resources: {{- toYaml .Values.coverageWorker.resources | nindent 12 }}
+          volumeMounts:
+            - {name: database-tls, mountPath: /tls/prod-db, readOnly: true}
+      volumes:
+        - name: database-tls
+          secret:
+            secretName: {{ required "coverageWorker.databaseTLSSecret is required" .Values.coverageWorker.databaseTLSSecret }}
+            defaultMode: 0440
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: {{ include "workouts.fullname" . }}-worker
   labels: {{- include "workouts.labels" . | nindent 4 }}
 spec:

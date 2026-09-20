@@ -6,7 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const SupportedSchemaVersion = 6
+const SupportedSchemaVersion = 8
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	if pool == nil {
@@ -21,6 +21,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND to_regclass('osm_catalog.generations') IS NOT NULL
 		   AND to_regclass('osm_catalog.region_storage') IS NOT NULL
 		   AND to_regclass('osm_catalog.storage_gc') IS NOT NULL
+		   AND to_regclass('osm_catalog.promotion_events') IS NOT NULL
 		   AND to_regclass('osm_catalog.regions_boundary_gist') IS NOT NULL
 		   AND to_regclass('osm_canonical.ways') IS NOT NULL
 		   AND to_regclass('osm_canonical.localities') IS NOT NULL
@@ -40,13 +41,10 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		         AND indisvalid AND indisready
 		   )
 		   AND to_regprocedure('osm_catalog.promote_region_generation(text,bigint,name,jsonb)') IS NOT NULL
+		   AND to_regprocedure('osm_catalog.read_promotion_events(bigint,integer)') IS NOT NULL
+		   AND to_regprocedure('osm_catalog.promotion_event_head()') IS NOT NULL
 		   AND position(
-		       'FULL JOIN' IN pg_get_functiondef(
-		           to_regprocedure('osm_catalog.promote_region_generation(text,bigint,name,jsonb)')
-		       )
-		   ) > 0
-		   AND position(
-		       'abs(derived.member_length_m-stored.member_length_m) > 0.01' IN pg_get_functiondef(
+		       'remainingConnectedAttributionSplits' IN pg_get_functiondef(
 		           to_regprocedure('osm_catalog.promote_region_generation(text,bigint,name,jsonb)')
 		       )
 		   ) > 0

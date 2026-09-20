@@ -532,8 +532,8 @@ function AggregateCard({ label, value, breakdown, averages, onToggleMode }: {
   );
 }
 
-function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
-  data: WorkoutList; preferences: Preferences; sort: { field: WorkoutColumn; direction: WorkoutSortDirection };
+function WorkoutTable({ data, loading = false, preferences, sort, onSort, onShowOnMap, onViewProvenance, onExportGeoJSON, onExportPoints, onDelete }: {
+  data?: WorkoutList; loading?: boolean; preferences: Preferences; sort: { field: WorkoutColumn; direction: WorkoutSortDirection };
   onSort: (field: WorkoutColumn) => void;
   onShowOnMap?: (workoutId: string) => void;
   onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
@@ -543,6 +543,7 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const selectedColumns = new Set<unknown>(Array.isArray(preferences.workoutColumns) ? preferences.workoutColumns : []);
+  const workouts = data?.items ?? [];
   const filteredColumns = CANONICAL_COLUMNS.filter((column) => selectedColumns.has(column));
   const columns = filteredColumns.length ? filteredColumns : (["date", "type", "duration"] satisfies WorkoutColumn[]);
   const columnWeights = columns.map((column) => column === "date" ? 2 : column === "type" ? 1.4 : 1);
@@ -555,17 +556,17 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
   });
   return (
     <>
-      <div className="workout-table-wrap">
+      <div className={`workout-table-wrap${loading ? " is-loading" : ""}`}>
         <table className="workout-table">
           <colgroup>{columns.map((column, index) => <col key={column} style={{ width: `${columnWidths[index]}%` }} />)}<col className="workout-actions-col" /></colgroup>
           <thead><tr>{columns.map((column) => {
             const selected = sort.field === column;
             return <th key={column} aria-sort={selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"} scope="col"><button onClick={() => onSort(column)} disabled={!SORTABLE_COLUMNS.has(column)}><span className="column-label">{COLUMN_LABELS[column]}</span><span className="sort-indicator" aria-hidden="true">{selected ? (sort.direction === "asc" ? <>&#9650;</> : <>&#9660;</>) : <>&#9650; &#9660;</>}</span></button></th>;
           })}<th className="workout-actions-heading" scope="col"><span className="visually-hidden">Actions</span></th></tr></thead>
-          <tbody>{data.items.map((workout) => <tr key={workout.id}>{columns.map((column) => {
+          <tbody>{loading ? <tr className="workout-loading-row"><td colSpan={columns.length + 1} role="status">Loading workouts...</td></tr> : workouts.map((workout) => <tr key={workout.id}>{columns.map((column) => {
             const hasValue = workoutHasColumnValue(column, workout);
             const value = isWorkoutMetricColumn(column) && !hasValue ? <span className="workout-table-na">n/a</span> : columnValue(column, workout, preferences);
-            const extent = workoutColumnExtent(column, data, preferences);
+            const extent = data ? workoutColumnExtent(column, data, preferences) : undefined;
             return <td key={column}><div className={`workout-cell workout-cell--${column}`}>{isWorkoutMetricColumn(column)
               ? <span className="workout-value-lane" data-width-sample={extent ?? "n/a"}><span className="workout-value-content">{value}</span></span>
               : value}</div></td>;
@@ -573,7 +574,7 @@ function WorkoutTable({ data, preferences, sort, onSort, onShowOnMap, onViewProv
         </table>
       </div>
       <div className="mobile-workouts">
-        {data.items.map((workout) => {
+        {!loading && workouts.map((workout) => {
           const isExpanded = expanded.has(workout.id);
           const detailsId = `workout-details-${workout.id}`;
           const times = workoutTimes(workout, preferences);
@@ -642,6 +643,10 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
   const [rangeDeletionOpen, setRangeDeletionOpen] = useState(false);
   const [rangeConfirmation, setRangeConfirmation] = useState("");
   const [rangeDeletionError, setRangeDeletionError] = useState("");
+  const [showWorkoutLoading, setShowWorkoutLoading] = useState(false);
+  const workoutResultsRef = useRef<HTMLDivElement>(null);
+  const pendingPageScroll = useRef<{ x: number; y: number } | undefined>(undefined);
+  const [workoutResultsMinHeight, setWorkoutResultsMinHeight] = useState<number>();
   const rangeDeletionCancelRef = useRef<HTMLButtonElement>(null);
   const rangeDeletionErrorRef = useRef<HTMLParagraphElement>(null);
   const explicit = EXPLICIT_RANGE.exec(range);
@@ -710,7 +715,7 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
         previousKey[0] === workoutQueryKey[0] && previousKey[1] === range && previousKey[2] === preferences.timezone &&
         previousKey[3] === preferences.firstWeekday && previousKey[5] === preferences.pageSize;
       const sortChanged = previousKey?.[workoutBaseKey.length] !== sort.field || previousKey?.[workoutBaseKey.length + 1] !== sort.direction;
-      return sameFilter && page === 1 && sortChanged ? previousData : undefined;
+      return sameFilter && (sortChanged || previousKey?.[4] !== page) ? previousData : undefined;
     },
   });
   const provenanceQuery = useQuery({
@@ -838,6 +843,12 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
     setSortActivity({ ...next, state: "sorting" });
     setPageState({ page: 1, pageSize: preferences.pageSize });
   };
+  const changeWorkoutPage = (nextPage: number) => {
+    pendingPageScroll.current = { x: window.scrollX, y: window.scrollY };
+    const currentHeight = workoutResultsRef.current?.getBoundingClientRect().height;
+    if (currentHeight) setWorkoutResultsMinHeight((height) => Math.max(height ?? 0, currentHeight));
+    setPageState({ page: nextPage, pageSize: preferences.pageSize });
+  };
   const summary = summaryQuery.data;
   const workouts = workoutsQuery.data;
   const pageNeedsCorrection = Boolean(workouts && workouts.pagination.totalItems > 0 &&
@@ -856,6 +867,14 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
     setSortActivity({ ...sortActivity, state: "complete" });
   }, [sort, sortActivity, workoutsQuery.isError, workoutsQuery.isFetching, workoutsQuery.isPlaceholderData, workoutsQuery.isSuccess]);
   useEffect(() => {
+    if (!pendingPageScroll.current || workoutsQuery.isFetching || workoutsQuery.isPlaceholderData || !workoutsQuery.isSuccess) return;
+    const position = pendingPageScroll.current;
+    pendingPageScroll.current = undefined;
+    const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+    return () => window.cancelAnimationFrame(frame);
+  }, [workoutsQuery.dataUpdatedAt, workoutsQuery.isFetching, workoutsQuery.isPlaceholderData, workoutsQuery.isSuccess]);
+  useEffect(() => { setWorkoutResultsMinHeight(undefined); pendingPageScroll.current = undefined; }, [range, preferences.pageSize]);
+  useEffect(() => {
     if (!provenanceWorkout || !(provenanceQuery.error instanceof ApiError) || provenanceQuery.error.status !== 404) return;
     setProvenanceWorkout(undefined);
     void workoutsQuery.refetch();
@@ -863,6 +882,12 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
     setTimeout(() => provenanceReturnFocus.current?.focus());
   }, [provenanceQuery.error, provenanceWorkout]);
   const displayedWorkouts = pageNeedsCorrection ? undefined : workouts;
+  const workoutLoadPending = workoutsQuery.isPending || pageNeedsCorrection;
+  useEffect(() => {
+    if (!workoutLoadPending) { setShowWorkoutLoading(false); return; }
+    const timer = window.setTimeout(() => setShowWorkoutLoading(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [workoutLoadPending]);
   const sortActivityLabel = sortActivity && `${COLUMN_LABELS[sortActivity.field]} ${sortActivity.direction === "asc" ? "ascending" : "descending"}`;
   const rangeZone = summary?.range && currentZone(summary.range.timezone);
   const workoutTypes = summary?.byType ?? [];
@@ -958,13 +983,12 @@ export function Summary({ preferences, csrfToken, selectedDateRange, onDateRange
 
       <section className="workouts-section" aria-labelledby="workouts-heading">
         <div className="section-line"><h2 id="workouts-heading" tabIndex={-1}>Workout log</h2><div className="workout-log-actions">{explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && <button type="button" className="range-delete-trigger" aria-label="Delete workouts in this range" title="Delete workouts in this range" onClick={() => { setRangeConfirmation(""); setRangeDeletionError(""); setRangeDeletionOpen(true); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></svg></button>}{displayedWorkouts && <span>{displayedWorkouts.pagination.totalItems} {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} | page {displayedWorkouts.pagination.page} of {Math.max(1, displayedWorkouts.pagination.totalPages)}</span>}</div></div>
-        {(workoutsQuery.isPending || pageNeedsCorrection) && <p className="summary-loading" role="status">Loading workouts...</p>}
         {workoutsQuery.isError && <QueryError message="Workouts are unavailable." retry={() => void workoutsQuery.refetch()} />}
         {displayedWorkouts && displayedWorkouts.items.length === 0 && <div className="summary-empty"><strong>No workouts in this range.</strong><span>Choose another date range to continue tracing your archive.</span></div>}
         {sortActivity?.state === "sorting" && <p className="visually-hidden workout-sort-status" role="status">Sorting by {sortActivityLabel}...</p>}
         {sortActivity?.state === "complete" && <span className="visually-hidden" role="status">Sorted by {sortActivityLabel}.</span>}
-        {displayedWorkouts && displayedWorkouts.items.length > 0 && <div className="workout-results" aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} preferences={preferences} sort={sort} onSort={updateSort} onShowOnMap={onShowOnMap} onViewProvenance={openProvenance} onExportGeoJSON={(workout) => void exportRoute(workout, "geojson")} onExportPoints={(workout) => void exportRoute(workout, "points")} onDelete={openDeletion} /></div>}
-        {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && <nav className="pagination" aria-label="Workout pages"><button className="secondary" disabled={page <= 1 || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page - 1, pageSize: preferences.pageSize }))}>Previous</button><span>Page {displayedWorkouts.pagination.page} of {displayedWorkouts.pagination.totalPages}</span><button className="secondary" disabled={page >= displayedWorkouts.pagination.totalPages || workoutsQuery.isFetching} onClick={() => setPageState((current) => ({ page: current.page + 1, pageSize: preferences.pageSize }))}>Next</button></nav>}
+        {(showWorkoutLoading || (displayedWorkouts && displayedWorkouts.items.length > 0)) && <div ref={workoutResultsRef} className="workout-results" style={workoutResultsMinHeight ? { minHeight: workoutResultsMinHeight } : undefined} aria-busy={workoutsQuery.isFetching}><WorkoutTable data={displayedWorkouts} loading={showWorkoutLoading} preferences={preferences} sort={sort} onSort={updateSort} onShowOnMap={onShowOnMap} onViewProvenance={openProvenance} onExportGeoJSON={(workout) => void exportRoute(workout, "geojson")} onExportPoints={(workout) => void exportRoute(workout, "points")} onDelete={openDeletion} /></div>}
+        {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && <nav className="pagination" aria-label="Workout pages"><button className="secondary" disabled={page <= 1 || workoutsQuery.isFetching} onClick={() => changeWorkoutPage(page - 1)}>Previous</button><span>Page {displayedWorkouts.pagination.page} of {displayedWorkouts.pagination.totalPages}</span><button className="secondary" disabled={page >= displayedWorkouts.pagination.totalPages || workoutsQuery.isFetching} onClick={() => changeWorkoutPage(page + 1)}>Next</button></nav>}
       </section>
     </main>
   );

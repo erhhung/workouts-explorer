@@ -26,6 +26,26 @@ func ProvisionRoles(ctx context.Context, db *pgxpool.Pool) error {
 		return errors.New("role provisioning lock is unavailable")
 	}
 	var canLogin, superuser, createRole, createDB, replication, bypassRLS bool
+	err = tx.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_coverage_worker'`).Scan(&canLogin, &superuser, &createRole, &createDB, &replication, &bypassRLS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := tx.Exec(ctx, `CREATE ROLE workouts_coverage_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`); err != nil {
+			return errors.New("coverage worker role could not be created")
+		}
+	} else if err != nil {
+		return errors.New("coverage worker role could not be verified")
+	} else if !canLogin || superuser || createRole || createDB || replication || bypassRLS {
+		return errors.New("existing coverage worker role is unsafe")
+	}
+	if _, err := tx.Exec(ctx, `ALTER ROLE workouts_coverage_worker SET row_security=on;
+		ALTER ROLE workouts_coverage_worker SET statement_timeout='120s';
+		ALTER ROLE workouts_coverage_worker SET lock_timeout='5s';
+		ALTER ROLE workouts_coverage_worker SET idle_in_transaction_session_timeout='30s'`); err != nil {
+		return errors.New("coverage worker role defaults could not be configured")
+	}
+	var coverageWorkerHasMemberships bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_auth_members memberships JOIN pg_roles member_role ON member_role.oid=memberships.member WHERE member_role.rolname='workouts_coverage_worker')`).Scan(&coverageWorkerHasMemberships); err != nil || coverageWorkerHasMemberships {
+		return errors.New("existing coverage worker role has unsafe memberships")
+	}
 	err = tx.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_tiles'`).Scan(&canLogin, &superuser, &createRole, &createDB, &replication, &bypassRLS)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`); err != nil {

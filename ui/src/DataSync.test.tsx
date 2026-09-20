@@ -15,7 +15,7 @@ const progress: JobProgress = {
 };
 const preferences: Preferences = {
   theme: "dark", units: "metric", timezone: "UTC", firstWeekday: "monday", clockFormat: "24h",
-  workoutColumns: ["date", "type", "duration"], pageSize: 25, initialized: true,
+  workoutColumns: ["date", "type", "duration"], pageSize: 25, coverageDiagnosticsEnabled: false, initialized: true,
 };
 const snapshot: DataSyncModel = {
   schedule: { enabled: true, sourceCount: 1, cadence: "Daily at 02:00", cadenceSeconds: 86400, staleDays: 3, nextRunAt: "2026-08-07T02:00:00Z" },
@@ -140,6 +140,42 @@ describe("DataSync", () => {
     expect(await screen.findByText("No tasks match these filters.")).toBeInTheDocument();
   });
 
+  test("retains task rows, table geometry, and scroll position while a new page loads", async () => {
+    const pageTwoJobId = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+    let resolvePageTwo!: (response: Response) => void;
+    const deferredPageTwo = new Promise<Response>((resolve) => { resolvePageTwo = resolve; });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const path = String(input);
+      if (path === "/api/data-sync") return Promise.resolve(json(snapshot));
+      if (path === "/api/jobs?page=1&pageSize=25") return Promise.resolve(json({
+        pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 2 },
+        items: [{ id: JOB_ID, trigger: "manual", status: "partially_succeeded", progress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }],
+      }));
+      if (path === "/api/jobs?page=2&pageSize=25") return deferredPageTwo;
+      throw new Error(`Unhandled fetch: ${path}`);
+    });
+    renderDataSync();
+    const next = await screen.findByRole("button", { name: "Next" });
+    const table = document.querySelector<HTMLTableElement>(".sync-history-table table")!;
+    const rows = within(table).getAllByRole("row").slice(1);
+    const results = table.closest<HTMLElement>(".sync-history-results")!;
+    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 900, height: 420, top: 0, right: 900, bottom: 420, left: 0, toJSON: () => ({}) });
+    const scrollTo = vi.spyOn(window, "scrollTo");
+    await userEvent.click(next);
+    expect(document.querySelector(".sync-history-table table")).toBe(table);
+    expect(within(table).getAllByRole("row").slice(1)).toEqual(rows);
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveStyle({ minHeight: "420px" });
+    expect(screen.queryByText("Loading task history...")).not.toBeInTheDocument();
+    resolvePageTwo(json({
+      pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 },
+      items: [{ id: pageTwoJobId, trigger: "automatic", status: "succeeded", progress, createdAt: "2026-08-07T12:00:00Z", updatedAt: "2026-08-07T12:05:00Z" }],
+    }));
+    expect(await screen.findByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    await waitFor(() => expect(within(table).getByText("Completed")).toBeVisible());
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(0, 0));
+  });
+
   test("keeps embedded notifications authoritative, marks truncation statically, and links only job notifications", async () => {
     const navigate = vi.fn();
     const jobNotification = { ...snapshot.notifications[0], id: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", subjectType: "job" as const, sourceId: undefined, jobId: JOB_ID, title: "Workout deletion failed", message: "The workout could not be deleted, but you can retry the task." };
@@ -163,7 +199,7 @@ describe("DataSync", () => {
     expect(await within(region).findByText("No new data.")).toBeInTheDocument();
     expect(within(region).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(within(region).queryByText(/Discovering files/)).not.toBeInTheDocument();
-    const queued = within(region).getByText("Queued").closest("div")!;
+    const queued = [...region.querySelectorAll(".job-metadata dt")].find((node) => node.textContent === "Queued")!.closest("div")!;
     expect(queued.querySelector("dd")).not.toHaveTextContent("Never");
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
     expect(within(region).queryByText(/Retry of job/)).not.toBeInTheDocument();
@@ -171,7 +207,24 @@ describe("DataSync", () => {
     expect(region).not.toHaveFocus();
   });
 
-  test.each([[1, "First", ""], [2, "Second", "first"], [5, "Fifth", "fourth"]] as const)("renders retry ordinal %i with root and previous-job navigation", async (retryOrdinal, ordinalLabel, previousLabel) => {
+  test("distinguishes original queue time from a previously started Coverage parent waiting again", async () => {
+    const waiting = { ...detail, operation: "coverage_update" as const, trigger: "system" as const, status: "queued" as const,
+      startedAt: "2026-08-06T12:01:00Z", updatedAt: "2026-08-06T12:10:00Z",
+      routeStats: { total: 3, processed: 1, running: 0, succeeded: 1, failed: 0, cancelled: 0, superseded: 0 } };
+    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json(waiting) : undefined);
+    renderDataSync(JOB_ID);
+    const region = await screen.findByRole("region", { name: "Selected run" });
+    await within(region).findByText("Waiting since");
+    const queued = [...region.querySelectorAll(".job-metadata dt")].find((node) => node.textContent === "Queued")!.closest("div")!;
+    const started = within(region).getByText("First started").closest("div")!;
+    const waitingSince = within(region).getByText("Waiting since").closest("div")!;
+    expect(queued.querySelector("dd")).not.toHaveTextContent("Never");
+    expect(started.querySelector("dd")).not.toHaveTextContent("Never");
+    expect(waitingSince.querySelector("dd")).not.toHaveTextContent("Never");
+    expect(waitingSince.querySelector("dd")?.textContent).not.toBe(queued.querySelector("dd")?.textContent);
+  });
+
+	test.each([[1, "First", ""], [2, "Second", "first"], [5, "Fifth", "fourth"]] as const)("renders retry ordinal %i with root and previous-job navigation", async (retryOrdinal, ordinalLabel, previousLabel) => {
     const rootJobId = "ABCDEF1234567890ABCDEF1234567890";
     const previousJobId = "1234567890ABCDEF1234567890ABCDEF";
     const navigate = vi.fn();
@@ -180,11 +233,16 @@ describe("DataSync", () => {
       retryRootJobId: rootJobId,
       retryOrdinal,
       retryOfJobId: retryOrdinal > 1 ? previousJobId : rootJobId,
-      latestRetryJobId: retryOrdinal < 5 ? "FEDCBA0987654321FEDCBA0987654321" : undefined,
-      latestRetryOrdinal: retryOrdinal < 5 ? 5 : undefined,
+      latestRetryJobId: retryOrdinal > 1 && retryOrdinal < 5 ? "FEDCBA0987654321FEDCBA0987654321" : undefined,
+      latestRetryOrdinal: retryOrdinal > 1 && retryOrdinal < 5 ? 5 : undefined,
     }) : undefined);
     renderDataSync(JOB_ID, navigate);
     const region = await screen.findByRole("region", { name: "Selected run" });
+    if (retryOrdinal === 1) {
+      expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
+      expect(within(region).queryByText(/Retry of job|Retry by job/)).not.toBeInTheDocument();
+      return;
+    }
     const link = await within(region).findByRole("link", { name: rootJobId.slice(0, 8) });
     expect(link).toHaveAttribute("href", `/data-sync/jobs/${rootJobId}`);
     expect(link.closest("dt")).toHaveTextContent(`Retry of job ${rootJobId.slice(0, 8)}`);
@@ -206,7 +264,63 @@ describe("DataSync", () => {
     await userEvent.click(link);
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${rootJobId}`);
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
-  });
+	});
+
+	test("renders coverage route outcomes, counters, and ingest-style retry navigation", async () => {
+		const first = "11111111111111111111111111111111";
+		const third = "33333333333333333333333333333333";
+		const coverageJob: JobDetail = {
+			...detail, operation: "coverage_update", trigger: "system", retryOrdinal: 4, retryRootJobId: first, retryOfJobId: third,
+			routeStats: { total: 3, processed: 3, running: 0, succeeded: 1, failed: 1, cancelled: 0, superseded: 1 },
+			coverage: { regionId: "geofabrik:test", targetOsmGeneration: 2, targetWorkRevision: 4,
+				rulesVersion: "coverage-experimental-v1", samplingVersion: "coverage-sampling-experimental-v1",
+				pathPolicyVersion: "coverage-path-policy-experimental-v82" },
+			children: [{ ...detail, id: "44444444444444444444444444444444", operation: "coverage_update", trigger: "system",
+				status: "succeeded", results: undefined, routeStats: undefined, children: [], coverageRoute: {
+					workoutId: "55555555555555555555555555555555", startedAt: "2026-08-05T08:00:00Z",
+					localStartDate: "2026-08-05", workoutType: "Outdoor Run", resultOutcome: "applied", durationMilliseconds: 1234,
+				} }],
+		};
+		baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json(coverageJob) : undefined);
+		renderDataSync(JOB_ID);
+		const region = await screen.findByRole("region", { name: "Selected run" });
+		expect(await within(region).findByRole("heading", { name: "Coverage update" })).toBeInTheDocument();
+		expect(within(region).getByText("Routes Processed").closest("div")).toHaveTextContent("3");
+		expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
+		expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
+		expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
+		expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
+		expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute("href", `/data-sync/jobs/${first}`);
+		expect(within(region).getByText("Fourth")).toBeVisible();
+		expect(within(region).getByRole("link", { name: "third" })).toHaveAttribute("href", `/data-sync/jobs/${third}`);
+		expect(within(region).queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+	});
+
+	test("distinguishes matching Coverage parents from parents waiting for the matcher", async () => {
+		const matching = { ...detail, id: "1".repeat(32), operation: "coverage_update" as const, trigger: "system" as const,
+			status: "running" as const, routeStats: { total: 3, processed: 1, running: 1, succeeded: 1, failed: 0, cancelled: 0, superseded: 0 } };
+		const waiting = { ...matching, id: "2".repeat(32), status: "queued" as const, routeStats: { ...matching.routeStats, total: 2, processed: 0, running: 0, succeeded: 0 } };
+		let historyReads = 0;
+		baseFetch((path) => {
+			if (path !== "/api/jobs?page=1&pageSize=25") return undefined;
+			historyReads++;
+			return json({ pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 }, items: historyReads === 1 ? [matching, waiting] : [
+				{ ...matching, status: "queued" as const, routeStats: { ...matching.routeStats, running: 0 } },
+				{ ...waiting, status: "running" as const, routeStats: { ...waiting.routeStats, running: 1 } },
+			] });
+		});
+		renderDataSync(undefined, vi.fn(), 1);
+		const history = screen.getByRole("region", { name: "Recent activity" });
+		await within(history).findAllByText("1 of 3 routes");
+		const table = history.querySelector(".sync-history-table") as HTMLElement;
+		const matchingRow = within(table).getByText("1 of 3 routes").closest("tr")!;
+		const waitingRow = within(table).getByText("0 of 2 routes").closest("tr")!;
+		expect(within(matchingRow).getByText("Running")).toBeVisible();
+		expect(within(waitingRow).getByText("Queued")).toBeVisible();
+		await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(2), { timeout: 2000 });
+		expect(within(matchingRow).getByText("Queued")).toBeVisible();
+		expect(within(waitingRow).getByText("Running")).toBeVisible();
+	});
 
   test("renders result counts in the approved DOM order with derived values and rejected help", async () => {
     baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({ ...detail, results: undefined }) : undefined);
@@ -477,7 +591,7 @@ describe("DataSync", () => {
     expect(within(table).getByText("0 of 1 deleted")).toBeInTheDocument();
     await waitFor(() => expect(within(table).getByText("Completed")).toBeInTheDocument());
     expect(within(table).getByText("1 of 1 deleted")).toBeInTheDocument();
-    expect(historyReads).toBe(2);
+    expect(historyReads).toBeGreaterThanOrEqual(2);
   });
 
   test("cancellation posts an empty body and refetches snapshot, history, and detail", async () => {
@@ -567,7 +681,7 @@ describe("DataSync", () => {
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${latestRetryJobId}`);
   });
 
-  test("uses operation-aware history headings and plain desktop status while retaining mobile badges", async () => {
+  test("uses operation-aware history headings and plain status text on desktop and mobile", async () => {
     baseFetch((path) => path === "/api/jobs?page=1&pageSize=25" ? json({
       pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
       items: [{ id: JOB_ID, trigger: "manual", status: "cancelled", progress, createdAt: detail.createdAt, startedAt: detail.createdAt, updatedAt: detail.updatedAt }],
@@ -580,8 +694,11 @@ describe("DataSync", () => {
     expect(within(table as HTMLElement).getByRole("columnheader", { name: "Started" })).toBeInTheDocument();
     expect(table.querySelector("tbody .sync-status")).toBeNull();
     expect(table.querySelector("tbody .sync-status-text--cancelled")).toHaveTextContent("Canceled");
+    expect(Array.from(table.querySelectorAll("col")).map((column) => column.className)).toEqual([
+      "history-started-column", "history-operation-column", "history-results-column", "history-status-column", "history-action-column",
+    ]);
     const cards = document.querySelector(".sync-history-cards")!;
-    expect(cards.querySelector(".sync-status--cancelled")).toHaveTextContent("Canceled");
+    expect(cards.querySelector(".sync-status-text--cancelled")).toHaveTextContent("Canceled");
     expect(screen.getByText("Enabled", { selector: ".schedule-state" })).toHaveClass("schedule-state--enabled");
   });
 

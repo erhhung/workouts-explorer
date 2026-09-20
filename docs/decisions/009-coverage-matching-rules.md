@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed - requires representative route experiments during Milestone 7.
+Accepted on 2026-09-11. The accepted baseline uses matcher rules
+`coverage-experimental-v1`, adaptive sampling, and path policy
+`coverage-path-policy-experimental-v82`. Durable production coverage persistence,
+aggregation, and rendering are the next Milestone 7 delivery slice; the retained
+diagnostic workflow remains the review and future policy-evaluation surface.
 
 ## Context
 
@@ -19,7 +23,7 @@ Export routes, route-point accuracy, path density, and the segment model selecte
 by ADR 0008. Choosing constants before those inputs exist would turn guesses into
 persistent coverage data.
 
-## Proposed Decision Process
+## Decision Process
 
 Build a curated, privacy-safe evaluation set containing:
 
@@ -38,7 +42,7 @@ Evaluate candidate distance thresholds and quality rules with false-positive,
 false-negative, unmatched, and ambiguous-match rates. Record results by path
 class and quality band rather than selecting one aggregate score only.
 
-## Proposed Rule Constraints
+## Rule Constraints
 
 The accepted matcher must:
 
@@ -73,7 +77,7 @@ demonstrates a clear improvement. Every operator-configurable threshold must
 represent a legitimate deployment policy; correct-by-construction matching rules
 remain versioned code.
 
-## Proposed Sequence Model
+## Sequence Model
 
 Use an offline hidden Markov model with Viterbi decoding over directed physical
 segment candidates. Each candidate records the segment, projected position,
@@ -114,7 +118,7 @@ opposite directions as different geometry or using a proximity-based spatial uni
 that could close a real gap. Covered length is computed from the resulting unique
 geometry, not by summing the pre-dissolution traversal lengths.
 
-## Alternatives To Evaluate
+## Alternatives Considered
 
 ### One fixed nearest-segment distance
 
@@ -156,13 +160,27 @@ cross-street attributions, and zero missed expected turns. At NorCal scale, the
 provenance-preserving 50-meter candidate query measured 255.753 ms cold and
 7.892 ms warm; endpoint expansion uses the dedicated start/end graph-node indexes.
 
-This evidence does not yet accept the ADR. The current bridge deliberately treats
-physical edges as bidirectional, retains meter intervals rather than clipped
-source polylines, and has not been labeled across representative private route
-classes and quality bands. Access/direction policy, curved-geometry clipping,
-representative error rates, and rematch behavior remain acceptance blockers.
+Subsequent owner-reviewed diagnostics exercised representative private foot and
+bicycle routes across road, trail, cycleway, sidewalk-adjacent, driveway,
+parking-aisle, dead-end, sparse, poor-accuracy, intersection, turnaround, and
+route-gap cases. The matcher now uses directed physical edges, clips canonical
+source polylines, retains exact segment direction and source intervals, and records
+rule, path-policy, route-revision, and OSM-generation provenance. Diagnostic runs
+and fixed labels are persisted without route coordinates. Recomputing a route
+starts from its retained raw observations and produces a new immutable diagnostic
+run, which proves the rematch input and provenance contract before durable coverage
+is introduced.
 
-Implementation decisions selected for the next evaluation round are:
+Policies v1 through v82 record the evaluated progression. Broad repair policies
+v70 and v72 were rejected after corpus regressions; their diagnostic evidence
+remains immutable. Policy v82 removes the final reviewed unsupported perpendicular
+residential-road reversal while preserving endpoint-supported turnarounds and the
+accepted physical-segment evidence of the sensitive control routes. The reviewed
+v82 example corpus is generally free of known unexpected segments. This evidence,
+the synthetic invariants, deterministic tie-breaking tests, bounded OSM adapter,
+and deployed diagnostic review accept the matcher for production persistence.
+
+Implementation decisions selected during evaluation are:
 
 - use testuser xdev routes for tuning while retaining and reporting only aggregate
   metrics and public segment identities, never route coordinates;
@@ -667,10 +685,13 @@ retain endpoints, temporal/spatial gap boundaries, material accuracy-band change
 and significant turns, plus a point after either 5 meters of movement or 5 seconds.
 The sampling policy is versioned independently from matcher rules.
 
-Before acceptance, record the fixture composition, labeling method, candidate
-rules, chosen thresholds, tie-breakers, measured errors, known limitations,
-matching-rule versioning, and rematch trigger. The accepted ADR must contain
-concrete values rather than delegating them to unspecified runtime configuration.
+The fixture composition, labeling method, candidate rules, chosen thresholds,
+tie-breakers, measured results, known limitations, matching-rule versioning, and
+rematch inputs are recorded here and in `docs/coverage-matcher-evaluation.md`.
+Matcher and path-policy thresholds are concrete versioned code. The minimum
+persisted traversal remains the one legitimate deployment policy: 5 meters by
+default, validated from 0.1 through 100 meters, with its effective value retained
+in run provenance.
 
 Evidence must report false cross-street attribution and missed-turn rates
 separately. Required fixtures include straight intersection travel, true turns,

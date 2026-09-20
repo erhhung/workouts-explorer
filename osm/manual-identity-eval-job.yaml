@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: osm-identity-eval-${OSM_EVAL_JOB_SUFFIX}
+  namespace: workouts-explorer
+  labels:
+    app.kubernetes.io/name: workouts-explorer
+    app.kubernetes.io/component: osm-identity-eval
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: workouts-explorer
+        app.kubernetes.io/component: osm-identity-eval
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ${OSM_IMAGE_PULL_SECRET}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: osm-identity-eval
+          image: ${OSM_UPDATE_IMAGE}
+          imagePullPolicy: Always
+          command: [/app/osm-identity-eval]
+          args:
+            - --region=$(OSM_REGION_ID)
+            - --localities=$(OSM_EVAL_LOCALITIES)
+            - --max-segments=$(OSM_EVAL_MAX_SEGMENTS)
+          env:
+            - name: OSM_REGION_ID
+              value: "${OSM_REGION_ID}"
+            - name: OSM_EVAL_LOCALITIES
+              value: "${OSM_EVAL_LOCALITIES}"
+            - name: OSM_EVAL_MAX_SEGMENTS
+              value: "${OSM_EVAL_MAX_SEGMENTS}"
+            - name: OSM_PIPELINE_ROOT
+              value: /app/osm
+            - name: OSM_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${OSM_DATABASE_SECRET}
+                  key: ${OSM_DATABASE_KEY}
+            - name: MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${OSM_DATABASE_SECRET}
+                  key: ${APP_MIGRATION_DATABASE_KEY}
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: database-tls
+              mountPath: /tls/prod-db
+              readOnly: true
+      volumes:
+        - name: database-tls
+          secret:
+            secretName: ${OSM_DATABASE_TLS_SECRET}
+            defaultMode: 0440

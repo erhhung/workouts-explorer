@@ -33,7 +33,7 @@ test-ui:
 	npm --prefix ui test
 
 build:
-	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker ./worker/cmd/osm-migrate ./worker/cmd/osm-catalog ./worker/cmd/osm-update ./worker/cmd/timezone-import ./worker/cmd/timezone-backfill ./worker/cmd/coverage-evaluate
+	go build ./api/cmd/api ./api/cmd/migrate ./api/cmd/bootstrap-admin ./api/cmd/provision-roles ./worker/cmd/worker ./worker/cmd/coverage-worker ./worker/cmd/osm-migrate ./worker/cmd/osm-catalog ./worker/cmd/osm-update ./worker/cmd/osm-identity-eval ./worker/cmd/timezone-import ./worker/cmd/timezone-backfill ./worker/cmd/coverage-evaluate
 	npm --prefix ui run build
 
 images:

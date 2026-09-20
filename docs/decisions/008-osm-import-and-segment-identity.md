@@ -149,12 +149,32 @@ derivation algorithm must not silently reuse old identity.
 ### Logical path and locality constraints
 
 The accepted design must retain a second identity above matching segments for
-user-facing attribution and Path Coverage rows. Named logical paths are scoped by
-an authoritative municipal city/town locality identity, normalized path name,
-and a broad compatible path class. Locality identity uses imported administrative
+user-facing attribution and Path Coverage rows. Named logical paths begin with an
+authoritative municipal city/town locality identity, normalized path name, and a
+broad compatible path class. Locality identity uses imported administrative
 provenance rather than postal-city or display text alone. Thus `El Camino Real, Mountain View` and `El Camino
 Real, Sunnyvale` are distinct logical paths even when their source geometry is
 part of one continuous road.
+
+Coverage identity primarily follows OSM graph connectivity within an attribution
+scope. That scope is a named educational ground for eligible unnamed geometry,
+otherwise a named park for non-road geometry, an authoritative municipality or
+county, or finally the provider region. Compatible connected segments may share
+an identity across source-way and path-class transitions, while disconnected
+components and scope or name boundaries remain separate. Named roads also use
+bounded proximity connections to join nearby divided carriageways and topology
+gaps as described by derivation versions 13 and 14 below.
+
+Derivation version 6 applies a second, connectivity-bounded identity pass after
+park attribution. Its scope is the stable selected park ID when present, otherwise
+municipal locality ID, otherwise provider region ID. Within a scope, exact shared
+graph nodes merge existing logical IDs with the same normalized name; all null
+names use one unnamed key. Broad class, highway, and source lineage are ignored
+only across those exact connections. Park scope wins over locality, preventing
+park-contained geometry from bridging to outside geometry, while municipality
+scope prevents cross-city merges. National-park behavior from version 5 is thus
+preserved and generalized, including same-name class transitions across municipal
+boundaries inside one national park.
 
 When no authoritative municipality contains a named segment, logical identity is
 scoped by provider region ID, normalized path name, and broad path class instead
@@ -168,11 +188,11 @@ boundary before logical-path assignment. The spike must define behavior for
 boundary roads, disputed or overlapping boundaries, unincorporated areas, missing
 locality data, name aliases, route relations, and name or boundary changes.
 
-Unnamed paths must remain eligible and display as N/A, but every unnamed segment
-in one locality must not collapse into a single logical path. Their identity uses
-deterministic source and topology lineage within the locality. The spike must
-measure whether connected-component derivation or retained source-way/relation
-lineage provides the most stable useful grouping.
+Unnamed paths remain eligible and display as N/A. Initial identity retains
+deterministic source and topology lineage, then version 6 merges those IDs only
+when exact graph endpoints connect under the same attribution scope. Disconnected
+IDs are not newly merged. Existing legacy IDs can already contain disconnected
+geometry; version 6 deliberately does not detect or split those members.
 
 Decoded positive-length segment traversals remain the source evidence for rendering
 geometry. Durable evidence has one row per workout and physical segment: overlapping
@@ -182,6 +202,110 @@ must not fill an untraversed gap. A workout contributes at most once to the
 containing logical path, using its earliest accepted member-segment traversal.
 Only traversed geometry from selected workouts renders as visited; every emitted
 span uses the logical path count and bucket.
+
+Named park polygons are generation-local derivation input. Qualifying
+`leisure=park` areas from 500 m² through 25 km² and qualifying
+`leisure=nature_reserve` or `boundary=protected_area` areas from 1,000 m² through
+10 km² may attribute a fully contained locality-clipped segment. Authoritative
+national-park tagging is `boundary=national_park`,
+`protected_area=national_park`, or case-insensitive
+`protection_title=National Park`; these named areas qualify from 1 km² through
+100,000 km², including when `protect_class=2`. Unrelated `protect_class=2`,
+invalid polygons, unnamed polygons, and material partial overlaps abstain. Local
+parks still require an authoritative named municipality. Overlap selection
+prefers local park, nature reserve, protected area, then national park; then
+smaller area, relation before way, and source ID.
+
+Park attribution is additive for named trails and roads and never replaces
+physical segment identity. It supplies the highest-priority connectivity scope
+for both named and unnamed logical identity. Stable local park identity combines municipal locality
+relation, OSM source type, and OSM source ID. Stable national park identity uses a
+distinct namespace and combines provider region, OSM source type, and OSM source
+ID, making one park one entity across municipalities. This allows one workout to
+contribute once to both a named logical path and the containing park visit. A
+named path without a municipality uses an attributed national park name as
+display context; an actual municipality always wins, and local parks are never
+used for that fallback.
+User-facing reads assign an unnamed segment inside a qualifying park only to the
+park; an unnamed logical path remains visible and countable only for traversed
+member geometry outside attributed parks.
+
+The version-6 implementation first scope-rebases the bounded park-attributed
+subset so a legacy locality ID cannot remain shared across a park boundary. It
+does not materialize all approximately nine million segment endpoints. Four index-driven start/end join orientations insert only
+deduplicated cross-logical-ID edges. Component state contains only logical IDs on
+those edges and uses deterministic minimum-member hooking with parent compression.
+The merged UUID namespace includes stable scope, encoded name/unnamed key, and
+minimum member logical ID. Beyond the park rebase, only participating segment
+groups are updated; all logical paths are then reaggregated because an old ID may
+retain members in another scope. Validation must report zero remaining same-key
+connected splits and records park-rebase, cross-ID edge, affected-ID, and merged-component counts. Cross-scope and cross-name
+connections are valid. No disconnected-merge validation is claimed.
+
+Derivation version 7 supersedes that component contract. Incoming logical IDs are
+not connectivity vertices because one can already contain disconnected geometry.
+Instead, physical segments are vertices; exact shared graph nodes form edges only
+when attribution scope, normalized name or unnamed sentinel, and road/path class
+all match. Cycleways and footways belong to the path class. The deterministic
+component UUID uses the minimum physical segment ID.
+This splits disconnected legacy members and prevents road identities from using
+path-class segments as transitive bridges while preserving source-lineage merging
+inside one graph-connected road/path-class component.
+
+Derivation version 8 adds branch continuity. For one scope/name/road-path key,
+segments from different source ways connect only where exactly two eligible
+segments meet. At nodes with three or more eligible segments, cross-source edges
+are removed while same-source edges remain. This preserves a source way through a
+junction, still joins source-way transitions such as Stevens Creek Trail into
+Sleeper Park, and prevents one branching unnamed sidewalk network from becoming a
+town-wide identity. Derivation records its remaining required-edge split count for
+promotion validation, avoiding a second full endpoint-join validation pass.
+
+Derivation version 9 restricts that branch-edge pruning to unnamed groups. A
+normalized name provides semantic identity across a branch, so named same-scope,
+same-road/path-class segments retain every exact graph edge regardless of source
+way. Unnamed groups continue to use the source-way/simple-continuation rule.
+
+Derivation version 10 additionally retains a cross-source unnamed edge at a branch
+when the edge joins the only two incident segments of one exact broad class. This
+uses OSM's cycleway/footway/trail classification to identify the through pair while
+leaving different-class spurs and ambiguous three-way same-class branches split.
+Derivation version 11 retains named valid county (`admin_level=6`) polygons as a
+fallback below municipality (`admin_level=8`) and above provider region. The
+smallest covering polygon wins. A non-road municipality clipping island no longer
+than 25 m is absorbed into county scope when both adjacent pieces from the same
+source segment belong to that county with the same name state and exact broad
+class. This is a clipping-artifact correction, not general permission to cross
+scope; roads, parks, endpoints, and longer municipal pieces remain unchanged.
+
+Derivation version 12 corrects the initial covering-polygon selector to order by
+administrative specificity (`admin_level=8` before `6`), then polygon area and
+relation ID. Numeric OSM relation IDs never decide municipality-versus-county
+precedence.
+
+Derivation version 13 treats a normalized name as sufficient to bridge exact graph
+road/path transitions. It also adds spatial edges between same-scope, same-name
+road segments within 15 m, extended to 50 m only when both carry an explicit
+one-way tag. This models divided carriageways without applying proximity grouping
+to unnamed roads or arbitrary two-way roads.
+
+Derivation version 14 keeps one nearest named-road proximity edge per scope/name
+and source-way pair, including a same-source pair when clipping or OSM topology
+left it disconnected. This bounds graph storage without dropping short approaches.
+
+Derivation version 15 limits park identity scope to non-road geometry. Road
+segments may retain park tags for context, but identity grouping uses their
+municipality/county scope so a park crossing does not split a named street.
+
+Derivation version 16 retains named educational-ground polygons for schools,
+colleges, and universities. Only canonical segments with no formal normalized name
+receive education tags/scope; named campus roads and paths are unchanged. Matcher
+copy coalesces the education name only at the application boundary, preserving
+canonical source provenance and avoiding an application schema migration.
+Driveway, parking-aisle, and parking-area geometry remains eligible for matching
+and Coverage rendering under the accepted matcher policy, but those ordinary
+logical paths are excluded from user-facing path statistics and history. Their
+park visit remains eligible when the segment is fully inside a qualifying park.
 
 ### Refresh and promotion constraints
 

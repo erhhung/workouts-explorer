@@ -90,16 +90,23 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Errorf("job owner route %s lacks operation or security alternatives", route)
 		}
 	}
-	for _, route := range []string{"/api/workouts", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workout-types", "/api/summary"} {
+	for _, route := range []string{"/api/workouts", "/api/workouts/{workoutId}/provenance", "/api/workouts/{workoutId}/route", "/api/workouts/{workoutId}/route/points", "/api/workout-types", "/api/summary", "/api/map-selections/{mapSelectionId}/coverage/paths", "/api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}"} {
 		operation := document.Paths.Find(route).Get
 		if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
 			t.Errorf("owner read route %s lacks GET or security alternatives", route)
 		}
 	}
-	for _, name := range []string{"BaseMapAttributionLink", "BaseMapAttribution", "BaseMapStyles", "BaseMapFamily", "BaseMapWorkoutTypeMapping", "BaseMapsConfig", "ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "MapSelectionWorkoutType", "CoverageReadiness", "MapSelectionWorkout", "MapSelection", "ExactMetric", "Workout", "WorkoutColumnExtents", "Pagination", "WorkoutList", "WorkoutProvenanceWarning", "WorkoutProvenanceEvent", "WorkoutProvenance", "NormalizedRoutePoint", "WorkoutPointsExport", "RouteBounds", "RouteElevation", "WorkoutGeoJSONProperties", "GeoJSONLineString", "WorkoutGeoJSONFeature", "WorkoutDeletionAccepted", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
+	for _, name := range []string{"BaseMapAttributionLink", "BaseMapAttribution", "BaseMapStyles", "BaseMapFamily", "BaseMapWorkoutTypeMapping", "BaseMapsConfig", "ResolvedDateRange", "WorkoutType", "WorkoutTypeList", "MapSelectionWorkoutType", "CoverageReadiness", "MapSelectionWorkout", "MapSelection", "RoadCoverageEntity", "RoadCoverageList", "RoadCoverageDetail", "ExactMetric", "Workout", "WorkoutColumnExtents", "Pagination", "WorkoutList", "WorkoutProvenanceWarning", "WorkoutProvenanceEvent", "WorkoutProvenance", "NormalizedRoutePoint", "WorkoutPointsExport", "RouteBounds", "RouteElevation", "WorkoutGeoJSONProperties", "GeoJSONLineString", "GeoJSONMultiLineString", "WorkoutGeoJSONFeature", "WorkoutDeletionAccepted", "SummaryTotals", "WorkoutTypeSummary", "WorkoutSummary", "JobProgress", "JobSourceContext", "JobSummary", "JobDetail", "JobList", "JobFile", "JobFileList", "JobEvent", "JobEventList", "JobLog", "JobLogList", "Notification", "NotificationList", "SourceFreshness", "DataSyncSource", "DataSyncSchedule", "DataSync", "Problem"} {
 		schema := document.Components.Schemas[name].Value
 		if schema.AdditionalProperties.Has == nil || *schema.AdditionalProperties.Has {
 			t.Errorf("owner response schema %s is not closed", name)
+		}
+	}
+	for _, name := range []string{"RoadCoverageEntity", "RoadCoverageDetail"} {
+		schema := document.Components.Schemas[name].Value
+		regionName := schema.Properties["regionName"]
+		if !slices.Contains(schema.Required, "regionName") || regionName == nil || regionName.Value == nil || !regionName.Value.Nullable {
+			t.Errorf("%s lacks required nullable regionName", name)
 		}
 	}
 	jobDetail := document.Components.Schemas["JobDetail"].Value

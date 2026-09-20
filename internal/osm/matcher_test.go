@@ -43,6 +43,18 @@ func TestMatcherCandidateBoundsBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestMatcherCopyUsesEducationNameOnlyAsFallback(t *testing.T) {
+	for _, fragment := range []string{
+		"COALESCE(segment.name,segment.tags->>'workouts:education_name')",
+		"COALESCE(segment.normalized_name,segment.tags->>'workouts:education_normalized_name')",
+		"COALESCE(path.name,segment.tags->>'workouts:education_name')",
+	} {
+		if !strings.Contains(matcherCopySegmentsSQL, fragment) {
+			t.Errorf("matcher segment copy missing education fallback %q", fragment)
+		}
+	}
+}
+
 func TestMatcherIncidentBoundsBeforeQuery(t *testing.T) {
 	validNode := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	tests := []struct {
@@ -182,6 +194,17 @@ func TestMatcherSnapshotRequiresTransaction(t *testing.T) {
 	}
 }
 
+func TestUnrestrictedMatcherQueriesTreatNullGenerationArraysAsEmpty(t *testing.T) {
+	for name, query := range map[string]string{
+		"candidates":     matcherCandidatesSQL,
+		"incident edges": matcherIncidentEdgesSQL,
+	} {
+		if strings.Contains(query, "AND (cardinality(") || !strings.Contains(query, "COALESCE(cardinality(") {
+			t.Errorf("%s query does not treat a null generation array as unrestricted", name)
+		}
+	}
+}
+
 func TestMatcherReadOnlySnapshotIntegration(t *testing.T) {
 	databaseURL := os.Getenv("OSM_MATCHER_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -256,6 +279,38 @@ func TestMatcherReadOnlySnapshotIntegration(t *testing.T) {
 			clipped[0].SegmentID != candidates[0].SegmentID || clipped[0].SourceWayID != candidates[0].SourceWayID ||
 			clipped[0].LogicalPathID != candidates[0].LogicalPathID || len(clipped[0].GeoJSON) == 0 || clipped[0].LengthMeters <= 0 {
 			t.Fatalf("fixture clipped portions=%+v", clipped)
+		}
+		copies, err := snapshot.CopySegments(ctx, []MatcherSegmentRef{{SegmentID: candidates[0].SegmentID,
+			RegionID: candidates[0].RegionID, GenerationID: candidates[0].GenerationID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(copies) != 1 || copies[0].Ordinal != 0 || copies[0].SegmentID != candidates[0].SegmentID ||
+			copies[0].LogicalPathID != candidates[0].LogicalPathID || copies[0].PathName == nil ||
+			*copies[0].PathName != "New Path" || len(copies[0].GeoJSON) == 0 || copies[0].LengthMeters <= 0 {
+			t.Fatalf("fixture segment copies=%+v", copies)
+		}
+		targeted, err := BeginMatcherSnapshotForGenerations(ctx, pool, []MatcherGeneration{{
+			RegionID: "fixture:region-a", GenerationID: fixtureGeneration,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		targetedCandidates, err := targeted.Candidates(ctx, []MatcherObservation{{Longitude: 0.5, Latitude: 1, RadiusMeters: 10}}, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(targetedCandidates) != 1 || targetedCandidates[0].RegionID != "fixture:region-a" ||
+			targetedCandidates[0].GenerationID != fixtureGeneration {
+			t.Fatalf("targeted fixture candidates=%+v", targetedCandidates)
+		}
+		if err := targeted.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := BeginMatcherSnapshotForGenerations(ctx, pool, []MatcherGeneration{{
+			RegionID: "fixture:region-a", GenerationID: fixtureGeneration + 1,
+		}}); !errors.Is(err, ErrMatcherGenerationChanged) {
+			t.Fatalf("inactive target generation error=%v", err)
 		}
 	}
 	// A synthetic polar point exercises the geographic candidate SQL without

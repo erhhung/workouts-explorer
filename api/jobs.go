@@ -12,15 +12,27 @@ import (
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const jobDetailSelect = `SELECT j.id,j.parent_job_id,j.kind,j.status,j.attempt,j.progress_current,COALESCE(j.progress_total,0),
 	j.cancel_requested_at,j.started_at,j.terminal_at,j.failure_code,j.failure_summary,j.retry_of_job_id,j.created_at,j.updated_at,
 	COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
 	COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
-	c.source_id,c.source_generation,c.display_name,c.source_type
+	c.source_id,c.source_generation,c.display_name,c.source_type,
+	COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
+	COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
+	COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0),
+	cc.region_id,cc.target_osm_generation,cc.target_work_revision,cc.rules_version,cc.sampling_version,cc.path_policy_version,
+	rc.workout_id,rc.result_outcome,rc.duration_milliseconds,w.started_at,w.local_start_date,wt.provider_label
 	FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
-	LEFT JOIN app.job_source_contexts c ON c.job_id=j.id AND c.account_id=j.account_id`
+	LEFT JOIN app.job_source_contexts c ON c.job_id=j.id AND c.account_id=j.account_id
+	LEFT JOIN app.coverage_job_progress cp ON cp.job_id=j.id AND cp.account_id=j.account_id
+	LEFT JOIN app.coverage_job_contexts cc ON cc.job_id=j.id AND cc.account_id=j.account_id
+	LEFT JOIN app.coverage_route_job_contexts rc ON rc.job_id=j.id AND rc.account_id=j.account_id
+	LEFT JOIN app.workouts w ON w.id=rc.workout_id AND w.account_id=rc.account_id
+	LEFT JOIN app.workout_types wt ON wt.id=w.workout_type_id AND wt.account_id=w.account_id`
 
 const (
 	maxJobRetryOrdinal  = 100
@@ -57,11 +69,15 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 	}
 	var total int64
 	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM app.jobs WHERE parent_job_id IS NULL
-		AND kind IN ('manual_ingest','scheduled_ingest','workout_deletion') AND ($1='' OR status=$1)
+		AND kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update') AND ($1='' OR
+			CASE WHEN kind='coverage_update' AND status='running' AND NOT EXISTS (
+				SELECT 1 FROM app.jobs running_child WHERE running_child.parent_job_id=jobs.id AND running_child.status='running')
+			THEN 'queued' ELSE status END=$1)
 		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=jobs.id
 			AND successor.parent_job_id IS NULL AND ((jobs.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
-				OR (jobs.kind='workout_deletion' AND successor.kind='workout_deletion')))
-		AND ($2='' OR kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' END)`, status, operation).Scan(&total)
+				OR (jobs.kind='workout_deletion' AND successor.kind='workout_deletion')
+				OR (jobs.kind='coverage_update' AND successor.kind='coverage_update')))
+		AND ($2='' OR kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' WHEN 'coverage_update' THEN 'coverage_update' END)`, status, operation).Scan(&total)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -69,13 +85,21 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 	rows, err := tx.Query(r.Context(), `SELECT j.id,j.kind,j.status,j.progress_current,COALESCE(j.progress_total,0),
 		j.started_at,j.terminal_at,j.created_at,j.updated_at,
 		COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
-		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0)
+		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
+		COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
+		COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
+		COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0)
 		FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
-		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest','workout_deletion') AND ($1='' OR j.status=$1)
+		LEFT JOIN app.coverage_job_progress cp ON cp.job_id=j.id AND cp.account_id=j.account_id
+		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update') AND ($1='' OR
+			CASE WHEN j.kind='coverage_update' AND j.status='running' AND NOT EXISTS (
+				SELECT 1 FROM app.jobs running_filter_child WHERE running_filter_child.parent_job_id=j.id AND running_filter_child.status='running')
+			THEN 'queued' ELSE j.status END=$1)
 		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=j.id
 			AND successor.parent_job_id IS NULL AND ((j.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
-				OR (j.kind='workout_deletion' AND successor.kind='workout_deletion')))
-		AND ($2='' OR j.kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' END)
+				OR (j.kind='workout_deletion' AND successor.kind='workout_deletion')
+				OR (j.kind='coverage_update' AND successor.kind='coverage_update')))
+		AND ($2='' OR j.kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' WHEN 'coverage_update' THEN 'coverage_update' END)
 		ORDER BY j.created_at DESC,j.id DESC LIMIT $3 OFFSET $4`, status, operation, pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeJobUnavailable(w, r)
@@ -90,9 +114,12 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		var started, terminal *time.Time
 		var created, updated time.Time
 		progress := generated.JobProgress{}
+		routeStats := generated.CoverageRouteStats{}
 		if err = rows.Scan(&id, &kind, &jobStatus, &current, &progressTotal, &started, &terminal, &created, &updated,
 			&progress.FilesDiscovered, &progress.FilesSkipped, &progress.FilesSucceeded, &progress.FilesFailed,
-			&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected); err != nil {
+			&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected,
+			&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
+			&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running); err != nil {
 			writeJobUnavailable(w, r)
 			return
 		}
@@ -100,9 +127,18 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		operation := generated.JobSummaryOperationDataSync
 		if kind == "workout_deletion" {
 			operation = generated.JobSummaryOperationWorkoutDeletion
+		} else if kind == "coverage_update" {
+			operation = generated.JobSummaryOperationCoverageUpdate
 		}
-		items = append(items, generated.JobSummary{Id: compactUUID(id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
-			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: created, UpdatedAt: updated})
+		if kind == "coverage_update" {
+			jobStatus = coverageParentPresentationStatus(jobStatus, routeStats.Running)
+		}
+		item := generated.JobSummary{Id: compactUUID(id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
+			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: created, UpdatedAt: updated}
+		if kind == "coverage_update" {
+			item.RouteStats = &routeStats
+		}
+		items = append(items, item)
 	}
 	if rows.Err() != nil {
 		writeJobUnavailable(w, r)
@@ -228,7 +264,7 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 	var kind, status string
 	var parentID *uuid.UUID
 	err = tx.QueryRow(r.Context(), `SELECT kind,status,parent_job_id FROM app.jobs WHERE id=$1
-		AND kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')`, id).Scan(&kind, &status, &parentID)
+		AND kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion','coverage_update')`, id).Scan(&kind, &status, &parentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "job was not found")
 		return
@@ -248,6 +284,27 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 	}
 	if status != "failed" && status != "cancelled" && status != "partially_succeeded" {
 		writeProblem(w, r, http.StatusConflict, "Conflict", "job is not retryable")
+		return
+	}
+	if kind == "coverage_update" {
+		var retryID uuid.UUID
+		var routeCount int
+		err = tx.QueryRow(r.Context(), `SELECT job_id,route_count FROM app.retry_coverage_update($1,$2,$3)`,
+			id, session.principalID, maxJobRetryOrdinal).Scan(&retryID, &routeCount)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, r, http.StatusConflict, "Conflict", "coverage update has no unsuccessful routes to retry")
+			return
+		}
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && (databaseError.Code == "55000" || databaseError.Code == "54001") {
+			writeProblem(w, r, http.StatusConflict, "Conflict", databaseError.Message)
+			return
+		}
+		if err != nil || routeCount < 1 || tx.Commit(r.Context()) != nil {
+			writeJobUnavailable(w, r)
+			return
+		}
+		writeIngestAccepted(w, retryID, "queued", false)
 		return
 	}
 	if kind == "workout_deletion" {
@@ -483,7 +540,7 @@ func (s *Server) listJobDiagnostics(w http.ResponseWriter, r *http.Request, jobI
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if err = requireOwnedIngestJob(r.Context(), tx, id); errors.Is(err, pgx.ErrNoRows) {
+	if err = requireOwnedObservableJob(r.Context(), tx, id); errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "job was not found")
 		return
 	} else if err != nil {
@@ -582,15 +639,48 @@ func requireOwnedIngestJob(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	return err
 }
 
+func coverageParentPresentationStatus(status string, runningChildren int) string {
+	if status == "running" && runningChildren == 0 {
+		return "queued"
+	}
+	return status
+}
+
+func requireOwnedObservableJob(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	var exists bool
+	return tx.QueryRow(ctx, `SELECT true FROM app.jobs WHERE id=$1 AND kind IN
+		('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source',
+		 'coverage_update','coverage_update_route')`, id).Scan(&exists)
+}
+
 func readJobDetail(ctx context.Context, tx pgx.Tx, id uuid.UUID) (generated.JobDetail, error) {
 	detail, kind, err := scanJobDetail(tx.QueryRow(ctx, jobDetailSelect+`
-		WHERE j.id=$1 AND j.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')`, id))
+		WHERE j.id=$1 AND j.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion','coverage_update','coverage_update_route')`, id))
 	if err != nil {
 		return generated.JobDetail{}, err
 	}
 	if kind == "manual_ingest" || kind == "scheduled_ingest" {
 		rows, queryErr := tx.Query(ctx, jobDetailSelect+` WHERE j.parent_job_id=$1
 			AND j.kind IN ('manual_ingest_source','scheduled_ingest_source') ORDER BY c.source_id,j.id`, id)
+		if queryErr != nil {
+			return generated.JobDetail{}, queryErr
+		}
+		for rows.Next() {
+			child, _, scanErr := scanJobDetail(rows)
+			if scanErr != nil {
+				rows.Close()
+				return generated.JobDetail{}, scanErr
+			}
+			detail.Children = append(detail.Children, child)
+		}
+		if rows.Err() != nil {
+			rows.Close()
+			return generated.JobDetail{}, rows.Err()
+		}
+		rows.Close()
+	} else if kind == "coverage_update" {
+		rows, queryErr := tx.Query(ctx, jobDetailSelect+` WHERE j.parent_job_id=$1
+			AND j.kind='coverage_update_route' ORDER BY w.started_at,j.id`, id)
 		if queryErr != nil {
 			return generated.JobDetail{}, queryErr
 		}
@@ -638,23 +728,38 @@ func readJobRetryMetadata(ctx context.Context, tx pgx.Tx, refs []jobDetailRef) e
 	}
 
 	lineages, err := readJobRetryLineages(ctx, tx, ids)
-	if err != nil {
+	if errors.Is(err, errInvalidJobRetryLineage) {
+		lineages = make(map[uuid.UUID]jobRetryLineage, len(ids))
+		for _, id := range ids {
+			lineage, lineageErr := readJobRetryLineages(ctx, tx, []uuid.UUID{id})
+			if lineageErr == nil {
+				lineages[id] = lineage[id]
+				continue
+			}
+			if !errors.Is(lineageErr, errInvalidJobRetryLineage) {
+				return lineageErr
+			}
+		}
+	} else if err != nil {
 		return err
 	}
+	validIDs := make([]uuid.UUID, 0, len(lineages))
 	for id, lineage := range lineages {
-		if lineage.ordinal > 0 {
-			root := compactUUID(lineage.rootID)
-			ordinal := lineage.ordinal
-			byID[id].RetryRootJobId = &root
-			byID[id].RetryOrdinal = &ordinal
-		}
+		root := compactUUID(lineage.rootID)
+		ordinal := lineage.ordinal
+		byID[id].RetryRootJobId = &root
+		byID[id].RetryOrdinal = &ordinal
+		validIDs = append(validIDs, id)
+	}
+	if len(validIDs) == 0 {
+		return nil
 	}
 
 	rows, err := tx.Query(ctx, `SELECT requested.id,successor.id FROM unnest($1::uuid[]) requested(id)
 		JOIN LATERAL (SELECT job.id,job.created_at FROM app.jobs job WHERE job.retry_of_job_id=requested.id
-			AND job.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion')
+			AND job.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source','workout_deletion','coverage_update','coverage_update_route')
 			ORDER BY job.created_at,job.id LIMIT 100) successor ON true
-		ORDER BY requested.id,successor.created_at,successor.id`, ids)
+		ORDER BY requested.id,successor.created_at,successor.id`, validIDs)
 	if err != nil {
 		return err
 	}
@@ -682,16 +787,16 @@ func readJobRetryMetadata(ctx context.Context, tx pgx.Tx, refs []jobDetailRef) e
 		FROM descendants current JOIN app.jobs successor ON successor.retry_of_job_id=current.id
 		WHERE current.depth<$2 AND NOT current.cycle AND current.parent_job_id IS NULL AND successor.parent_job_id IS NULL
 			AND ((current.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
-				OR (current.kind='workout_deletion' AND successor.kind='workout_deletion'))
+				OR (current.kind='workout_deletion' AND successor.kind='workout_deletion')
+				OR (current.kind='coverage_update' AND successor.kind='coverage_update'))
 	), latest AS (
 		SELECT DISTINCT ON (requested_id) requested_id,id,depth,cycle FROM descendants WHERE depth>0
 		ORDER BY requested_id,depth DESC,created_at DESC,id DESC
 	)
-	SELECT requested_id,id,depth,cycle FROM latest ORDER BY requested_id`, ids, maxJobRetryOrdinal)
+	SELECT requested_id,id,depth,cycle FROM latest ORDER BY requested_id`, validIDs, maxJobRetryOrdinal)
 	if err != nil {
 		return err
 	}
-	defer latestRows.Close()
 	for latestRows.Next() {
 		var requestedID, latestID uuid.UUID
 		var depth int
@@ -712,7 +817,12 @@ func readJobRetryMetadata(ctx context.Context, tx pgx.Tx, refs []jobDetailRef) e
 		detail.LatestRetryJobId = &compactLatest
 		detail.LatestRetryOrdinal = &latestOrdinal
 	}
-	return latestRows.Err()
+	if err := latestRows.Err(); err != nil {
+		latestRows.Close()
+		return err
+	}
+	latestRows.Close()
+	return nil
 }
 
 type jobRetryLineage struct {
@@ -722,17 +832,26 @@ type jobRetryLineage struct {
 
 // readJobRetryLineages treats persisted retry pointers as hostile and validates them under account RLS.
 func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[uuid.UUID]jobRetryLineage, error) {
-	rows, err := tx.Query(ctx, `WITH RECURSIVE lineage(requested_id,id,retry_of_job_id,parent_job_id,kind,source_id,depth,path,cycle,consistent) AS (
-		SELECT requested.id,job.id,job.retry_of_job_id,job.parent_job_id,job.kind,source.source_id,0,ARRAY[job.id],false,true
+	rows, err := tx.Query(ctx, `WITH RECURSIVE lineage(requested_id,id,retry_of_job_id,parent_job_id,kind,source_id,workout_id,depth,path,cycle,consistent) AS (
+		SELECT requested.id,job.id,job.retry_of_job_id,job.parent_job_id,job.kind,source.source_id,route.workout_id,0,ARRAY[job.id],false,true
 		FROM unnest($1::uuid[]) requested(id) JOIN app.jobs job ON job.id=requested.id
 		LEFT JOIN app.job_source_contexts source ON source.job_id=job.id AND source.account_id=job.account_id
+		LEFT JOIN app.coverage_route_job_contexts route ON route.job_id=job.id AND route.account_id=job.account_id
 		UNION ALL
-		SELECT current.requested_id,prior.id,prior.retry_of_job_id,prior.parent_job_id,prior.kind,prior_source.source_id,current.depth+1,
+		SELECT current.requested_id,prior.id,prior.retry_of_job_id,prior.parent_job_id,prior.kind,prior_source.source_id,prior_route.workout_id,current.depth+1,
 			current.path||prior.id,prior.id=ANY(current.path),current.consistent AND
 			((current.kind IN ('manual_ingest','scheduled_ingest') AND prior.kind IN ('manual_ingest','scheduled_ingest')
 				AND current.parent_job_id IS NULL AND prior.parent_job_id IS NULL) OR
 			 (current.kind='workout_deletion' AND prior.kind='workout_deletion'
 				AND current.parent_job_id IS NULL AND prior.parent_job_id IS NULL) OR
+			 (current.kind='coverage_update' AND prior.kind='coverage_update'
+				AND current.parent_job_id IS NULL AND prior.parent_job_id IS NULL) OR
+			 (current.kind='coverage_update_route' AND prior.kind='coverage_update_route'
+				AND current.workout_id IS NOT NULL AND current.workout_id=prior_route.workout_id
+				AND current.parent_job_id IS NOT NULL AND prior.parent_job_id IS NOT NULL AND EXISTS (
+					SELECT 1 FROM app.jobs current_parent JOIN app.jobs prior_parent ON prior_parent.id=prior.parent_job_id
+					WHERE current_parent.id=current.parent_job_id AND current_parent.kind='coverage_update'
+					AND prior_parent.kind='coverage_update' AND current_parent.retry_of_job_id=prior_parent.id)) OR
 			 (current.kind IN ('manual_ingest_source','scheduled_ingest_source') AND prior.kind IN ('manual_ingest_source','scheduled_ingest_source')
 				AND current.source_id IS NOT NULL AND prior_source.source_id IS NOT NULL AND current.source_id=prior_source.source_id
 				AND current.parent_job_id IS NOT NULL AND prior.parent_job_id IS NOT NULL AND EXISTS (
@@ -744,6 +863,7 @@ func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[
 						 (prior.kind='scheduled_ingest_source' AND prior_parent.kind='scheduled_ingest')))))
 		FROM lineage current JOIN app.jobs prior ON prior.id=current.retry_of_job_id
 		LEFT JOIN app.job_source_contexts prior_source ON prior_source.job_id=prior.id AND prior_source.account_id=prior.account_id
+		LEFT JOIN app.coverage_route_job_contexts prior_route ON prior_route.job_id=prior.id AND prior_route.account_id=prior.account_id
 		WHERE current.retry_of_job_id IS NOT NULL AND current.depth<$2 AND NOT current.cycle
 	), checks AS (
 		SELECT requested_id,bool_or(cycle) cycle,bool_and(consistent) consistent FROM lineage GROUP BY requested_id
@@ -751,10 +871,12 @@ func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[
 	SELECT checks.requested_id,deepest.id,deepest.depth,checks.cycle,checks.consistent,deepest.retry_of_job_id,
 		COALESCE((deepest.kind IN ('manual_ingest','scheduled_ingest') AND deepest.parent_job_id IS NULL) OR
 		 (deepest.kind='workout_deletion' AND deepest.parent_job_id IS NULL) OR
+		 (deepest.kind='coverage_update' AND deepest.parent_job_id IS NULL) OR
+		 (deepest.kind='coverage_update_route' AND deepest.workout_id IS NOT NULL AND parent.kind='coverage_update' AND parent.retry_of_job_id IS NULL) OR
 		 (deepest.kind='manual_ingest_source' AND deepest.source_id IS NOT NULL AND parent.kind='manual_ingest' AND parent.retry_of_job_id IS NULL) OR
 		 (deepest.kind='scheduled_ingest_source' AND deepest.source_id IS NOT NULL AND parent.kind='scheduled_ingest' AND parent.retry_of_job_id IS NULL),false) root_consistent
 	FROM checks JOIN LATERAL (
-		SELECT id,retry_of_job_id,parent_job_id,kind,source_id,depth FROM lineage
+		SELECT id,retry_of_job_id,parent_job_id,kind,source_id,workout_id,depth FROM lineage
 		WHERE requested_id=checks.requested_id ORDER BY depth DESC LIMIT 1
 	) deepest ON true
 	LEFT JOIN app.jobs parent ON parent.id=deepest.parent_job_id`, ids, maxJobRetryOrdinal)
@@ -774,7 +896,7 @@ func readJobRetryLineages(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) (map[
 		if cycle || !consistent || unresolvedRetryID != nil || !rootConsistent {
 			return nil, errInvalidJobRetryLineage
 		}
-		lineages[requestedID] = jobRetryLineage{rootID: rootID, ordinal: depth}
+		lineages[requestedID] = jobRetryLineage{rootID: rootID, ordinal: depth + 1}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -794,21 +916,37 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	var kind, status string
 	var sourceGeneration *int64
 	var displayName, sourceType *string
+	var coverageRegion, coverageRules, coverageSampling, coveragePolicy *string
+	var coverageGeneration, coverageRevision *int64
+	var routeWorkoutID *uuid.UUID
+	var routeOutcome, routeType *string
+	var routeDuration *int
+	var routeStarted, routeLocalDate *time.Time
 	var rawFailureCode, rawFailureSummary *string
 	var current, total int64
 	progress := generated.JobProgress{}
+	routeStats := generated.CoverageRouteStats{}
 	err := row.Scan(&id, &parentID, &kind, &status, &detail.Attempt, &current, &total, &detail.CancelRequestedAt,
 		&detail.StartedAt, &detail.TerminalAt, &rawFailureCode, &rawFailureSummary, &retryID, &detail.CreatedAt, &detail.UpdatedAt,
 		&progress.FilesDiscovered, &progress.FilesSkipped, &progress.FilesSucceeded, &progress.FilesFailed,
 		&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected,
-		&sourceID, &sourceGeneration, &displayName, &sourceType)
+		&sourceID, &sourceGeneration, &displayName, &sourceType,
+		&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
+		&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running,
+		&coverageRegion, &coverageGeneration, &coverageRevision, &coverageRules, &coverageSampling, &coveragePolicy,
+		&routeWorkoutID, &routeOutcome, &routeDuration, &routeStarted, &routeLocalDate, &routeType)
 	if err != nil {
 		return generated.JobDetail{}, "", err
+	}
+	if kind == "coverage_update" {
+		status = coverageParentPresentationStatus(status, routeStats.Running)
 	}
 	detail.Id, detail.Status, detail.Trigger = compactUUID(id), generated.JobStatus(status), jobTrigger(kind)
 	operation := generated.JobDetailOperationDataSync
 	if kind == "workout_deletion" {
 		operation = generated.JobDetailOperationWorkoutDeletion
+	} else if kind == "coverage_update" || kind == "coverage_update_route" {
+		operation = generated.JobDetailOperationCoverageUpdate
 	}
 	detail.Operation = &operation
 	detail.FailureCode, detail.FailureSummary = safeJobFailure(rawFailureCode)
@@ -817,20 +955,22 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	detail.RetriedByJobIds = []generated.CompactUUID{}
 	progress.Current, progress.Total = current, total
 	detail.Progress = progress
-	detail.Results = &struct {
-		FilesFailed       *int64 `json:"filesFailed,omitempty"`
-		FilesSucceeded    *int64 `json:"filesSucceeded,omitempty"`
-		WorkoutsCreated   *int64 `json:"workoutsCreated,omitempty"`
-		WorkoutsRejected  *int64 `json:"workoutsRejected,omitempty"`
-		WorkoutsUnchanged *int64 `json:"workoutsUnchanged,omitempty"`
-		WorkoutsUpdated   *int64 `json:"workoutsUpdated,omitempty"`
-	}{
-		FilesFailed:       &progress.FilesFailed,
-		FilesSucceeded:    &progress.FilesSucceeded,
-		WorkoutsCreated:   &progress.WorkoutsCreated,
-		WorkoutsRejected:  &progress.WorkoutsRejected,
-		WorkoutsUnchanged: &progress.WorkoutsUnchanged,
-		WorkoutsUpdated:   &progress.WorkoutsUpdated,
+	if kind != "coverage_update" && kind != "coverage_update_route" {
+		detail.Results = &struct {
+			FilesFailed       *int64 `json:"filesFailed,omitempty"`
+			FilesSucceeded    *int64 `json:"filesSucceeded,omitempty"`
+			WorkoutsCreated   *int64 `json:"workoutsCreated,omitempty"`
+			WorkoutsRejected  *int64 `json:"workoutsRejected,omitempty"`
+			WorkoutsUnchanged *int64 `json:"workoutsUnchanged,omitempty"`
+			WorkoutsUpdated   *int64 `json:"workoutsUpdated,omitempty"`
+		}{
+			FilesFailed:       &progress.FilesFailed,
+			FilesSucceeded:    &progress.FilesSucceeded,
+			WorkoutsCreated:   &progress.WorkoutsCreated,
+			WorkoutsRejected:  &progress.WorkoutsRejected,
+			WorkoutsUnchanged: &progress.WorkoutsUnchanged,
+			WorkoutsUpdated:   &progress.WorkoutsUpdated,
+		}
 	}
 	if parentID != nil {
 		value := compactUUID(*parentID)
@@ -843,6 +983,26 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	if sourceID != nil && sourceGeneration != nil && displayName != nil && sourceType != nil {
 		detail.Source = &generated.JobSourceContext{SourceId: compactUUID(*sourceID), Generation: *sourceGeneration, DisplayName: *displayName, SourceType: *sourceType}
 	}
+	if coverageRegion != nil && coverageGeneration != nil && coverageRevision != nil && coverageRules != nil && coverageSampling != nil && coveragePolicy != nil {
+		detail.Coverage = &generated.CoverageJobContext{RegionId: *coverageRegion, TargetOsmGeneration: *coverageGeneration,
+			TargetWorkRevision: *coverageRevision, RulesVersion: *coverageRules, SamplingVersion: *coverageSampling,
+			PathPolicyVersion: *coveragePolicy}
+		detail.RouteStats = &routeStats
+	}
+	if routeWorkoutID != nil && routeStarted != nil && routeType != nil {
+		context := generated.CoverageRouteContext{WorkoutId: compactUUID(*routeWorkoutID), StartedAt: *routeStarted,
+			WorkoutType: *routeType, DurationMilliseconds: routeDuration}
+		if routeLocalDate == nil {
+			context.LocalStartDate.SetNull()
+		} else {
+			context.LocalStartDate.Set(openapi_types.Date{Time: *routeLocalDate})
+		}
+		if routeOutcome != nil {
+			value := generated.CoverageRouteContextResultOutcome(*routeOutcome)
+			context.ResultOutcome = &value
+		}
+		detail.CoverageRoute = &context
+	}
 	return detail, kind, nil
 }
 
@@ -851,24 +1011,33 @@ func safeJobFailure(code *string) (*string, *string) {
 		return nil, nil
 	}
 	summaries := map[string]string{
-		"ingest-parameters-invalid": "Ingest parameters were invalid.",
-		"source-config-invalid":     "Source configuration could not be read.",
-		"source-unavailable":        "Source data could not be accessed.",
-		"source-directory-limit":    "The source contains too many entries.",
-		"source-files-changed":      "Source files changed while ingest was running.",
-		"source-file-invalid":       "One or more source files could not be processed.",
-		"workout-delete-failed":     "The workout deletion could not be completed.",
+		"ingest-parameters-invalid":  "Ingest parameters were invalid.",
+		"source-config-invalid":      "Source configuration could not be read.",
+		"source-unavailable":         "Source data could not be accessed.",
+		"source-directory-limit":     "The source contains too many entries.",
+		"source-files-changed":       "Source files changed while ingest was running.",
+		"source-file-invalid":        "One or more source files could not be processed.",
+		"workout-delete-failed":      "The workout deletion could not be completed.",
+		"coverage-route-invalid":     "Coverage route input was invalid.",
+		"coverage-route-read-failed": "Coverage route input could not be read.",
+		"coverage-route-timeout":     "Coverage matching timed out.",
+		"coverage-route-too-large":   "Coverage route exceeded a processing limit.",
+		"coverage-osm-unavailable":   "Coverage map data is temporarily unavailable.",
+		"coverage-persist-failed":    "Coverage results could not be persisted.",
 	}
 	summary, ok := summaries[*code]
 	if !ok {
-		safeCode := "ingest-failed"
-		safeSummary := "The ingest job could not be completed."
+		safeCode := "job-failed"
+		safeSummary := "The job could not be completed."
 		return &safeCode, &safeSummary
 	}
 	return code, &summary
 }
 
 func jobTrigger(kind string) generated.JobTrigger {
+	if kind == "coverage_update" || kind == "coverage_update_route" {
+		return generated.JobTrigger("system")
+	}
 	if kind == "scheduled_ingest" || kind == "scheduled_ingest_source" {
 		return generated.JobTrigger("scheduled")
 	}

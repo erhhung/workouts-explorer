@@ -128,7 +128,6 @@ SELECT
     ST_Length(piece_geom::geography) AS length_m
 FROM assigned;
 
-BEGIN;
 DELETE FROM path_segments AS segment
 USING locality_clip_candidates AS candidate
 WHERE segment.segment_id = candidate.segment_id;
@@ -163,8 +162,6 @@ SELECT logical_path_id,
     count(*), sum(length_m)
 FROM path_segments
 GROUP BY logical_path_id;
-COMMIT;
-
 ANALYZE path_segments;
 ANALYZE logical_paths;
 DROP TABLE locality_clip_replacements;

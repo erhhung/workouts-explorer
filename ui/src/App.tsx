@@ -6,6 +6,7 @@ import { ApiError, DEFAULT_WORKOUT_SORT, SESSION_EXPIRED_EVENT, type DateRangePr
 import { DataSync } from "./DataSync";
 import { initialRange, Summary } from "./Summary";
 import { applyTheme } from "./theme";
+import type { MapMode, RoadCoverageCache } from "./MapPage";
 
 const MapPage = lazy(() => import("./MapPage"));
 
@@ -86,6 +87,7 @@ function preferenceInitialization(preferences: Preferences) {
     clockFormat: preferences.clockFormat,
     workoutColumns: preferences.workoutColumns,
     pageSize: preferences.pageSize,
+    coverageDiagnosticsEnabled: false,
   };
 }
 
@@ -346,7 +348,7 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
     const selectedColumns = new Set(formData.getAll("workoutColumns").map(String));
     const workoutColumns = WORKOUT_COLUMN_CHOICES.map(([value]) => value).filter((value) => selectedColumns.has(value));
     const nextProfile = { ...profile, fullName: values.fullName.trim() };
-    const preferencePatch = { theme: values.theme as Preferences["theme"], units: values.units as Preferences["units"], timezone: values.timezone, firstWeekday: values.firstWeekday as Preferences["firstWeekday"], clockFormat: values.clockFormat as Preferences["clockFormat"], workoutColumns, pageSize };
+    const preferencePatch = { theme: values.theme as Preferences["theme"], units: values.units as Preferences["units"], timezone: values.timezone, firstWeekday: values.firstWeekday as Preferences["firstWeekday"], clockFormat: values.clockFormat as Preferences["clockFormat"], workoutColumns, pageSize, coverageDiagnosticsEnabled: formData.has("coverageDiagnosticsEnabled") };
     setSaving(true);
     try {
       const savedProfile = await api<Profile>("/api/me", { method: "PATCH", body: JSON.stringify({ fullName: nextProfile.fullName }) }, csrfToken);
@@ -371,8 +373,11 @@ function PreferencesDialog({ open, onOpenChange, returnFocus, profile, preferenc
               <div className="field"><label htmlFor={`${id}-timezone`}>Time zone</label><span className="select-control"><select id={`${id}-timezone`} name="timezone" defaultValue={initialTimeZone}>{timeZoneOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></span></div>
               <SelectField label="First weekday" name="firstWeekday" id={`${id}-weekday`} value={preferences.firstWeekday} options={["monday", "sunday"]} />
               <SelectField label="Clock format" name="clockFormat" id={`${id}-clock`} value={preferences.clockFormat} options={["12h", "24h"]} />
-              <div className="field"><label htmlFor={`${id}-page-size`}>Workouts per page</label><span className="select-control"><select id={`${id}-page-size`} name="pageSize" defaultValue={preferences.pageSize}>{pageSizeChoices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></span></div>
+              <div className="field"><label htmlFor={`${id}-page-size`}>Table rows per page</label><span className="select-control"><select id={`${id}-page-size`} name="pageSize" defaultValue={preferences.pageSize}>{pageSizeChoices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></span></div>
               <div className="field field--wide"><span className="field-label" id={`${id}-columns`}>Workout columns</span><div className="checkbox-list" role="group" aria-labelledby={`${id}-columns`}>{WORKOUT_COLUMN_CHOICES.map(([value, label]) => <label className="checkbox-option" key={value}><input type="checkbox" name="workoutColumns" value={value} defaultChecked={preferences.workoutColumns.includes(value)} /><span>{label}</span></label>)}</div><span className="field-hint">Choose the columns to show in the Workout Log table (they will always appear in this order).</span></div>
+            </div></fieldset>
+            <fieldset><legend>Diagnostics</legend><div className="settings-grid">
+              <div className="field field--wide"><label className="checkbox-option"><input type="checkbox" name="coverageDiagnosticsEnabled" defaultChecked={preferences.coverageDiagnosticsEnabled} /><span>Enable coverage diagnostics</span></label><span className="field-hint">Use the selected-route matcher review instead of aggregate coverage on the Map tab.</span></div>
             </div></fieldset>
           </div>
           <footer className="dialog-actions"><Dialog.Close type="button" className="secondary preferences-action">Cancel</Dialog.Close><button className="primary preferences-action" disabled={saving}>{saving ? "Saving..." : "Save"}</button></footer>
@@ -397,6 +402,8 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
   const [mapWorkoutIds, setMapWorkoutIds] = useState<string[] | undefined>();
   const [mapAvailableWorkouts, setMapAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
   const [mapFocusedWorkoutId, setMapFocusedWorkoutId] = useState<string>();
+  const [mapMode, setMapMode] = useState<MapMode>("routes");
+  const [roadCoverageCache, setRoadCoverageCache] = useState<RoadCoverageCache>();
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -437,6 +444,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
       setMapWorkoutIds(undefined);
       setMapAvailableWorkouts([]);
       setMapFocusedWorkoutId(undefined);
+      setRoadCoverageCache(undefined);
     }
     setVisitRange(next);
   };
@@ -456,7 +464,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
       setMenuError("Theme change wasn't saved.");
     }
   };
-  const avatar = <span className="avatar">{!avatarFailed && <img src="/api/me/avatar" alt="" onError={() => setAvatarFailed(true)} />}<span>{initials}</span></span>;
+  const avatar = <span className="avatar">{!avatarFailed && <img src="/api/me/avatar?v=2" alt="" onError={() => setAvatarFailed(true)} />}<span>{initials}</span></span>;
   return (
     <div className="shell">
       <header className="app-header">
@@ -481,7 +489,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
         <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 6 &middot; Raw Route Map</p></div>
       </Modal>
       {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={config.pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> : mapRoute ?
-        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} persistedWorkoutIds={mapWorkoutIds} onWorkoutSelectionChange={setMapWorkoutIds} persistedAvailableWorkouts={mapAvailableWorkouts} onAvailableWorkoutsChange={setMapAvailableWorkouts} persistedFocusedWorkoutId={mapFocusedWorkoutId} onFocusedWorkoutChange={setMapFocusedWorkoutId} /></Suspense> :
+        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} persistedWorkoutIds={mapWorkoutIds} onWorkoutSelectionChange={setMapWorkoutIds} persistedAvailableWorkouts={mapAvailableWorkouts} onAvailableWorkoutsChange={setMapAvailableWorkouts} persistedFocusedWorkoutId={mapFocusedWorkoutId} onFocusedWorkoutChange={setMapFocusedWorkoutId} persistedMapMode={mapMode} onMapModeChange={setMapMode} roadCoverageCache={roadCoverageCache} onRoadCoverageCacheChange={setRoadCoverageCache} /></Suspense> :
         <Summary preferences={data.preferences} csrfToken={session.csrfToken} selectedDateRange={visitRange} onDateRangeSelected={selectDateRange} selectedSort={workoutSort} onSortChange={setWorkoutSort} selectedPage={summaryPage} onPageChange={setSummaryPage} onShowOnMap={(workoutId) => { const canonicalID = workoutId.toUpperCase(); setMapWorkoutIds((current) => current === undefined || current.includes(canonicalID) ? current : [...current, canonicalID].sort()); setMapFocusedWorkoutId(canonicalID); navigate(`/map?workoutId=${encodeURIComponent(canonicalID)}`); }} onDateRangeSaved={(dateRange) => { setVisitRange(dateRange); setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current); }} />}
     </div>
   );

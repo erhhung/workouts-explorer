@@ -15,10 +15,11 @@ import (
 )
 
 type avatarEntry struct {
-	contentType string
-	body        []byte
-	etag        string
-	expires     time.Time
+	contentType  string
+	body         []byte
+	etag         string
+	expires      time.Time
+	cacheControl string
 }
 
 type avatarService struct {
@@ -53,25 +54,29 @@ func (s *avatarService) get(ctx context.Context, canonicalEmail, fullName string
 		if response.StatusCode == http.StatusOK && (contentType == "image/png" || contentType == "image/jpeg" || contentType == "image/webp") {
 			body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
 			if readErr == nil && len(body) > 0 && len(body) <= 1<<20 {
-				entry = makeAvatarEntry(contentType, body, 24*time.Hour)
+				entry = makeAvatarEntry(contentType, body, 24*time.Hour, "private, max-age=3600")
 				s.store(canonicalEmail, entry)
 				return entry
 			}
 		}
 	}
-	initial := "?"
-	if trimmed := strings.TrimSpace(fullName); trimmed != "" {
-		initial = strings.ToUpper(string([]rune(trimmed)[0]))
-	}
-	body := []byte(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img"><rect width="160" height="160" rx="80" fill="#174f46"/><text x="80" y="100" text-anchor="middle" font-family="sans-serif" font-size="72" fill="#f7f1df">%s</text></svg>`, html.EscapeString(initial)))
-	entry = makeAvatarEntry("image/svg+xml", body, time.Hour)
+	entry = fallbackAvatar(fullName)
 	s.store(canonicalEmail, entry)
 	return entry
 }
 
-func makeAvatarEntry(contentType string, body []byte, ttl time.Duration) avatarEntry {
+func fallbackAvatar(fullName string) avatarEntry {
+	initial := "?"
+	if trimmed := strings.TrimSpace(fullName); trimmed != "" {
+		initial = strings.ToUpper(string([]rune(trimmed)[0]))
+	}
+	body := []byte(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img"><rect width="160" height="160" rx="80" fill="#174f46"/><text x="80" y="112" text-anchor="middle" font-family="sans-serif" font-size="72" fill="#f7f1df">%s</text></svg>`, html.EscapeString(initial)))
+	return makeAvatarEntry("image/svg+xml", body, 30*time.Second, "private, max-age=30, must-revalidate")
+}
+
+func makeAvatarEntry(contentType string, body []byte, ttl time.Duration, cacheControl string) avatarEntry {
 	digest := sha256.Sum256(body)
-	return avatarEntry{contentType: contentType, body: body, etag: `"` + hex.EncodeToString(digest[:]) + `"`, expires: time.Now().Add(ttl)}
+	return avatarEntry{contentType: contentType, body: body, etag: `"` + hex.EncodeToString(digest[:]) + `"`, expires: time.Now().Add(ttl), cacheControl: cacheControl}
 }
 
 func (s *avatarService) store(key string, value avatarEntry) {

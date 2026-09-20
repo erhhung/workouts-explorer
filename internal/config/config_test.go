@@ -231,6 +231,37 @@ func TestLoadAPIRestrictsPlaintextSMTPToLoopback(t *testing.T) {
 	}
 }
 
+func TestLoadCoverageWorker(t *testing.T) {
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	cfg, err := LoadCoverageWorker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenAddress != ":8082" || cfg.LeaseDuration != 4*time.Minute || cfg.HeartbeatInterval != 20*time.Second ||
+		cfg.RouteTimeout != 3*time.Minute || cfg.PollInterval != time.Second || cfg.AdmissionInterval != time.Second ||
+		cfg.ReconciliationPollInterval != 30*time.Second || cfg.ReconciliationScanInterval != 24*time.Hour ||
+		cfg.ReconciliationPageSize != 10 || cfg.MinimumTraversalMeters != 5 {
+		t.Fatalf("unexpected coverage worker defaults: %+v", cfg)
+	}
+}
+
+func TestLoadCoverageWorkerValidatesLeaseBudget(t *testing.T) {
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	for _, test := range []struct{ key, value string }{
+		{"COVERAGE_WORKER_HEARTBEAT_INTERVAL", "2m"},
+		{"COVERAGE_WORKER_ROUTE_TIMEOUT", "235s"},
+	} {
+		t.Run(test.key, func(t *testing.T) {
+			t.Setenv(test.key, test.value)
+			if _, err := LoadCoverageWorker(); err == nil {
+				t.Fatal("unsafe coverage worker timing was accepted")
+			}
+		})
+	}
+}
+
 func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
 	t.Setenv("OSM_DATABASE_URL", "postgresql://database.invalid/osm")

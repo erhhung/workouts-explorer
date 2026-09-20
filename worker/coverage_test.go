@@ -39,3 +39,12 @@ func TestCanonicalRouteInputDigestPreservesOrderAndNulls(t *testing.T) {
 		t.Fatal("timestamp did not affect digest")
 	}
 }
+
+func TestNullableReadinessReason(t *testing.T) {
+	if nullableReadinessReason("") != nil {
+		t.Fatal("empty readiness reason must be persisted as SQL NULL")
+	}
+	if got := nullableReadinessReason("region_not_active"); got != "region_not_active" {
+		t.Fatalf("readiness reason = %#v", got)
+	}
+}

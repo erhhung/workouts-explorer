@@ -119,7 +119,7 @@ WITH cut_ranges AS (
         FROM localities AS candidate
         WHERE candidate.geom && ST_LineInterpolatePoint(physical.geom, 0.5)
           AND ST_Covers(candidate.geom, ST_LineInterpolatePoint(physical.geom, 0.5))
-        ORDER BY candidate.relation_id
+        ORDER BY candidate.admin_level DESC,candidate.relation_id
         LIMIT 1
     ) AS locality ON true
     WHERE ST_NPoints(physical.geom) >= 2

@@ -99,6 +99,9 @@ func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecry
 	if options.FileConcurrency == 0 {
 		options.FileConcurrency = 2
 	}
+	if options.CoverageMinTraversalMeters == 0 {
+		options.CoverageMinTraversalMeters = 5
+	}
 	return &Runner{
 		db:                         db,
 		osmDB:                      options.OSMDatabase,

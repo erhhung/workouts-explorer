@@ -10,6 +10,8 @@ spec:
         app.kubernetes.io/component: osm-update
     spec:
       restartPolicy: Never
+      imagePullSecrets:
+        - name: ${OSM_IMAGE_PULL_SECRET}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -20,6 +22,7 @@ spec:
       containers:
         - name: osm-update
           image: ${OSM_UPDATE_IMAGE}
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -32,9 +35,9 @@ spec:
                   name: ${OSM_DATABASE_SECRET}
                   key: ${OSM_DATABASE_KEY}
             - name: OSM_REGION_ID
-              value: ${OSM_REGION_ID}
+              value: "${OSM_REGION_ID}"
             - name: OSM_MAX_DOWNLOAD_BYTES
-              value: ${OSM_MAX_DOWNLOAD_BYTES}
+              value: "${OSM_MAX_DOWNLOAD_BYTES}"
             - name: OSM_UPDATE_SCRATCH
               value: /scratch
             - name: OSM_PIPELINE_ROOT
@@ -61,3 +64,4 @@ spec:
         - name: database-tls
           secret:
             secretName: ${OSM_DATABASE_TLS_SECRET}
+            defaultMode: 0440

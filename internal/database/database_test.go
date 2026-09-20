@@ -17,6 +17,12 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
+func TestSupportedSchemaVersion(t *testing.T) {
+	if SupportedSchemaVersion != 19 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 19", SupportedSchemaVersion)
+	}
+}
+
 func TestOpenDoesNotReturnDatabaseCredentials(t *testing.T) {
 	secret := "do-not-expose-this-value"
 	_, err := Open(context.Background(), "postgresql://user:"+secret+"@%zz", "test")

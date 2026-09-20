@@ -2,12 +2,12 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ApiError, SESSION_EXPIRED_EVENT, type BaseMapsConfig, type MapSelection, type Preferences, type PublicConfig } from "./api";
-import MapPage, { absoluteRouteTileTemplate, buildRawRouteDirectionMarkers, buildRawRouteEndpoints, buildSegmentedRawRoute, formatRoutePopupDetails, formatRoutePopupDistance, pointyDirectionMarkerImage, privateRouteTileUnauthorized, privateRouteTileUnavailable, requestedWorkoutIds, resolveBaseFamily, routeColor, routeColors, routeEndpointOutline, selectionRequest, sortMapWorkouts } from "./MapPage";
+import { ApiError, SESSION_EXPIRED_EVENT, type BaseMapsConfig, type DateRangePreference, type MapSelection, type Preferences, type PublicConfig } from "./api";
+import MapPage, { absoluteRouteTileTemplate, buildRawRouteDirectionMarkers, buildRawRouteEndpoints, buildSegmentedRawRoute, COVERAGE_HIGHLIGHT_DURATION_MS, coverageRegionLabel, formatRoutePopupDetails, formatRoutePopupDistance, onMapContextReady, pointyDirectionMarkerImage, privateRouteTileUnauthorized, privateRouteTileUnavailable, requestedWorkoutIds, resolveBaseFamily, retryInitialDiagnosticBusy, routeColor, routeColors, routeEndpointOutline, selectionRequest, sortMapWorkouts, startCoverageHighlightBlink, type RoadCoverageCache } from "./MapPage";
 
 const mapInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
 const popupInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
-const mapBehavior = vi.hoisted(() => ({ emitInitialStyleLoad: true, emitSetStyleLoad: true, styleLoaded: true }));
+const mapBehavior = vi.hoisted(() => ({ emitInitialStyleLoad: true, emitSetStyleLoad: true, styleLoaded: true, moving: false, tilesLoaded: true }));
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, "geolocation");
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 
@@ -36,6 +36,8 @@ vi.mock("maplibre-gl", () => ({
       setStyle = vi.fn((style: unknown) => { if (typeof style !== "string") mapBehavior.styleLoaded = true; if (typeof style !== "string" || mapBehavior.emitSetStyleLoad) this.handlers.get("style.load")?.(); });
       getStyle = vi.fn(() => ({}));
       isStyleLoaded = vi.fn(() => mapBehavior.styleLoaded);
+      isMoving = vi.fn(() => mapBehavior.moving);
+      areTilesLoaded = vi.fn(() => mapBehavior.tilesLoaded);
       queryRenderedFeatures = vi.fn(() => []);
 		project = vi.fn((coordinate: [number, number]) => ({ x: coordinate[0] * 10000, y: -coordinate[1] * 10000 }));
       getCanvas = vi.fn(() => this.canvas);
@@ -84,16 +86,18 @@ const baseMaps: BaseMapsConfig = {
   ],
 };
 const config: PublicConfig = { productName: "Workouts Explorer", pollingIntervalSeconds: 30, mapFitPaddingPixels: 48, passwordMinimumLength: 12, pageSizeMaximum: 100, features: { coverageMatcherDiagnostics: false }, baseMaps };
-const preferences: Preferences = { theme: "dark", units: "metric", timezone: "America/Denver", firstWeekday: "monday", clockFormat: "24h", workoutColumns: ["date", "type"], pageSize: 25, initialized: true, dateRange: "last30Days" };
+const preferences: Preferences = { theme: "dark", units: "metric", timezone: "America/Denver", firstWeekday: "monday", clockFormat: "24h", workoutColumns: ["date", "type"], pageSize: 25, coverageDiagnosticsEnabled: true, initialized: true, dateRange: "last30Days" };
 const selection: MapSelection = {
   id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 7,
   range: { startDate: "2026-07-10", endDate: "2026-08-08" },
   bounds: { minimumLongitude: -105.3, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40.1 },
+  focusedWorkoutId: null,
   workouts: [
     { id: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-08T12:00:00Z", endedAt: "2026-08-08T13:45:00Z", duration: "6300", localStartDate: "2026-08-08", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: { value: "8.25", unit: "km" }, pace: { value: "5", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevationGain: { value: "100", unit: "m" }, coverageReadiness: { state: "notProcessed" } },
     { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: true, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: { value: "300", unit: "kcal" }, heartRate: { value: "100", unit: "count/min" }, elevationGain: { value: "250", unit: "m" }, coverageReadiness: { state: "pending", reason: "region_not_active" } },
   ],
   routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/route-tiles/7/{z}/{x}/{y}.pbf",
+  coverageTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/coverage-tiles/7/{z}/{x}/{y}.pbf",
 };
 const diagnostic = {
   id: "D".repeat(32), workoutId: selection.workouts[0].id, routeRevision: 2,
@@ -123,7 +127,7 @@ const rawRouteEndpoints = { type: "FeatureCollection", features: [
   { type: "Feature", geometry: { type: "Point", coordinates: [-105.2, 40.02] }, properties: { kind: "finish" } },
 ] };
 
-beforeEach(() => { history.replaceState({}, "", "/map"); mapInstances.splice(0); popupInstances.splice(0); mapBehavior.emitInitialStyleLoad = true; mapBehavior.emitSetStyleLoad = true; mapBehavior.styleLoaded = true; });
+beforeEach(() => { history.replaceState({}, "", "/map"); mapInstances.splice(0); popupInstances.splice(0); mapBehavior.emitInitialStyleLoad = true; mapBehavior.emitSetStyleLoad = true; mapBehavior.styleLoaded = true; mapBehavior.moving = false; mapBehavior.tilesLoaded = true; });
 afterEach(() => {
   vi.useRealTimers();
   if (originalGeolocation) Object.defineProperty(navigator, "geolocation", originalGeolocation);
@@ -137,9 +141,69 @@ function json(body: unknown, status = 200) {
 }
 
 describe("map contract helpers", () => {
+  test("formats provider region IDs for display", () => {
+    expect(coverageRegionLabel("geofabrik:norcal")).toBe("Norcal");
+    expect(coverageRegionLabel("geofabrik:new-york")).toBe("New York");
+    expect(coverageRegionLabel("colorado")).toBe("Colorado");
+    expect(coverageRegionLabel("future-provider:upper-valley")).not.toContain("future-provider");
+  });
+
+  test("starts highlighting immediately and counts three seconds only after map context is ready", () => {
+    vi.useFakeTimers();
+    try {
+      const opacities: number[] = [];
+      let ready: () => void = () => {};
+      const cleanup = startCoverageHighlightBlink((opacity) => opacities.push(opacity), (handler) => { ready = handler; return () => undefined; });
+      expect(opacities).toEqual([1]);
+      vi.advanceTimersByTime(5000);
+      expect(opacities.length).toBeGreaterThan(10);
+      ready();
+      const atIdle = opacities.length;
+      vi.advanceTimersByTime(COVERAGE_HIGHLIGHT_DURATION_MS - 1);
+      expect(opacities.length).toBeGreaterThan(atIdle);
+      vi.advanceTimersByTime(1);
+      expect(opacities.at(-1)).toBe(0);
+      const atFinish = opacities.length;
+      vi.advanceTimersByTime(1000);
+      expect(opacities).toHaveLength(atFinish);
+      cleanup();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("detects map context readiness from render without waiting for idle", () => {
+    vi.useFakeTimers();
+    try {
+      let moving = true, tilesLoaded = false;
+      const handlers = new Map<string, () => void>();
+      const map = {
+        isStyleLoaded: () => true,
+        isMoving: () => moving,
+        areTilesLoaded: () => tilesLoaded,
+        on: (event: string, handler: () => void) => handlers.set(event, handler),
+        off: (event: string) => handlers.delete(event),
+      } as never;
+      const ready = vi.fn();
+      const cleanup = onMapContextReady(map, ready);
+      vi.advanceTimersByTime(0);
+      expect(ready).not.toHaveBeenCalled();
+      handlers.get("render")?.();
+      expect(ready).not.toHaveBeenCalled();
+      moving = false; tilesLoaded = true;
+      handlers.get("render")?.();
+      expect(ready).toHaveBeenCalledTimes(1);
+      cleanup();
+      expect(handlers).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("builds enum and explicit selectors and canonicalizes compact workout IDs", () => {
     expect(selectionRequest("last7Days", "America/Denver", ["ABCDEFABCDEFABCDEFABCDEFABCDEFAB"])).toEqual({ dateRangeEnum: "last7Days", tz: "America/Denver", workoutIds: ["ABCDEFABCDEFABCDEFABCDEFABCDEFAB"] });
     expect(selectionRequest("last7Days", "America/Denver", [])).toEqual({ dateRangeEnum: "last7Days", tz: "America/Denver", workoutIds: [] });
+    expect(selectionRequest("last7Days", "America/Denver", ["A".repeat(32)], "A".repeat(32))).toEqual({ dateRangeEnum: "last7Days", tz: "America/Denver", workoutIds: ["A".repeat(32)], focusedWorkoutId: "A".repeat(32) });
     expect(selectionRequest("2026-08-01/2026-08-08", "ignored")).toEqual({ startDate: "2026-08-01", endDate: "2026-08-08" });
     expect(requestedWorkoutIds("?workoutId=abcdefabcdefabcdefabcdefabcdefab&workoutId=bad&workoutIds=ABCDEFABCDEFABCDEFABCDEFABCDEFAB")).toEqual(["ABCDEFABCDEFABCDEFABCDEFABCDEFAB"]);
   });
@@ -153,7 +217,9 @@ describe("map contract helpers", () => {
     expect(routeColors([selection.workouts[0], { ...selection.workouts[0], id: "D".repeat(32) }])).toHaveLength(1);
     expect(absoluteRouteTileTemplate("/api/map/{z}/{x}/{y}.pbf", "https://workouts.example.test")).toBe("https://workouts.example.test/api/map/{z}/{x}/{y}.pbf");
 		expect(privateRouteTileUnauthorized({ sourceId: "private-workout-routes", error: { status: 401 } })).toBe(true);
+		expect(privateRouteTileUnauthorized({ sourceId: "private-workout-coverage", error: { status: 401 } })).toBe(true);
 		expect(privateRouteTileUnauthorized({ error: { status: 401, url: `${window.location.origin}/api/map-selections/${"A".repeat(32)}/route-tiles/7/12/654/1583.pbf` } })).toBe(true);
+		expect(privateRouteTileUnauthorized({ error: { status: 401, url: `${window.location.origin}/api/map-selections/${"A".repeat(32)}/coverage-tiles/7/12/654/1583.pbf` } })).toBe(true);
 		expect(privateRouteTileUnauthorized({ error: { status: 401, url: "https://tiles.example.test/12/654/1583.pbf" } })).toBe(false);
 		expect(privateRouteTileUnavailable({ sourceId: "private-workout-routes", error: { status: 404, url: `${window.location.origin}/api/map-selections/${selection.id}/route-tiles/7/12/654/1583.pbf` } }, selection.routeTileUrl)).toBe(true);
 		expect(privateRouteTileUnavailable({ error: { status: 404, url: `${window.location.origin}/api/map-selections/${selection.id}/route-tiles/7/12/654/1583.pbf` } }, selection.routeTileUrl)).toBe(true);
@@ -192,6 +258,28 @@ describe("map contract helpers", () => {
 });
 
 describe("MapPage", () => {
+	test("retries an initial busy diagnostic once and keeps later failures", async () => {
+		const controller = new AbortController();
+		const succeeds = vi.fn()
+			.mockRejectedValueOnce(new ApiError(429))
+			.mockResolvedValueOnce("prepared");
+		await expect(retryInitialDiagnosticBusy(succeeds, controller.signal, 0)).resolves.toBe("prepared");
+		expect(succeeds).toHaveBeenCalledTimes(2);
+
+		const remainsBusy = vi.fn().mockRejectedValue(new ApiError(429));
+		await expect(retryInitialDiagnosticBusy(remainsBusy, controller.signal, 0)).rejects.toMatchObject({ status: 429 });
+		expect(remainsBusy).toHaveBeenCalledTimes(2);
+	});
+
+	test("cancels a pending busy diagnostic retry when the route changes", async () => {
+		const controller = new AbortController();
+		const request = vi.fn().mockRejectedValue(new ApiError(429));
+		const result = retryInitialDiagnosticBusy(request, controller.signal, 60_000);
+		controller.abort();
+		await expect(result).rejects.toMatchObject({ name: "AbortError" });
+		expect(request).toHaveBeenCalledTimes(1);
+	});
+
   test("keeps timestamp-separated raw route components disjoint", () => {
     expect(buildSegmentedRawRoute(rawRoutePoints.points)).toEqual(rawRoute);
 		expect(buildRawRouteEndpoints(rawRoutePoints.points)).toEqual(rawRouteEndpoints);
@@ -386,6 +474,24 @@ describe("MapPage", () => {
 		expect(within(review).queryByText("Matched")).not.toBeInTheDocument();
 	});
 
+	test("explains when all diagnostic workers are busy", async () => {
+		const enabledConfig: PublicConfig = { ...config, features: { coverageMatcherDiagnostics: true } };
+		let diagnosticRequests = 0;
+		vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+			const path = String(input); const method = init?.method ?? "GET";
+			if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+			if (path === `/api/workouts/${selection.workouts[0].id}/route/points` && method === "GET") return Promise.resolve(json(rawRoutePoints));
+			if (path.endsWith("/coverage-diagnostic-runs") && method === "POST") { diagnosticRequests++; return Promise.resolve(json({ title: "Too Many Requests", detail: "coverage diagnostic capacity is busy" }, 429)); }
+			if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+			throw new Error(`Unexpected request ${method} ${path}`);
+		});
+		render(<MapPage config={enabledConfig} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+		await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+		await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
+		expect(await screen.findByRole("alert", {}, { timeout: 3500 })).toHaveTextContent("The diagnostic overlay could not be prepared because all available workers are currently busy. Please try again later.");
+		expect(diagnosticRequests).toBe(2);
+	});
+
   test("aborts and ignores a late diagnostic when focus changes", async () => {
     const enabledConfig: PublicConfig = { ...config, features: { coverageMatcherDiagnostics: true } };
     let resolveDiagnostic!: (response: Response) => void;
@@ -456,10 +562,303 @@ describe("MapPage", () => {
     const markerLayer = map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-route-markers")?.[0];
     expect(markerLayer).toMatchObject({ type: "circle", "source-layer": "routes", filter: ["==", ["geometry-type"], "Point"] });
     expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-route-marker-hover")?.[0].paint["circle-color"]).toBe("#c026ff");
+    expect(screen.getByRole("application", { name: "Workout route map" })).not.toHaveAttribute("aria-keyshortcuts");
+    map.setPaintProperty.mockClear();
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-routes", "line-opacity", 0);
     expect(map.fitBounds).toHaveBeenCalledWith([[-105.3, 39.8], [-105.1, 40.1]], { padding: 48, duration: 350 });
     view.unmount();
     await waitFor(() => expect(requests).toContainEqual({ path: `/api/map-selections/${selection.id}`, method: "DELETE", body: undefined, csrf: "csrf-map" }));
     expect(map.remove).toHaveBeenCalled();
+  });
+
+  test("shows aggregate coverage and statistics when diagnostics preference is disabled", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    const coverageEntity = { entityId: "E".repeat(32), entityKind: "park", name: "Example Park", localityName: null, regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "park", rangeWorkoutCount: 3, rangeFirstDate: "2026-07-12", rangeFirstWorkoutId: selection.workouts[1].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 7, allTimeFirstDate: "2026-01-01", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds } as const;
+    const secondEntity = { ...coverageEntity, entityId: "D".repeat(32), entityKind: "path", name: "Alpha Road", localityName: "Alpha City", broadClass: "road", rangeWorkoutCount: 1 } as const;
+    const unnamedEntity = { ...secondEntity, entityId: "C".repeat(32), name: null, localityName: null, broadClass: "footway" } as const;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+      if (path.startsWith(`/api/map-selections/${selection.id}/coverage/paths?`)) {
+        const requestedPage = Number(new URL(path, "https://test").searchParams.get("page"));
+        return Promise.resolve(json({ pagination: { page: requestedPage, pageSize: 100, totalItems: 3, totalPages: 2 }, items: requestedPage === 1 ? [coverageEntity] : [secondEntity, unnamedEntity] }));
+      }
+      if (path === `/api/map-selections/${selection.id}/coverage/park/${coverageEntity.entityId}?generation=${selection.dataGeneration}`) return Promise.resolve(json({ ...coverageEntity, geometry: { type: "LineString", coordinates: [[-105.2, 40], [-105.19, 40.01]] }, fitBounds: { minimumLongitude: -105.205, minimumLatitude: 39.995, maximumLongitude: -105.185, maximumLatitude: 40.015 } }));
+      if (path === `/api/map-selections/${selection.id}` && method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    function CachedCoverageMap() {
+      const [cache, setCache] = useState<RoadCoverageCache>();
+      return <MapPage config={{ ...config, features: { coverageMatcherDiagnostics: true } }} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} roadCoverageCache={cache} onRoadCoverageCacheChange={setCache} />;
+    }
+    render(<CachedCoverageMap />);
+    const coverage = await screen.findByRole("button", { name: "Coverage" });
+    expect(coverage).toBeEnabled();
+    await userEvent.click(coverage);
+    expect(await screen.findByRole("region", { name: "Coverage statistics" })).toHaveTextContent("Road coverage");
+    expect(screen.getByLabelText("Coverage workout count legend")).toHaveTextContent("26+ workouts");
+    const map = mapInstances.at(-1)!;
+    expect(screen.getByRole("button", { name: "Fit" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Fit" }));
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByRole("dialog", { name: "Road Coverage" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Example Park" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Coverage statistics" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Workouts/ })).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getAllByRole("button", { name: "Jul 12, 2026" })[0]).toBeVisible();
+    expect(screen.getAllByText("Jan 1, 2026")[0].tagName).toBe("SPAN");
+    const coverageRequestCount = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length;
+    expect(coverageRequestCount).toBe(2);
+    await userEvent.click(screen.getByRole("button", { name: /City\/County\/Region/ }));
+    expect(screen.getByRole("columnheader", { name: /City\/County\/Region/ })).toHaveAttribute("aria-sort", "ascending");
+    expect(within(screen.getByRole("table")).getAllByRole("button", { name: /Alpha Road|Example Park/ }).map((button) => button.textContent)).toEqual(["Alpha Road", "Example Park"]);
+    expect(screen.queryByRole("button", { name: "Unnamed path" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
+    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
+    expect(screen.getAllByText("Northern California").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: /Workouts/ }));
+    expect(within(screen.getByRole("table")).getAllByRole("button", { name: /Example Park|Alpha Road|Unnamed path/ }).map((button) => button.textContent)).toEqual(["Example Park", "Alpha Road", "Unnamed path"]);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "northern california" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible(), { timeout: 1000 });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "path" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Road" })).not.toBeInTheDocument(), { timeout: 1000 });
+    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "unnamed" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Road" })).not.toBeInTheDocument(), { timeout: 1000 });
+    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "not present" } });
+    await waitFor(() => expect(screen.getByText("No roads, paths, or parks match this search.")).toBeVisible(), { timeout: 1000 });
+    expect(screen.getByText("Page 1 of 1", { selector: ".pagination span" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "park" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Example Park" })).toBeVisible(), { timeout: 1000 });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Road" })).not.toBeInTheDocument(), { timeout: 1000 });
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length).toBe(coverageRequestCount);
+    await userEvent.click(screen.getByRole("button", { name: "Example Park" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument());
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage", { type: "vector", tiles: [`${window.location.origin}${selection.coverageTileUrl}`], minzoom: 0, maxzoom: 22 }));
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage")?.[0]["source-layer"]).toBe("coverage");
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0]["source-layer"]).toBe("coverage_focus");
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0].paint["line-color"]).toContain("#ffd8f0");
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage")?.[0].paint["line-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
+    expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-coverage", "visibility", "visible");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-routes", "visibility", "none");
+    expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage-highlight", expect.objectContaining({ type: "geojson" }));
+    expect(map.fitBounds).toHaveBeenCalledWith([[-105.205, 39.995], [-105.185, 40.015]], { padding: 48, duration: 350 });
+    expect(screen.getByRole("application", { name: "Workout route map" })).toHaveAttribute("aria-keyshortcuts", "Space");
+    map.setPaintProperty.mockClear();
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+    await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage", "line-opacity", 0));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage-parks", "line-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-coverage-focus", "line-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-coverage-parks-focus", "line-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-coverage-highlight", "line-opacity", 0);
+    fireEvent.keyUp(window, { key: " ", code: "Space" });
+    await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage", "line-opacity", 0.94));
+    const requestsAfterInitialLoad = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length;
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByRole("button", { name: "Example Park" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Road Coverage" }), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument());
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length).toBe(requestsAfterInitialLoad);
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input).includes("coverage-diagnostic-runs"))).toBe(false);
+  });
+
+  test("shows delayed exact road coverage details after one transient failure without exposing a raw focused route", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    const focusedSelection = { ...selection, focusedWorkoutId: selection.workouts[0].id };
+    const entityID = "E".repeat(32);
+    let detailAttempts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(focusedSelection));
+      if (path === `/api/map-selections/${selection.id}/coverage/path/${entityID}?generation=${selection.dataGeneration}`) {
+        detailAttempts++;
+        if (detailAttempts === 1) return Promise.resolve(json({ title: "Service Unavailable" }, 503));
+        return Promise.resolve(json({ entityId: entityID, entityKind: "path", name: "Juniper Road", localityName: null, regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "road", rangeWorkoutCount: 3, rangeFirstDate: "2025-10-25", rangeFirstWorkoutId: selection.workouts[0].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 8, allTimeFirstDate: "2024-04-02", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds, fitBounds: selection.bounds, geometry: { type: "LineString", coordinates: [[-105.2, 40], [-105.19, 40.01]] } }));
+      }
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    const map = mapInstances.at(-1)!;
+    map.queryRenderedFeatures.mockImplementation((_point: unknown, options: { layers?: string[] }) => options.layers?.some((layer) => layer.includes("coverage")) ? [
+      { properties: { entity_id: "D".repeat(32), entity_kind: "park", name: "Yosemite National Park" } },
+      { properties: { entity_id: entityID, entity_kind: "path", name: "Juniper Road" } },
+    ] : []);
+    vi.useFakeTimers();
+    act(() => map.handlers.get("mousemove")?.({ point: { x: 50, y: 50 }, lngLat: { lng: -105.2, lat: 40 } }));
+    act(() => vi.advanceTimersByTime(749));
+    expect(popupInstances).toHaveLength(0);
+    await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); await Promise.resolve(); });
+    expect(popupInstances).toHaveLength(0);
+    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve(); });
+    expect(popupInstances).toHaveLength(1);
+    expect(detailAttempts).toBe(2);
+    expect(popupInstances[0].content).toHaveTextContent("Juniper RoadNorthern CaliforniaWorkouts3Earliest visit10/25/2025First visit ever4/2/2024Most recent visit8/5/2026Last visit ever8/5/2026");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-routes", "visibility", "none");
+    expect(map.getLayer("coverage-diagnostic-raw-route")).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  test("replaces a failed Road Coverage table with a compact retryable error dialog", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    let coverageRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+      if (path.includes("/coverage/paths?")) { coverageRequests++; return Promise.resolve(json({ title: "Service Unavailable" }, 503)); }
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Road Coverage" });
+    expect(dialog).toHaveTextContent("Road coverage could not be loaded.");
+    expect(within(dialog).queryByRole("table")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("searchbox")).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(coverageRequests).toBe(2));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument();
+  });
+
+  test("refreshes a stale map selection and resumes Road Coverage loading after a 404", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    let selectionRequests = 0, coverageRequests = 0;
+    const coverageEntity = { entityId: "E".repeat(32), entityKind: "park", name: "Example Park", localityName: "Test City", regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "park", rangeWorkoutCount: 3, rangeFirstDate: "2026-07-12", rangeFirstWorkoutId: selection.workouts[1].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 7, allTimeFirstDate: "2026-01-01", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds } as const;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input), method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") {
+        selectionRequests++;
+        return Promise.resolve(json(selectionRequests === 1 ? selection : { ...selection, id: "8".repeat(32), dataGeneration: selection.dataGeneration + 1 }));
+      }
+      if (path.includes("/coverage/paths?")) {
+        coverageRequests++;
+        return Promise.resolve(coverageRequests === 1 ? json({ title: "Not Found" }, 404) : json({ pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 }, items: [coverageEntity] }));
+      }
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByRole("button", { name: "Example Park" })).toBeVisible();
+    expect(selectionRequests).toBeGreaterThanOrEqual(2);
+    expect(coverageRequests).toBe(2);
+    expect(screen.queryByText("Road coverage could not be loaded.")).not.toBeInTheDocument();
+  });
+
+  test("refreshes Road Coverage when an updating entity disappears", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    const staleEntity = { entityId: "E".repeat(32), entityKind: "path", name: null, localityName: "Mountain View", regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "footway", rangeWorkoutCount: 25, rangeFirstDate: "2025-04-03", rangeFirstWorkoutId: selection.workouts[1].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 27, allTimeFirstDate: "2025-04-03", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds } as const;
+    const replacement = { ...staleEntity, entityId: "D".repeat(32), name: "Replacement Path" } as const;
+    let listRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input), method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+      if (path.includes("/coverage/paths?")) {
+        listRequests++;
+        return Promise.resolve(json({ pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 }, items: listRequests === 1 ? [staleEntity] : [replacement] }));
+      }
+      if (path.includes(`/coverage/path/${staleEntity.entityId}`)) return Promise.resolve(json({ title: "Not Found" }, 404));
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Unnamed path" }));
+    expect(await screen.findByRole("button", { name: "Replacement Path" })).toBeVisible();
+    expect(listRequests).toBe(2);
+    expect(screen.queryByText("That road coverage could not be shown on the map.")).not.toBeInTheDocument();
+  });
+
+  test("restores the cached Road Coverage page and resets it for search", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false, pageSize: 1 };
+    const entity = (id: string, name: string, count: number) => ({ entityId: id.repeat(32), entityKind: "path", name, localityName: "Test City", regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "road", rangeWorkoutCount: count, rangeFirstDate: "2026-07-12", rangeFirstWorkoutId: selection.workouts[1].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: count, allTimeFirstDate: "2026-07-12", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds } as const);
+    const high = entity("E", "High Road", 2), low = entity("F", "Low Road", 1);
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input), method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        return Promise.resolve(json(body.dateRangeEnum === "last7Days" ? { ...selection, id: "9".repeat(32), range: { startDate: "2026-07-30", endDate: "2026-08-05" } } : selection));
+      }
+      if (path.includes("/coverage/paths?")) return Promise.resolve(json({ pagination: { page: 1, pageSize: 100, totalItems: 2, totalPages: 1 }, items: [high, low] }));
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    function CachedCoverageMap({ range }: { range: DateRangePreference }) {
+      const [cache, setCache] = useState<RoadCoverageCache>();
+      return <MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange={range} onDateRangeSelected={vi.fn()} roadCoverageCache={cache} onRoadCoverageCacheChange={setCache} />;
+    }
+    const view = render(<CachedCoverageMap range="last30Days" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByRole("button", { name: "High Road" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Page 2 of 2")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Low Road" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Close Road Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByText("Page 2 of 2")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Low Road" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "High" } });
+    await waitFor(() => expect(screen.getByText("Page 1 of 1")).toBeVisible(), { timeout: 1000 });
+    expect(screen.getByRole("button", { name: "High Road" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Low Road" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close Road Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    expect(await screen.findByText("Page 1 of 1")).toBeVisible();
+    expect(screen.getByRole("searchbox")).toHaveValue("High");
+    expect(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "High Road" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    await waitFor(() => expect(screen.getByText("Page 1 of 2")).toBeVisible(), { timeout: 1000 });
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Page 2 of 2")).toBeVisible();
+    view.rerender(<CachedCoverageMap range="last7Days" />);
+    await waitFor(() => expect(screen.getByText("Page 1 of 2")).toBeVisible());
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" })).not.toBeChecked();
+  });
+
+  test("uses a two-row loading body before locking Road Coverage to the loaded result height", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    let resolveCoverage!: (response: Response) => void;
+    const deferredCoverage = new Promise<Response>((resolve) => { resolveCoverage = resolve; });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+      if (path.includes("/coverage/paths?")) return deferredCoverage;
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Road Coverage" });
+    const frame = dialog.querySelector<HTMLElement>(".road-coverage-table-wrap")!;
+    expect(frame.style.getPropertyValue("--road-coverage-row-slots")).toBe("2");
+    expect(await within(dialog).findByText("Loading coverage...", {}, { timeout: 1500 })).toHaveAttribute("role", "status");
+    resolveCoverage(json({ pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 }, items: [{ entityId: "E".repeat(32), entityKind: "park", name: "Example Park", localityName: "Test City", regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "park", rangeWorkoutCount: 3, rangeFirstDate: "2026-07-12", rangeFirstWorkoutId: selection.workouts[1].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 7, allTimeFirstDate: "2026-01-01", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds }] }));
+    expect(await within(dialog).findByRole("button", { name: "Example Park" })).toBeVisible();
+    expect(frame.style.getPropertyValue("--road-coverage-row-slots")).toBe("1");
+    expect(within(dialog).queryByRole("button", { name: "Fit" })).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close Road Coverage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fit" }));
+    expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument();
+    const map = mapInstances.at(-1)!;
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-105.3, 39.9], [-105.2, 40.1]], { padding: 48, duration: 350 }));
+    expect(map.getCanvas()).toHaveFocus();
   });
 
   test("keeps a family override visit-local and exposes the accessible mobile sheet", async () => {
@@ -668,6 +1067,24 @@ describe("MapPage", () => {
     await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
     expect(map.fitBounds).toHaveBeenLastCalledWith([[-105.3, 39.9], [-105.2, 40.1]], { padding: 48, duration: 350 });
     expect(map.setStyle).toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.objectContaining({ transformStyle: expect.any(Function) }));
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    expect(screen.getByRole("application", { name: "Workout route map" })).toHaveAttribute("aria-keyshortcuts", "Space");
+    map.setPaintProperty.mockClear();
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+    await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-routes", "line-opacity", 0));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-markers", "circle-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-route-hover", "line-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-route-marker-hover", "circle-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-route-start", "circle-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-route-finish", "text-opacity", 0);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("coverage-diagnostic-direction", "icon-opacity", 0);
+    fireEvent.keyUp(window, { key: " ", code: "Space" });
+    await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-routes", "line-opacity", 0.82));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-markers", "circle-opacity", 0.9);
+    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Routes" }));
+    await waitFor(() => expect(map.getCanvas()).toHaveFocus());
   });
 
   test("replaces a stale empty source when a route is re-enabled", async () => {
@@ -689,9 +1106,9 @@ describe("MapPage", () => {
     await user.click(screen.getByRole("checkbox", { name: "Select all workout routes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Fit routes" })).toBeDisabled());
     await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
-    await waitFor(() => expect(posted).toContainEqual({ dateRangeEnum: "last30Days", tz: "America/Denver", workoutIds: [selection.workouts[0].id] }));
+    await waitFor(() => expect(posted).toContainEqual({ dateRangeEnum: "last30Days", tz: "America/Denver", workoutIds: [selection.workouts[0].id], focusedWorkoutId: selection.workouts[0].id }));
     await waitFor(() => expect(map.removeSource).toHaveBeenCalledWith("private-workout-routes"));
-    expect(map.addSource).toHaveBeenLastCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "F".repeat(32))}`] });
+    expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "F".repeat(32))}`] });
     expect(mapInstances).toHaveLength(1);
     expect(map.remove).not.toHaveBeenCalled();
   });
@@ -853,20 +1270,17 @@ describe("MapPage", () => {
     render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
     await screen.findByRole("checkbox", { name: /Show Running/ });
     const map = mapInstances.at(-1)!;
-    map.handlers.get("error")?.();
-    expect(await screen.findByText("The public base map could not be loaded. Your private routes remain available.")).toBeInTheDocument();
+    vi.useFakeTimers();
+    act(() => map.handlers.get("error")?.());
+    expect(screen.getByText("The public base map could not be loaded. Your private routes remain available. Retrying in 5 seconds...")).toBeInTheDocument();
     expect(map.setStyle).toHaveBeenCalledWith(expect.objectContaining({ version: 8 }));
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl}`] });
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Dismiss base map warning" }));
-    expect(screen.queryByText("The public base map could not be loaded. Your private routes remain available.")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
-    act(() => map.handlers.get("error")?.());
-    expect(await screen.findByText("The public base map could not be loaded. Your private routes remain available.")).toBeInTheDocument();
     mapBehavior.emitSetStyleLoad = true;
-    await user.click(screen.getByRole("button", { name: "Select base map" }));
-    await user.click(screen.getByRole("menuitem", { name: /^Road/ }));
-    await waitFor(() => expect(screen.queryByText("The public base map could not be loaded. Your private routes remain available.")).not.toBeInTheDocument());
+    act(() => vi.advanceTimersByTime(4999));
+    expect(map.setStyle).not.toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.anything());
+    act(() => vi.advanceTimersByTime(1));
+    expect(map.setStyle).toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.objectContaining({ transformStyle: expect.any(Function) }));
+    expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
   });
 
 	test("turns a private route tile 401 into session expiration", async () => {
@@ -900,7 +1314,7 @@ describe("MapPage", () => {
 		const currentTile = `${window.location.origin}${selection.routeTileUrl.replace("{z}/{x}/{y}", "12/654/1583")}`;
 		act(() => map.handlers.get("error")?.({ sourceId: "private-workout-routes", error: { status: 404, url: currentTile } }));
 		await waitFor(() => expect(posts).toBe(2));
-		await waitFor(() => expect(map.addSource).toHaveBeenLastCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`] }));
+		await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`] }));
 		act(() => map.handlers.get("error")?.({ sourceId: "private-workout-routes", error: { status: 404, url: currentTile } }));
 		await new Promise((resolve) => setTimeout(resolve, 5));
 		expect(posts).toBe(2);
@@ -931,7 +1345,7 @@ describe("MapPage", () => {
 		const currentTile = `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32)).replace("{z}/{x}/{y}", "12/654/1583")}`;
 		act(() => map.handlers.get("error")?.({ sourceId: "private-workout-routes", error: { status: 404, url: currentTile } }));
 		await waitFor(() => expect(posts).toBe(3));
-		await waitFor(() => expect(map.addSource).toHaveBeenLastCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "E".repeat(32))}`] }));
+		await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "E".repeat(32))}`] }));
 		expect(map.fitBounds).not.toHaveBeenCalled();
 	});
 
@@ -965,7 +1379,7 @@ describe("MapPage", () => {
 		const currentTile = `${window.location.origin}${selection.routeTileUrl.replace("{z}/{x}/{y}", "12/654/1583")}`;
 		act(() => map.handlers.get("error")?.({ sourceId: "private-workout-routes", error: { status: 404, url: currentTile } }));
 		await waitFor(() => expect(posts).toBe(2));
-		await waitFor(() => expect(map.addSource).toHaveBeenLastCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`] }));
+		await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`] }));
 		expect(routeLayers.map(visibility)).toEqual(["none", "none", "none", "none"]);
 		for (const layer of routeLayers) expect(map.setLayoutProperty).toHaveBeenCalledWith(layer, "visibility", "none");
 		expect(map.fitBounds).not.toHaveBeenCalled();

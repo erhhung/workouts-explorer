@@ -24,7 +24,7 @@ func TestAvatarProxyPrivacyCachingAndSizeLimit(t *testing.T) {
 	})
 	first := service.get(context.Background(), "owner@example.test", "Owner")
 	second := service.get(context.Background(), "owner@example.test", "Owner")
-	if first.contentType != "image/png" || second.etag != first.etag || requests != 1 {
+	if first.contentType != "image/png" || first.cacheControl != "private, max-age=3600" || second.etag != first.etag || requests != 1 {
 		t.Fatalf("avatar cache content=%q requests=%d", first.contentType, requests)
 	}
 
@@ -33,8 +33,15 @@ func TestAvatarProxyPrivacyCachingAndSizeLimit(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: io.NopCloser(io.LimitReader(&infiniteReader{}, 1<<20+1)), Request: request}, nil
 	})
 	oversized := service.get(context.Background(), "large@example.test", "<Owner>")
-	if oversized.contentType != "image/svg+xml" || len(oversized.body) > 1024 || strings.Contains(string(oversized.body), "<Owner>") {
+	if oversized.contentType != "image/svg+xml" || oversized.cacheControl != "private, max-age=30, must-revalidate" || len(oversized.body) > 1024 || strings.Contains(string(oversized.body), "<Owner>") || !strings.Contains(string(oversized.body), `x="80" y="112"`) {
 		t.Fatal("oversized avatar did not use a safe bounded fallback")
+	}
+}
+
+func TestFallbackAvatarCanBeGeneratedWithoutGravatar(t *testing.T) {
+	entry := fallbackAvatar("  owner ")
+	if entry.contentType != "image/svg+xml" || !strings.Contains(string(entry.body), `y="112"`) || !strings.Contains(string(entry.body), ">O</text>") {
+		t.Fatalf("unexpected fallback avatar %q", entry.body)
 	}
 }
 

@@ -169,16 +169,16 @@ func (e CoverageDiagnosticRunMovementMode) Valid() bool {
 
 // Defines values for CoverageDiagnosticRunOutcome.
 const (
-	Evaluated  CoverageDiagnosticRunOutcome = "evaluated"
-	NoEvidence CoverageDiagnosticRunOutcome = "no_evidence"
+	CoverageDiagnosticRunOutcomeEvaluated  CoverageDiagnosticRunOutcome = "evaluated"
+	CoverageDiagnosticRunOutcomeNoEvidence CoverageDiagnosticRunOutcome = "no_evidence"
 )
 
 // Valid indicates whether the value is a known member of the CoverageDiagnosticRunOutcome enum.
 func (e CoverageDiagnosticRunOutcome) Valid() bool {
 	switch e {
-	case Evaluated:
+	case CoverageDiagnosticRunOutcomeEvaluated:
 		return true
-	case NoEvidence:
+	case CoverageDiagnosticRunOutcomeNoEvidence:
 		return true
 	default:
 		return false
@@ -533,6 +533,27 @@ func (e CoverageReadinessState) Valid() bool {
 	}
 }
 
+// Defines values for CoverageRouteContextResultOutcome.
+const (
+	CoverageRouteContextResultOutcomeApplied    CoverageRouteContextResultOutcome = "applied"
+	CoverageRouteContextResultOutcomeNoEvidence CoverageRouteContextResultOutcome = "no_evidence"
+	CoverageRouteContextResultOutcomeSuperseded CoverageRouteContextResultOutcome = "superseded"
+)
+
+// Valid indicates whether the value is a known member of the CoverageRouteContextResultOutcome enum.
+func (e CoverageRouteContextResultOutcome) Valid() bool {
+	switch e {
+	case CoverageRouteContextResultOutcomeApplied:
+		return true
+	case CoverageRouteContextResultOutcomeNoEvidence:
+		return true
+	case CoverageRouteContextResultOutcomeSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DataSyncSourceStatus.
 const (
 	DataSyncSourceStatusCheckingConnection DataSyncSourceStatus = "checking-connection"
@@ -599,6 +620,21 @@ const (
 func (e GeoJSONLineStringType) Valid() bool {
 	switch e {
 	case LineString:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GeoJSONMultiLineStringType.
+const (
+	MultiLineString GeoJSONMultiLineStringType = "MultiLineString"
+)
+
+// Valid indicates whether the value is a known member of the GeoJSONMultiLineStringType enum.
+func (e GeoJSONMultiLineStringType) Valid() bool {
+	switch e {
+	case MultiLineString:
 		return true
 	default:
 		return false
@@ -736,6 +772,7 @@ func (e InvitationState) Valid() bool {
 
 // Defines values for JobDetailOperation.
 const (
+	JobDetailOperationCoverageUpdate  JobDetailOperation = "coverage_update"
 	JobDetailOperationDataSync        JobDetailOperation = "data_sync"
 	JobDetailOperationWorkoutDeletion JobDetailOperation = "workout_deletion"
 )
@@ -743,6 +780,8 @@ const (
 // Valid indicates whether the value is a known member of the JobDetailOperation enum.
 func (e JobDetailOperation) Valid() bool {
 	switch e {
+	case JobDetailOperationCoverageUpdate:
+		return true
 	case JobDetailOperationDataSync:
 		return true
 	case JobDetailOperationWorkoutDeletion:
@@ -853,6 +892,7 @@ func (e JobStatus) Valid() bool {
 
 // Defines values for JobSummaryOperation.
 const (
+	JobSummaryOperationCoverageUpdate  JobSummaryOperation = "coverage_update"
 	JobSummaryOperationDataSync        JobSummaryOperation = "data_sync"
 	JobSummaryOperationWorkoutDeletion JobSummaryOperation = "workout_deletion"
 )
@@ -860,6 +900,8 @@ const (
 // Valid indicates whether the value is a known member of the JobSummaryOperation enum.
 func (e JobSummaryOperation) Valid() bool {
 	switch e {
+	case JobSummaryOperationCoverageUpdate:
+		return true
 	case JobSummaryOperationDataSync:
 		return true
 	case JobSummaryOperationWorkoutDeletion:
@@ -873,6 +915,7 @@ func (e JobSummaryOperation) Valid() bool {
 const (
 	Manual    JobTrigger = "manual"
 	Scheduled JobTrigger = "scheduled"
+	System    JobTrigger = "system"
 )
 
 // Valid indicates whether the value is a known member of the JobTrigger enum.
@@ -881,6 +924,8 @@ func (e JobTrigger) Valid() bool {
 	case Manual:
 		return true
 	case Scheduled:
+		return true
+	case System:
 		return true
 	default:
 		return false
@@ -1184,6 +1229,102 @@ func (e ProfileAvatarUrl) Valid() bool {
 	}
 }
 
+// Defines values for RoadCoverageDetailBroadClass.
+const (
+	RoadCoverageDetailBroadClassCycleway RoadCoverageDetailBroadClass = "cycleway"
+	RoadCoverageDetailBroadClassFootway  RoadCoverageDetailBroadClass = "footway"
+	RoadCoverageDetailBroadClassOther    RoadCoverageDetailBroadClass = "other"
+	RoadCoverageDetailBroadClassPark     RoadCoverageDetailBroadClass = "park"
+	RoadCoverageDetailBroadClassRoad     RoadCoverageDetailBroadClass = "road"
+	RoadCoverageDetailBroadClassTrail    RoadCoverageDetailBroadClass = "trail"
+)
+
+// Valid indicates whether the value is a known member of the RoadCoverageDetailBroadClass enum.
+func (e RoadCoverageDetailBroadClass) Valid() bool {
+	switch e {
+	case RoadCoverageDetailBroadClassCycleway:
+		return true
+	case RoadCoverageDetailBroadClassFootway:
+		return true
+	case RoadCoverageDetailBroadClassOther:
+		return true
+	case RoadCoverageDetailBroadClassPark:
+		return true
+	case RoadCoverageDetailBroadClassRoad:
+		return true
+	case RoadCoverageDetailBroadClassTrail:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RoadCoverageDetailEntityKind.
+const (
+	RoadCoverageDetailEntityKindPark RoadCoverageDetailEntityKind = "park"
+	RoadCoverageDetailEntityKindPath RoadCoverageDetailEntityKind = "path"
+)
+
+// Valid indicates whether the value is a known member of the RoadCoverageDetailEntityKind enum.
+func (e RoadCoverageDetailEntityKind) Valid() bool {
+	switch e {
+	case RoadCoverageDetailEntityKindPark:
+		return true
+	case RoadCoverageDetailEntityKindPath:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RoadCoverageEntityBroadClass.
+const (
+	RoadCoverageEntityBroadClassCycleway RoadCoverageEntityBroadClass = "cycleway"
+	RoadCoverageEntityBroadClassFootway  RoadCoverageEntityBroadClass = "footway"
+	RoadCoverageEntityBroadClassOther    RoadCoverageEntityBroadClass = "other"
+	RoadCoverageEntityBroadClassPark     RoadCoverageEntityBroadClass = "park"
+	RoadCoverageEntityBroadClassRoad     RoadCoverageEntityBroadClass = "road"
+	RoadCoverageEntityBroadClassTrail    RoadCoverageEntityBroadClass = "trail"
+)
+
+// Valid indicates whether the value is a known member of the RoadCoverageEntityBroadClass enum.
+func (e RoadCoverageEntityBroadClass) Valid() bool {
+	switch e {
+	case RoadCoverageEntityBroadClassCycleway:
+		return true
+	case RoadCoverageEntityBroadClassFootway:
+		return true
+	case RoadCoverageEntityBroadClassOther:
+		return true
+	case RoadCoverageEntityBroadClassPark:
+		return true
+	case RoadCoverageEntityBroadClassRoad:
+		return true
+	case RoadCoverageEntityBroadClassTrail:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RoadCoverageEntityEntityKind.
+const (
+	RoadCoverageEntityEntityKindPark RoadCoverageEntityEntityKind = "park"
+	RoadCoverageEntityEntityKindPath RoadCoverageEntityEntityKind = "path"
+)
+
+// Valid indicates whether the value is a known member of the RoadCoverageEntityEntityKind enum.
+func (e RoadCoverageEntityEntityKind) Valid() bool {
+	switch e {
+	case RoadCoverageEntityEntityKindPark:
+		return true
+	case RoadCoverageEntityEntityKindPath:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SourceStatus.
 const (
 	SourceStatusCheckingConnection SourceStatus = "checking-connection"
@@ -1310,6 +1451,7 @@ func (e WorkoutProvenanceWarningCode) Valid() bool {
 // Defines values for ListJobsParamsOperation.
 const (
 	ListJobsParamsOperationAutomatedSync   ListJobsParamsOperation = "automated_sync"
+	ListJobsParamsOperationCoverageUpdate  ListJobsParamsOperation = "coverage_update"
 	ListJobsParamsOperationManualSync      ListJobsParamsOperation = "manual_sync"
 	ListJobsParamsOperationWorkoutDeletion ListJobsParamsOperation = "workout_deletion"
 )
@@ -1319,9 +1461,65 @@ func (e ListJobsParamsOperation) Valid() bool {
 	switch e {
 	case ListJobsParamsOperationAutomatedSync:
 		return true
+	case ListJobsParamsOperationCoverageUpdate:
+		return true
 	case ListJobsParamsOperationManualSync:
 		return true
 	case ListJobsParamsOperationWorkoutDeletion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListMapSelectionCoveragePathsParamsSort.
+const (
+	AllTimeFirstAsc   ListMapSelectionCoveragePathsParamsSort = "allTimeFirst:asc"
+	AllTimeFirstDesc  ListMapSelectionCoveragePathsParamsSort = "allTimeFirst:desc"
+	AllTimeLatestAsc  ListMapSelectionCoveragePathsParamsSort = "allTimeLatest:asc"
+	AllTimeLatestDesc ListMapSelectionCoveragePathsParamsSort = "allTimeLatest:desc"
+	CityOrRegionAsc   ListMapSelectionCoveragePathsParamsSort = "cityOrRegion:asc"
+	CityOrRegionDesc  ListMapSelectionCoveragePathsParamsSort = "cityOrRegion:desc"
+	NameAsc           ListMapSelectionCoveragePathsParamsSort = "name:asc"
+	NameDesc          ListMapSelectionCoveragePathsParamsSort = "name:desc"
+	RangeCountAsc     ListMapSelectionCoveragePathsParamsSort = "rangeCount:asc"
+	RangeCountDesc    ListMapSelectionCoveragePathsParamsSort = "rangeCount:desc"
+	RangeFirstAsc     ListMapSelectionCoveragePathsParamsSort = "rangeFirst:asc"
+	RangeFirstDesc    ListMapSelectionCoveragePathsParamsSort = "rangeFirst:desc"
+	RangeLatestAsc    ListMapSelectionCoveragePathsParamsSort = "rangeLatest:asc"
+	RangeLatestDesc   ListMapSelectionCoveragePathsParamsSort = "rangeLatest:desc"
+)
+
+// Valid indicates whether the value is a known member of the ListMapSelectionCoveragePathsParamsSort enum.
+func (e ListMapSelectionCoveragePathsParamsSort) Valid() bool {
+	switch e {
+	case AllTimeFirstAsc:
+		return true
+	case AllTimeFirstDesc:
+		return true
+	case AllTimeLatestAsc:
+		return true
+	case AllTimeLatestDesc:
+		return true
+	case CityOrRegionAsc:
+		return true
+	case CityOrRegionDesc:
+		return true
+	case NameAsc:
+		return true
+	case NameDesc:
+		return true
+	case RangeCountAsc:
+		return true
+	case RangeCountDesc:
+		return true
+	case RangeFirstAsc:
+		return true
+	case RangeFirstDesc:
+		return true
+	case RangeLatestAsc:
+		return true
+	case RangeLatestDesc:
 		return true
 	default:
 		return false
@@ -1517,6 +1715,21 @@ type CoverageDiagnosticUnavailableRegion struct {
 	RegionId    string `json:"regionId"`
 }
 
+// CoverageGeoJSONGeometry defines model for CoverageGeoJSONGeometry.
+type CoverageGeoJSONGeometry struct {
+	union json.RawMessage
+}
+
+// CoverageJobContext defines model for CoverageJobContext.
+type CoverageJobContext struct {
+	PathPolicyVersion   string `json:"pathPolicyVersion"`
+	RegionId            string `json:"regionId"`
+	RulesVersion        string `json:"rulesVersion"`
+	SamplingVersion     string `json:"samplingVersion"`
+	TargetOsmGeneration int64  `json:"targetOsmGeneration"`
+	TargetWorkRevision  int64  `json:"targetWorkRevision"`
+}
+
 // CoverageReadiness defines model for CoverageReadiness.
 type CoverageReadiness struct {
 	Reason *CoverageReadinessReason `json:"reason,omitempty"`
@@ -1528,6 +1741,30 @@ type CoverageReadinessReason string
 
 // CoverageReadinessState defines model for CoverageReadiness.State.
 type CoverageReadinessState string
+
+// CoverageRouteContext defines model for CoverageRouteContext.
+type CoverageRouteContext struct {
+	DurationMilliseconds *int                                  `json:"durationMilliseconds,omitempty"`
+	LocalStartDate       nullable.Nullable[openapi_types.Date] `json:"localStartDate,omitempty"`
+	ResultOutcome        *CoverageRouteContextResultOutcome    `json:"resultOutcome,omitempty"`
+	StartedAt            time.Time                             `json:"startedAt"`
+	WorkoutId            CompactUUID                           `json:"workoutId"`
+	WorkoutType          string                                `json:"workoutType"`
+}
+
+// CoverageRouteContextResultOutcome defines model for CoverageRouteContext.ResultOutcome.
+type CoverageRouteContextResultOutcome string
+
+// CoverageRouteStats defines model for CoverageRouteStats.
+type CoverageRouteStats struct {
+	Cancelled  int `json:"cancelled"`
+	Failed     int `json:"failed"`
+	Processed  int `json:"processed"`
+	Running    int `json:"running"`
+	Succeeded  int `json:"succeeded"`
+	Superseded int `json:"superseded"`
+	Total      int `json:"total"`
+}
 
 // DataSync defines model for DataSync.
 type DataSync struct {
@@ -1588,6 +1825,15 @@ type GeoJSONLineString struct {
 
 // GeoJSONLineStringType defines model for GeoJSONLineString.Type.
 type GeoJSONLineStringType string
+
+// GeoJSONMultiLineString defines model for GeoJSONMultiLineString.
+type GeoJSONMultiLineString struct {
+	Coordinates [][][]float64              `json:"coordinates"`
+	Type        GeoJSONMultiLineStringType `json:"type"`
+}
+
+// GeoJSONMultiLineStringType defines model for GeoJSONMultiLineString.Type.
+type GeoJSONMultiLineStringType string
 
 // Health defines model for Health.
 type Health struct {
@@ -1671,19 +1917,21 @@ type JobCancellationCreate = map[string]interface{}
 
 // JobDetail defines model for JobDetail.
 type JobDetail struct {
-	Attempt            int                 `json:"attempt"`
-	CancelRequested    bool                `json:"cancelRequested"`
-	CancelRequestedAt  *time.Time          `json:"cancelRequestedAt,omitempty"`
-	Children           []JobDetail         `json:"children"`
-	CreatedAt          time.Time           `json:"createdAt"`
-	FailureCode        *string             `json:"failureCode,omitempty"`
-	FailureSummary     *string             `json:"failureSummary,omitempty"`
-	Id                 CompactUUID         `json:"id"`
-	LatestRetryJobId   *CompactUUID        `json:"latestRetryJobId,omitempty"`
-	LatestRetryOrdinal *int                `json:"latestRetryOrdinal,omitempty"`
-	Operation          *JobDetailOperation `json:"operation,omitempty"`
-	ParentJobId        *CompactUUID        `json:"parentJobId,omitempty"`
-	Progress           JobProgress         `json:"progress"`
+	Attempt            int                   `json:"attempt"`
+	CancelRequested    bool                  `json:"cancelRequested"`
+	CancelRequestedAt  *time.Time            `json:"cancelRequestedAt,omitempty"`
+	Children           []JobDetail           `json:"children"`
+	Coverage           *CoverageJobContext   `json:"coverage,omitempty"`
+	CoverageRoute      *CoverageRouteContext `json:"coverageRoute,omitempty"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	FailureCode        *string               `json:"failureCode,omitempty"`
+	FailureSummary     *string               `json:"failureSummary,omitempty"`
+	Id                 CompactUUID           `json:"id"`
+	LatestRetryJobId   *CompactUUID          `json:"latestRetryJobId,omitempty"`
+	LatestRetryOrdinal *int                  `json:"latestRetryOrdinal,omitempty"`
+	Operation          *JobDetailOperation   `json:"operation,omitempty"`
+	ParentJobId        *CompactUUID          `json:"parentJobId,omitempty"`
+	Progress           JobProgress           `json:"progress"`
 	Results            *struct {
 		FilesFailed       *int64 `json:"filesFailed,omitempty"`
 		FilesSucceeded    *int64 `json:"filesSucceeded,omitempty"`
@@ -1692,16 +1940,17 @@ type JobDetail struct {
 		WorkoutsUnchanged *int64 `json:"workoutsUnchanged,omitempty"`
 		WorkoutsUpdated   *int64 `json:"workoutsUpdated,omitempty"`
 	} `json:"results,omitempty"`
-	RetriedByJobIds []CompactUUID     `json:"retriedByJobIds"`
-	RetryOfJobId    *CompactUUID      `json:"retryOfJobId,omitempty"`
-	RetryOrdinal    *int              `json:"retryOrdinal,omitempty"`
-	RetryRootJobId  *CompactUUID      `json:"retryRootJobId,omitempty"`
-	Source          *JobSourceContext `json:"source,omitempty"`
-	StartedAt       *time.Time        `json:"startedAt,omitempty"`
-	Status          JobStatus         `json:"status"`
-	TerminalAt      *time.Time        `json:"terminalAt,omitempty"`
-	Trigger         JobTrigger        `json:"trigger"`
-	UpdatedAt       time.Time         `json:"updatedAt"`
+	RetriedByJobIds []CompactUUID       `json:"retriedByJobIds"`
+	RetryOfJobId    *CompactUUID        `json:"retryOfJobId,omitempty"`
+	RetryOrdinal    *int                `json:"retryOrdinal,omitempty"`
+	RetryRootJobId  *CompactUUID        `json:"retryRootJobId,omitempty"`
+	RouteStats      *CoverageRouteStats `json:"routeStats,omitempty"`
+	Source          *JobSourceContext   `json:"source,omitempty"`
+	StartedAt       *time.Time          `json:"startedAt,omitempty"`
+	Status          JobStatus           `json:"status"`
+	TerminalAt      *time.Time          `json:"terminalAt,omitempty"`
+	Trigger         JobTrigger          `json:"trigger"`
+	UpdatedAt       time.Time           `json:"updatedAt"`
 }
 
 // JobDetailOperation defines model for JobDetail.Operation.
@@ -1809,6 +2058,7 @@ type JobSummary struct {
 	Id         CompactUUID          `json:"id"`
 	Operation  *JobSummaryOperation `json:"operation,omitempty"`
 	Progress   JobProgress          `json:"progress"`
+	RouteStats *CoverageRouteStats  `json:"routeStats,omitempty"`
 	StartedAt  *time.Time           `json:"startedAt,omitempty"`
 	Status     JobStatus            `json:"status"`
 	TerminalAt *time.Time           `json:"terminalAt,omitempty"`
@@ -1824,22 +2074,25 @@ type JobTrigger string
 
 // MapSelection defines model for MapSelection.
 type MapSelection struct {
-	Bounds         nullable.Nullable[RouteBounds] `json:"bounds"`
-	DataGeneration int64                          `json:"dataGeneration"`
-	ExpiresAt      time.Time                      `json:"expiresAt"`
-	Id             CompactUUID                    `json:"id"`
-	Range          ResolvedDateRange              `json:"range"`
-	RouteTileUrl   string                         `json:"routeTileUrl"`
-	Workouts       []MapSelectionWorkout          `json:"workouts"`
+	Bounds           nullable.Nullable[RouteBounds] `json:"bounds"`
+	CoverageTileUrl  string                         `json:"coverageTileUrl"`
+	DataGeneration   int64                          `json:"dataGeneration"`
+	ExpiresAt        time.Time                      `json:"expiresAt"`
+	FocusedWorkoutId nullable.Nullable[CompactUUID] `json:"focusedWorkoutId"`
+	Id               CompactUUID                    `json:"id"`
+	Range            ResolvedDateRange              `json:"range"`
+	RouteTileUrl     string                         `json:"routeTileUrl"`
+	Workouts         []MapSelectionWorkout          `json:"workouts"`
 }
 
 // MapSelectionCreate defines model for MapSelectionCreate.
 type MapSelectionCreate struct {
-	DateRangeEnum *DateRangeEnum      `json:"dateRangeEnum,omitempty"`
-	EndDate       *openapi_types.Date `json:"endDate,omitempty"`
-	StartDate     *openapi_types.Date `json:"startDate,omitempty"`
-	Tz            *string             `json:"tz,omitempty"`
-	WorkoutIds    *[]UUIDInput        `json:"workoutIds,omitempty"`
+	DateRangeEnum    *DateRangeEnum      `json:"dateRangeEnum,omitempty"`
+	EndDate          *openapi_types.Date `json:"endDate,omitempty"`
+	FocusedWorkoutId *UUIDInput          `json:"focusedWorkoutId,omitempty"`
+	StartDate        *openapi_types.Date `json:"startDate,omitempty"`
+	Tz               *string             `json:"tz,omitempty"`
+	WorkoutIds       *[]UUIDInput        `json:"workoutIds,omitempty"`
 }
 
 // MapSelectionWorkout defines model for MapSelectionWorkout.
@@ -1942,15 +2195,16 @@ type PasswordResetRequest struct {
 
 // Preferences defines model for Preferences.
 type Preferences struct {
-	ClockFormat    PreferencesClockFormat                 `json:"clockFormat"`
-	DateRange      nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
-	FirstWeekday   PreferencesFirstWeekday                `json:"firstWeekday"`
-	Initialized    bool                                   `json:"initialized"`
-	PageSize       int                                    `json:"pageSize"`
-	Theme          PreferencesTheme                       `json:"theme"`
-	Timezone       string                                 `json:"timezone"`
-	Units          PreferencesUnits                       `json:"units"`
-	WorkoutColumns []PreferencesWorkoutColumns            `json:"workoutColumns"`
+	ClockFormat                PreferencesClockFormat                 `json:"clockFormat"`
+	CoverageDiagnosticsEnabled bool                                   `json:"coverageDiagnosticsEnabled"`
+	DateRange                  nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
+	FirstWeekday               PreferencesFirstWeekday                `json:"firstWeekday"`
+	Initialized                bool                                   `json:"initialized"`
+	PageSize                   int                                    `json:"pageSize"`
+	Theme                      PreferencesTheme                       `json:"theme"`
+	Timezone                   string                                 `json:"timezone"`
+	Units                      PreferencesUnits                       `json:"units"`
+	WorkoutColumns             []PreferencesWorkoutColumns            `json:"workoutColumns"`
 }
 
 // PreferencesClockFormat defines model for Preferences.ClockFormat.
@@ -1970,14 +2224,15 @@ type PreferencesWorkoutColumns string
 
 // PreferencesPatch defines model for PreferencesPatch.
 type PreferencesPatch struct {
-	ClockFormat    *PreferencesPatchClockFormat           `json:"clockFormat,omitempty"`
-	DateRange      nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
-	FirstWeekday   *PreferencesPatchFirstWeekday          `json:"firstWeekday,omitempty"`
-	PageSize       *int                                   `json:"pageSize,omitempty"`
-	Theme          *PreferencesPatchTheme                 `json:"theme,omitempty"`
-	Timezone       *string                                `json:"timezone,omitempty"`
-	Units          *PreferencesPatchUnits                 `json:"units,omitempty"`
-	WorkoutColumns *[]PreferencesPatchWorkoutColumns      `json:"workoutColumns,omitempty"`
+	ClockFormat                *PreferencesPatchClockFormat           `json:"clockFormat,omitempty"`
+	CoverageDiagnosticsEnabled *bool                                  `json:"coverageDiagnosticsEnabled,omitempty"`
+	DateRange                  nullable.Nullable[DateRangePreference] `json:"dateRange,omitempty"`
+	FirstWeekday               *PreferencesPatchFirstWeekday          `json:"firstWeekday,omitempty"`
+	PageSize                   *int                                   `json:"pageSize,omitempty"`
+	Theme                      *PreferencesPatchTheme                 `json:"theme,omitempty"`
+	Timezone                   *string                                `json:"timezone,omitempty"`
+	Units                      *PreferencesPatchUnits                 `json:"units,omitempty"`
+	WorkoutColumns             *[]PreferencesPatchWorkoutColumns      `json:"workoutColumns,omitempty"`
 }
 
 // PreferencesPatchClockFormat defines model for PreferencesPatch.ClockFormat.
@@ -2059,6 +2314,70 @@ type ResolvedDateRange struct {
 	EndDate   openapi_types.Date `json:"endDate"`
 	StartDate openapi_types.Date `json:"startDate"`
 	Timezone  string             `json:"timezone"`
+}
+
+// RoadCoverageDetail defines model for RoadCoverageDetail.
+type RoadCoverageDetail struct {
+	AllTimeFirstDate       openapi_types.Date           `json:"allTimeFirstDate"`
+	AllTimeFirstWorkoutId  CompactUUID                  `json:"allTimeFirstWorkoutId"`
+	AllTimeLatestDate      openapi_types.Date           `json:"allTimeLatestDate"`
+	AllTimeLatestWorkoutId CompactUUID                  `json:"allTimeLatestWorkoutId"`
+	AllTimeWorkoutCount    int64                        `json:"allTimeWorkoutCount"`
+	Bounds                 RouteBounds                  `json:"bounds"`
+	BroadClass             RoadCoverageDetailBroadClass `json:"broadClass"`
+	EntityId               CompactUUID                  `json:"entityId"`
+	EntityKind             RoadCoverageDetailEntityKind `json:"entityKind"`
+	FitBounds              RouteBounds                  `json:"fitBounds"`
+	Geometry               CoverageGeoJSONGeometry      `json:"geometry"`
+	LocalityName           nullable.Nullable[string]    `json:"localityName"`
+	Name                   nullable.Nullable[string]    `json:"name"`
+	RangeFirstDate         openapi_types.Date           `json:"rangeFirstDate"`
+	RangeFirstWorkoutId    CompactUUID                  `json:"rangeFirstWorkoutId"`
+	RangeLatestDate        openapi_types.Date           `json:"rangeLatestDate"`
+	RangeLatestWorkoutId   CompactUUID                  `json:"rangeLatestWorkoutId"`
+	RangeWorkoutCount      int64                        `json:"rangeWorkoutCount"`
+	RegionId               string                       `json:"regionId"`
+	RegionName             nullable.Nullable[string]    `json:"regionName"`
+}
+
+// RoadCoverageDetailBroadClass defines model for RoadCoverageDetail.BroadClass.
+type RoadCoverageDetailBroadClass string
+
+// RoadCoverageDetailEntityKind defines model for RoadCoverageDetail.EntityKind.
+type RoadCoverageDetailEntityKind string
+
+// RoadCoverageEntity defines model for RoadCoverageEntity.
+type RoadCoverageEntity struct {
+	AllTimeFirstDate       openapi_types.Date           `json:"allTimeFirstDate"`
+	AllTimeFirstWorkoutId  CompactUUID                  `json:"allTimeFirstWorkoutId"`
+	AllTimeLatestDate      openapi_types.Date           `json:"allTimeLatestDate"`
+	AllTimeLatestWorkoutId CompactUUID                  `json:"allTimeLatestWorkoutId"`
+	AllTimeWorkoutCount    int64                        `json:"allTimeWorkoutCount"`
+	Bounds                 RouteBounds                  `json:"bounds"`
+	BroadClass             RoadCoverageEntityBroadClass `json:"broadClass"`
+	EntityId               CompactUUID                  `json:"entityId"`
+	EntityKind             RoadCoverageEntityEntityKind `json:"entityKind"`
+	LocalityName           nullable.Nullable[string]    `json:"localityName"`
+	Name                   nullable.Nullable[string]    `json:"name"`
+	RangeFirstDate         openapi_types.Date           `json:"rangeFirstDate"`
+	RangeFirstWorkoutId    CompactUUID                  `json:"rangeFirstWorkoutId"`
+	RangeLatestDate        openapi_types.Date           `json:"rangeLatestDate"`
+	RangeLatestWorkoutId   CompactUUID                  `json:"rangeLatestWorkoutId"`
+	RangeWorkoutCount      int64                        `json:"rangeWorkoutCount"`
+	RegionId               string                       `json:"regionId"`
+	RegionName             nullable.Nullable[string]    `json:"regionName"`
+}
+
+// RoadCoverageEntityBroadClass defines model for RoadCoverageEntity.BroadClass.
+type RoadCoverageEntityBroadClass string
+
+// RoadCoverageEntityEntityKind defines model for RoadCoverageEntity.EntityKind.
+type RoadCoverageEntityEntityKind string
+
+// RoadCoverageList defines model for RoadCoverageList.
+type RoadCoverageList struct {
+	Items      []RoadCoverageEntity `json:"items"`
+	Pagination Pagination           `json:"pagination"`
 }
 
 // RouteBounds defines model for RouteBounds.
@@ -2455,9 +2774,32 @@ type DeleteMapSelectionParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
+// ListMapSelectionCoveragePathsParams defines parameters for ListMapSelectionCoveragePaths.
+type ListMapSelectionCoveragePathsParams struct {
+	Generation int64                                    `form:"generation" json:"generation"`
+	Page       *int                                     `form:"page,omitempty" json:"page,omitempty"`
+	PageSize   *int                                     `form:"pageSize,omitempty" json:"pageSize,omitempty"`
+	Search     *string                                  `form:"search,omitempty" json:"search,omitempty"`
+	Sort       *ListMapSelectionCoveragePathsParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+}
+
+// ListMapSelectionCoveragePathsParamsSort defines parameters for ListMapSelectionCoveragePaths.
+type ListMapSelectionCoveragePathsParamsSort string
+
+// GetMapSelectionCoverageEntityParams defines parameters for GetMapSelectionCoverageEntity.
+type GetMapSelectionCoverageEntityParams struct {
+	Generation int64 `form:"generation" json:"generation"`
+}
+
 // UpdateMeParams defines parameters for UpdateMe.
 type UpdateMeParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// GetMyAvatarParams defines parameters for GetMyAvatar.
+type GetMyAvatarParams struct {
+	// Fallback Return the generated fallback directly without contacting Gravatar. Intended for previewing the authenticated identity's fallback.
+	Fallback *bool `form:"fallback,omitempty" json:"fallback,omitempty"`
 }
 
 // UpdateMyPreferencesParams defines parameters for UpdateMyPreferences.
@@ -2592,6 +2934,68 @@ type UpdateSourceJSONRequestBody = SourcePatch
 
 // CreateCoverageDiagnosticRunJSONRequestBody defines body for CreateCoverageDiagnosticRun for application/json ContentType.
 type CreateCoverageDiagnosticRunJSONRequestBody = CreateCoverageDiagnosticRunJSONBody
+
+// AsGeoJSONLineString returns the union data inside the CoverageGeoJSONGeometry as a GeoJSONLineString
+func (t CoverageGeoJSONGeometry) AsGeoJSONLineString() (GeoJSONLineString, error) {
+	var body GeoJSONLineString
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGeoJSONLineString overwrites any union data inside the CoverageGeoJSONGeometry as the provided GeoJSONLineString
+func (t *CoverageGeoJSONGeometry) FromGeoJSONLineString(v GeoJSONLineString) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGeoJSONLineString performs a merge with any union data inside the CoverageGeoJSONGeometry, using the provided GeoJSONLineString
+func (t *CoverageGeoJSONGeometry) MergeGeoJSONLineString(v GeoJSONLineString) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGeoJSONMultiLineString returns the union data inside the CoverageGeoJSONGeometry as a GeoJSONMultiLineString
+func (t CoverageGeoJSONGeometry) AsGeoJSONMultiLineString() (GeoJSONMultiLineString, error) {
+	var body GeoJSONMultiLineString
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGeoJSONMultiLineString overwrites any union data inside the CoverageGeoJSONGeometry as the provided GeoJSONMultiLineString
+func (t *CoverageGeoJSONGeometry) FromGeoJSONMultiLineString(v GeoJSONMultiLineString) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGeoJSONMultiLineString performs a merge with any union data inside the CoverageGeoJSONGeometry, using the provided GeoJSONMultiLineString
+func (t *CoverageGeoJSONGeometry) MergeGeoJSONMultiLineString(v GeoJSONMultiLineString) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CoverageGeoJSONGeometry) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CoverageGeoJSONGeometry) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // AsSafeFields0 returns the union data inside the SafeFields_AdditionalProperties as a SafeFields0
 func (t SafeFields_AdditionalProperties) AsSafeFields0() (SafeFields0, error) {
@@ -2830,6 +3234,15 @@ type ServerInterface interface {
 	// (DELETE /api/map-selections/{mapSelectionId})
 	DeleteMapSelection(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, params DeleteMapSelectionParams)
 
+	// (GET /api/map-selections/{mapSelectionId}/coverage-tiles/{generation}/{z}/{x}/{y}.pbf)
+	GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, generation int64, z int, x int, y int)
+
+	// (GET /api/map-selections/{mapSelectionId}/coverage/paths)
+	ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, params ListMapSelectionCoveragePathsParams)
+
+	// (GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId})
+	GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, entityKind string, entityId UUIDInput, params GetMapSelectionCoverageEntityParams)
+
 	// (GET /api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf)
 	GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, generation int64, z int, x int, y int)
 
@@ -2840,7 +3253,7 @@ type ServerInterface interface {
 	UpdateMe(w http.ResponseWriter, r *http.Request, params UpdateMeParams)
 
 	// (GET /api/me/avatar)
-	GetMyAvatar(w http.ResponseWriter, r *http.Request)
+	GetMyAvatar(w http.ResponseWriter, r *http.Request, params GetMyAvatarParams)
 
 	// (GET /api/me/preferences)
 	GetMyPreferences(w http.ResponseWriter, r *http.Request)
@@ -3009,6 +3422,21 @@ func (_ Unimplemented) DeleteMapSelection(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /api/map-selections/{mapSelectionId}/coverage-tiles/{generation}/{z}/{x}/{y}.pbf)
+func (_ Unimplemented) GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, generation int64, z int, x int, y int) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/map-selections/{mapSelectionId}/coverage/paths)
+func (_ Unimplemented) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, params ListMapSelectionCoveragePathsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId})
+func (_ Unimplemented) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, entityKind string, entityId UUIDInput, params GetMapSelectionCoverageEntityParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf)
 func (_ Unimplemented) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request, mapSelectionId MapSelectionID, generation int64, z int, x int, y int) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -3025,7 +3453,7 @@ func (_ Unimplemented) UpdateMe(w http.ResponseWriter, r *http.Request, params U
 }
 
 // (GET /api/me/avatar)
-func (_ Unimplemented) GetMyAvatar(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) GetMyAvatar(w http.ResponseWriter, r *http.Request, params GetMyAvatarParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3823,6 +4251,222 @@ func (siw *ServerInterfaceWrapper) DeleteMapSelection(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetMapSelectionCoverageTile operation middleware
+func (siw *ServerInterfaceWrapper) GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "mapSelectionId" -------------
+	var mapSelectionId MapSelectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mapSelectionId", chi.URLParam(r, "mapSelectionId"), &mapSelectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mapSelectionId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "generation" -------------
+	var generation int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "generation", chi.URLParam(r, "generation"), &generation, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "generation", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "z" -------------
+	var z int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "z", chi.URLParam(r, "z"), &z, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "z", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "x" -------------
+	var x int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "x", chi.URLParam(r, "x"), &x, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "x", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "y" -------------
+	var y int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "y", chi.URLParam(r, "y"), &y, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "y", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMapSelectionCoverageTile(w, r, mapSelectionId, generation, z, x, y)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMapSelectionCoveragePaths operation middleware
+func (siw *ServerInterfaceWrapper) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "mapSelectionId" -------------
+	var mapSelectionId MapSelectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mapSelectionId", chi.URLParam(r, "mapSelectionId"), &mapSelectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mapSelectionId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMapSelectionCoveragePathsParams
+
+	// ------------- Required query parameter "generation" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "generation", r.URL.Query(), &params.Generation, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "generation"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "generation", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "pageSize" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "pageSize", r.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "pageSize"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pageSize", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "search" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "search", r.URL.Query(), &params.Search, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "search"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "search", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sort", r.URL.Query(), &params.Sort, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "sort"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMapSelectionCoveragePaths(w, r, mapSelectionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMapSelectionCoverageEntity operation middleware
+func (siw *ServerInterfaceWrapper) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "mapSelectionId" -------------
+	var mapSelectionId MapSelectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mapSelectionId", chi.URLParam(r, "mapSelectionId"), &mapSelectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mapSelectionId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entityKind" -------------
+	var entityKind string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entityKind", chi.URLParam(r, "entityKind"), &entityKind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entityKind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entityId" -------------
+	var entityId UUIDInput
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entityId", chi.URLParam(r, "entityId"), &entityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entityId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMapSelectionCoverageEntityParams
+
+	// ------------- Required query parameter "generation" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "generation", r.URL.Query(), &params.Generation, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "generation"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "generation", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMapSelectionCoverageEntity(w, r, mapSelectionId, entityKind, entityId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMapSelectionRouteTile operation middleware
 func (siw *ServerInterfaceWrapper) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request) {
 
@@ -3943,8 +4587,27 @@ func (siw *ServerInterfaceWrapper) UpdateMe(w http.ResponseWriter, r *http.Reque
 // GetMyAvatar operation middleware
 func (siw *ServerInterfaceWrapper) GetMyAvatar(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMyAvatarParams
+
+	// ------------- Optional query parameter "fallback" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "fallback", r.URL.Query(), &params.Fallback, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "fallback"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fallback", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetMyAvatar(w, r)
+		siw.Handler.GetMyAvatar(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5163,6 +5826,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/map-selections/{mapSelectionId}/route-tiles/{generation}/{z}/{x}/{y}.pbf", wrapper.GetMapSelectionRouteTile)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/map-selections/{mapSelectionId}/coverage-tiles/{generation}/{z}/{x}/{y}.pbf", wrapper.GetMapSelectionCoverageTile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/map-selections/{mapSelectionId}/coverage/paths", wrapper.ListMapSelectionCoveragePaths)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}", wrapper.GetMapSelectionCoverageEntity)
+	})
+	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/workouts", wrapper.DeleteWorkoutRange)
 	})
 	r.Group(func(r chi.Router) {
@@ -5201,204 +5873,222 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"7H1rd9u2luhf4dKdteace6j4mbRx16yz0jx6kkmaXDudztzGN4bIbQk1SbAAKFtJ/N/vwosESZACaclx",
+	"U3+yLOG5X9jY2I/Pk4ikOckg42xy9HmSI4pS4EDlf09Pjl+8JxeQiX9wNjmaLADFQCfhJEMpTI4m/z0V",
+	"baaqUThh0QJSJFrzVS5+Z5zibD65vg4nzxCHY5TN4XlWpOWAfxRAV9V4ca2RPeC/UTifHE3+10614B31",
+	"K9upDy0me57F4suuaUD/bE9wTmiKuF7DJHTs4BWZvXxWDpkjvqhG/J3MXsaTcELhjwJTiCdHnBbgu4Gn",
+	"JM1RxH/55eUzOdMblJ9AAhHHJOucMrUbjZ9bTPoyywsuZ/6ZcHyOI9Q7c2Y32tyu36F5J8Zy8Zs9cAzn",
+	"qEj45GgvnKQ4w6kgqr0SbTjjMAdajnuCP/WOLX93jr//MJyk6EpPsLu7drpjDQxvGuyG3nqaNJOdcER5",
+	"33SsbHCzCU9IQSPoJA2mft4cUQza2JCNvMcpfCJZ57j8U23AFF29hmzOF4IiHkoiMP/vOYevyc06kLgW",
+	"l+Mg9DZHfxSgxhcz/UroBSl4J0ou9e+bERHXahBg/EcSY5DnxAmeZ1huNiIZh4yLjyjPEy0jdn5nRP7s",
+	"N50a7ljNUk1ZrVt9w3KSMbWAd5TMEkh7VpCrFv8YthIzrlxDDCyiOBfDTY4mxy+eBo8PH34X6DbBM+AI",
+	"J2wimBJxeI1TzCG+zSW9X0DAFohCHKCCLyDjeqqAIg5BIlYUXCIWwFUEEIMgCHWgSyAeA6er6ZNzDlT8",
+	"200qvfJPrksvVjR+EkWQa0CgOMZiPSh5R0kOlEv6OUcJg3CSW199FlzNC/kJpLrw2wSZgU5d7Fat9jfT",
+	"t2pHZr9DxAVmfkQM3qD8CecUzwoFt0HrSnB2IT9gDilbh6z2dK9xdiEWkqKrl2qEvUflOhGlaCV+5XDF",
+	"G0Jnb3f/cL3UscEgBwn1iv2AIVc3ECBoBklzrfvfr1lqOCloUpPTBcWTdTtSc6m+PRt6gVKcrAbuA9VJ",
+	"YhhWxeQ4Vgo050AFN/6/39D00+nf/nkk/u5OH09PP++Gj/av9b+nf//nv00ccBkLTwrq6H1L8RxndRLt",
+	"B3KTGFOcmf8alBlOigz/UYD+WYricML4KgFfVjhRjZuYxfHEbL0cMKzhpL3DHgo4KZc0gAJiRC98oJXg",
+	"+YIPp13ZK1Sz9Cxdn+bvV7n4LxdDDdvGuaT+l7HjFhZOMrHkBH+CWEzwn7BqqjZavzX/Hxw6AJBTssQx",
+	"0NcOUj3cffxomJiqj+ZaYljtqQdw7CnJzvFwaCXJDEUXL/qgJqfHUGcqD2JXg9Y57GC/j8OuQ6OuWQQw",
+	"eF4HDdXWsP+wdeY0kFLuOGxDyL1EJ2YouWRAT4Cx4SdtxOh5qUR768PhBK5yTIE94a1rwJTjFFwcjeN1",
+	"c9RuJaIDZBzz1bpuL3W7kyJNEV25xV45mL320Nq/C7T2ghrHzu708ZPpi9PPB/vXzhPmKVkCRXN4htE8",
+	"I4zj6CkptP1nyIGZzvC8IAV7R7DuXSqGu23FMJzEBZXa6BucJJhBRLLYo1eKeLSA2HcSIg8HlFjtzd19",
+	"/+Fu7fbu7J8TKtZY77m369GTgsCN/0oZSvOk1nzQdJyiJVCGEo+p1Kl9AvMUmnOV8rq3+yAkNGi8gZHm",
+	"xpsYDluE1V5AC9g1cFhIbG29gwrdHNZkk+finMoieEoSbXYbetgA4gUdcI50r+GFGqqhvSnCad0m5P/V",
+	"TUr3tbax9kolfw2rDQwDmFnsMGjNgaTA6Voh+xOQVydvf36NMzixdRRrqHEwtlbYDUVv2JXbqS1uGCDf",
+	"1SXwAN0W04pizQ7OCb1EVJmFBPO49hJOwFB9gljtQq550uZY5wBzyEDxXO1Exhl/dDjpt6aGk3yxYjhC",
+	"iebgl0NPai0K3tJYyKCa6Hv8+PHj9UJ9rmzcLrVQyxyI35QvJnAVJQXDS3hjhlXGk0oPIcUsgYlz3qxI",
+	"Zw4B2tiCCyahhWBr0TXYt9fbxK0fLf5UQ+cQGgSKl7LjfwE1CmE/9m9EOjgVkAPqPVtOSUo4xENUx14C",
+	"UffVf0kTmzA3M47SvHPsrEgSJIhD00zHcCcLtP/wkUPpQ9Pz08+PDt1Kn+r7ywijSxc1VSM2VtaGfOjA",
+	"fQ3cfpQnb4hDJZ8cJUlswRURKphFLDSrPhdZBJQjLE/D9biwlKmRR7lmX7mr+jmulLLeC1o5/xDQvRMS",
+	"+1bg99Xh5TJV3QyEx8XgG2x5rRq2UX0duw4nEQU0UCBVPHoTWFtCfp3lYMT1OSkZediqtAC4LiX/e6P1",
+	"Vyew46R1P97uPthrnbzhJCVLEFTxhsRQ15UIn4STGY5WkRxVPbR8zItZgiMnyZOCRyStjQJLlBQCo9LO",
+	"9dEcv+7uS6AJWo1XXy39XhxuiC/ekQRHK+s8rDhaDTIVraa5bDaFqxwoFsBAyXS5Nwl9mu37NTvwa3bo",
+	"1+yhX7NHfs2+82v2vV+zx37N9nY923niYc8TEXuemNjzRMWeJy72PJGx54mNPU907HniY98TH/u+fOGJ",
+	"j31PfOx74mPfEx/7nvjY98THvic+9j3xceCJjwNPfBz4CipPfBx44uPAEx8Hnvg48MTHgSc+DjzxceiJ",
+	"j0NPfBx64uPQ9+TwxMehJz4OPfFx6ImPQ098HHri46EnPh564uOhJz4eeuLjoe9R7omPh574eOiJj4ee",
+	"+HjoiY9Hnvh45ImPR574eOSJj0ee+Hjkq1t54uORJz4eeeLjkSc+vvPEx3ee+PjOEx/feeLjO098fOeJ",
+	"j+98lV1PfHzniY/vPPHxvSc+vvfEx/f7zksUJQWHY1hiNs6GSIsEWN+FqXlJci1CPnjhbN43jmnjNWCR",
+	"oSXC0kB1LK1zN7nq/9IcrH7jf3TY6aIw0Bjvevuu+abWcNWAfRuKritt4/7eaSeoLuehsdLULSdOGFd3",
+	"8tKEYZto/MxINSvWSFc7Qz2CViJlTSiy2j99prgbPYmse5tQa/QDRZvyhj5qsTxBq5+RMrKsdZCrLPVD",
+	"/JNoZf+2J+zbon6R/Ml6wCQZvD2fHP02/CnTq8ebIuHY7nZqLecVmT0lmfEpHQBgp81osF+iBXa76+P1",
+	"XRvCd+DMDrE7cASO6Bz4W5b+dJN3KDWK8MkafRB1k6Rric4pR8nTPiI/BhTjDNjQBxkKiNUPQbWdjxnh",
+	"H1HE8RKUddQ4Bn5Uv7uPVq4jQ8xYOWSx+K0mwOV4/B0lETDm60Hez+LH4rAax1Xj/KASIl587WCYZojL",
+	"2jcrCqxI+Nu2WVpGJbSM0uGEFbl8L4a4C/h04OvEOM2h5nF4Y4dTW+eotlCfYy3qTzga7DEXoSyCJIF4",
+	"PbbPEfZql5c0vbYpLbJMexP3N2RFpMNDPJqWBLK2LSccJeuaNVCl+tjbrPZhL7QEWGgBuYN+K4Q+Qxyd",
+	"rLJoIBqVjHpFZuto+BWZlY6fQjPiwPjgbnaspb+ab4dxTq7bGnxt1Pe0yCKkY3R0yxkhCSDZV4wZFwl4",
+	"ROFKcJ6Y9qXbgf+6yzFkv/bKm3LaTFXN1IRY5177KOLE2vIgBleS8+jzemGs255Y8t9o4Y92D7+vPVUe",
+	"7Do5CjIxQwfWEsT48+yPAophElr0eyWDmYdJ6Ayu+HGRDZlKoUy+dnuIGo4SeIZWdVAd7A5SnAzE6nO3",
+	"kGHP1ksmcpCh4qPgRHR+3oe9aAHRxTDENW9DjaCOVvtzCmxh9LfecEy5yxdl8zEv/u1wPrlDYfCISJaV",
+	"rmv6H4irz5hkUy3dXUoIb6sEjw7XqQC4eZvTHcqFhi002QDroIl6egOzUb7A7FeAi4niLevjd5LA1OeD",
+	"Xf2PaP6GZHyhfzCfxff/A4jqr+VHFzzKdbyjcA7UyKMGeJriyXIl+5tZ8Bez3C/lYr9US/1SLvRLucwv",
+	"ZpFfzBK/CMe008+H11P1Yb/6sNP909+dLmzP05yvnlJAfD3LpejK/nbXgbDnVyjib4BTPFQBKDLMnf5+",
+	"wrsDGp5503/KXf3jb/88+vDhgfrsDP1rkKgaK1STuQiubSsY6p1EpNWGN47ndtRg6UnT9papwprsqKb9",
+	"tsJhuxCV4Q3dzZvO1tYuff2t7f31wK9pOdkwELcETb8f99YDtrn9TUH3X4ASvrhx0De5uFG4t1rFk4KT",
+	"51c5ofy1uESPihOUKRUG3zzDybJl8987XaumLGsmGf+dqZPaU0SO0UpKyPUd/X1AX6+nrIFnk34XcrKp",
+	"WL54OiGUT6WlZD3ZOI//9qmv9+zCQTO6b2AwUJEkBgg3j0ikJKnBBcVCLWacIk6oOEYYuPUF8UPmXoZL",
+	"aSqbh9UG9OxOEGVzYHxkDojfR1xDKBSs8yLbEi/qemQZFdZSjcnzVOqJesLuzY9iR6hyB63JZBOWKXeG",
+	"PALWYFYLIBsT/99jlFwjusulu+G3xHxcpEmCl0BXJ93WYd2kbjsqsouMXLotzZAinDh59VYCjhkbeI/v",
+	"sYyXmVRk4Be5kJ/ULjxs41IMKGiYWcIGxK312uDpx/E4PjFYqaVnqidKOVi3IzWIa3Xi5UzZE4cs0ePy",
+	"8YrMVL6g4VlKIM09zCXKDKpzKHWe5/VGQ8grWuAkpjrDlY/MqXbsMEcaNwhf7wXrRdPqLQ3zvkPUHnDG",
+	"hVoIuSHjaGMPC0TZ3NIWrB4P9/Y3ISeUkVlmchpjxLO62+4Bvc+bgjxRM7Q0Rhx9ZMK2Xr6rfIwhgdLM",
+	"o5Dwscjj+ktbtfccUchGmSJzSubUw7D1iszemabl89jQR51znAB7UT7XdD/rut95RO8T+8Fl4AAauEyJ",
+	"ppuMcKxD6m8wxC9ZtEDZ/GZjSIoYPsK1Q8pS4BRD/KPihU3pR03hRSW7nL8apa0O4TTZ+piQUUxBa6+W",
+	"3hJS9Si1TJ+3K21ZLyXriGfiSlNfN5lqKJAPNBVgHDINp3g+B+oxz3vdUlyYFIH6z+PSn8zMtsFZH+2W",
+	"/LKO2TYx20eWvar22d+h2TxfmqSEQ+xdMbjSnNVynB24Q5DHnLAYknj9AwU6hxeqZXlmDvTRGXPVTIEx",
+	"rbOsPcgZLIHqhEHmjMTZORHHI6L6PRsoJdRTAS/voWbgUOGmWlYJvXU+ioYUXmM2lBzaZs41fCQncmmA",
+	"OZrjDPlk33tXtWxCxhok1Evq2PALPPhxd4YYZG2jlZcV8NtQLn8fp4spz40he9edcDY/GXF24E/w40ob",
+	"5AcqITc65OrX7RgzqeXKy3W1IbfbitMwt4lzphQTamNhRcXV3b0CWNeR0sNEtyE0xDx3QGbcxlYtx5+v",
+	"vVsyv9cNNqwbqBy+XspBDLNCCIs7pCS8JvPbYAFBeF+f/N9ZNoQhPFBQqrXqMZaAZ9WhMXKEG1oiLnCe",
+	"fx1DRukeem8AGW0AsUndUGJYOtE2KayB8xYO6xTVhnR7yS5AOODbwXJ1nepmoUDDHpVvlGasrHgx0CNO",
+	"dnvv9l4b4s7Oqoobtfxc9fdta7ou8K9/Ha3rrjmiHKMkWX1c44jt0m4tXWeghB2uKQy+6GzNpD3SMH1T",
+	"0929Ac7HAGeb3YZcg95Xm6hSY2aFlLnGQV1MyVaMQ+okDLve01CzBCm0/zhKEo8QQ0kaP6pO161Md9Zr",
+	"2nucmHyBlka/g3K8k6J8ysx62Y6dcXrHdJ9ycXjs/LY3fXwqGpz+750PHz5/+vDhWvy90n9XHz5cf/jw",
+	"IJ+dO68FguduFHs34m3+nETCo+NXO1LJD7Q1KeIC7XCvHnGGrutzDIwkS4hLz99SZoxEoey7EfyZo99b",
+	"/7cZQWOg/gLz0JHh2MXfdib1BhUZsIaGd6x1OtDfgGWbQVxiwd7HKMeGuOlOPqD+XTjIfchF757FoIb5",
+	"/oSipNbQSlpWyKA/FdWW2Es7HWkie/Fp6HKsnPaWzuEkQgmhegA/GWR7tfeK91r4rpdOUXZQTpwc6dCC",
+	"DS3MhMU6Mtt6eM+HE0hAZZj9CeFsg+uCLB6mOy0AUX5sWH4zixjuCHLzcOEcbRS/+rpQOuk4/TOH6qlc",
+	"358GninyHuTWC8swoDIu2BCARaIt+Da2Zx0tJadogFpMbZNKk35djHrqJ5jMnXKIkW4oeV2srRzkEuXj",
+	"ns9caBLz6/FcUPm5rCEk8SGrRAwECUo45kUMfZllO1ioiuiISEEZPImigqJo9QzmFGBdltqDR43aH56z",
+	"bGv0BaH4E8k4Ssw++kAyaOgEKRivWfNje8nTx7uukUg29xlq7/vaWHvfuwYzFUvenp8z4G9wVujXxGqY",
+	"3cY4u99377fmwRMROvA4YcKPw0Tx9b9e5gBxHUnvgKqg1g1gSw6/+WGXQDmONk5drWTfGoo1JHTh2iYo",
+	"i0zDplToAEqTJXuYqHP/a9DZJVvc0tBKBnD3rG3b9r2hkOJs0BaovlEPY9MbePiMtyIbtwPfZBDKQV/0",
+	"LCR9DJ9R9XvfiMNCUaRj6X8ns8rhwLVVjnniF6JutLsxL8qbsRJqbbB6Py2dJiwwmC3Zz6r+FkQbO1t/",
+	"X12XF+Q2X1nbZGnRU5EZJpwYDp5UjKn06hR3ZHMKJ3ZNwAYBPZn+X0U+H6ennw87qOddDQ6D4kTn4FFp",
+	"xqpI399SPt69bAURD3hTFdXv2U1fE3X5/byqlG8trDaRC9PvEGOXhMbHwGBcPFyuR6jto/wybB0CfReK",
+	"cHJJMYe3WbKyLqdqKBmmStMS89uYiw8uatnKiiS+De01Ode/FhWmxPowXNgRo/UC5L/oXwJCAxMh1hOY",
+	"tfaqV87k3EmZ32Kwk0ZCoosXGrOVyNnbX0zCyf7hwilRolb6StYbK10acL2Nt9WGlEMFVdk3YlTTKVKS",
+	"xdJwyQr5wbVWnGGO1f3XvTi3/HHLkAXUk8XJAsamCrL7fE/hE8kGv2urXBe1F2ic5kCxfElLlWnptNtC",
+	"/JQkRdrIkVUtmltR3pYdZ6R55rS/ivb+8GpECs4GBhYUG6QQ1si3tfmajO6h2TqRrOEvv7pRKc7sb/f+",
+	"cmx3z1V3gqsclExmCaSDg8h5Z8Q3pYT6K93/hRIcy10+Fx1dejfOqvcUuzrftCJO5z1Vnt9d1QdLH47S",
+	"bvWwlt750J1Wrryfdd7HfFfoTh1jLktWCgWzDbccIufDozXQEnFE9eO3oVf18g076kcxGwUUV8pZX9j/",
+	"2pabzedhK1lrpl6TpsMoYuX6eoC8GUFvQ2LQC4GTeWWBtVE5e2aqGr5v1XxW5aixCzX3XoLl4l6Y1lJc",
+	"5S8wfydWmc3f4StIGhyobwx9OV31MfLG9GmUBrf67z90D6B0fF2D1sDbzjB5aDvO7DsHIYnIDv0y40CX",
+	"otZsO0/lwaPd3XB9TdW4iPjPXhlm7MadK3DDuGvXbXCGFV2sKWjdwO7QaAiluLwRLAXU0l9ciksDED2d",
+	"uxc6Ol3KBlObODNrrMsBIpL/y0xFY51lRguc8C9uWKifM4Oy43fYJNz5ocZYKtpubVtMoTTMjclSxdem",
+	"pisdBMx6rP7ObRMUl6UyRqWISRJRa/oFpsx/S3anX0fmaNdjvEYchs+set1w6l/NlaVYF4LjPKtGuWjN",
+	"qEBYsza++HISTmSx2Et5VREFZNUnTpVQzNWVj/BFR2o2lV1uMDBUt//EWWyvSGYS1JOeOsPp+I9j9j+3",
+	"ipz4uJE1a6MYXyXMy+iNtZ5JmW9D6eg5jBOqLmOJUY4wkAusPjea9oYccJNiLbKr6xR+2HLwWYO3VtJu",
+	"zQY10q5xniaJBilZ+6mtzwWrFq24KaGN3Q7cuWVS2JbOXbLXJU87paXlb1byo83S6w6a5xKu9wfN/UGz",
+	"/YPmXtrfS/t7ab8Rab9OrG/dncRxhnxlpxJbaA7buTZrve71SXXlbJe9+v1P291wNmYynA2frAHH1hjt",
+	"xTh2FbbA0wn85+ZJZyD85whnvr6fXWjo698FzQF93KAsHTbriwjtHbmgZaUm6YSUXTiyKYQHevScXrcy",
+	"037vWhUwJorTAUcx4mggEm8lF7JOu76uWzM9u/OhpBxsnZHyBM8znI3zmNm2kbHDiDfe38ay2DlhcZfq",
+	"Hm2kKMEIP+dGyonNJpW4KwWWwsnVVAw4XSJJGUyM/FSP/NQe+Kk1cPWDTh5yWq7QN5+daj0knd0NKkNs",
+	"yFvYs6JE+e5dS9ehyXiI53Cz3EeMWURxijPECVUwy3Nd06YTGkP4pTbhdcngmgfUAq9Dz1rHHjOclpt8",
+	"YRcrG1Qym/Gf4VLN4H0/q/cqM+YMLaMnS8QNj2ksu5qsKgMTdyRwgpuuJJ3VGDqIaus3B88Cj92Kvhpg",
+	"Mw4Lf47iN05s5Yl4CY9GvZCdI8aBcetpf0zcNUvI5U1HaWC9sbDWHE56UEfFe8JRMvytvhiVs+0uRsFn",
+	"QOerDS6IqjoJ4wAkO8fPNg2mlreEsra4HRA1RGo7aa3MRVHyjVxfhwaXCI6Asfcj3uPv9AVKuxg0Y79+",
+	"BETBNyel88IV1iBmT+NCTJXeo84kf/vnkc5jg6bnMpXNF/v/76+n9r+HQ/7d6ypK2fTtHJcy1Z3c1PmL",
+	"Ffm4RojKIXTGTxcYx+UxUdWvn24hMcnmh9Sn7XvLX2PtI8KWZXo9YEZ2DXJKljgGGpiGAc4CVh5+98lQ",
+	"bpoMBWcxUbzZgX67bvbNE6eIIQy+1zbWRsO61XQzcNJD/2sLKNDH/jZWbSLyn2fx5hMwmMElgjc//IZT",
+	"5kgl5ckSYf2161pCywQnvoXUR0aam5vG2qudPldOqg4jc/sMEds+iYDWJv+xUqmOzgPUPHN6aa6H2msR",
+	"YFqAWaLFFWNjoagWcNM4susROC0h0c5E1GJ2h9RqE2KLfHt0EBVk9PyKC3wN1aG2ojdsUwfoKb7+1Q/4",
+	"bZzXG5WKzSq+Gww6a5HlM53e987Vr/VPyovoHBwnw97aiP+uQrf1MXuApx09dfjE0MdgT6/SdhH86+ZQ",
+	"HieCHsValeM9wWzEt0K65YhnLWg9wOrPv9vOMFnygp2N2z+RcHUAbOa6kLsVGXfi9eEqxeVIb6vLema9",
+	"fvxXk9Q7dmkTuX1mln6cLcT0UM4Ia33UPHE92KR+Sl+HA03+Vj7fzXgIjc+P3MCYGias+xjVIdTnc6Q3",
+	"JnUfpsz+w2NVRvDJkLQ/jnyIteDqfZEct7f497XKZp6i/wLK6rnx907vFn/eKL9kfZPhOHbuJxRKlpCV",
+	"Cua2nthas3UW3xsH9h6xt55XGovacrpSnAqmHEaLY7S3i4YvdFSWSinKEimpjOmMPxZliZTufHCmTOHQ",
+	"eoM3qkkyMpJyfEGTMkPeDWj7VzVCXagpWK1PFn+hXIzrxfKsj+0aKjUEWeuvkZoX/ZuFj3s4qDINCiAl",
+	"wOGjTukRTooMrnLpkvOxyDAXa8uW4rniI8nVNB/lDf3jEiUFdASF6WeIYeiktaS7Q4oWqepkatoe8J3U",
+	"jFED4HaBE5ICB+qv5zae2DvMoQlscsQGWKpV66n6QDOqqs5sZRh3CPuJPj0VC8dXr+DlK34vHGtP/l1K",
+	"nR4rNHvsgd2IzNnrvADHZtb2zoFtL2DN1rbu1FMzsI727HEQ17BFj6Kem5uQTXobNWB7Z+KMhKig4kVd",
+	"DKc5DxAF+qTgi+o/kyRrQqRzgK4jlEpzkGxQ6SsLznPlnUQuMJhhcDY50l+ZaJmjssjJR6Z9GioM5fg/",
+	"QaDoWhecbD1UPgOG59lUZscKnrx7GZwTGuicr0GCz0EGoIWBOhVZGOBsDoyHgZk0DFAWBznFS8QhkAdE",
+	"kKKcPSgTAh0ZxLPg+VWeEApUzKQyJKsLx2T3weGDXV2hK0M5nhxNDh7sPjhQr6QLCVCZ5AfFKc52cJkR",
+	"Q/6SE8bbW3simqr8E4ROSZasgrL+V8AXiAdKi2NyBzKjBQtQwHA2T2BaMAiqaR4E7xcQCCtOMCPxSvZQ",
+	"OaqCM9nzLEAUAkM1PwQKRwEq+AIyrpOhBihhxDRiwdl/T5+eHL+YSueIMwGwcn1Cw5sob0kr+4cABkWp",
+	"jmvoOIyqJjtidO2AclpmY/qRxCulaWTcaOh5nugl7vzO1A1QMcZaT5Jycca1s8485r0LWE4yphhjf3dv",
+	"C/OrmesUUP0axJBgVR3xOpwc7u52DVyudMckF5Pt9wa2PxjY/vGw9nsDx997OKj9w0Hrt8SfJEpb8P12",
+	"KsJZbBn226mgRY7EneC3Cap4VKYLEYNJPq+cMufg4O1j4AXNWJCRbMogosCDGSWXDGhAi4zjFAIGnAvV",
+	"/UHwM2nyIaEBFn5GQcUsNf5t8+JPwGsJq1o0vbsxmq7N46BqEV5U7lbBybyVyLbnqEj4MPwZdORy6hoa",
+	"dNG3uMxUNKVFxnY+0yJ7GV/vJGimM2E1RJM8qXTIsD6nZJdJUzyEnmCxaj8JCsqNg3CTMPIERcACaW+F",
+	"OADhgZNFEKiVSsltrknJKlDXdxbwBQRyr0kSkMsMqGr/IHi6AUGuyqg+bWW8fK2Ad/fEetdSlVe2l4zf",
+	"3fpiXLzxVBXH1ci+m7L+8C8q643GaImXGHE0laVX1wl6vqjxIMSKS/+dBaL7gpIMf1KsaSpzGp01ODch",
+	"JmGgHCZ2EsHyXKqwSn01wiKzMterg+OPAuhq0DHxDHF0oqrJbo0lyjkcLPBWSi8B2TZoMpSzBeG3Qee3",
+	"R1cVEVWEpW4p3XeD/1NAAUzoAfL1W+j9qrSrvt8IjAs5Im5De9O93d0S56Xab4yJ7OxB8FYfKMFZmRjs",
+	"TBLWmU4OdhakBePBDAJWCKxDHHAyB74AGiBxKAU4i5KC4SUE0r7RdYMYfHmQcLiLFwexsCGXhv0Nz136",
+	"fjh46E2NFspy2QtAsQ4pf225gnbrM83irL+TWb0kqytk5vpbOLX+sjcaLXlsUVTaKnY+y/iH657TTtpM",
+	"hTjKIRNZUAOlklumiOAS8wUpeCCiPYWxIsCcBYwTIZyWQPE5BqrsFU5TRnAmF3EWCOW8OtkCzPrPtRvY",
+	"IWxRstVLU785QIZ0WJAYTth9VyXB252IFRZaFmg3BKO8TJeY4VkCASf5NIElJPLElgeHVpamphB9wBG7",
+	"YPZJk6M5nIXBmUmDKz6XSDtTes2ZcvI6C85xIrWXiGSMU4QzqVBRYEXCfwhwxoGKQbXGJCPM1VUpBzot",
+	"v8VJHIhtSiUIrqKkiF3EIjb7SkAjdF4KpUpV3Qp1BZoKzeUNdi9c49fWPaCuk+AYdP9h6eQqsy6Pm6N0",
+	"nvOjTst1r2vEEoS1Qet15z8ypVeigpNU0JH5QlPLR0MtVomIj+qG6/Ju2yY/viIzQQYuNnxfUrug6WCB",
+	"hexa3cW72u2dGlJ41GXJzmf5bH299mpkJp1SiFEkpIuqcBCK+KM5lRefBQaKaLRYKblAgdNVkOAM0Byk",
+	"kksykEJJMrg6Pc7k/IPPiVeyTNw2CUtnz+0yjSnzze9kpuFwF/WjW6esoUf2KzITz5anLorciVAWQZJY",
+	"8cxjhg477mY6FQ8L7GkCci5uSYpEhdWXA02xOLN+J7MfhNFXOFvIY1PoQrk46jRpLiFZBYiLpx1pORV3",
+	"fURXD0oCFxyBsgDSnK/UG4962fN60hl4IXtFZk9t6N29m1ljhUOuaLfE5fbyAg2Cu/qwc39tuvEBuANL",
+	"48vspVtLLmecFhEvqHwBEN3Vw3ZmH3KG/60T7YfybUAr2FI4VDq2UKA5JUlQeRR36r/Pl9rBeBiHi2qL",
+	"MgmcRzuxpsm29Ti5jy5lTp644qzVSPoGmPDPfTaf4wS8eSUMSp1R9JvmlETApFFB3Q0bbKMNYrfBPS/k",
+	"Pv70zCO20cs7GqQC/Abm90z0tZkoIfMB5037/lWV9bn9Y+c1mX8DfPOazLvY5tiAWV7xKlDfs83XZhtq",
+	"Ijs3eyF8atz0hMXiAoz5QnAWJHguTaiKv1S2S/Gsp++O5Zm1UxpS5RXR2NDl7aEQ5510ANEx+3U+veXr",
+	"4bGJLb1j98LnYv939cFOAu3+oe7+xjn6xpmifMogUdlte7yKS2GUBThNCy6CO8JAZjyTajMpOExTlAfl",
+	"YFJQtf1XjJO1EC/acftBcCK8A1YBYOUZkImBExxhHkjHgh3IYuHaAUGOMBVyDsl/p9JnIGALQnlU8B8C",
+	"kmIenJWRe+ws4ESvSNzU6EottHxnCqoXIRm0EeRAMYm73N8GSrU3KD8x0LiDks1e3tdxY64ByHVTUPQx",
+	"ZRHJIQ7q5FXFIg4We9+kRPtmJFSK8m4JtfM5tYhGvxNJJQdcUR4JaKGlFKWGgKIklewfaffJuqQqpdMg",
+	"YfCDmA0lFJCIl5gxMW41JWYBV3QbIBaodTvek9TCNyo/aix82IbVmxpo9MqkqK3t5a/9XqlJcygubETW",
+	"rhFraLvyQ+fCLLTzucqwfr3z+dP1zuer653Pq+sH+ey8897+jpIrDEw+dZp4JTSfU5iLT8bLOFhCxMWB",
+	"LQwy+vIuA24xbfGN4qXZyvN0d72W1s4evYT3KvZ4wPV6mcUPUpTPyNVULV/CqX7+lMHxM5whecNoSf+w",
+	"BbFOKL2Rs9nA+jau3/vfNsOFzsCMWr2Cbm1hUKmLjqk+9c5QOubsrymm3jH6ld/oh3uPDw92D0ZNsdrk",
+	"FIPl304ZDdnrEgIi1Vpo2SgpQbHy50L0IjCjKfmWJOW5X78UMHMrqEs9ef+QFw63DdIl0t7JZXv5g22V",
+	"GL8J3zMQnjyTBtnV6vS1gsw7RiKUu1eqguxl7qojQWKTsCpM2frF+gaxSA9vf9TtIsxXb+mxrOB3hNpf",
+	"2cPJMnpHqPmFbmLX2jtC7a/skVSRvSPU+qY+Vq1Z/TvZ8Jb951rV/lzHc529S66Wedh1srt7g/hdV2l3",
+	"PlflMK/NPz5+f1LI2+afkgBMhsIwMEn5w4BxxLF8JwkDii6VG5SO3mdAl0BF+SAkw6DOMde/l76B0gmQ",
+	"UHl+eCuyz01BgK8l9m+LQ7t9lVQieAd/rmreifdMegfU4FpZ2m4S9KuH3DvHpsKgfWWNskpv+O68vYty",
+	"IG7AQUQIjeUBp0IRZF/dWoY3VhtpPMUhOsOcIroq2ys5eI5NBGcmjOAB0i9KawWaTK54567l93fw+zv4",
+	"/R18c3dwGBGFLgWRCUXPgTLpxJNTIhy6HgRPAkVggYy5EwqUSdyhZZ1xG1gXVfEGtppyRK3XKWwae9q+",
+	"yLgJi2p5r7nUmSHkF53xowzE1o+4ZoOBTFLIOl5tJaoFXkUMguUSIrNC1Ty6oo0lDnkDd/DRVJPMV8kI",
+	"0kOuCmJxnVrv2IH47WRvKrmtkqE7aIk4omtFKVJ6ZLQSTsdXgg9VRyEj9VkoHbqSZIaiiw5uNNdb8TSZ",
+	"mTSCJiSEBSlaKTZfietvFiMaBxGKFhAsVXU3Qplb2q6eqF20+M61Gbkwx5pjTCHiyar0NhPEjyIu/ER+",
+	"omq7D4KXgiHkrVtcryksMVwahzT3bv+dlXM8mITO27T53W3d08kVm4UoPK7LOBUWi99zmA/VYkPdN89G",
+	"d2XL+T+u0mRs90uY5ZvRvT2Jtu6R8VQQ3vSpcuStr6O94ufv0by/jWh14Hq//pnwICWxuOzEf5bD2hIf",
+	"OYVzoJBFwG6QFCgHyjBTvtgyjWpoGcp0ysrSlTqw5hyZ9OfN6p217q0efdU0TvK0fv6TK2rvEOW4lqSt",
+	"VNkkmm20BZcLFUDBEZaBoCTFXKBfpsBmD4JfMV8EZzjDYkj8Cd5myeo/hJ4iMiXIURU5ST1O5gq9XECN",
+	"MoIFWhrDwQwgs2hMkBPhC6CXmMlFlNQJV5hJeW8PVCaIv209skGko1XKjuekOnRHHD3b0FLLDX8lTbWX",
+	"XStttcG29xrrbR05tZRv3jE/tV595s2CAV2TtcV6gVEDyawt0J+0xf30/nNtM9sPAurJjgLeyVHsRZ9w",
+	"5X27zYcbe76up1WVRK9OG39ph786KDrYZ+ez/a94eIgxSzFjKBkeFWSjyS9fhGYiHSuXKOVPTa8y/aU4",
+	"i4EGC5TFiTiU64lP7LU/CM7qW7ndMCB7789KEH4DMUHb4WIXB9u/y8dvCEypnnsn9z+BYNGFAB6sUJp0",
+	"HsvVRRAzkynvbQ6ZKGQg6wcEMYmKVLq0s+B/nrx5vbFs4HqaZ3r8YXc+s6mK1N1VMGo1kctyE+3TSm9Z",
+	"bHDzOcBzxNglofGUAgM+Nda1nsIL8llVRhuIt3INONFdFnLlgTWidIpYGZOdSjxl4G7diKTlDGcsOBMK",
+	"lVAzzkJx54sW0sg3gwAF5heBT1mTIUBxTIGxLin7Ti/jWOxLnyKTLd1DXFPdchRlf/ykXFL5Ij5KRm5Z",
+	"Jh3ue4QqikrAr3GK9R4GyzFPLugLECQZK1IZriytzIHsoB4Aw4Ca/PRClTdjmqRsS3IBrLIZ6CdC5sEV",
+	"cnR1r1BD6nuFrEknxip/kHUFaKqyRHpxxm2wxBAd4tBlKlJjGfDGtjsJ05C9J+oWUVOYl8U3+gQ6JymO",
+	"pCkuKqk7s3PKCnCbajq2j5Ay1Olb9xA6tsT82XmRJD/rz5uh72Nr31sib3uKrxNU2vNK+kQhpAwdHaUR",
+	"P75npJKRtKjpi8E81uK9bSMy0ReNOMtpvVX5qqkpqBVuqbTurl4xCTLCuyIsdd2Mk7KA2HZjLI9tgfyt",
+	"mEgMDYgnjd7bSgocSb8h56N2aHlRtihjY/5ELYTf6KJOMvAoj/mjWqqZ8zrsb67bvdHQEq713QVfWDno",
+	"QIraFMY7Tk4LszKBDYlEXQH9kF87NpFUUyLpitRAarP6nIVcdQoWjJtD1HENwpl1ngZ5UjDrHO06IhvI",
+	"ah2SbvCaJhjYzgmeZ1hiZGtHXJOiHPSh2KHkDleuhBPgU9Vu/ZP7X+1p5laP1YqfGufqVIq7Pg11HJ+p",
+	"MpxGpn5FbtMUrM7Qu8lrcm09nPZjDYg3Uy337nnA4gFVenXN26TwIzDJKnQPn7AL4ZqmMubWKgkqjiFZ",
+	"BlFlQB/jGyMWd6I3sMXXADVF12ueURJUUSy9mm9L99Sb6tZErLxViixUF4noP1Q1LMxZgEzNMFIwmwBk",
+	"SRCPC7xVtfosrDJkBWfiMBUXeFRwIkqXPc/E9+YeL36dshwi8RYQnClaPNvQa5oijlt9PoMrlOa6dHx9",
+	"w8aoXxU4lbENRxNZDG+nLJJnVUfeu65XAz+a/AtQwhfBk4ITUVNZhXGbwtHyN3ENJCKik1A+laehIMgh",
+	"zPR1jBYaV64cWPIXc640BZSkz7UJAB2unwXF09L75k+T5O+vmrSvknON03Hns6nHNywRluoVBlECiLLy",
+	"wh1RkLojSnSItMonygJ0fg4RL9OK6myi0vkwpyA8EGRFrlTwnZVeL6dkCZkY40FVOfBs845+an8bEnjr",
+	"rDiaI7XW8dcOTLYP4F7jD8mqNGuqk6+aJugIsoiuxANdQ10jNFBlsPVjkUVjA8v3lLSzZV3NU0+7p6pS",
+	"rRvEywrIxm/K18G6IRZ/CKSjspBoKEY5b9YbD3AWUUjF3FJ5tAOyK7USBRlcOnRJi0ZFa+R0hd6oc5Vy",
+	"t/0K6uAQxvgqfspr1a5vyXfqXnuqtKciTZHK2d5/al1mljbDCUdJVR9SqMzBjAK6iMllVpY8qCoay/vH",
+	"VGYwnlrZw4InKpeYyhNBamfTkQnc06mQZ0TEb3RWVyY0OBNjHYuBn2dFehaaUA3RUWj7zC6ywD+daVWO",
+	"lVmTVfLjgnelavxV7f5Eg2ywRDZr93Gxfp7Fvk2f2dv26SAyW30i2ZZrODSg1fMI3aCqZibqimD+2h7Y",
+	"jvL5+ivJgOvtgzSVsTkWG4tuRhlNVuoCo4ued6qiY42Amh7ey6Vun+7EPOvMgahJgHJtfxGiYX3X5Kco",
+	"5wXVeXdwmkKMERdlFBc41i4M5/hKpobmATmvHw+ShVFlJqzOAUt+71SyW8dkClozKmNcUGk1NEU7ulJP",
+	"j7kcawKRIvOGQXBrGh9rCAyS/KZTeQKcbtElVMPimQZzn4foM40SU5BA55wzvGMwVXqQStJJyFz7jS1w",
+	"HEPWbZn7a+Wo/yoCIPQsCSeuYQpdLr6+83pd2Blkh5KEXCYqZPeMEcrPAg40FYs7xxmsja77tbLN/+lV",
+	"v6+aEHfdQELGkBiMLPBKXYs5pKxRyudvgnS+iBm+xNpk8SWWMQgRfMlRBF8ilBCKgX1ZAKJcvOF+gQSW",
+	"sulPCGd/P/obYtEXwTF/d5QAkul8X6qZvy9/RZQiWc+c8VUivhBkeivadpfG01C175XsEfrSzueynE7v",
+	"E8PLlrpUhRia09KyjhlVJ1+smDgr5W8xULyEeCoNoeJpIitybdgtF9Fn2d3kY4Imrc2+JnxVFeZeZ/kT",
+	"6SzDiE5TQy0Rs4uBq4IiVQHJKS20i9noKbucL2Q4+VSmFYGrHChOIeMoUeELQK0qlg0XC+OAVgYeqyDA",
+	"zfC3euEvcxiXazguvlaVLncUpM4ZkqIr+9tdZ2Dk7XkquOHWkUHR5CIyTdWbcoLzHGITuApLHEMWQSAG",
+	"TpQGcW9r/7O58on2h3dLW9mpvA/WGvrFYsWpHygnMH0YBgxlmEvjoXJtsBwa6lkUwmCJGbZOWSXQOEmA",
+	"oozL8VHEp4ROY8QW4ibmpdH0WeTfVdvbvoptTebg9RdFkjRA5wYYalyu79PA3zUNQeZM7+SXZ+QySwiK",
+	"tUOHILArXqAk+AmIfL1+jTM4kfqfwnd1puskPxXZh0EhS+5HJJMHhTTGHzyrJUCvUpKp8p05wRkPFogF",
+	"KOGYFzE0spDtP3sQ/Gque8Z9RATJSxVYbk5nKhPznic4clg9lG+hHkbvbBiPzYH8YxSf6dleAOIFdb9M",
+	"m5SeBuS6rfFGFSBtIMdo/hVyGjka1SamzzDLCcOD6gYjzlG0SCHjP8hq/hlK4T8+TEQR4dPPh9dT9WHf",
+	"/oCmn3anj6en//jw4cEciIDTh8l9peFvVprsSK5lHkJFUdhUuwBDbD/fKd5VQwlDjjhZcCxDL/4owPdE",
+	"9jUkXLZkiCxKTCgfLUjeKSjcwlktJ1Jzu4PDtLLjA11CY6B3Rlzcy4o/vaxQjvo7CV72qeWCdkV6U5DP",
+	"JcJoKzL95JREwJg0DYgBBE9jJr6eQWUAyFqpjqRxkcifhP0rB6EzZIH02+EUUCqTqGGRCNelcL/GS8iA",
+	"bZV3VWyDi13F7LVYKQVBfftR/+zIGr2D4anyr5ggv2rt0hV1hhhoiawdHUQZYE4krCDgFJ2f48iVWWrd",
+	"BeYYUIy/HkCPJaxuEq1WwwC7RPM5dKd+PxHg0plvlMkDZxwoijheKjSYbF06B9/LbEkuVPZcwpXbfQlC",
+	"FjCOk6Qidr4ATLUkb+DB7eisVvvLy/WwF+rjzoKna9J2tzVUNUXwy8sNZuWS0osujdApaDI5muwImfL/",
+	"BwA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
