@@ -52,6 +52,19 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 		writeFieldError(w, r, "workoutIds", "unique", "workoutIds must identify unique workouts")
 		return
 	}
+	var focusedWorkoutID *uuid.UUID
+	if input.FocusedWorkoutId != nil {
+		parsed, ok := parseCompactUUID(string(*input.FocusedWorkoutId))
+		if !ok {
+			writeFieldError(w, r, "focusedWorkoutId", "format", "focusedWorkoutId must identify a workout")
+			return
+		}
+		focusedWorkoutID = &parsed
+		if input.WorkoutIds != nil && !containsUUID(workoutIDs, parsed) {
+			writeFieldError(w, r, "focusedWorkoutId", "subset", "focusedWorkoutId must be included in workoutIds")
+			return
+		}
+	}
 	var generation int64
 	if err := tx.QueryRow(r.Context(), `SELECT app.lock_account_data_generation()`).Scan(&generation); err != nil {
 		writeMapUnavailable(w, r)
@@ -66,7 +79,13 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 	if session.expiresAt.Before(expiresAt) {
 		expiresAt = session.expiresAt
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at) VALUES($1,$2,$3,$4,$5)`, selectionID, accountID, session.sessionID, generation, expiresAt); err != nil {
+	selectionKind := "complete_range"
+	if input.WorkoutIds != nil {
+		selectionKind = "explicit_subset"
+	}
+	if _, err := tx.Exec(r.Context(), `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, selectionID, accountID, session.sessionID, generation, expiresAt,
+		resolved.start, resolved.end, selectionKind, focusedWorkoutID); err != nil {
 		writeMapUnavailable(w, r)
 		return
 	}
@@ -83,13 +102,22 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 		writeFieldError(w, r, "dateRangeEnum", "limit", "the resolved period contains more than 5000 routed workouts")
 		return
 	}
-	response, err := readMapSelection(r.Context(), tx, accountID, selectionID, generation, expiresAt, resolved)
+	response, err := readMapSelection(r.Context(), tx, accountID, selectionID, generation, expiresAt, resolved, focusedWorkoutID)
 	if err != nil || tx.Commit(r.Context()) != nil {
 		writeMapUnavailable(w, r)
 		return
 	}
 	w.Header().Set("Location", "/api/map-selections/"+response.Id)
 	writeJSON(w, http.StatusCreated, response)
+}
+
+func containsUUID(values []uuid.UUID, target uuid.UUID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedMapWorkoutIDs(values *[]generated.UUIDInput) ([]uuid.UUID, bool) {
@@ -134,11 +162,17 @@ func insertMapSelectionWorkouts(ctx context.Context, tx pgx.Tx, accountID, selec
 	return command.RowsAffected(), nil
 }
 
-func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uuid.UUID, generation int64, expiresAt time.Time, resolved resolvedRange) (generated.MapSelection, error) {
+func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uuid.UUID, generation int64, expiresAt time.Time, resolved resolvedRange, focusedWorkoutID *uuid.UUID) (generated.MapSelection, error) {
 	result := generated.MapSelection{
 		Id: compactUUID(selectionID), DataGeneration: generation, ExpiresAt: expiresAt, Range: rangeResponse(resolved),
-		RouteTileUrl: fmt.Sprintf("/api/map-selections/%s/route-tiles/%d/{z}/{x}/{y}.pbf", compactUUID(selectionID), generation),
-		Workouts:     make([]generated.MapSelectionWorkout, 0),
+		RouteTileUrl:    fmt.Sprintf("/api/map-selections/%s/route-tiles/%d/{z}/{x}/{y}.pbf", compactUUID(selectionID), generation),
+		CoverageTileUrl: fmt.Sprintf("/api/map-selections/%s/coverage-tiles/%d/{z}/{x}/{y}.pbf", compactUUID(selectionID), generation),
+		Workouts:        make([]generated.MapSelectionWorkout, 0),
+	}
+	if focusedWorkoutID == nil {
+		result.FocusedWorkoutId.SetNull()
+	} else {
+		result.FocusedWorkoutId.Set(compactUUID(*focusedWorkoutID))
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT workout.id,workout_type.id,workout_type.type_key,workout_type.provider_label,
@@ -276,7 +310,205 @@ func (s *Server) DeleteMapSelection(w http.ResponseWriter, r *http.Request, mapS
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, params generated.ListMapSelectionCoveragePathsParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	id, valid := parseCompactUUID(string(mapSelectionID))
+	if !valid {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "map selection ID is invalid")
+		return
+	}
+	page, pageSize := 1, 25
+	if params.Page != nil {
+		page = *params.Page
+	}
+	if params.PageSize != nil {
+		pageSize = *params.PageSize
+	}
+	sortValue := "rangeCount:desc"
+	if params.Sort != nil {
+		sortValue = string(*params.Sort)
+	}
+	orderBy := map[string]string{
+		"rangeCount:desc":    "range_workout_count DESC,entity_kind,entity_id",
+		"rangeCount:asc":     "range_workout_count,entity_kind,entity_id",
+		"name:asc":           "name ASC NULLS LAST,entity_kind,entity_id",
+		"name:desc":          "name DESC NULLS LAST,entity_kind,entity_id",
+		"cityOrRegion:asc":   "COALESCE(locality_name,region_name,region_id) ASC,entity_kind,entity_id",
+		"cityOrRegion:desc":  "COALESCE(locality_name,region_name,region_id) DESC,entity_kind,entity_id",
+		"rangeFirst:asc":     "range_first_date,entity_kind,entity_id",
+		"rangeFirst:desc":    "range_first_date DESC,entity_kind,entity_id",
+		"allTimeFirst:asc":   "all_time_first_date,entity_kind,entity_id",
+		"allTimeFirst:desc":  "all_time_first_date DESC,entity_kind,entity_id",
+		"rangeLatest:asc":    "range_latest_date,entity_kind,entity_id",
+		"rangeLatest:desc":   "range_latest_date DESC,entity_kind,entity_id",
+		"allTimeLatest:asc":  "all_time_latest_date,entity_kind,entity_id",
+		"allTimeLatest:desc": "all_time_latest_date DESC,entity_kind,entity_id",
+	}[sortValue]
+	if orderBy == "" {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "coverage path sort is invalid")
+		return
+	}
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{})
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var exists bool
+	if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM app.map_selections selection
+		JOIN app.account_data_generations generation ON generation.account_id=selection.account_id
+		WHERE selection.id=$1 AND selection.account_id=$2 AND selection.session_id=$3 AND selection.generation=$4
+		AND generation.generation=$4 AND selection.expires_at>transaction_timestamp())`, id, *session.accountID,
+		session.sessionID, params.Generation).Scan(&exists); err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	if !exists {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "map selection is unavailable")
+		return
+	}
+	var search *string
+	if params.Search != nil && *params.Search != "" {
+		value := *params.Search
+		search = &value
+	}
+	arguments := []any{*session.accountID, session.sessionID, id, params.Generation, search, pageSize, (page - 1) * pageSize}
+	var total int64
+	if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5)`, arguments[:5]...).Scan(&total); err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	rows, err := tx.Query(r.Context(), `SELECT entity_id,entity_kind,broad_class,name,locality_name,region_id,region_name,
+		range_workout_count,range_first_date,range_first_workout_id,range_latest_date,range_latest_workout_id,
+		all_time_workout_count,all_time_first_date,all_time_first_workout_id,all_time_latest_date,all_time_latest_workout_id,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude
+		FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5) ORDER BY `+orderBy+` LIMIT $6 OFFSET $7`, arguments...)
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	defer rows.Close()
+	items := make([]generated.RoadCoverageEntity, 0, pageSize)
+	for rows.Next() {
+		var value roadCoverageRow
+		if err := rows.Scan(value.scanDestinations()...); err != nil {
+			writeMapUnavailable(w, r)
+			return
+		}
+		items = append(items, value.entity())
+	}
+	if rows.Err() != nil || tx.Commit(r.Context()) != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, generated.RoadCoverageList{Items: items, Pagination: pagination(page, pageSize, total)})
+}
+
+type roadCoverageRow struct {
+	entityID, rangeFirstWorkoutID, rangeLatestWorkoutID, allTimeFirstWorkoutID, allTimeLatestWorkoutID uuid.UUID
+	entityKind, broadClass, regionID                                                                   string
+	name, localityName, regionName                                                                     *string
+	rangeCount, allTimeCount                                                                           int64
+	rangeFirst, rangeLatest, allTimeFirst, allTimeLatest                                               time.Time
+	bounds                                                                                             generated.RouteBounds
+}
+
+func (value *roadCoverageRow) scanDestinations() []any {
+	return []any{&value.entityID, &value.entityKind, &value.broadClass, &value.name, &value.localityName, &value.regionID, &value.regionName,
+		&value.rangeCount, &value.rangeFirst, &value.rangeFirstWorkoutID, &value.rangeLatest, &value.rangeLatestWorkoutID,
+		&value.allTimeCount, &value.allTimeFirst, &value.allTimeFirstWorkoutID, &value.allTimeLatest, &value.allTimeLatestWorkoutID,
+		&value.bounds.MinimumLongitude, &value.bounds.MinimumLatitude, &value.bounds.MaximumLongitude, &value.bounds.MaximumLatitude}
+}
+
+func (value roadCoverageRow) entity() generated.RoadCoverageEntity {
+	item := generated.RoadCoverageEntity{
+		EntityId: compactUUID(value.entityID), EntityKind: generated.RoadCoverageEntityEntityKind(value.entityKind),
+		BroadClass: generated.RoadCoverageEntityBroadClass(value.broadClass), RegionId: value.regionID,
+		RangeWorkoutCount: value.rangeCount, RangeFirstDate: openapi_types.Date{Time: value.rangeFirst},
+		RangeFirstWorkoutId: compactUUID(value.rangeFirstWorkoutID), RangeLatestDate: openapi_types.Date{Time: value.rangeLatest},
+		RangeLatestWorkoutId: compactUUID(value.rangeLatestWorkoutID), AllTimeWorkoutCount: value.allTimeCount,
+		AllTimeFirstDate: openapi_types.Date{Time: value.allTimeFirst}, AllTimeFirstWorkoutId: compactUUID(value.allTimeFirstWorkoutID),
+		AllTimeLatestDate: openapi_types.Date{Time: value.allTimeLatest}, AllTimeLatestWorkoutId: compactUUID(value.allTimeLatestWorkoutID),
+		Bounds: value.bounds,
+	}
+	setNullableString(&item.Name, value.name)
+	setNullableString(&item.LocalityName, value.localityName)
+	setNullableString(&item.RegionName, value.regionName)
+	return item
+}
+
+func setNullableString(target interface {
+	Set(string)
+	SetNull()
+}, value *string) {
+	if value == nil {
+		target.SetNull()
+	} else {
+		target.Set(*value)
+	}
+}
+
+func (s *Server) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, entityKind string, entityIDInput generated.UUIDInput, params generated.GetMapSelectionCoverageEntityParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	selectionID, selectionValid := parseCompactUUID(string(mapSelectionID))
+	entityID, entityValid := parseCompactUUID(string(entityIDInput))
+	if !selectionValid || !entityValid || entityKind != "path" && entityKind != "park" {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "coverage entity identifier is invalid")
+		return
+	}
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{})
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var value roadCoverageRow
+	var geometry []byte
+	var fit generated.RouteBounds
+	destinations := append(value.scanDestinations(), &geometry, &fit.MinimumLongitude, &fit.MinimumLatitude, &fit.MaximumLongitude, &fit.MaximumLatitude)
+	err = tx.QueryRow(r.Context(), `SELECT * FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)`,
+		*session.accountID, session.sessionID, selectionID, params.Generation, entityKind, entityID).Scan(destinations...)
+	if err == pgx.ErrNoRows {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "coverage entity is unavailable")
+		return
+	}
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	entity := value.entity()
+	detail := generated.RoadCoverageDetail{
+		EntityId: entity.EntityId, EntityKind: generated.RoadCoverageDetailEntityKind(entity.EntityKind),
+		BroadClass: generated.RoadCoverageDetailBroadClass(entity.BroadClass), Name: entity.Name,
+		LocalityName: entity.LocalityName, RegionId: entity.RegionId, RegionName: entity.RegionName, RangeWorkoutCount: entity.RangeWorkoutCount,
+		RangeFirstDate: entity.RangeFirstDate, RangeFirstWorkoutId: entity.RangeFirstWorkoutId,
+		RangeLatestDate: entity.RangeLatestDate, RangeLatestWorkoutId: entity.RangeLatestWorkoutId,
+		AllTimeWorkoutCount: entity.AllTimeWorkoutCount, AllTimeFirstDate: entity.AllTimeFirstDate,
+		AllTimeFirstWorkoutId: entity.AllTimeFirstWorkoutId, AllTimeLatestDate: entity.AllTimeLatestDate,
+		AllTimeLatestWorkoutId: entity.AllTimeLatestWorkoutId, Bounds: entity.Bounds, FitBounds: fit,
+	}
+	if err := detail.Geometry.UnmarshalJSON(geometry); err != nil || tx.Commit(r.Context()) != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
 func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int) {
+	s.getMapSelectionTile(w, r, mapSelectionID, generation, z, x, y, "app.raw_route_mvt")
+}
+
+func (s *Server) GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int) {
+	s.getMapSelectionTile(w, r, mapSelectionID, generation, z, x, y, "app.coverage_mvt")
+}
+
+func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int, source string) {
 	session, ok := s.requireSession(w, r, "user")
 	if !ok {
 		return
@@ -314,7 +546,7 @@ func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "map selection is unavailable")
 		return
 	}
-	upstream, err := mapTileUpstreamURL(s.config.TileServerURL, id, *session.accountID, session.sessionID, generation, z, x, y)
+	upstream, err := mapTileFunctionUpstreamURL(s.config.TileServerURL, source, id, *session.accountID, session.sessionID, generation, z, x, y)
 	if err != nil {
 		writeMapUnavailable(w, r)
 		return
@@ -352,11 +584,18 @@ func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request
 }
 
 func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID, generation int64, z, x, y int) (string, error) {
+	return mapTileFunctionUpstreamURL(base, "app.raw_route_mvt", selectionID, accountID, sessionID, generation, z, x, y)
+}
+
+func mapTileFunctionUpstreamURL(base, source string, selectionID, accountID, sessionID uuid.UUID, generation int64, z, x, y int) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
 		return "", fmt.Errorf("invalid tile service URL")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/app.raw_route_mvt/" + strconv.Itoa(z) + "/" + strconv.Itoa(x) + "/" + strconv.Itoa(y)
+	if source != "app.raw_route_mvt" && source != "app.coverage_mvt" {
+		return "", fmt.Errorf("invalid tile source")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + source + "/" + strconv.Itoa(z) + "/" + strconv.Itoa(x) + "/" + strconv.Itoa(y)
 	query := url.Values{}
 	query.Set("target_account_id", accountID.String())
 	query.Set("target_session_id", sessionID.String())

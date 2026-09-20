@@ -1,4 +1,6 @@
 -- +goose Up
+ALTER TABLE app.preferences ADD COLUMN coverage_diagnostics_enabled boolean NOT NULL DEFAULT false;
+
 CREATE TABLE app.coverage_diagnostic_runs (
     id uuid NOT NULL,
     account_id uuid NOT NULL,
@@ -126,8 +128,8 @@ BEGIN
     PERFORM 1 FROM app.workout_coverage_states state
       JOIN app.workouts workout ON workout.id=state.workout_id AND workout.account_id=state.account_id
      WHERE state.account_id=target_account_id AND state.workout_id=target_workout_id
-       AND workout.deletion_requested_at IS NULL AND state.route_input_revision=target_revision
-       AND state.route_input_sha256=target_digest FOR UPDATE OF state;
+       AND workout.deletion_requested_at IS NULL AND state.route_input_revision=$4
+       AND state.route_input_sha256=$5 FOR UPDATE OF state;
     IF NOT FOUND THEN RETURN false; END IF;
     INSERT INTO app.coverage_diagnostic_runs VALUES(target_run_id,target_account_id,target_workout_id,target_revision,target_digest,
         target_rules,target_sampling,target_policy,target_mode,target_minimum,target_outcome,target_original,target_sampled,
@@ -199,10 +201,10 @@ REVOKE ALL ON FUNCTION app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,byt
 GRANT EXECUTE ON FUNCTION app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb),
     app.set_coverage_diagnostic_labels(uuid,uuid,boolean,text,jsonb) TO workouts_api;
 
-UPDATE app.schema_metadata SET schema_version=14,minimum_runtime_version=13 WHERE singleton;
+UPDATE app.schema_metadata SET schema_version=13,minimum_runtime_version=12 WHERE singleton;
 
 -- +goose Down
-UPDATE app.schema_metadata SET schema_version=13,minimum_runtime_version=12 WHERE singleton;
+UPDATE app.schema_metadata SET schema_version=12,minimum_runtime_version=11 WHERE singleton;
 DROP FUNCTION app.set_coverage_diagnostic_labels(uuid,uuid,boolean,text,jsonb);
 DROP FUNCTION app.persist_coverage_diagnostic(uuid,uuid,uuid,bigint,bytea,text,text,text,text,double precision,text,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,jsonb,jsonb);
 DROP TABLE app.coverage_diagnostic_segment_labels;
@@ -210,3 +212,4 @@ DROP TABLE app.coverage_diagnostic_overall_labels;
 DROP TABLE app.coverage_diagnostic_evidence;
 DROP TABLE app.coverage_diagnostic_generations;
 DROP TABLE app.coverage_diagnostic_runs;
+ALTER TABLE app.preferences DROP COLUMN coverage_diagnostics_enabled;

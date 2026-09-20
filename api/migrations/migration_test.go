@@ -8,8 +8,34 @@ import (
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 )
 
+var migrationFiles = []string{
+	"001_job_foundations.sql", "002_account_lifecycle.sql", "003_sources_and_job_snapshots.sql",
+	"004_ingest_workouts.sql", "005_worker_job_log_context.sql", "006_durable_data_sync.sql",
+	"007_workout_route_summaries.sql", "008_durable_workout_deletion.sql", "009_raw_route_map.sql",
+	"010_segment_route_geometry.sql", "011_workout_split_paces.sql", "012_workout_timezones.sql",
+	"013_coverage_matcher_diagnostics.sql", "014_martin_tile_contract.sql",
+	"015_coverage_route_jobs.sql", "016_durable_route_coverage.sql", "017_coverage_reconciliation.sql",
+	"018_park_attribution.sql", "019_coverage_explorer_reads.sql",
+}
+
+func TestMigrationFilesAreSequential(t *testing.T) {
+	entries, err := Files.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			actual = append(actual, entry.Name())
+		}
+	}
+	if strings.Join(actual, "\n") != strings.Join(migrationFiles, "\n") {
+		t.Fatalf("migration files are not the expected sequential set:\n%s", strings.Join(actual, "\n"))
+	}
+}
+
 func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
-	source, err := Files.ReadFile("00001_job_foundations.sql")
+	source, err := Files.ReadFile("001_job_foundations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +55,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 }
 
 func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
-	for _, name := range []string{"00001_job_foundations.sql", "00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql", "00005_worker_job_log_context.sql", "00006_durable_data_sync.sql", "00007_workout_route_summaries.sql", "00008_durable_workout_deletion.sql", "00009_raw_route_map.sql", "00010_segment_route_geometry.sql", "00011_workout_split_paces.sql", "00012_workout_timezones.sql", "00013_workout_coverage_readiness.sql", "00014_coverage_matcher_diagnostics.sql", "00015_coverage_reconciliation_reads.sql", "00016_sidewalk_road_attribution_policy.sql", "00017_road_accessory_attribution_policy.sql", "00018_offset_road_candidate_policy.sql", "00019_policy_filtered_candidate_overfetch.sql", "00020_versioned_path_policy_contract.sql", "00021_martin_tile_contract.sql", "00022_martin_runtime_floor.sql"} {
+	for _, name := range migrationFiles {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -44,24 +70,8 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 	}
 }
 
-func TestVersionedPathPolicyContractMigration(t *testing.T) {
-	source, err := Files.ReadFile("00020_versioned_path_policy_contract.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{
-		"^coverage-path-policy-experimental-v[1-9][0-9]*$", "schema_version=20,minimum_runtime_version=19",
-		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=19,minimum_runtime_version=18",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("versioned path-policy migration is missing %q", required)
-		}
-	}
-}
-
 func TestMartinTileContractMigration(t *testing.T) {
-	source, err := Files.ReadFile("00021_martin_tile_contract.sql")
+	source, err := Files.ReadFile("014_martin_tile_contract.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +84,7 @@ func TestMartinTileContractMigration(t *testing.T) {
 		"selection.session_id=target_session_id", "data_generation.generation=target_generation",
 		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,json) TO workouts_tiles",
 		"GRANT CREATE ON SCHEMA app TO workouts_security_owner", "REVOKE CREATE ON SCHEMA app FROM workouts_security_owner",
-		"schema_version=21,minimum_runtime_version=20", "schema_version=20,minimum_runtime_version=19",
+		"schema_version=14,minimum_runtime_version=14", "schema_version=13,minimum_runtime_version=12",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Martin tile migration is missing %q", required)
@@ -91,85 +101,8 @@ func TestMartinTileContractMigration(t *testing.T) {
 	}
 }
 
-func TestMartinRuntimeFloorMigration(t *testing.T) {
-	source, err := Files.ReadFile("00022_martin_runtime_floor.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{"schema_version=22,minimum_runtime_version=21", "schema_version=21,minimum_runtime_version=20"} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("Martin runtime floor migration is missing %q", required)
-		}
-	}
-}
-
-func TestPolicyFilteredCandidateOverfetchMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00019_policy_filtered_candidate_overfetch.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{
-		"coverage-path-policy-experimental-v5", "schema_version=19,minimum_runtime_version=18",
-		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=18,minimum_runtime_version=17",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("candidate overfetch migration is missing %q", required)
-		}
-	}
-}
-
-func TestOffsetRoadCandidatePolicyMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00018_offset_road_candidate_policy.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{
-		"coverage-path-policy-experimental-v4", "schema_version=18,minimum_runtime_version=17",
-		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=17,minimum_runtime_version=16",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("offset road candidate migration is missing %q", required)
-		}
-	}
-}
-
-func TestRoadAccessoryAttributionPolicyMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00017_road_accessory_attribution_policy.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{
-		"coverage-path-policy-experimental-v3", "schema_version=17,minimum_runtime_version=16",
-		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=16,minimum_runtime_version=15",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("road accessory attribution migration is missing %q", required)
-		}
-	}
-}
-
-func TestSidewalkRoadAttributionPolicyMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00016_sidewalk_road_attribution_policy.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	for _, required := range []string{
-		"coverage-path-policy-experimental-v2", "schema_version=16,minimum_runtime_version=15",
-		"DELETE FROM app.coverage_diagnostic_runs", "schema_version=15,minimum_runtime_version=14",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("sidewalk road-attribution migration is missing %q", required)
-		}
-	}
-}
-
 func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00014_coverage_matcher_diagnostics.sql")
+	source, err := Files.ReadFile("013_coverage_matcher_diagnostics.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,42 +112,189 @@ func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
 		"CREATE TABLE app.coverage_diagnostic_evidence", "CREATE TABLE app.coverage_diagnostic_overall_labels",
 		"CREATE TABLE app.coverage_diagnostic_segment_labels", "ON DELETE CASCADE", "FORCE ROW LEVEL SECURITY",
 		"CREATE FUNCTION app.persist_coverage_diagnostic", "CREATE FUNCTION app.set_coverage_diagnostic_labels",
-		"state.route_input_revision=target_revision", "state.route_input_sha256=target_digest",
+		"state.route_input_revision=$4", "state.route_input_sha256=$5",
 		"minimum_traversal_meters BETWEEN 0.1 AND 100", "evidence_class IN ('matched','ambiguous')",
+		"^coverage-path-policy-experimental-v[1-9][0-9]*$",
 		"label IN ('correct','incorrect','uncertain')", "label IN ('expected','unexpected','uncertain')",
-		"GRANT EXECUTE ON FUNCTION app.persist_coverage_diagnostic", "schema_version=14,minimum_runtime_version=13",
+		"GRANT EXECUTE ON FUNCTION app.persist_coverage_diagnostic", "schema_version=13,minimum_runtime_version=12",
+		"coverage_diagnostics_enabled boolean NOT NULL DEFAULT false",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("diagnostic migration is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"GRANT INSERT ON app.coverage_diagnostic", "GRANT UPDATE ON app.coverage_diagnostic", "advance_account_data_generation"} {
+	for _, forbidden := range []string{
+		"GRANT INSERT ON app.coverage_diagnostic", "GRANT UPDATE ON app.coverage_diagnostic",
+		"advance_account_data_generation", "state.route_input_revision=target_revision", "state.route_input_sha256=target_digest",
+	} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("diagnostic migration contains forbidden behavior %q", forbidden)
 		}
 	}
 }
 
-func TestCoverageReconciliationReadMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00015_coverage_reconciliation_reads.sql")
+func TestCoverageRouteJobsMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("015_coverage_route_jobs.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(source)
 	for _, required := range []string{
-		"GRANT SELECT(account_id,workout_id) ON app.workout_routes TO workouts_worker",
-		"GRANT SELECT(account_id,workout_id,readiness_state) ON app.workout_coverage_states TO workouts_worker",
-		"GRANT SELECT(account_id,workout_id,region_id,desired_osm_generation) ON app.workout_coverage_regions TO workouts_worker",
-		"schema_version=15,minimum_runtime_version=14", "schema_version=14,minimum_runtime_version=13",
+		"'coverage_update','coverage_update_route'", "CREATE TABLE app.coverage_job_contexts",
+		"CREATE TABLE app.coverage_route_job_contexts", "CREATE TABLE app.coverage_job_progress",
+		"CREATE FUNCTION app.enqueue_coverage_update", "CREATE FUNCTION app.claim_next_coverage_route",
+		"timeout_retry_count integer NOT NULL DEFAULT 0", "coverage-route-timeout",
+		"CREATE FUNCTION app.coverage_route_timeout_retry_count",
+		"CREATE OR REPLACE FUNCTION app.read_owned_job_logs", "'coverage_update','coverage_update_route'",
+		"CREATE OR REPLACE FUNCTION app.count_owned_job_rows", "contextual.code='coverage-route-result-context'",
+		"'coverage-route-started'", "'coverage-route-applied'", "'coverage-route-failed'",
+		"%s (%s): Coverage matching started", "%s (%s): %s after %s ms",
+		"CREATE FUNCTION app.finish_coverage_route", "CREATE TABLE app.matcher_slots",
+		"CREATE FUNCTION app.retry_coverage_update",
+		"CREATE FUNCTION app.request_coverage_job_cancellation", "CREATE OR REPLACE FUNCTION app.request_owned_job_cancellation",
+		"CREATE FUNCTION app.sync_coverage_route_job_state", "CREATE FUNCTION app.sync_coverage_matcher_slot_lease",
+		"CREATE FUNCTION app.acquire_coverage_matcher_slot", "CREATE FUNCTION app.acquire_diagnostic_matcher_slot",
+		"last_child_claimed_at NULLS FIRST", "result_outcome IN ('applied','no_evidence','superseded')",
+		"processing_state IN ('not_started','queued','running','current','failed','stale')",
+		"CREATE TABLE app.workout_coverage_states", "CREATE TABLE app.workout_coverage_regions",
+		"CREATE FUNCTION app.initialize_workout_coverage", "CREATE FUNCTION app.set_workout_coverage_readiness",
+		"required role workouts_coverage_worker is missing", "TO workouts_coverage_worker",
+		"GRANT SELECT ON public.goose_db_version,app.schema_metadata TO workouts_coverage_worker",
+		"GRANT EXECUTE ON FUNCTION app.current_account_id(),app.heartbeat_job",
+		"schema_version=15,minimum_runtime_version=14", "cannot downgrade while coverage jobs exist",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("coverage reconciliation read migration is missing %q", required)
+			t.Errorf("coverage route jobs migration is missing %q", required)
 		}
 	}
 }
 
+func TestDurableRouteCoverageMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("016_durable_route_coverage.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.coverage_paths", "CREATE TABLE app.path_segments",
+		"CREATE TABLE app.workout_segment_matches", "CREATE TABLE app.workout_path_attributions",
+		"CREATE FUNCTION app.valid_coverage_generation_vector", "CREATE FUNCTION app.read_coverage_route",
+		"CREATE FUNCTION app.persist_coverage_route", "CREATE FUNCTION app.fail_coverage_route",
+		"ST_Length(covered_geometry::geography)", "app.finish_coverage_route(persist_coverage_route.target_job_id",
+		"coverage match is outside the target generation vector", "first_route_order",
+		"REVOKE ALL ON FUNCTION", "schema_version=16,minimum_runtime_version=15",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("durable route coverage migration is missing %q", required)
+		}
+	}
+}
+
+func TestCoverageReconciliationMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("017_coverage_reconciliation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.coverage_reconciliation_state", "CREATE TABLE app.coverage_reconciliation_accounts",
+		"CREATE TABLE app.coverage_region_catalog", "CREATE FUNCTION app.sync_coverage_region_catalog",
+		"jsonb_array_length(regions)>256", "GRANT EXECUTE ON FUNCTION app.sync_coverage_region_catalog(jsonb)",
+		"CREATE FUNCTION app.observe_coverage_reconciliation", "CREATE FUNCTION app.claim_coverage_reconciliation",
+		"CREATE FUNCTION app.read_coverage_reconciliation_routes", "CREATE FUNCTION app.apply_coverage_reconciliation",
+		"CREATE FUNCTION app.advance_coverage_reconciliation", "FOR UPDATE OF reconciliation SKIP LOCKED",
+		"ADD COLUMN selection_kind", "ADD COLUMN visit_date", "CREATE TABLE app.account_path_daily_rollups",
+		"CREATE TABLE app.account_path_all_time", "CREATE FUNCTION app.increment_coverage_path_rollups",
+		"CREATE FUNCTION app.decrement_coverage_path_rollups", "CREATE FUNCTION app.map_selection_path_counts",
+		"selection.selection_kind='complete_range'", "selection.selection_kind='explicit_subset'",
+		"workout_coverage_states_data_generation_after_current",
+		"CREATE FUNCTION app.coverage_count_bucket", "WHEN workout_count BETWEEN 3 AND 5 THEN 3",
+		"WHEN workout_count>=26 THEN 6", "CREATE FUNCTION app.coverage_mvt",
+		"selected_workout_count", "count_bucket", "ST_AsMVT(tile_rows,'coverage'",
+		"GRANT EXECUTE ON FUNCTION app.coverage_mvt",
+		"schema_version=17,minimum_runtime_version=16",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("coverage reconciliation migration is missing %q", required)
+		}
+	}
+}
+
+func TestParkAttributionMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("018_park_attribution.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"CREATE TABLE app.coverage_parks", "CREATE TABLE app.workout_park_attributions",
+		"CREATE TABLE app.account_park_daily_rollups", "CREATE FUNCTION app.attribute_workout_segment_to_park",
+		"workouts:park_id", "workouts:park_kind", "park_kind IN ('local_park','nature_reserve','protected_area','national_park')",
+		"locality_relation_id IS NULL AND locality_relation_version IS NULL AND locality_name IS NULL",
+		"park_kind='national_park' OR locality_relation_id IS NOT NULL", "segment.tags->>'service' IN ('driveway','parking_aisle')",
+		"segment.tags->>'amenity' IS DISTINCT FROM 'parking'", "SELECT park.park_id,park.name,park.locality_name,'park'",
+		"park-attributed unnamed segments exclusively to", "migration 019 applies this contract",
+		"schema_version=18,minimum_runtime_version=17",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("park attribution migration is missing %q", required)
+		}
+	}
+	down := strings.Split(text, "-- +goose Down")[1]
+	for _, explorerObject := range []string{
+		"map_selection_coverage_entities", "map_selection_coverage_entity_detail", "focused_workout_id",
+	} {
+		if strings.Contains(down, explorerObject) {
+			t.Errorf("park attribution Down references later explorer object %q", explorerObject)
+		}
+	}
+}
+
+func TestCoverageExplorerReadsMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("019_coverage_explorer_reads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"ADD COLUMN focused_workout_id uuid", "DEFERRABLE INITIALLY DEFERRED",
+		"CREATE FUNCTION app.validate_map_selection_focus", "workout.deletion_requested_at IS NULL", "route.route IS NOT NULL",
+		"CREATE FUNCTION app.map_selection_coverage_entities", "CREATE FUNCTION app.map_selection_coverage_entity_detail",
+		"region_id text,region_name text", "LEFT JOIN app.coverage_region_catalog", "entity.region_name",
+		"workout.local_start_date BETWEEN selected.start_date AND selected.end_date",
+		"visit.started_at,visit.workout_id", "strpos(lower(concat_ws",
+		"CREATE OR REPLACE FUNCTION app.coverage_mvt", "ST_AsMVT(rows,'coverage'",
+		"ST_AsMVT(rows,'coverage_parks'", "ST_AsMVT(rows,'coverage_focus'",
+		"ST_AsMVT(rows,'coverage_parks_focus'", "range_workout_count", "count_bucket",
+		"segment.tags->>'service' IN ('driveway','parking_aisle')",
+		"segment.tags->>'amenity' IS DISTINCT FROM 'parking'",
+		"path.name IS NOT NULL OR NOT (segment.tags ? 'workouts:park_id')",
+		"metadata.name IS NOT NULL OR NOT (segment.tags ? 'workouts:park_id')",
+		"path.name IS NOT NULL OR NOT (checked.tags ? 'workouts:park_id')",
+		"segment.tags->>'workouts:park_kind'='national_park'", "COALESCE(path.locality_name,national.locality_name)",
+		"schema_version=19,minimum_runtime_version=18", "schema_version=18,minimum_runtime_version=17",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("coverage explorer migration is missing %q", required)
+		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	if strings.Contains(up, "GRANT EXECUTE ON FUNCTION app.coverage_mvt(integer,integer,integer,json) TO workouts_api") {
+		t.Fatal("coverage tile function is executable by the API role")
+	}
+	down := strings.Split(text, "-- +goose Down")[1]
+	restore := strings.Index(down, "EXECUTE saved_definition")
+	dropExplorer := strings.Index(down, "DROP FUNCTION app.map_selection_coverage_entity_detail")
+	if restore < 0 || dropExplorer < 0 || restore > dropExplorer {
+		t.Fatal("coverage explorer Down does not restore migration-017 coverage_mvt before removing explorer functions")
+	}
+	if strings.Contains(down, "DROP FUNCTION app.coverage_mvt") {
+		t.Fatal("coverage explorer Down removes migration-017 coverage_mvt")
+	}
+}
+
 func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00013_workout_coverage_readiness.sql")
+	source, err := Files.ReadFile("015_coverage_route_jobs.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +308,7 @@ func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
 		"prior_digest=new_route_input_sha256", "route_input_revision=prior_revision+1",
 		"DELETE FROM app.workout_coverage_regions", "CREATE FUNCTION app.set_workout_coverage_readiness",
 		"desired_osm_generation", "TO workouts_worker", "GRANT SELECT ON app.workout_coverage_states,app.workout_coverage_regions TO workouts_api",
-		"schema_version=13,minimum_runtime_version=12", "schema_version=12,minimum_runtime_version=11",
+		"schema_version=15,minimum_runtime_version=14", "schema_version=14,minimum_runtime_version=14",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("coverage readiness migration is missing %q", required)
@@ -242,7 +322,7 @@ func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
 }
 
 func TestWorkoutTimezoneMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00012_workout_timezones.sql")
+	source, err := Files.ReadFile("012_workout_timezones.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +358,7 @@ func TestWorkoutTimezoneMigrationContract(t *testing.T) {
 }
 
 func TestWorkoutSplitPaceMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00011_workout_split_paces.sql")
+	source, err := Files.ReadFile("011_workout_split_paces.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +376,7 @@ func TestWorkoutSplitPaceMigrationContract(t *testing.T) {
 }
 
 func TestOwnerFileFailureLogMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00005_worker_job_log_context.sql")
+	source, err := Files.ReadFile("005_worker_job_log_context.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +393,7 @@ func TestOwnerFileFailureLogMigrationContract(t *testing.T) {
 }
 
 func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
-	source, err := Files.ReadFile("00010_segment_route_geometry.sql")
+	source, err := Files.ReadFile("010_segment_route_geometry.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +426,7 @@ func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
 }
 
 func TestRawRouteMapMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00009_raw_route_map.sql")
+	source, err := Files.ReadFile("009_raw_route_map.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +475,7 @@ func TestRawRouteMapMigrationContainsSecurityBoundaries(t *testing.T) {
 }
 
 func TestDurableWorkoutDeletionMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00008_durable_workout_deletion.sql")
+	source, err := Files.ReadFile("008_durable_workout_deletion.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +561,7 @@ func TestDurableWorkoutDeletionMigrationContainsSecurityBoundaries(t *testing.T)
 }
 
 func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00006_durable_data_sync.sql")
+	source, err := Files.ReadFile("006_durable_data_sync.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +714,7 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 }
 
 func TestWorkoutRouteSummaryMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00007_workout_route_summaries.sql")
+	source, err := Files.ReadFile("007_workout_route_summaries.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +743,7 @@ func TestWorkoutRouteSummaryMigrationContainsSecurityBoundaries(t *testing.T) {
 }
 
 func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00005_worker_job_log_context.sql")
+	source, err := Files.ReadFile("005_worker_job_log_context.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +810,7 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 }
 
 func TestPolymorphicTriggersBranchBeforeRecordFieldAccess(t *testing.T) {
-	for _, name := range []string{"00002_account_lifecycle.sql", "00003_sources_and_job_snapshots.sql", "00004_ingest_workouts.sql"} {
+	for _, name := range []string{"002_account_lifecycle.sql", "003_sources_and_job_snapshots.sql", "004_ingest_workouts.sql"} {
 		source, err := Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -740,7 +820,7 @@ func TestPolymorphicTriggersBranchBeforeRecordFieldAccess(t *testing.T) {
 			t.Fatalf("%s contains polymorphic CASE record field access", name)
 		}
 	}
-	source, err := Files.ReadFile("00003_sources_and_job_snapshots.sql")
+	source, err := Files.ReadFile("003_sources_and_job_snapshots.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +836,7 @@ func TestPolymorphicTriggersBranchBeforeRecordFieldAccess(t *testing.T) {
 }
 
 func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00004_ingest_workouts.sql")
+	source, err := Files.ReadFile("004_ingest_workouts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -921,7 +1001,7 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 }
 
 func TestSourceSnapshotMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00003_sources_and_job_snapshots.sql")
+	source, err := Files.ReadFile("003_sources_and_job_snapshots.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1063,7 +1143,7 @@ func functionBody(t *testing.T, migration, declaration string) string {
 }
 
 func TestAccountLifecycleMigrationContainsSecurityBoundaries(t *testing.T) {
-	source, err := Files.ReadFile("00002_account_lifecycle.sql")
+	source, err := Files.ReadFile("002_account_lifecycle.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

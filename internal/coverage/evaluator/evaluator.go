@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/coverage"
+	"github.com/erhhung/workouts-explorer/internal/coverage/routepipeline"
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
 )
 
 const (
-	WindowSize       = 128
+	WindowSize       = routepipeline.WindowSize
 	workoutTimeout   = 2 * time.Minute
 	outcomeEvaluated = "evaluated"
 	outcomeEmpty     = "no_observations"
@@ -158,7 +159,7 @@ func (r Runner) Run(ctx context.Context, identity string, cfg Config) (report Re
 func (r Runner) runWorkout(parent context.Context, accountID uuid.UUID, workout Workout, rules coverage.Rules, sampling coverage.SamplingRules, report *Report) {
 	ctx, cancel := context.WithTimeout(parent, workoutTimeout)
 	defer cancel()
-	mode := movementMode(workout.TypeKey, workout.ProviderLabel)
+	mode := routepipeline.MovementMode(workout.TypeKey, workout.ProviderLabel)
 	dbStarted := r.now()
 	points, err := r.Source.Points(ctx, accountID, workout.ID)
 	report.Durations.DatabaseMilliseconds += r.now().Sub(dbStarted).Milliseconds()
@@ -260,21 +261,6 @@ func (r Runner) now() time.Time {
 func addMeasure(measure *Measure, value int) {
 	measure.Total += value
 	measure.Max = max(measure.Max, value)
-}
-
-func movementMode(typeKey, label string) coverage.MovementMode {
-	value := strings.ToLower(typeKey + " " + label)
-	for _, token := range []string{"cycl", "bicycl", "bike", "biking"} {
-		if strings.Contains(value, token) {
-			return coverage.MovementBicycle
-		}
-	}
-	for _, token := range []string{"walk", "run", "hik", "foot", "climb", "trek"} {
-		if strings.Contains(value, token) {
-			return coverage.MovementFoot
-		}
-	}
-	return coverage.MovementSharedPublic
 }
 
 type SafeError struct{ Category string }

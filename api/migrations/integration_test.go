@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,8 @@ type testDatabases struct {
 	ctx       context.Context
 	api       *pgxpool.Pool
 	worker    *pgxpool.Pool
+	coverage  *pgxpool.Pool
+	tiles     *pgxpool.Pool
 	migration *pgxpool.Pool
 }
 
@@ -37,6 +40,8 @@ func openTestDatabases(t *testing.T) testDatabases {
 		ctx:       ctx,
 		api:       openPool(t, ctx, apiURL, 1),
 		worker:    openPool(t, ctx, workerURL, 1),
+		coverage:  openPool(t, ctx, envOr("COVERAGE_WORKER_DATABASE_URL", workerURL), 2),
+		tiles:     openPool(t, ctx, envOr("TILE_DATABASE_URL", migrationURL), 1),
 		migration: openPool(t, ctx, migrationURL, 2),
 	}
 	// Register cancellation last so it runs before pool cleanup and releases blocked goroutines first.
@@ -44,13 +49,41 @@ func openTestDatabases(t *testing.T) testDatabases {
 	return result
 }
 
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func TestRoleDefaultsAndReadiness(t *testing.T) {
 	db := openTestDatabases(t)
 	assertRuntimeRole(t, db.ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, db.ctx, db.worker, "workouts_worker")
-	for _, pool := range []*pgxpool.Pool{db.api, db.worker} {
+	if coverageURL := os.Getenv("COVERAGE_WORKER_DATABASE_URL"); coverageURL != "" {
+		assertRuntimeRole(t, db.ctx, db.coverage, "workouts_coverage_worker")
+		var canClaim, canPersist, canSyncCatalog, canReadCatalog, canReadWorkouts, generalCanClaim, generalCanSync bool
+		if err := db.coverage.QueryRow(db.ctx, `SELECT
+			has_function_privilege(current_user,'app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE'),
+			has_function_privilege(current_user,'app.persist_coverage_route(uuid,text,uuid,integer,jsonb,jsonb)','EXECUTE'),
+			has_function_privilege(current_user,'app.sync_coverage_region_catalog(jsonb)','EXECUTE'),
+			has_table_privilege(current_user,'app.coverage_region_catalog','SELECT'),
+			has_table_privilege(current_user,'app.workouts','SELECT'),
+			has_function_privilege('workouts_worker','app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE'),
+			has_function_privilege('workouts_worker','app.sync_coverage_region_catalog(jsonb)','EXECUTE')`).Scan(
+			&canClaim, &canPersist, &canSyncCatalog, &canReadCatalog, &canReadWorkouts, &generalCanClaim, &generalCanSync); err != nil {
+			t.Fatal(err)
+		}
+		if !canClaim || !canPersist || !canSyncCatalog || canReadCatalog || canReadWorkouts || generalCanClaim || generalCanSync {
+			t.Fatalf("coverage role boundaries claim=%t persist=%t sync_catalog=%t read_catalog=%t read_workouts=%t general_claim=%t general_sync=%t",
+				canClaim, canPersist, canSyncCatalog, canReadCatalog, canReadWorkouts, generalCanClaim, generalCanSync)
+		}
+	}
+	for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
 		if !database.Ready(db.ctx, pool) {
-			t.Fatal("runtime role is not schema-ready")
+			var role string
+			_ = pool.QueryRow(db.ctx, `SELECT current_user`).Scan(&role)
+			t.Fatalf("runtime role %s is not schema-ready", role)
 		}
 		var canUpdate, canDelete bool
 		if err := pool.QueryRow(db.ctx, `SELECT has_table_privilege(current_user, 'app.jobs', 'UPDATE'), has_table_privilege(current_user, 'app.jobs', 'DELETE')`).Scan(&canUpdate, &canDelete); err != nil {
@@ -58,6 +91,20 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 		}
 		if canUpdate || canDelete {
 			t.Fatal("runtime role has unsafe direct job mutation privileges")
+		}
+	}
+	if os.Getenv("COVERAGE_WORKER_DATABASE_URL") != "" {
+		if _, err := db.migration.Exec(db.ctx, `REVOKE EXECUTE ON FUNCTION app.sync_coverage_region_catalog(jsonb) FROM workouts_coverage_worker`); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = db.migration.Exec(context.Background(), `GRANT EXECUTE ON FUNCTION app.sync_coverage_region_catalog(jsonb) TO workouts_coverage_worker`)
+		})
+		if database.Ready(db.ctx, db.coverage) {
+			t.Fatal("readiness ignored missing coverage region catalog sync privilege")
+		}
+		if _, err := db.migration.Exec(db.ctx, `GRANT EXECUTE ON FUNCTION app.sync_coverage_region_catalog(jsonb) TO workouts_coverage_worker`); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if database.Ready(db.ctx, db.migration) {
@@ -365,6 +412,56 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	})
 	if database.Ready(db.ctx, db.api) {
 		t.Fatal("readiness ignored an incompatible minimum runtime version")
+	}
+}
+
+func TestCoverageRegionCatalogSyncContract(t *testing.T) {
+	if os.Getenv("COVERAGE_WORKER_DATABASE_URL") == "" {
+		t.Skip("COVERAGE_WORKER_DATABASE_URL is required")
+	}
+	db := openTestDatabases(t)
+	t.Cleanup(func() {
+		_, _ = db.migration.Exec(context.Background(), `DELETE FROM app.coverage_region_catalog WHERE region_id LIKE 'contract:%'`)
+	})
+	sync := func(payload any) error {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		var count int
+		return db.coverage.QueryRow(db.ctx, `SELECT app.sync_coverage_region_catalog($1)`, encoded).Scan(&count)
+	}
+	if err := sync([]map[string]string{{"regionId": "contract:alpha", "displayName": "Alpha Region"}, {"regionId": "contract:beta", "displayName": "Beta Region"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sync([]map[string]string{{"regionId": "contract:beta", "displayName": "Updated Beta"}}); err != nil {
+		t.Fatal(err)
+	}
+	var alpha, beta string
+	if err := db.migration.QueryRow(db.ctx, `SELECT min(display_name) FILTER (WHERE region_id='contract:alpha'),
+		min(display_name) FILTER (WHERE region_id='contract:beta') FROM app.coverage_region_catalog`).Scan(&alpha, &beta); err != nil {
+		t.Fatal(err)
+	}
+	if alpha != "Alpha Region" || beta != "Updated Beta" {
+		t.Fatalf("catalog historical/update values=%q/%q", alpha, beta)
+	}
+	for name, payload := range map[string]any{
+		"duplicate":  []map[string]string{{"regionId": "contract:alpha", "displayName": "Alpha"}, {"regionId": "contract:alpha", "displayName": "Again"}},
+		"bad id":     []map[string]string{{"regionId": "not-a-provider-id", "displayName": "Bad"}},
+		"empty name": []map[string]string{{"regionId": "contract:empty", "displayName": ""}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := sync(payload); err == nil {
+				t.Fatal("invalid catalog payload was accepted")
+			}
+		})
+	}
+	tooMany := make([]map[string]string, 257)
+	for i := range tooMany {
+		tooMany[i] = map[string]string{"regionId": fmt.Sprintf("contract:r%d", i), "displayName": "Region"}
+	}
+	if err := sync(tooMany); err == nil {
+		t.Fatal("oversized catalog payload was accepted")
 	}
 }
 
@@ -3682,6 +3779,954 @@ func TestEventWritesSerializeWithFinishAndRecovery(t *testing.T) {
 			t.Fatal("recovered lease appended a log")
 		}
 	})
+}
+
+func TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry(t *testing.T) {
+	db := openTestDatabases(t)
+	account, workouts := uuid.Must(uuid.NewV7()), []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	digest := bytes.Repeat([]byte{0x6c}, 32)
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.accounts(id) VALUES($1)`, account); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	for i, workout := range workouts {
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+			provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+			VALUES($1,$2,$3,$4,$5,$6,$7,'Outdoor Run',transaction_timestamp(),transaction_timestamp(),current_date,0)`,
+			workout, account, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), fmt.Sprintf("coverage-%d", i), digest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, workout := range workouts {
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states
+			(account_id,workout_id,route_input_revision,route_input_sha256,readiness_state,map_data_ready_at)
+			VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp())`, account, workout, digest); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+			minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+			VALUES($1,$2,1,-122,37,-122,37,false,ST_GeomFromText('MULTILINESTRING((-122 37,-122.0001 37.0001))',4326))`, account, workout); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_regions(account_id,workout_id,region_id,desired_osm_generation)
+			VALUES($1,$2,'geofabrik:test',1)`, account, workout); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	parent, children := uuid.Must(uuid.NewV7()), []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	updatedDigest := bytes.Repeat([]byte{0x7d}, 32)
+	routes := []string{
+		fmt.Sprintf(`[{"jobId":"%s","workoutId":"%s","routeRevision":1,"generations":[{"regionId":"geofabrik:test","generation":1}]}]`, children[0], workouts[0]),
+		fmt.Sprintf(`[{"jobId":"%s","workoutId":"%s","routeRevision":2,"generations":[{"regionId":"geofabrik:test","generation":1}]}]`, children[1], workouts[0]),
+		fmt.Sprintf(`[{"jobId":"%s","workoutId":"%s","routeRevision":1,"generations":[{"regionId":"geofabrik:test","generation":1}]}]`, children[2], workouts[1]),
+	}
+	tx = beginAccount(t, db.ctx, db.worker, account)
+	var enqueued uuid.UUID
+	var routeCount int
+	var reused bool
+	if err := tx.QueryRow(db.ctx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update(
+		$1,$2,'geofabrik:test',1,1,'coverage-experimental-v1','coverage-sampling-experimental-v1',
+		'coverage-path-policy-experimental-v82',5,$3::jsonb)`, account, parent, routes[0]).Scan(&enqueued, &routeCount, &reused); err != nil {
+		if pgErr, ok := err.(*pgconn.PgError); ok {
+			t.Fatalf("enqueue coverage: %s (%s)", pgErr.Message, pgErr.Where)
+		}
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if enqueued != parent || routeCount != 1 || reused {
+		t.Fatalf("enqueue=%s routes=%d reused=%t", enqueued, routeCount, reused)
+	}
+	tx = beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `UPDATE app.workout_coverage_states SET route_input_revision=2,route_input_sha256=$2
+		WHERE account_id=$1 AND workout_id=$3`, account, updatedDigest, workouts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx = beginAccount(t, db.ctx, db.worker, account)
+	if err := tx.QueryRow(db.ctx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update(
+		$1,$2,'geofabrik:test',1,2,'coverage-experimental-v1','coverage-sampling-experimental-v1',
+		'coverage-path-policy-experimental-v82',5,$3::jsonb)`, account, uuid.New(), routes[1]).Scan(&enqueued, &routeCount, &reused); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if enqueued != parent || routeCount != 2 || !reused {
+		t.Fatalf("coalesced enqueue=%s routes=%d reused=%t", enqueued, routeCount, reused)
+	}
+	tx = beginAccount(t, db.ctx, db.worker, account)
+	if err := tx.QueryRow(db.ctx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update(
+		$1,$2,'geofabrik:test',1,3,'coverage-experimental-v1','coverage-sampling-experimental-v1',
+		'coverage-path-policy-experimental-v82',5,$3::jsonb)`, account, uuid.New(), routes[2]).Scan(&enqueued, &routeCount, &reused); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if enqueued != parent || routeCount != 3 || !reused {
+		t.Fatalf("second coalesced enqueue=%s routes=%d reused=%t", enqueued, routeCount, reused)
+	}
+
+	claim := func() (uuid.UUID, uuid.UUID) {
+		t.Helper()
+		lease := uuid.New()
+		tx := beginAccount(t, db.ctx, db.coverage, account)
+		var jobID, claimedAccount, claimedParent, workoutID uuid.UUID
+		var revision int64
+		var claimedDigest []byte
+		var rules, sampling, policy string
+		var minimum float64
+		var generations []byte
+		if err := tx.QueryRow(db.ctx, `SELECT * FROM app.claim_next_coverage_route('coverage-worker',$1,interval '1 minute',$2)`,
+			lease, database.SupportedSchemaVersion).Scan(&jobID, &claimedAccount, &claimedParent, &workoutID, &revision,
+			&claimedDigest, &rules, &sampling, &policy, &minimum, &generations); err != nil {
+			if pgErr, ok := err.(*pgconn.PgError); ok {
+				t.Fatalf("claim coverage: %s (%s)", pgErr.Message, pgErr.Where)
+			}
+			t.Fatal(err)
+		}
+		expectedDigest := digest
+		expectedRevision := int64(1)
+		if workoutID == workouts[0] {
+			expectedDigest, expectedRevision = updatedDigest, 2
+		}
+		if claimedAccount != account || claimedParent != parent || revision != expectedRevision || !bytes.Equal(claimedDigest, expectedDigest) ||
+			rules != "coverage-experimental-v1" || sampling != "coverage-sampling-experimental-v1" ||
+			policy != "coverage-path-policy-experimental-v82" || minimum != 5 {
+			t.Fatalf("unexpected coverage claim: %s %s %s %d %s %s %s %f", jobID, claimedAccount, claimedParent, revision, rules, sampling, policy, minimum)
+		}
+		if err := tx.Commit(db.ctx); err != nil {
+			if pgErr, ok := err.(*pgconn.PgError); ok {
+				t.Fatalf("commit coverage claim: %s (%s)", pgErr.Message, pgErr.Where)
+			}
+			t.Fatal(err)
+		}
+		return jobID, lease
+	}
+
+	firstJob, firstLease := claim()
+	productionSlot := uuid.New()
+	if !callBool(t, db.ctx, db.coverage, account, `SELECT app.acquire_coverage_matcher_slot($1,'coverage-worker',$2,$3)`, firstJob, firstLease, productionSlot) {
+		t.Fatal("production matcher slot was not acquired")
+	}
+	var slotExpiryBefore, slotExpiryAfter time.Time
+	if err := db.migration.QueryRow(db.ctx, `SELECT expires_at FROM app.matcher_slots WHERE slot_token=$1`, productionSlot).Scan(&slotExpiryBefore); err != nil {
+		t.Fatal(err)
+	}
+	if !callBool(t, db.ctx, db.coverage, account, `SELECT app.heartbeat_job($1,'coverage-worker',$2,interval '2 minutes')`, firstJob, firstLease) {
+		t.Fatal("coverage heartbeat was rejected")
+	}
+	if err := db.migration.QueryRow(db.ctx, `SELECT expires_at FROM app.matcher_slots WHERE slot_token=$1`, productionSlot).Scan(&slotExpiryAfter); err != nil {
+		t.Fatal(err)
+	}
+	if !slotExpiryAfter.After(slotExpiryBefore) {
+		t.Fatalf("matcher slot expiry was not extended: before=%s after=%s", slotExpiryBefore, slotExpiryAfter)
+	}
+	if callBool(t, db.ctx, db.api, account, `SELECT app.acquire_diagnostic_matcher_slot($1,'api-pod',$2,$3,
+		ARRAY['geofabrik:test'],interval '30 seconds')`, account, uuid.New(), uuid.New()) {
+		t.Fatal("diagnostic exceeded the shared global matcher limit")
+	}
+	if !callBool(t, db.ctx, db.coverage, account, `SELECT app.release_matcher_slot($1,'coverage-worker',$2)`, productionSlot, firstLease) {
+		t.Fatal("production matcher slot was not released")
+	}
+	diagnosticSlot, diagnosticRequest := uuid.New(), uuid.New()
+	if !callBool(t, db.ctx, db.api, account, `SELECT app.acquire_diagnostic_matcher_slot($1,'api-pod',$2,$3,
+		ARRAY[]::text[],interval '30 seconds')`, account, diagnosticSlot, diagnosticRequest) {
+		t.Fatal("global-only diagnostic matcher slot was not acquired")
+	}
+	if !callBool(t, db.ctx, db.api, account, `SELECT app.release_matcher_slot($1,'api-pod',$2)`, diagnosticSlot, diagnosticRequest) {
+		t.Fatal("diagnostic matcher slot was not released")
+	}
+	segmentID, logicalPathID, parkID := uuid.New(), uuid.New(), uuid.New()
+	matches := fmt.Sprintf(`[{"physicalSegmentId":"%s","regionId":"geofabrik:test","generation":1,"derivationVersion":3,"logicalPathId":"%s","localityRelationId":101,"localityRelationVersion":1,"localityName":"Test City","sourceWayId":42,"sourceWayVersion":1,"highway":"service","broadClass":"road","tags":{"service":"driveway","workouts:park_id":"%s","workouts:park_name":"Example Park","workouts:park_normalized_name":"example park","workouts:park_source_type":"relation","workouts:park_source_id":88},"segmentMeters":15,"segmentGeometry":{"type":"LineString","coordinates":[[-122,37],[-122.0001,37.0001]]},"firstTraversedAt":"2026-09-12T08:00:00Z","firstRouteOrder":0,"coveredGeometry":{"type":"MultiLineString","coordinates":[[[-122,37],[-122.0001,37.0001]]]}}]`, segmentID, logicalPathID, parkID)
+	tx = beginAccount(t, db.ctx, db.coverage, account)
+	if err := tx.QueryRow(db.ctx, `SELECT app.persist_coverage_route($1,'coverage-worker',$2,100,$3::jsonb,$4::jsonb)`,
+		firstJob, firstLease, `[{"regionId":"geofabrik:test","generation":1}]`,
+		strings.Replace(matches, `"geofabrik:test"`, `"geofabrik:foreign"`, 1)).Scan(new(string)); err == nil {
+		t.Fatal("out-of-vector coverage match was accepted")
+	}
+	_ = tx.Rollback(db.ctx)
+	tx = beginAccount(t, db.ctx, db.coverage, account)
+	var appliedOutcome string
+	if err := tx.QueryRow(db.ctx, `SELECT app.persist_coverage_route($1,'coverage-worker',$2,100,$3::jsonb,$4::jsonb)`,
+		firstJob, firstLease, `[{"regionId":"geofabrik:test","generation":1}]`, matches).Scan(&appliedOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if appliedOutcome != "applied" {
+		t.Fatalf("coverage persistence outcome=%s", appliedOutcome)
+	}
+
+	secondJob, secondLease := claim()
+	if !callBool(t, db.ctx, db.coverage, account, `SELECT app.fail_coverage_route($1,'coverage-worker',$2,200,
+		'coverage-route-timeout','Coverage matching timed out.')`, secondJob, secondLease) {
+		t.Fatal("failed coverage route was not finished")
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var status string
+	var total, processed, succeeded, failed, cancelled, superseded int
+	var segmentMatches, pathAttributions, dailyCount, allTimeCount, parkAttributions, parkDailyCount, parkAllTimeCount int
+	if err := tx.QueryRow(db.ctx, `SELECT job.status,progress.routes_total,progress.routes_processed,progress.routes_succeeded,
+		progress.routes_failed,progress.routes_cancelled,progress.routes_superseded FROM app.jobs job
+		JOIN app.coverage_job_progress progress ON progress.job_id=job.id AND progress.account_id=job.account_id WHERE job.id=$1`, parent).Scan(
+		&status, &total, &processed, &succeeded, &failed, &cancelled, &superseded); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(db.ctx, `SELECT (SELECT count(*) FROM app.workout_segment_matches WHERE workout_id=$1),
+		(SELECT count(*) FROM app.workout_path_attributions WHERE workout_id=$1),
+		(SELECT workout_count FROM app.account_path_daily_rollups WHERE logical_path_id=$2),
+		(SELECT workout_count FROM app.account_path_all_time WHERE logical_path_id=$2),
+		(SELECT count(*) FROM app.workout_park_attributions WHERE workout_id=$1 AND park_id=$3),
+		(SELECT workout_count FROM app.account_park_daily_rollups WHERE park_id=$3),
+		(SELECT workout_count FROM app.account_park_all_time WHERE park_id=$3)`, workouts[0], logicalPathID, parkID).Scan(
+		&segmentMatches, &pathAttributions, &dailyCount, &allTimeCount, &parkAttributions, &parkDailyCount, &parkAllTimeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status != "partially_succeeded" || total != 3 || processed != 3 || succeeded != 1 || failed != 1 || cancelled != 0 || superseded != 1 {
+		t.Fatalf("parent=%s counters=%d/%d/%d/%d/%d/%d", status, total, processed, succeeded, failed, cancelled, superseded)
+	}
+	if segmentMatches != 1 || pathAttributions != 1 {
+		t.Fatalf("durable segment/path rows=%d/%d", segmentMatches, pathAttributions)
+	}
+	if dailyCount != 1 || allTimeCount != 1 {
+		t.Fatalf("coverage daily/all-time counts=%d/%d", dailyCount, allTimeCount)
+	}
+	if parkAttributions != 1 || parkDailyCount != 1 || parkAllTimeCount != 1 {
+		t.Fatalf("park attribution/daily/all-time counts=%d/%d/%d", parkAttributions, parkDailyCount, parkAllTimeCount)
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var eventCount, logCount int64
+	var logMessages string
+	if err := tx.QueryRow(db.ctx, `SELECT count(*) FROM app.job_events event JOIN app.jobs child
+		ON child.id=event.job_id AND child.account_id=event.account_id WHERE child.parent_job_id=$1`, parent).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(db.ctx, `SELECT count(*),string_agg(message,' ') FROM app.read_owned_job_logs($1,100,0)`, parent).Scan(&logCount, &logMessages); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount < 4 || logCount != eventCount {
+		t.Fatalf("coverage lifecycle diagnostics events/logs=%d/%d", eventCount, logCount)
+	}
+	if !strings.Contains(logMessages, "Outdoor Run (") || !strings.Contains(logMessages, " ms.") {
+		t.Fatalf("coverage logs lack route context: %q", logMessages)
+	}
+	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.job_logs(account_id,job_id,severity,code,redacted_message,fields)
+		VALUES($1,$2,'info','coverage-route-start-context','Legacy contextual start.','{}'),
+		      ($1,$2,'info','coverage-route-result-context','Contextual replacement.','{}')`, account, firstJob); err != nil {
+		t.Fatal(err)
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var visibleTotal, genericStart, contextualStart, genericTerminal, contextualTerminal int64
+	var contextualStartMessage string
+	if err := tx.QueryRow(db.ctx, `SELECT (SELECT app.count_owned_job_rows($1,'log')),
+		count(*) FILTER (WHERE code='coverage-route-started'),
+		count(*) FILTER (WHERE code='coverage-route-start-context'),
+		count(*) FILTER (WHERE code='coverage-route-applied'),
+		count(*) FILTER (WHERE code='coverage-route-result-context'),
+		max(message) FILTER (WHERE code='coverage-route-start-context')
+		FROM app.read_owned_job_logs($1,100,0)`, firstJob).Scan(
+		&visibleTotal, &genericStart, &contextualStart, &genericTerminal, &contextualTerminal, &contextualStartMessage); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if visibleTotal != 2 || genericStart != 0 || contextualStart != 1 || genericTerminal != 0 || contextualTerminal != 1 ||
+		!strings.Contains(contextualStartMessage, "Outdoor Run (") || !strings.HasSuffix(contextualStartMessage, "): Coverage matching started.") {
+		t.Fatalf("contextual log suppression total/start/context/terminal/context=%d/%d/%d/%d/%d message=%q",
+			visibleTotal, genericStart, contextualStart, genericTerminal, contextualTerminal, contextualStartMessage)
+	}
+	requester := accountRequester(t, db, account)
+	sessionID, selectionID := uuid.New(), uuid.New()
+	var generation int64
+	if err := db.migration.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, account).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	tx = beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,expires_at)
+		VALUES($1,$2,'bearer',$3,transaction_timestamp()+interval '1 hour')`, sessionID, requester, bytes.Repeat([]byte{0x2f}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id)
+		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes',current_date,current_date,'explicit_subset',$5)`,
+		selectionID, account, sessionID, generation, workouts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selection_workouts(selection_id,account_id,workout_id,sort_order)
+		VALUES($1,$2,$3,1)`, selectionID, account, workouts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	diagnosticRunID := uuid.Must(uuid.NewV7())
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var diagnosticPersisted bool
+	if err := tx.QueryRow(db.ctx, `SELECT app.persist_coverage_diagnostic($1,$2,$3,state.route_input_revision,state.route_input_sha256,
+		'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',
+		'foot',8.0,'no_evidence',1,1,0,0,1,0,0,0,0,1,'[]'::jsonb,'[]'::jsonb)
+		FROM app.workout_coverage_states state WHERE state.account_id=$1 AND state.workout_id=$3`,
+		account, diagnosticRunID, workouts[0]).Scan(&diagnosticPersisted); err != nil {
+		t.Fatal(err)
+	}
+	if !diagnosticPersisted {
+		t.Fatal("final-schema diagnostic persistence rejected a current workout")
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var listedID uuid.UUID
+	var listedName, listedLocality, listedClass string
+	if err := tx.QueryRow(db.ctx, `SELECT logical_path_id,name,locality_name,broad_class
+		FROM app.map_selection_path_counts($1,$2,$3,$4)`, account, sessionID, selectionID, generation).Scan(
+		&listedID, &listedName, &listedLocality, &listedClass); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if listedID != parkID || listedName != "Example Park" || listedLocality != "Test City" || listedClass != "park" {
+		t.Fatalf("user-visible coverage entity=%s/%s/%s/%s", listedID, listedName, listedLocality, listedClass)
+	}
+	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.coverage_region_catalog(region_id,display_name)
+		VALUES('geofabrik:test','Test Region') ON CONFLICT (region_id) DO UPDATE SET display_name=EXCLUDED.display_name`); err != nil {
+		t.Fatal(err)
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var entityKind, regionID string
+	var regionName string
+	var rangeCount, entityAllTimeCount int64
+	if err := tx.QueryRow(db.ctx, `SELECT entity_id,entity_kind,name,locality_name,region_id,region_name,range_workout_count,all_time_workout_count
+		FROM app.map_selection_coverage_entities($1,$2,$3,$4,'test region')`, account, sessionID, selectionID, generation).Scan(
+		&listedID, &entityKind, &listedName, &listedLocality, &regionID, &regionName, &rangeCount, &entityAllTimeCount); err != nil {
+		t.Fatal(err)
+	}
+	var geometry []byte
+	var rawMinX, rawMinY, rawMaxX, rawMaxY, fitMinX, fitMinY, fitMaxX, fitMaxY float64
+	var detailRegionName string
+	if err := tx.QueryRow(db.ctx, `SELECT region_name,minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,geometry,
+		fit_minimum_longitude,fit_minimum_latitude,fit_maximum_longitude,fit_maximum_latitude
+		FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'park',$5)`,
+		account, sessionID, selectionID, generation, parkID).Scan(&detailRegionName, &rawMinX, &rawMinY, &rawMaxX, &rawMaxY, &geometry,
+		&fitMinX, &fitMinY, &fitMaxX, &fitMaxY); err != nil {
+		t.Fatal(err)
+	}
+	var literalSearchCount int
+	if err := tx.QueryRow(db.ctx, `SELECT count(*) FROM app.map_selection_coverage_entities($1,$2,$3,$4,'%')`,
+		account, sessionID, selectionID, generation).Scan(&literalSearchCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if listedID != parkID || entityKind != "park" || regionID != "geofabrik:test" || regionName != "Test Region" || detailRegionName != regionName || rangeCount != 1 || entityAllTimeCount != 1 {
+		t.Fatalf("exact coverage entity=%s/%s/%s/%s/%s/%d/%d", listedID, entityKind, regionID, regionName, detailRegionName, rangeCount, entityAllTimeCount)
+	}
+	if !bytes.Contains(geometry, []byte(`"LineString"`)) && !bytes.Contains(geometry, []byte(`"MultiLineString"`)) {
+		t.Fatalf("unexpected coverage geometry: %s", geometry)
+	}
+	if fitMinX > rawMinX || fitMinY > rawMinY || fitMaxX < rawMaxX || fitMaxY < rawMaxY || fitMinX == fitMaxX || fitMinY == fitMaxY {
+		t.Fatalf("fit bounds do not contain raw bounds: raw=%f/%f/%f/%f fit=%f/%f/%f/%f",
+			rawMinX, rawMinY, rawMaxX, rawMaxY, fitMinX, fitMinY, fitMaxX, fitMaxY)
+	}
+	if literalSearchCount != 0 {
+		t.Fatalf("literal search treated %% as a wildcard: count=%d", literalSearchCount)
+	}
+	var coverageTile []byte
+	if err := db.tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt(14,2639,6377,json_build_object(
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
+		account, sessionID, selectionID, generation).Scan(&coverageTile); err != nil {
+		t.Fatal(err)
+	}
+	if len(coverageTile) == 0 {
+		t.Fatal("coverage MVT fixture produced an empty tile")
+	}
+
+	invalidSelectionID := uuid.New()
+	tx = beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id)
+		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes',current_date,current_date,'explicit_subset',$5)`,
+		invalidSelectionID, account, sessionID, generation, workouts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err == nil {
+		t.Fatal("focused workout outside map_selection_workouts passed deferred validation")
+	}
+
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var retryParent uuid.UUID
+	if err := tx.QueryRow(db.ctx, `SELECT job_id,route_count FROM app.retry_coverage_update($1,$2,10)`, parent, requester).Scan(&retryParent, &routeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if routeCount != 1 {
+		t.Fatalf("selective retry route count=%d", routeCount)
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var retryOfParent, retryOfChild uuid.UUID
+	var timeoutRetryCount int
+	if err := tx.QueryRow(db.ctx, `SELECT parent.retry_of_job_id,child.retry_of_job_id,context.timeout_retry_count FROM app.jobs parent
+		JOIN app.jobs child ON child.parent_job_id=parent.id
+		JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+		WHERE parent.id=$1`, retryParent).Scan(&retryOfParent, &retryOfChild, &timeoutRetryCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if retryOfParent != parent || retryOfChild != secondJob {
+		t.Fatalf("retry lineage parent/child=%s/%s", retryOfParent, retryOfChild)
+	}
+	if timeoutRetryCount != 1 {
+		t.Fatalf("timeout retry count=%d, want 1", timeoutRetryCount)
+	}
+	if !callBool(t, db.ctx, db.api, account, `SELECT app.request_owned_job_cancellation($1,$2)`, retryParent, requester) {
+		t.Fatal("coverage retry parent was not cancelled")
+	}
+	tx = beginAccount(t, db.ctx, db.api, account)
+	var retryParentStatus, retryChildStatus, processingState string
+	if err := tx.QueryRow(db.ctx, `SELECT parent.status,child.status,state.processing_state FROM app.jobs parent
+		JOIN app.jobs child ON child.parent_job_id=parent.id
+		JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+		JOIN app.workout_coverage_states state ON state.workout_id=context.workout_id AND state.account_id=context.account_id
+		WHERE parent.id=$1`, retryParent).Scan(&retryParentStatus, &retryChildStatus, &processingState); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if retryParentStatus != "cancelled" || retryChildStatus != "cancelled" || processingState != "not_started" {
+		t.Fatalf("cancelled coverage parent/child/state=%s/%s/%s", retryParentStatus, retryChildStatus, processingState)
+	}
+}
+
+func TestParkOwnedUnnamedCoverageReads(t *testing.T) {
+	db := openTestDatabases(t)
+	account, workout, parkOnlyWorkout := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	requester := accountRequester(t, db, account)
+	parkID := uuid.Must(uuid.NewV7())
+	unnamedParkPath, namedParkPath, unnamedOutsidePath := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	unnamedParkSegment, namedParkSegment := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	unnamedOutsideSegment, unnamedOutsideParkSegment := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	digest := bytes.Repeat([]byte{0x8e}, 32)
+
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	for i, fixtureWorkout := range []uuid.UUID{workout, parkOnlyWorkout} {
+		date := fmt.Sprintf("2026-09-%02d", 14-i)
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+			provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+			VALUES($1,$2,$3,$4,$5,$6,$7,'Outdoor Run',$8::date+time '08:00',$8::date+time '09:00',$8,3600)`,
+			fixtureWorkout, account, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
+			fmt.Sprintf("park-owned-coverage-%d", i), digest, date); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+		VALUES($1,$2,4,-122.001,37,-122,37.001,false,
+		ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0007 37.0007,-122.0009 37.0009))',4326))`, account, workout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+		VALUES($1,$2,2,-122.0011,37.0009,-122.0009,37.0011,false,
+		ST_GeomFromText('MULTILINESTRING((-122.0009 37.0009,-122.0011 37.0011))',4326))`, account, parkOnlyWorkout); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixtureWorkout := range []uuid.UUID{workout, parkOnlyWorkout} {
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
+			route_input_sha256,readiness_state,map_data_ready_at,processing_state,applied_route_input_revision,
+			applied_route_input_sha256,applied_rules_version,applied_sampling_version,applied_path_policy_version,
+			applied_generations,processing_finished_at)
+			VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp(),'current',1,$3,'coverage-experimental-v1',
+			'coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82','[{"regionId":"geofabrik:test","generation":1}]',transaction_timestamp())`,
+			account, fixtureWorkout, digest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.coverage_paths(account_id,logical_path_id,locality_relation_id,
+		locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
+		($1,$2,101,1,'Test City',NULL,NULL,'footway'),
+		($1,$3,101,1,'Test City','Named Park Path','named park path','footway'),
+		($1,$4,101,1,'Test City',NULL,NULL,'footway')`, account, unnamedParkPath, namedParkPath, unnamedOutsidePath); err != nil {
+		t.Fatal(err)
+	}
+	parkTags := fmt.Sprintf(`{"workouts:park_id":"%s","workouts:park_kind":"local_park","workouts:park_name":"Fixture Park","workouts:park_normalized_name":"fixture park"}`, parkID)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.path_segments(account_id,region_id,generation_id,physical_segment_id,
+		logical_path_id,derivation_version,locality_relation_id,source_way_id,source_way_version,name,normalized_name,
+		highway,broad_class,tags,segment_meters,geom) VALUES
+		($1,'geofabrik:test',1,$2,$3,3,101,1001,1,NULL,NULL,'footway','footway',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122 37,-122.0002 37.0002)',4326)),
+		($1,'geofabrik:test',1,$4,$5,3,101,1002,1,'Named Park Path','named park path','footway','footway',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0003 37.0003,-122.0005 37.0005)',4326)),
+		($1,'geofabrik:test',1,$6,$7,3,101,1003,1,NULL,NULL,'footway','footway','{}'::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0007 37.0007,-122.0009 37.0009)',4326)),
+		($1,'geofabrik:test',1,$9,$7,3,101,1004,1,NULL,NULL,'footway','footway',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0009 37.0009,-122.0011 37.0011)',4326))`, account,
+		unnamedParkSegment, unnamedParkPath, namedParkSegment, namedParkPath, unnamedOutsideSegment, unnamedOutsidePath,
+		parkTags, unnamedOutsideParkSegment); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
+		region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom) VALUES
+		($1,$2,$3,'geofabrik:test',1,$4,'2026-09-14T08:05:00Z',0,30,
+		 ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002))',4326)),
+		($1,$2,$5,'geofabrik:test',1,$6,'2026-09-14T08:10:00Z',1,30,
+		 ST_GeomFromText('MULTILINESTRING((-122.0003 37.0003,-122.0005 37.0005))',4326)),
+		($1,$2,$7,'geofabrik:test',1,$8,'2026-09-14T08:15:00Z',2,30,
+		 ST_GeomFromText('MULTILINESTRING((-122.0007 37.0007,-122.0009 37.0009))',4326))`, account, workout,
+		unnamedParkSegment, unnamedParkPath, namedParkSegment, namedParkPath, unnamedOutsideSegment, unnamedOutsidePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
+		region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom)
+		VALUES($1,$2,$3,'geofabrik:test',1,$4,'2026-09-13T08:05:00Z',0,30,
+		ST_GeomFromText('MULTILINESTRING((-122.0009 37.0009,-122.0011 37.0011))',4326))`, account, parkOnlyWorkout,
+		unnamedOutsideParkSegment, unnamedOutsidePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var generation int64
+	if err := db.migration.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, account).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	sessionID, selectionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tx = beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,expires_at)
+		VALUES($1,$2,'bearer',$3,transaction_timestamp()+interval '1 hour')`, sessionID, requester, bytes.Repeat([]byte{0x3f}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,
+		start_date,end_date,selection_kind,focused_workout_id)
+		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes','2026-09-13','2026-09-14','explicit_subset',$5)`,
+		selectionID, account, sessionID, generation, workout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selection_workouts(selection_id,account_id,workout_id,sort_order)
+		VALUES($1,$2,$3,1),($1,$2,$4,2)`, selectionID, account, workout, parkOnlyWorkout); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	tx = beginAccount(t, db.ctx, db.api, account)
+	rows, err := tx.Query(db.ctx, `SELECT entity_id,entity_kind FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)`,
+		account, sessionID, selectionID, generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := make(map[uuid.UUID]string)
+	for rows.Next() {
+		var id uuid.UUID
+		var kind string
+		if err := rows.Scan(&id, &kind); err != nil {
+			t.Fatal(err)
+		}
+		listed[id] = kind
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	for _, assertion := range []struct {
+		id   uuid.UUID
+		kind string
+		want bool
+	}{{unnamedParkPath, "path", false}, {namedParkPath, "path", true}, {unnamedOutsidePath, "path", true}, {parkID, "park", true}} {
+		kind, exists := listed[assertion.id]
+		if exists != assertion.want || exists && kind != assertion.kind {
+			t.Fatalf("coverage list entity %s kind=%q exists=%t, want kind=%q exists=%t", assertion.id, kind, exists, assertion.kind, assertion.want)
+		}
+	}
+	var outsideRangeCount, outsideAllTimeCount int64
+	var outsideRangeFirst, outsideRangeLatest, outsideAllFirst, outsideAllLatest uuid.UUID
+	if err := tx.QueryRow(db.ctx, `SELECT range_workout_count,range_first_workout_id,range_latest_workout_id,
+		all_time_workout_count,all_time_first_workout_id,all_time_latest_workout_id
+		FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL) WHERE entity_kind='path' AND entity_id=$5`,
+		account, sessionID, selectionID, generation, unnamedOutsidePath).Scan(&outsideRangeCount, &outsideRangeFirst,
+		&outsideRangeLatest, &outsideAllTimeCount, &outsideAllFirst, &outsideAllLatest); err != nil {
+		t.Fatal(err)
+	}
+	if outsideRangeCount != 1 || outsideAllTimeCount != 1 || outsideRangeFirst != workout || outsideRangeLatest != workout ||
+		outsideAllFirst != workout || outsideAllLatest != workout {
+		t.Fatalf("unnamed outside path counts=%d/%d workout refs=%s/%s/%s/%s, want only %s",
+			outsideRangeCount, outsideAllTimeCount, outsideRangeFirst, outsideRangeLatest, outsideAllFirst, outsideAllLatest, workout)
+	}
+	for _, assertion := range []struct {
+		id   uuid.UUID
+		kind string
+		want int
+	}{{unnamedParkPath, "path", 0}, {namedParkPath, "path", 1}, {unnamedOutsidePath, "path", 1}, {parkID, "park", 1}} {
+		var count int
+		if err := tx.QueryRow(db.ctx, `SELECT count(*) FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)`,
+			account, sessionID, selectionID, generation, assertion.kind, assertion.id).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != assertion.want {
+			t.Fatalf("coverage detail entity %s count=%d, want %d", assertion.id, count, assertion.want)
+		}
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var tile []byte
+	if err := db.tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt(14,2639,6377,json_build_object(
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
+		account, sessionID, selectionID, generation).Scan(&tile); err != nil {
+		t.Fatal(err)
+	}
+	compact := func(id uuid.UUID) []byte { return []byte(strings.ToUpper(strings.ReplaceAll(id.String(), "-", ""))) }
+	if bytes.Contains(tile, compact(unnamedParkPath)) {
+		t.Fatal("park-owned unnamed path is present in coverage MVT")
+	}
+	for _, id := range []uuid.UUID{namedParkPath, unnamedOutsidePath, parkID} {
+		if !bytes.Contains(tile, compact(id)) {
+			t.Fatalf("coverage MVT is missing entity %s", id)
+		}
+	}
+}
+
+func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
+	db := openTestDatabases(t)
+	account, workout := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	requester := accountRequester(t, db, account)
+	parkID := uuid.Must(uuid.NewV7())
+	outsidePath, unnamedPath, cityPath := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	outsideSegment, unnamedSegment, citySegment := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	digest := bytes.Repeat([]byte{0x9e}, 32)
+
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+		provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+		VALUES($1,$2,$3,$4,$5,'national-park-coverage',$6,'Hike','2026-09-15T08:00:00Z','2026-09-15T09:00:00Z','2026-09-15',3600)`,
+		workout, account, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+		VALUES($1,$2,4,-122.001,37,-122,37.001,false,
+		ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0006 37.0006,-122.0008 37.0008))',4326))`, account, workout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
+		route_input_sha256,readiness_state,map_data_ready_at,processing_state,applied_route_input_revision,
+		applied_route_input_sha256,applied_rules_version,applied_sampling_version,applied_path_policy_version,
+		applied_generations,processing_finished_at)
+		VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp(),'current',1,$3,'coverage-experimental-v1',
+		'coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82','[{"regionId":"geofabrik:test","generation":1}]',transaction_timestamp())`,
+		account, workout, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.coverage_paths(account_id,logical_path_id,locality_relation_id,
+		locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
+		($1,$2,NULL,NULL,NULL,'Yosemite Falls Trail','yosemite falls trail','trail'),
+		($1,$3,NULL,NULL,NULL,NULL,NULL,'trail'),
+		($1,$4,101,1,'Actual City','Valley Road','valley road','road')`, account, outsidePath, unnamedPath, cityPath); err != nil {
+		t.Fatal(err)
+	}
+	parkTags := fmt.Sprintf(`{"workouts:park_id":"%s","workouts:park_kind":"national_park","workouts:park_name":"Yosemite National Park","workouts:park_normalized_name":"yosemite national park","workouts:park_source_type":"relation","workouts:park_source_id":1643367,"workouts:park_source_version":42}`, parkID)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.path_segments(account_id,region_id,generation_id,physical_segment_id,
+		logical_path_id,derivation_version,locality_relation_id,source_way_id,source_way_version,name,normalized_name,
+		highway,broad_class,tags,segment_meters,geom) VALUES
+		($1,'geofabrik:test',1,$2,$3,4,NULL,2001,1,'Yosemite Falls Trail','yosemite falls trail','path','trail',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122 37,-122.0002 37.0002)',4326)),
+		($1,'geofabrik:test',1,$4,$5,4,NULL,2002,1,NULL,NULL,'path','trail',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0003 37.0003,-122.0005 37.0005)',4326)),
+		($1,'geofabrik:test',1,$6,$7,4,101,2003,1,'Valley Road','valley road','residential','road',$8::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0006 37.0006,-122.0008 37.0008)',4326))`, account,
+		outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath, parkTags); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
+		region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom) VALUES
+		($1,$2,$3,'geofabrik:test',1,$4,'2026-09-15T08:05:00Z',0,30,ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002))',4326)),
+		($1,$2,$5,'geofabrik:test',1,$6,'2026-09-15T08:10:00Z',1,30,ST_GeomFromText('MULTILINESTRING((-122.0003 37.0003,-122.0005 37.0005))',4326)),
+		($1,$2,$7,'geofabrik:test',1,$8,'2026-09-15T08:15:00Z',2,30,ST_GeomFromText('MULTILINESTRING((-122.0006 37.0006,-122.0008 37.0008))',4326))`,
+		account, workout, outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var parkKind string
+	var localityID *int64
+	var localityVersion *int
+	var localityName *string
+	if err := db.migration.QueryRow(db.ctx, `SELECT park_kind,locality_relation_id,locality_relation_version,locality_name
+		FROM app.coverage_parks WHERE account_id=$1 AND park_id=$2`, account, parkID).Scan(
+		&parkKind, &localityID, &localityVersion, &localityName); err != nil {
+		t.Fatal(err)
+	}
+	if parkKind != "national_park" || localityID != nil || localityVersion != nil || localityName != nil {
+		t.Fatalf("national park persistence kind/locality=%q/%v/%v/%v", parkKind, localityID, localityVersion, localityName)
+	}
+
+	var generation int64
+	if err := db.migration.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, account).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	sessionID, selectionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tx = beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,expires_at)
+		VALUES($1,$2,'bearer',$3,transaction_timestamp()+interval '1 hour')`, sessionID, requester, bytes.Repeat([]byte{0x4f}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,
+		start_date,end_date,selection_kind,focused_workout_id)
+		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes','2026-09-15','2026-09-15','explicit_subset',$5)`,
+		selectionID, account, sessionID, generation, workout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.map_selection_workouts(selection_id,account_id,workout_id,sort_order)
+		VALUES($1,$2,$3,1)`, selectionID, account, workout); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	tx = beginAccount(t, db.ctx, db.api, account)
+	rows, err := tx.Query(db.ctx, `SELECT entity_id,entity_kind,locality_name
+		FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)`, account, sessionID, selectionID, generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	places := make(map[uuid.UUID]*string)
+	kinds := make(map[uuid.UUID]string)
+	for rows.Next() {
+		var id uuid.UUID
+		var kind string
+		var place *string
+		if err := rows.Scan(&id, &kind, &place); err != nil {
+			t.Fatal(err)
+		}
+		places[id], kinds[id] = place, kind
+	}
+	rows.Close()
+	if _, exists := places[unnamedPath]; exists {
+		t.Fatal("national-park-owned unnamed path is present in the coverage list")
+	}
+	if places[outsidePath] == nil || *places[outsidePath] != "Yosemite National Park" || kinds[outsidePath] != "path" {
+		t.Fatalf("outside named path context=%v kind=%q", places[outsidePath], kinds[outsidePath])
+	}
+	if places[cityPath] == nil || *places[cityPath] != "Actual City" {
+		t.Fatalf("municipal path context=%v, want Actual City", places[cityPath])
+	}
+	if place, exists := places[parkID]; !exists || place != nil || kinds[parkID] != "park" {
+		t.Fatalf("national park entity context=%v exists=%t kind=%q", place, exists, kinds[parkID])
+	}
+	var detailPlace string
+	if err := tx.QueryRow(db.ctx, `SELECT locality_name FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'path',$5)`,
+		account, sessionID, selectionID, generation, outsidePath).Scan(&detailPlace); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if detailPlace != "Yosemite National Park" {
+		t.Fatalf("national path detail context=%q", detailPlace)
+	}
+
+	var tile []byte
+	if err := db.tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt(14,2639,6377,json_build_object(
+		'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
+		account, sessionID, selectionID, generation).Scan(&tile); err != nil {
+		t.Fatal(err)
+	}
+	compact := func(id uuid.UUID) []byte { return []byte(strings.ToUpper(strings.ReplaceAll(id.String(), "-", ""))) }
+	if bytes.Contains(tile, compact(unnamedPath)) || !bytes.Contains(tile, compact(outsidePath)) ||
+		!bytes.Contains(tile, compact(cityPath)) || !bytes.Contains(tile, []byte("Yosemite National Park")) {
+		t.Fatal("national park MVT identity or unnamed suppression contract failed")
+	}
+}
+
+func TestCoverageReconciliationBackfillsReadyRoutes(t *testing.T) {
+	db := openTestDatabases(t)
+	account, workout := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	digest := bytes.Repeat([]byte{0x4e}, 32)
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.accounts(id) VALUES($1)`, account); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+		provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+		VALUES($1,$2,$3,$4,$5,'reconciliation-fixture',$6,'Outdoor Run',transaction_timestamp(),transaction_timestamp(),current_date,0)`,
+		workout, account, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states
+		(account_id,workout_id,route_input_revision,route_input_sha256,readiness_state,map_data_ready_at)
+		VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp())`, account, workout, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude)
+		VALUES($1,$2,1,-122,37,-122,37,false)`, account, workout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_regions(account_id,workout_id,region_id,desired_osm_generation)
+		VALUES($1,$2,'geofabrik:test',1)`, account, workout); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var desiredRevision int64
+	var changed bool
+	if err := db.coverage.QueryRow(db.ctx, `SELECT desired_revision,changed FROM app.observe_coverage_reconciliation(1,'coverage-production-v1')`).Scan(
+		&desiredRevision, &changed); err != nil {
+		t.Fatal(err)
+	}
+	if desiredRevision < 1 {
+		t.Fatalf("desired reconciliation revision=%d", desiredRevision)
+	}
+	var staleRevision int64
+	var staleChanged bool
+	if err := db.coverage.QueryRow(db.ctx, `SELECT desired_revision,changed FROM app.observe_coverage_reconciliation(0,'coverage-production-v1')`).Scan(
+		&staleRevision, &staleChanged); err != nil {
+		t.Fatal(err)
+	}
+	if staleRevision != desiredRevision || staleChanged {
+		t.Fatalf("stale OSM observation revision/changed=%d/%t, want %d/false", staleRevision, staleChanged, desiredRevision)
+	}
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.coverage_reconciliation_accounts SET
+		completed_revision=desired_revision,next_scan_at=transaction_timestamp()+interval '1 day',worker_id=NULL,
+		lease_token=NULL,heartbeat_at=NULL,lease_expires_at=NULL WHERE account_id<>$1`, account); err != nil {
+		t.Fatal(err)
+	}
+	lease := uuid.New()
+	var claimedAccount uuid.UUID
+	var claimedRevision int64
+	var cursor *uuid.UUID
+	if err := db.coverage.QueryRow(db.ctx, `SELECT account_id,reconciliation_revision,cursor_workout_id
+		FROM app.claim_coverage_reconciliation('coverage-reconciler',$1,interval '2 minutes',$2)`, lease,
+		database.SupportedSchemaVersion).Scan(&claimedAccount, &claimedRevision, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	if claimedAccount != account || claimedRevision != desiredRevision || cursor != nil {
+		t.Fatalf("reconciliation claim=%s/%d/%v", claimedAccount, claimedRevision, cursor)
+	}
+	tx = beginAccount(t, db.ctx, db.coverage, account)
+	var listedWorkout uuid.UUID
+	var listedRevision int64
+	var listedDigest []byte
+	if err := tx.QueryRow(db.ctx, `SELECT workout_id,route_input_revision,route_input_sha256
+		FROM app.read_coverage_reconciliation_routes($1,$2,'coverage-reconciler',$3,NULL,10)`,
+		account, claimedRevision, lease).Scan(&listedWorkout, &listedRevision, &listedDigest); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if listedWorkout != workout || listedRevision != 1 || !bytes.Equal(listedDigest, digest) {
+		t.Fatalf("listed route=%s/%d/%x", listedWorkout, listedRevision, listedDigest)
+	}
+	tx = beginAccount(t, db.ctx, db.coverage, account)
+	var applied bool
+	if err := tx.QueryRow(db.ctx, `SELECT app.apply_coverage_reconciliation($1,$2,'coverage-reconciler',$3,$4,1,$5,
+		'map_data_ready',NULL,$6::jsonb,$7,$8,'coverage-experimental-v1','coverage-sampling-experimental-v1',
+		'coverage-path-policy-experimental-v82',5)`, account, claimedRevision, lease, workout, digest,
+		`[{"regionId":"geofabrik:test","generation":1}]`, uuid.New(), uuid.New()).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("reconciliation target was not applied")
+	}
+	var childCount int
+	if err := db.migration.QueryRow(db.ctx, `SELECT count(*) FROM app.coverage_route_job_contexts WHERE account_id=$1 AND workout_id=$2`,
+		account, workout).Scan(&childCount); err != nil {
+		t.Fatal(err)
+	}
+	if childCount != 1 {
+		t.Fatalf("reconciliation route children=%d", childCount)
+	}
+	var completed bool
+	if err := db.coverage.QueryRow(db.ctx, `SELECT app.advance_coverage_reconciliation($1,$2,'coverage-reconciler',$3,$4,true,interval '24 hours')`,
+		account, claimedRevision, lease, workout).Scan(&completed); err != nil {
+		t.Fatal(err)
+	}
+	if !completed {
+		t.Fatal("reconciliation campaign was not completed")
+	}
+}
+
+func TestCoverageCountBuckets(t *testing.T) {
+	db := openTestDatabases(t)
+	rows, err := db.api.Query(db.ctx, `SELECT value,app.coverage_count_bucket(value)
+		FROM unnest(ARRAY[1,2,3,5,6,10,11,25,26,100]::bigint[]) value`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []int{1, 2, 3, 3, 4, 4, 5, 5, 6, 6}
+	index := 0
+	for rows.Next() {
+		var value int64
+		var bucket int
+		if err := rows.Scan(&value, &bucket); err != nil {
+			t.Fatal(err)
+		}
+		if index >= len(want) || bucket != want[index] {
+			t.Fatalf("value %d bucket=%d want=%d", value, bucket, want[index])
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil || index != len(want) {
+		t.Fatalf("bucket rows=%d err=%v", index, err)
+	}
 }
 
 func openPool(t *testing.T, ctx context.Context, databaseURL string, maxConns int32) *pgxpool.Pool {

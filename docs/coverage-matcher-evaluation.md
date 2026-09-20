@@ -2,9 +2,11 @@
 
 ## Status
 
-Experimental evidence for ADR 0009. ADR 0009 remains **Proposed**. Production
-Coverage state remains untouched. An owner-only, feature-gated diagnostic API
-can persist bounded matcher evidence and labels; there is no diagnostic UI.
+Acceptance evidence for ADR 0009, accepted on 2026-09-11 with matcher rules
+`coverage-experimental-v1`, adaptive sampling, and path policy
+`coverage-path-policy-experimental-v82`. Production Coverage persistence remains
+the next delivery slice. The owner-only diagnostic API and UI persist bounded
+matcher evidence and labels and remain available for route-level review.
 
 ## Scope
 
@@ -106,8 +108,8 @@ silently truncating the graph.
 The package defines observations, directed segments, candidates, a graph,
 decoded observations/traversals/results, evaluation labels/metrics, and an
 explicit rules version. `coverage-experimental-v1` centralizes all constants in
-`ExperimentalRules`. These values are test hypotheses, not accepted production
-thresholds.
+`ExperimentalRules`. ADR 0009 accepts these values as the production baseline;
+future changes require a new version and diagnostic regression review.
 
 ## Semantics
 
@@ -248,19 +250,20 @@ they cannot establish false-positive or false-negative accuracy.
 
 ## Known Gaps
 
-- The adapter-to-decoder bridge is implemented, but persisted traversal geometry
-  still requires clipping source polylines rather than retaining only meter
-  intervals. Geographic projection tolerance also needs a larger fixture corpus.
+- The diagnostic adapter clips canonical source polylines and persists valid
+  traversal geometry. Geographic projection tolerance should continue to be
+  evaluated as routes from additional devices and regions become available.
 - Altitude, turn restrictions, and OSM conditional restrictions are not represented.
-  Experimental versioned foot, bicycle, and conservative shared-public access and
-  direction policy is implemented, but still requires representative evaluation.
+  The accepted versioned foot, bicycle, and conservative shared-public access and
+  direction policy remains subject to future diagnostic regression review.
 - Path policy v2 suppresses pedestrian-only candidates for foot and bicycle observations when
   a drivable centerline is within 5 meters. Label analysis found 146 Unexpected v2
   portions across 23 public segments: 11 sidewalks and 12 crossings. Sixteen were
   within 5 meters of a road and had leaked back through topology transitions; the
   remaining seven were 7.1-10.5 meters from centerlines. Policy v3 excludes tagged
   sidewalks/crossings from candidate and transition graphs while retaining untagged
-  park/trail paths. Representative sidewalk-heavy diagnostics must now validate v4.
+  park/trail paths. Representative sidewalk-heavy diagnostics were then used to
+  validate and refine v4 and subsequent policies.
 - A labeled 4,343-point Outdoor Walk produced 1,299 sampled observations under v3,
   with only 489 matched, 34 ambiguous, 738 unmatched, and 38 rejected. The missing
   spans corresponded to sidewalk traces beside road centerlines outside the
@@ -1105,14 +1108,15 @@ they cannot establish false-positive or false-negative accuracy.
   `0A0202A1E82CD6918EA1B7E522DC36C0`. The run yielded 2,100 matched, 300 ambiguous,
   113 unmatched, and 4 rejected observations. October 28 and 29 regressions shift
   substantial ambiguity to matched status while retaining comparable accepted totals.
-- The corpus is intentionally small and synthetic. It does not tune thresholds
-  across path classes, sampling devices, accuracy bands, switchbacks, tunnels,
-  dense urban grids, or representative Health Auto Export traces.
+- The labeled corpus is finite and biased toward the reviewed NorCal Health Auto
+  Export routes. Additional devices, regions, dense urban grids, switchbacks, and
+  tunnels remain useful future diagnostic coverage rather than acceptance blockers.
 - Ambiguity is reported from near-equal dynamic-programming state costs. It is
   not a calibrated posterior probability.
-- Runtime uses small synthetic graphs plus one public-coordinate NorCal smoke
-  evaluation. Candidate cardinality, projection accuracy, and bounded routing
-  cost across dense downtown, trail, switchback, tunnel, and poor-accuracy cases
-  still require representative measurement.
-- Map-data/rules version persistence, idempotent rematching, segment evidence,
-  logical-path counting, and rendering remain intentionally unimplemented.
+- Runtime evidence now includes synthetic graphs, the public-coordinate NorCal
+  smoke evaluation, aggregate route evaluation, and repeated deployed diagnostics.
+  Dense downtown, switchback, and tunnel cases still require representative
+  measurement.
+- Diagnostics persist map-data/rules provenance, immutable rematch runs, labels,
+  and exact segment evidence. Durable production matches, logical-path counting,
+  aggregation, and Coverage rendering remain the next implementation phase.

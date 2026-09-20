@@ -54,6 +54,9 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_worker') THEN
     CREATE ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
   END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_coverage_worker') THEN
+    CREATE ROLE workouts_coverage_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'workouts_tiles') THEN
     CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
@@ -65,6 +68,11 @@ $$;
 ALTER ROLE workouts_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 ALTER ROLE workouts_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 ALTER ROLE workouts_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE workouts_coverage_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE workouts_coverage_worker SET row_security=on;
+ALTER ROLE workouts_coverage_worker SET statement_timeout='120s';
+ALTER ROLE workouts_coverage_worker SET lock_timeout='5s';
+ALTER ROLE workouts_coverage_worker SET idle_in_transaction_session_timeout='30s';
 ALTER ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 ALTER ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -81,6 +89,7 @@ kubectl --context "$context" -n "$app_namespace" create secret generic workouts-
   --from-literal=migrationDatabaseUrl="postgresql://workouts_migration@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=apiDatabaseUrl="postgresql://workouts_api@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=workerDatabaseUrl="postgresql://workouts_worker@${database_host}:5432/workouts?sslmode=disable" \
+  --from-literal=coverageWorkerDatabaseUrl="postgresql://workouts_coverage_worker@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=tilesDatabaseUrl="postgresql://workouts_tiles@${database_host}:5432/workouts?sslmode=disable" \
   --from-literal=osmDatabaseUrl="$osm_database_url" \
   --dry-run=client -o yaml | kubectl --context "$context" apply -f -
@@ -114,6 +123,9 @@ if kubectl --context "$context" -n "$app_namespace" get deployment/workouts-expl
     deployment/workouts-explorer-ui \
     deployment/workouts-explorer-api \
     deployment/workouts-explorer-worker
+fi
+if kubectl --context "$context" -n "$app_namespace" get deployment/workouts-explorer-coverage-worker >/dev/null 2>&1; then
+  kubectl --context "$context" -n "$app_namespace" rollout restart deployment/workouts-explorer-coverage-worker
 fi
 if kubectl --context "$context" -n "$app_namespace" get deployment/workouts-explorer-tiles >/dev/null 2>&1; then
   kubectl --context "$context" -n "$app_namespace" rollout restart deployment/workouts-explorer-tiles
@@ -165,6 +177,7 @@ helm "${helm_args[@]}"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-ui --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-api --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-worker --timeout="$timeout"
+kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-coverage-worker --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" rollout status deployment/workouts-explorer-tiles --timeout="$timeout"
 kubectl --context "$context" -n "$app_namespace" wait \
   --for=condition=Ready certificate/workouts-explorer-ingress --timeout="$timeout"

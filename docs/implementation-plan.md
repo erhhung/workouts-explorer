@@ -13,6 +13,7 @@ This plan delivers vertical, testable product slices. It intentionally avoids a 
 - Keep account scope explicit in repositories, queries, jobs, tiles, tests, and telemetry.
 - Prefer PostgreSQL and PostGIS capabilities before introducing another stateful dependency.
 - Deploy immutable image SHA tags even before formal releases.
+- When verification needs a temporary Docker container and the Docker daemon is unavailable, try a disposable daemonless Buildah container with `buildah from` and `buildah run` before marking the check unavailable; clean up the working container and temporary artifacts afterward.
 
 ## Definition Of Done
 
@@ -46,7 +47,7 @@ implementation that depends on an unresolved choice.
 | Before Milestone 6 Map implementation | ADR 0011 | Theme-aware style families, workout-type defaults, fallback and override behavior, provider access, and private-overlay restoration are accepted. |
 | Before Milestone 7 OSM schema/bootstrap | ADR 0008 | The measured importer, derivation schema, segment identity, refresh, and promotion design are accepted. |
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
-| Before Milestone 7 Coverage rendering acceptance | ADR 0010 | Historical distributions establish concrete fixed count buckets, colors, legend labels, and tile semantics. |
+| Accepted 2026-09-13; amended 2026-09-14 | ADR 010 | Six fixed date-range buckets, paired aggregate/focus palettes, legend labels, and backend tile semantics are concrete; distribution and visual checks validate the contract. |
 
 ADRs 0001 through 0007 and ADRs 0011 through 0012 are accepted. ADRs 0008 through 0010 remain
 Proposed until their stated acceptance evidence is recorded. A proposed record's
@@ -360,16 +361,28 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   offset-safe nearest-workout inference, and restartable ingest/deletion backfill.
 - Implement named-region coverage detection, bounded provider-catalog auto-addition, globally coalesced region updates, and raw-route-only pending/unavailable behavior outside promoted regions.
 - Chain successful promotions to account/region coverage updates using desired/applied generation watermarks; refresh every intersecting routed workout after an existing region changes.
+- Decouple coverage from ingest completion: persist route revision/readiness and transactionally enqueue or coalesce one unclaimed account/region `coverage_update` parent with a `coverage_update_route` child per eligible stale workout revision, then make the workout and raw route available while matching remains pending.
+- Add queued, running, current, failed, and stale per-workout coverage state with target/applied route revision, matcher version, OSM generation vector, timestamps, bounded progress, and safe failure categories. Preserve prior valid coverage until a replacement commits.
+- Run coverage in a dedicated deployment that claims only `coverage_update_route` children; keep general-worker capacity reserved for connection checks, deletion, and ingest rather than relying on non-preemptive queue priority. Claim fairly across active account/region parents rather than draining one large parent first.
+- Process exactly one workout revision per child under one bounded OSM snapshot and no open application write transaction. Revalidate revision, matcher version, and OSM generations in a short fenced persistence transaction; make every route result an independent checkpoint so a failed child cannot stop or roll back siblings.
+- Derive coverage-parent status from route children: all successful is `succeeded`, mixed success and failure/cancellation is `partially_succeeded`, all failed is `failed`, and all cancelled is `cancelled`. Treat no-evidence as successful and a stale target as a successful `superseded` child that cannot replace current coverage.
+- Persist parent route counters for total, processed, succeeded, failed, cancelled, and superseded. Show those counters and authorized per-workout child status, attempts, duration, and safe failure category in the Data Sync Run detail without exposing coordinates.
+- Allow a failed or partially successful coverage parent to retry only failed/cancelled eligible routes using their current route revisions and matcher/OSM target; never rerun successful or superseded routes. Reuse the linear ingest retry contract: the original parent is First, each retry links to its immediate predecessor and root, only the latest parent may be retried, and Run detail navigates every parent by First, Second, ... latest ordinal. Link each retried route child to the corresponding unsuccessful child in the preceding parent. Do not advance the fully applied account/region watermark on partial failure or automatically hot-loop the failed target; retry only by user request or after desired work/OSM state advances.
+- Add PostgreSQL-coordinated global, per-account, and optional per-region matcher slots. Default to one active matcher route globally across production and diagnostics and one active production route per account, independent of worker or API replica count.
+- Give coverage workers dedicated least-privilege application/OSM credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts.
 - Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
 - Derive clipped positive-length segment traversals from decoded transitions; point projections alone create neither attribution nor rendered coverage.
-- Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning.
-- Choose fixed coverage bucket boundaries from historical distribution and accept ADR 0010 before accepting Coverage rendering.
+- Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning. Accepted on 2026-09-11 with matcher rules `coverage-experimental-v1` and path policy `coverage-path-policy-experimental-v82`.
+- Implement the accepted ADR 010 six-bucket Coverage rendering contract and retain aggregate/visual validation evidence.
 - Copy matched segment and logical-path identity, geometry, name, locality, class, and version into the application database.
 - Persist one match per workout and physical segment by dissolving overlapping or contiguous traversal spans regardless of direction, retaining disjoint spans as one `MultiLineString`, and computing unique covered length without filling gaps.
 - Enforce one workout/logical-path attribution using the earliest positive-length member-segment traversal.
 - Implement logical-path daily rollups plus all-time counts and date-only first/latest extrema.
-- Implement Coverage vector tiles, fixed blue buckets, hover properties, and legend.
-- Implement sortable, paginated Path Coverage in a full-map-area panel that preserves the mounted map and supports Show on map.
+- Implement Coverage vector tiles, paired amber/magenta fixed buckets, delayed exact hover details, and a dual-palette legend.
+- Preserve route-level matcher review behind the per-user **Enable coverage diagnostics** preference in a **Diagnostics** preference section. When enabled, Coverage synchronously runs and displays diagnostics for only the selected route; when disabled, Coverage displays durable aggregate coverage and statistics for all checked routes. Keep the existing bounded request timeout, local gate, and fast `429 Retry-After` behavior; additionally require cluster-wide matcher admission so API replicas cannot multiply OSM load. Do not introduce diagnostic jobs or polling in this milestone.
+- Implement searchable, sortable, paginated Road Coverage in a modal dialog that preserves the mounted map and supports entity/workout navigation.
+- Serve production Coverage tiles and statistics only from durable application data. Poll bounded processing state rather than invoking matching interactively, refresh private capabilities after committed generation changes, and identify omitted pending, failed, or unavailable checked routes when presenting partial coverage.
+- Set separate CPU/memory requests and limits for API, Martin, general-worker, and coverage-worker pods. Measure queue age, matcher duration, slot and pool contention, query timeouts, leases, retries, stale-result rejection, and interactive API/tile latency before raising matcher concurrency above one.
 - Implement manual OSM status/refresh and copied-segment reconciliation.
 
 ### Acceptance
@@ -381,6 +394,11 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Unmatched points remain visible in Routes but create no false coverage.
 - Month/year coverage remains interactive at the target scale.
 - OSM refresh failure leaves existing copied coverage usable.
+- Ingest completion and raw-route availability do not wait for coverage matching.
+- A coverage backlog cannot consume general-worker execution capacity or exceed configured database-coordinated matcher slots.
+- Each route becomes visible atomically after matching; stale, failed, cancelled, or timed-out work cannot replace prior valid coverage, block sibling routes, or falsely advance the fully applied watermark.
+- Mixed route success and failure produces a partially successful coverage parent with accurate route totals and child outcomes in Data Sync Run detail.
+- Partial Coverage identifies checked routes omitted because processing is pending, failed, or unavailable.
 
 ### Verification focus
 
@@ -394,7 +412,197 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Named-extract resolution, ephemeral download failure, overlap deduplication, and outside-region behavior
 - Coverage rollup equivalence to source attribution
 - High-density vector-tile benchmark
-- ADR 0010 distribution analysis and light/dark/mobile visual-regression checks
+- ADR 010 distribution analysis and light/dark/mobile visual-regression checks
+- Ingest completion with a long coverage backlog and immediate Routes availability
+- Dedicated worker-kind claim isolation while connection checks, deletion, and ingest execute
+- Global, per-account, and per-region matcher admission races across multiple coverage workers and API replicas
+- Fair route-child claiming, cancellation, timeout, selective retry, lease recovery, and sibling progress preservation
+- Coverage-parent status derivation and total/processed/succeeded/failed/cancelled/superseded counter races for every child-terminal combination
+- Per-route failure isolation, continued sibling execution, no-evidence success, superseded-result handling, and authorized Run-detail disclosure
+- Selective coverage retry across multiple ordinals, non-forking latest-only creation, parent first-to-latest navigation, and corresponding route-child lineage
+- Stale route-revision, matcher-version, and OSM-generation rejection plus desired-watermark successor coalescing
+- Synchronous diagnostic success when capacity is available and bounded `429 Retry-After` behavior when it is occupied
+- Summary, Routes, Coverage tile, and ordinary API latency under a representative matching backlog
+- Pool and PostgreSQL connection limits, reserved heartbeat capacity, pod resource limits, and saturation metrics
+
+### Progress (2026-09-12)
+
+- Extracted the complete route-level matcher pipeline from the synchronous
+  diagnostic API into `internal/coverage/routepipeline`. Sampling, bounded
+  overlapping windows, v82 cross-window repairs, exact clipping, invalid-geometry
+  filtering, generation provenance, unavailable-region lookup, movement-mode
+  inference, and diagnostic limits now form one side-effect-free implementation
+  reusable by diagnostics and future `coverage_update_route` workers.
+- The diagnostic API retains request admission, timeout, OSM snapshot lifecycle,
+  immutable run persistence, labels, response conversion, and summary logging.
+  The manual evaluator shares the canonical window size and movement-mode policy.
+- Focused and full Go tests plus `go vet ./...` pass after the extraction. Durable
+  production job schema, matcher admission, route-child execution, copied coverage
+  persistence, rollups, APIs, and UI remain next.
+- Migration 16 adds unclaimed `coverage_update` parents, independently leased
+  `coverage_update_route` children, immutable route/matcher/OSM targets,
+  per-workout queued/running/current/failed/stale state, exact parent route
+  counters, fair cross-parent claiming, failure-isolated completion, and selective
+  non-forking retries linked at both parent and route-child levels.
+- Migration 16 also adds one shared PostgreSQL-coordinated matcher admission pool
+  for production and synchronous diagnostics, conservatively defaulted to one
+  global, account, and region slot. Coverage parent cancellation now cancels
+  queued children, marks running children cooperatively, and preserves the mature
+  ingest/source lock order. At the migration-16 checkpoint, production matching
+  and copied coverage persistence were not yet connected to these durable jobs.
+- Migration 17 adds account-scoped copied logical paths and canonical segments,
+  dissolved workout/segment matches, and unique workout/path attributions. A
+  fenced persistence function atomically replaces one workout's coverage and
+  terminalizes its route child; workers can no longer mark successful coverage
+  current through the lower-level completion function. Valid no-evidence results
+  atomically remove prior coverage, while failed or stale work preserves it.
+- New ingest writes append ready workouts to coalesced coverage parents. The
+  dedicated `/app/coverage-worker` deployment claims only route children, loads
+  canonical route input through a lease-fenced reader, verifies its digest and OSM
+  generation vector, shares matcher admission with synchronous diagnostics, runs
+  v82, dissolves repeated traversal intervals, copies bounded OSM metadata, and
+  persists each workout independently. At the migration-17 checkpoint, aggregate
+  rollups, production tiles/stats, Data Sync coverage details, and historical-route
+  backfill remained next.
+- OSM migration 7 adds a transactionally emitted promotion-event outbox and seeds
+  events for already-active regions. Application migration 18 adds independent
+  event/matcher-contract observation, cross-account campaign seeding behind
+  security-definer functions, account leases, keyset cursors, route-input repair,
+  current region resolution, bounded historical backfill, retry delay, and daily
+  safety scans. The dedicated coverage worker runs reconciliation alongside route
+  matching without direct account enumeration.
+- Production matcher snapshots now constrain candidate and incident-edge lookup
+  to the child's exact OSM generation vector and remain open through application
+  persistence. Inactive targets complete as superseded, and queued children are
+  replaced when either route revision or generation vector changes. Aggregate
+  rollups, production tiles/stats, Data Sync coverage details, and the production
+  Coverage UI remain next.
+- Cumulative migration 18 adds workout-local attribution dates, transactionally maintained
+  account/path daily and all-time distinct-workout rollups, immutable map-selection
+  range/subset metadata, and a capability-fenced selected-path aggregate read.
+  Complete date ranges use daily rollups; explicit checked-workout subsets use
+  direct attribution membership. Map generations now advance once on successful
+  applied/no-evidence completion rather than on queued, running, failed, stale, or
+  cancellation state transitions. Fixed rendering buckets and Coverage MVT remain
+  remained blocked on ADR 010 acceptance at that checkpoint.
+- Coverage jobs are now owner-visible through the existing Jobs API and Data Sync
+  page. History supports a Coverage update filter and system trigger; detail shows
+  safe account/region context, route totals, per-workout outcomes and duration,
+  events/logs, cancellation, and selective failed/cancelled-route retry. Coverage
+  parent retry chains use one-based First/Second/... ordinals and expose every
+  attempt for direct navigation without exposing route coordinates or digests.
+- Numbered API migrations, OSM migrations, and ADR filenames use uniform
+  three-digit prefixes. Reconciliation, rollups, and Coverage MVT are cumulative migration 017;
+  migration 018 defines park-attributed unnamed segments as exclusively park-owned,
+  with the final explorer filters installed by migration 019. Migration 013 uses
+  positional arguments when persisting diagnostics so columns added by later
+  migrations cannot collide with its inputs. The next application migration ordinal is 020.
+- ADR 010 is accepted with date-range workout buckets `1`, `2`, `3-5`, `6-10`,
+  `11-25`, and `26+`, exact tile counts, paired amber and magenta sequential
+  palettes, and backend-authoritative assignment. Cumulative migration 017 adds the
+  capability-fenced aggregate Coverage MVT contract, and map selections expose separate immutable
+  route and Coverage tile URLs.
+- OSM importer/derivation versions 3/5 add generation-local bounded local and
+  national-park polygon import. Local attribution remains municipality-scoped;
+  national attribution is provider-region/source-scoped, spans municipalities,
+  and supports segments without a municipality. Derivation 5 gives connected
+  same-name national-park segments one logical path across broad-class changes,
+  while retaining separate IDs for disconnected components. Application migration 018
+  persists nullable-locality national park visits and rollups. Migration 019 uses
+  an attributed national park as the display context for a named path only when
+  no municipality exists. Driveway and parking geometry retains current matching
+  and tile behavior but is filtered from user-facing path statistics/history.
+- Cumulative migration 013 persists the owner diagnostics preference. With it disabled,
+  Coverage uses aggregate checked-workout MVT and the accepted legend/path stats;
+  with it enabled, Coverage retains selected-route matcher review. Cumulative
+  migration 015 creates readiness/job state and moves matcher execution to the least-privilege
+  `workouts_coverage_worker` role while the general worker retains enqueue-only
+  authority.
+- The xdev `dev-20260913` rollout exercised the storage-constrained rebuild: it
+  preserved the OSM catalog and 419 timezone geometries, retired generation 3,
+  and promoted validated importer/derivation 2/3 generation 4 with 4,483,073
+  segments and 83,137 park-attributed segments. The application database was
+  bridged in place from the shipped 22/21 migration history to cumulative 18/17
+  without changing workout or diagnostic row counts. Deployment probes also
+  hardened the manual update Job's pull/TLS settings, completed the dedicated
+  role's metadata and account-context grants, and raised only trusted production
+  route input capacity to 50,000 points while retaining the public diagnostics
+  limit. Live reconciliation then persisted path, segment, and park attribution.
+- Migration 019 separates checked-route geometry from date-range statistics and
+  focused-route coverage. Production Coverage hides raw GPS routes, renders
+  checked coverage with an amber sequence, overlays focused attribution with a
+  magenta sequence, and exposes delayed exact visit details. The Road Coverage
+  dialog provides server-side search, sorting, pagination, workout navigation,
+  and entity navigation with 500-meter minimum fit bounds and a white blink.
+- The original national-park rollout required the schema-19 xdev hotpatch. The
+  connected-path derivation requires no application schema hotpatch or function
+  signature change: publish OSM/worker images as `dev-20260913`, retire active
+  generation 7 for storage, rebuild generation 8 with importer/derivation 3/5,
+  and let coverage reconciliation repopulate copied paths, segments, and matches.
+- OSM derivation 6 supersedes the national-park-only component pass. After park
+  attribution it merges graph-connected existing logical IDs by park, municipality,
+  or provider-region scope and normalized name, using one key for all unnamed
+  segments. Park-attributed IDs are scope-rebased first so a legacy locality ID
+  cannot span the park boundary. Four indexed endpoint joins stage only cross-ID edges; connected
+  components contain only participating logical IDs. Broad class and source
+  lineage are ignored only across exact graph connections. Validation reports
+  edge, affected-ID, and component counts and promotion rejects any remaining
+  connected split. Existing disconnected members of one legacy ID are not split.
+- OSM derivation 7 corrects derivation 6's over-grouping. Component vertices are
+  physical segments rather than incoming logical IDs, and road/path class is part of
+  the scope/name key. Connected same-road/path-class named or unnamed segments merge across
+  source lineage (including cycleway/footway transitions), while road/path boundaries and every disconnected component
+  receive independent deterministic identities even when a legacy ID was shared.
+- OSM derivation 8 prevents connected unnamed pedestrian networks from collapsing
+  across town. Cross-source edges survive only at simple two-segment continuation
+  nodes; branch junctions preserve source-way boundaries while one source way
+  remains continuous. Validation reads the exact pruned-edge split count recorded
+  during derivation instead of rescanning four endpoint orientations.
+- OSM derivation 9 limits branch pruning to unnamed groups. A normalized name is
+  sufficient semantic identity at a branch, so graph-connected same-name segments
+  merge across source ways even where three or more eligible segments meet. This
+  reunifies named roads such as Cupertino's three-way Meteor Drive junction while
+  retaining derivation 8's protection for unnamed branching networks.
+- OSM derivation 10 preserves an unambiguous exact-class continuation at unnamed
+  branches: when exactly two cycleway, footway, trail, or other broad-class
+  segments meet, their cross-source edge survives while different-class spurs stay
+  separate. This reconnects the Cupertino Mary Avenue/Homestead cycleway without
+  reopening town-wide pedestrian-network merging.
+- Derivation 11 retains county (`admin_level=6`) polygons alongside municipalities
+  (`admin_level=8`), uses the smallest covering polygon, and scopes geometry outside
+  municipalities to county before provider region. It also absorbs non-road
+  municipality clipping islands up to 25 m when matching pieces of the same county
+  immediately precede and follow on one source segment. This removes Parker Ranch
+  Trail's 4.15 m Saratoga end cap while labeling real county pockets such as Monta
+  Vista as Santa Clara County.
+- Derivation 12 fixes overlapping administrative assignment by ordering covering
+  polygons by admin level before area and relation ID. Municipalities therefore
+  always beat their containing county; this is regression-checked against
+  Heatherstone Way and Yorkshire Way in Mountain View.
+- Derivation 13 lets normalized names bridge exact road/path graph transitions and
+  adds named-road proximity edges within one scope/name: 15 m for ordinary gaps,
+  or 50 m only when both segments are explicitly one-way. This merges Yorkshire
+  Way's road/cycleway continuation and divided roads such as Grant Road and
+  Foothill Expressway while preserving all unnamed class/branch protections.
+- Derivation 14 compacts named-road proximity to one nearest edge per scope/name
+  and source-way pair, including same-source disconnected pieces. This preserves
+  Grant Road's short approach while bounding full-region graph storage.
+- Derivation 15 applies park identity scope only to non-road geometry. Roads keep
+  municipality/county scope while crossing parks, preventing short park-covered
+  pieces from splitting named streets such as Franklin Avenue.
+- Derivation 16 imports named school/college/university/education grounds and
+  attributes only formally unnamed roads/paths to the smallest containing grounds
+  polygon. Education ID defines identity scope and matcher copy exposes the campus
+  name through existing name fields, so no application schema migration is needed.
+- The storage-constrained derivation-6 rollout retires active generation 8 only
+  after coverage/diagnostic/update workers are stopped and copied application
+  coverage is preserved, removes its detached canonical leaves and stale build
+  schemas, then builds and validates generation 9 with importer/derivation 3/6.
+  Restarting reconciliation copies the merged IDs through existing signatures.
+- Unrestricted diagnostic OSM snapshots treat both null and empty generation
+  arrays as unbounded. Production snapshots continue to fence explicit region
+  generations; diagnostics no longer filter every candidate when pgx encodes an
+  unset Go slice as SQL NULL.
 
 ## Milestone 8: iCloud/Rclone Source
 

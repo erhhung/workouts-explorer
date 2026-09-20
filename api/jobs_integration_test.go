@@ -84,8 +84,11 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	}
 	if len(detail.Children) != 2 || detail.Children[0].Source == nil || detail.Children[1].Source == nil ||
 		detail.Children[0].Source.SourceId != sourceA.Id || detail.Children[1].Source.SourceId != sourceB.Id ||
-		detail.RetryRootJobId != nil || detail.RetryOrdinal != nil || detail.Children[0].RetryRootJobId != nil ||
-		detail.Children[0].RetryOrdinal != nil || detail.Children[1].RetryRootJobId != nil || detail.Children[1].RetryOrdinal != nil {
+		detail.RetryRootJobId == nil || *detail.RetryRootJobId != detail.Id || detail.RetryOrdinal == nil || *detail.RetryOrdinal != 1 ||
+		detail.Children[0].RetryRootJobId == nil || *detail.Children[0].RetryRootJobId != detail.Children[0].Id ||
+		detail.Children[0].RetryOrdinal == nil || *detail.Children[0].RetryOrdinal != 1 ||
+		detail.Children[1].RetryRootJobId == nil || *detail.Children[1].RetryRootJobId != detail.Children[1].Id ||
+		detail.Children[1].RetryOrdinal == nil || *detail.Children[1].RetryOrdinal != 1 {
 		t.Fatalf("children are not safely source-sorted: %#v", detail.Children)
 	}
 	directFiles := integrationAccountTransaction(t, apiDB, accountID)
@@ -204,22 +207,40 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	detail = generated.JobDetail{}
 	if err := json.Unmarshal(retryDetailCall.recorder.Body.Bytes(), &detail); err != nil || detail.RetryOfJobId == nil ||
 		*detail.RetryOfJobId != accepted.JobId || detail.RetryRootJobId == nil || *detail.RetryRootJobId != accepted.JobId ||
-		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 1 || len(detail.Children) != 2 {
+		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 2 || len(detail.Children) != 2 {
 		t.Fatalf("retry lineage detail=%#v err=%v", detail, err)
 	}
 	for index := range detail.Children {
 		if detail.Children[index].RetryOfJobId == nil || *detail.Children[index].RetryOfJobId != originalChildren[index].Id ||
 			detail.Children[index].RetryRootJobId == nil || *detail.Children[index].RetryRootJobId != originalChildren[index].Id ||
-			detail.Children[index].RetryOrdinal == nil || *detail.Children[index].RetryOrdinal != 1 {
+			detail.Children[index].RetryOrdinal == nil || *detail.Children[index].RetryOrdinal != 2 {
 			t.Fatalf("child retry lineage=%#v", detail.Children)
 		}
+	}
+	mutatedChildID, valid := parseCompactUUID(detail.Children[0].Id)
+	originalChildID, originalValid := parseCompactUUID(originalChildren[0].Id)
+	if !valid || !originalValid {
+		t.Fatal("invalid retry child fixture IDs")
+	}
+	if _, err := adminDB.Exec(ctx, `UPDATE app.jobs SET retry_of_job_id=NULL WHERE id=$1`, mutatedChildID); err != nil {
+		t.Fatal(err)
+	}
+	malformedChildCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+retryAccepted.JobId, "", bearer, "", false)
+	var malformedChildDetail generated.JobDetail
+	if malformedChildCall.recorder.Code != http.StatusOK || json.Unmarshal(malformedChildCall.recorder.Body.Bytes(), &malformedChildDetail) != nil ||
+		malformedChildDetail.RetryRootJobId == nil || len(malformedChildDetail.Children) != 2 ||
+		malformedChildDetail.Children[0].RetryRootJobId != nil {
+		t.Fatalf("invalid child lineage blocked parent detail status=%d detail=%#v", malformedChildCall.recorder.Code, malformedChildDetail)
+	}
+	if _, err := adminDB.Exec(ctx, `UPDATE app.jobs SET retry_of_job_id=$2 WHERE id=$1`, mutatedChildID, originalChildID); err != nil {
+		t.Fatal(err)
 	}
 	originalDetailCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+accepted.JobId, "", bearer, "", false)
 	detail = generated.JobDetail{}
 	if err := json.Unmarshal(originalDetailCall.recorder.Body.Bytes(), &detail); err != nil ||
 		len(detail.RetriedByJobIds) != 1 || detail.RetriedByJobIds[0] != retryAccepted.JobId ||
 		detail.LatestRetryJobId == nil || *detail.LatestRetryJobId != retryAccepted.JobId ||
-		detail.LatestRetryOrdinal == nil || *detail.LatestRetryOrdinal != 1 {
+		detail.LatestRetryOrdinal == nil || *detail.LatestRetryOrdinal != 2 {
 		t.Fatalf("reverse retry lineage=%#v err=%v", detail.RetriedByJobIds, err)
 	}
 	historyCall := routeJobRequest(handler, http.MethodGet, "/api/jobs?page=1&pageSize=100", "", bearer, "", false)
@@ -252,7 +273,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 		t.Fatalf("retry cleanup status=%d body=%s", retryCancel.recorder.Code, retryCancel.recorder.Body.String())
 	}
 	previousRetryID := retryAccepted.JobId
-	for ordinal := 2; ordinal <= 3; ordinal++ {
+	for ordinal := 3; ordinal <= 4; ordinal++ {
 		nextRetry := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+previousRetryID+"/retry", `{}`, cookie, "jobs-csrf", true)
 		var nextAccepted generated.IngestAccepted
 		if nextRetry.recorder.Code != http.StatusAccepted || json.Unmarshal(nextRetry.recorder.Body.Bytes(), &nextAccepted) != nil {
@@ -273,7 +294,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 				t.Fatalf("retry ordinal %d child lineage=%#v", ordinal, nextDetail.Children)
 			}
 		}
-		if ordinal == 3 {
+		if ordinal == 4 {
 			childDetailCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+nextDetail.Children[0].Id, "", bearer, "", false)
 			validateRecordedResponse(t, http.MethodGet, "/api/jobs/"+nextDetail.Children[0].Id, childDetailCall.recorder)
 			var childDetail generated.JobDetail
@@ -300,10 +321,10 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	detail = generated.JobDetail{}
 	if err := json.Unmarshal(directDetailCall.recorder.Body.Bytes(), &detail); err != nil || detail.RetryOfJobId == nil ||
 		*detail.RetryOfJobId != accepted.JobId || detail.RetryRootJobId == nil || *detail.RetryRootJobId != accepted.JobId ||
-		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 1 || len(detail.Children) != 1 || detail.Children[0].RetryOfJobId == nil ||
+		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 2 || len(detail.Children) != 1 || detail.Children[0].RetryOfJobId == nil ||
 		*detail.Children[0].RetryOfJobId != originalChildren[0].Id || detail.Children[0].RetryRootJobId == nil ||
 		*detail.Children[0].RetryRootJobId != originalChildren[0].Id || detail.Children[0].RetryOrdinal == nil ||
-		*detail.Children[0].RetryOrdinal != 1 {
+		*detail.Children[0].RetryOrdinal != 2 {
 		t.Fatalf("direct child retry lineage=%#v err=%v", detail, err)
 	}
 	originalChildCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+originalChildren[0].Id, "", bearer, "", false)
@@ -483,6 +504,107 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	if err := finish.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	coverageParent, coverageChild, workoutID, workoutTypeID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	coverageFixture := integrationAccountTransaction(t, adminDB, accountID)
+	defer coverageFixture.Rollback(ctx)
+	if _, err := coverageFixture.Exec(ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
+		VALUES($1,$2,'running','Outdoor Run')`, workoutTypeID, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+		provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+		VALUES($1,$2,$3,$4,$5,'coverage-api-fixture',$6,'Outdoor Run','2026-09-10T08:00:00Z','2026-09-10T09:00:00Z','2026-09-10',3600)`,
+		workoutID, accountID, uuid.New(), uuid.New(), workoutTypeID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
+		route_input_sha256,readiness_state,map_data_ready_at) VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp())`,
+		accountID, workoutID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.workout_coverage_regions(account_id,workout_id,region_id,desired_osm_generation)
+		VALUES($1,$2,'geofabrik:test',2)`, accountID, workoutID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.jobs(id,account_id,kind,priority,progress_total)
+		VALUES($1,$2,'coverage_update',20,1)`, coverageParent, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.coverage_job_contexts(job_id,account_id,region_id,
+		target_osm_generation,target_work_revision,rules_version,sampling_version,path_policy_version,minimum_traversal_meters)
+		VALUES($1,$2,'geofabrik:test',2,4,'coverage-experimental-v1','coverage-sampling-experimental-v1',
+		'coverage-path-policy-experimental-v82',5)`, coverageParent, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority)
+		VALUES($1,$2,$3,'coverage_update_route',20)`, coverageChild, coverageParent, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.coverage_route_job_contexts(job_id,account_id,workout_id,
+		route_input_revision,route_input_sha256,target_generations)
+		VALUES($1,$2,$3,1,$4,'[{"regionId":"geofabrik:test","generation":2}]')`,
+		coverageChild, accountID, workoutID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.coverage_job_progress(job_id,account_id,routes_total)
+		VALUES($1,$2,1)`, coverageParent, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coverageFixture.Exec(ctx, `UPDATE app.jobs SET status='running',worker_id='coverage-test-worker',
+		lease_token=$2,claimed_at=transaction_timestamp(),heartbeat_at=transaction_timestamp(),
+		lease_expires_at=transaction_timestamp()+interval '2 minutes',started_at=transaction_timestamp()
+		WHERE id=$1`, coverageChild, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if err := coverageFixture.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	coverageList := routeJobRequest(handler, http.MethodGet, "/api/jobs?operation=coverage_update", "", bearer, "", false)
+	var coverageJobs generated.JobList
+	if coverageList.recorder.Code != http.StatusOK || json.Unmarshal(coverageList.recorder.Body.Bytes(), &coverageJobs) != nil ||
+		len(coverageJobs.Items) != 1 || coverageJobs.Items[0].Id != compactUUID(coverageParent) ||
+		coverageJobs.Items[0].RouteStats == nil || coverageJobs.Items[0].RouteStats.Running != 1 || coverageJobs.Items[0].Trigger != generated.JobTrigger("system") {
+		t.Fatalf("coverage job list status=%d body=%s", coverageList.recorder.Code, coverageList.recorder.Body.String())
+	}
+	coverageDetailCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+compactUUID(coverageParent), "", bearer, "", false)
+	var coverageDetail generated.JobDetail
+	if coverageDetailCall.recorder.Code != http.StatusOK || json.Unmarshal(coverageDetailCall.recorder.Body.Bytes(), &coverageDetail) != nil ||
+		coverageDetail.Coverage == nil || coverageDetail.Coverage.RegionId != "geofabrik:test" || coverageDetail.RouteStats == nil || coverageDetail.RouteStats.Running != 1 ||
+		len(coverageDetail.Children) != 1 || coverageDetail.Children[0].CoverageRoute == nil ||
+		coverageDetail.Children[0].CoverageRoute.WorkoutId != compactUUID(workoutID) ||
+		coverageDetail.RetryOrdinal == nil || *coverageDetail.RetryOrdinal != 1 || coverageDetail.RetryRootJobId == nil {
+		t.Fatalf("coverage detail status=%d body=%s", coverageDetailCall.recorder.Code, coverageDetailCall.recorder.Body.String())
+	}
+	coverageFiles := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+compactUUID(coverageParent)+"/files", "", bearer, "", false)
+	if coverageFiles.recorder.Code != http.StatusNotFound {
+		t.Fatalf("coverage files status=%d body=%s", coverageFiles.recorder.Code, coverageFiles.recorder.Body.String())
+	}
+	coverageCancel := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+compactUUID(coverageParent)+"/cancellation", `{}`, cookie, "jobs-csrf", true)
+	if coverageCancel.recorder.Code != http.StatusOK {
+		t.Fatalf("coverage cancellation status=%d body=%s", coverageCancel.recorder.Code, coverageCancel.recorder.Body.String())
+	}
+	coverageRetry := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+compactUUID(coverageParent)+"/retry", `{}`, cookie, "jobs-csrf", true)
+	var coverageRetryAccepted generated.IngestAccepted
+	if coverageRetry.recorder.Code != http.StatusAccepted || json.Unmarshal(coverageRetry.recorder.Body.Bytes(), &coverageRetryAccepted) != nil {
+		t.Fatalf("coverage retry status=%d body=%s", coverageRetry.recorder.Code, coverageRetry.recorder.Body.String())
+	}
+	coverageRetryDetailCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+coverageRetryAccepted.JobId, "", bearer, "", false)
+	var coverageRetryDetail generated.JobDetail
+	if coverageRetryDetailCall.recorder.Code != http.StatusOK || json.Unmarshal(coverageRetryDetailCall.recorder.Body.Bytes(), &coverageRetryDetail) != nil ||
+		coverageRetryDetail.RetryOrdinal == nil || *coverageRetryDetail.RetryOrdinal != 2 ||
+		coverageRetryDetail.RetryRootJobId == nil || *coverageRetryDetail.RetryRootJobId != compactUUID(coverageParent) ||
+		coverageRetryDetail.RetryOfJobId == nil || *coverageRetryDetail.RetryOfJobId != compactUUID(coverageParent) ||
+		len(coverageRetryDetail.Children) != 1 || coverageRetryDetail.Children[0].RetryOfJobId == nil ||
+		*coverageRetryDetail.Children[0].RetryOfJobId != compactUUID(coverageChild) {
+		t.Fatalf("coverage retry detail status=%d body=%s", coverageRetryDetailCall.recorder.Code, coverageRetryDetailCall.recorder.Body.String())
+	}
 }
 
 func TestJobRetryLimitAndSourceLineageIntegration(t *testing.T) {
@@ -559,32 +681,17 @@ func TestJobRetryLimitAndSourceLineageIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ordinal99 := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+compactUUID(parentIDs[maxJobRetryOrdinal-1]), "", bearer, "", false)
+	ordinal100 := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+compactUUID(parentIDs[maxJobRetryOrdinal-1]), "", bearer, "", false)
 	var detail generated.JobDetail
-	if ordinal99.recorder.Code != http.StatusOK || json.Unmarshal(ordinal99.recorder.Body.Bytes(), &detail) != nil ||
-		detail.RetryOrdinal == nil || *detail.RetryOrdinal != maxJobRetryOrdinal-1 {
-		t.Fatalf("ordinal 99 detail status=%d body=%s", ordinal99.recorder.Code, ordinal99.recorder.Body.String())
-	}
-	retry100 := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+compactUUID(parentIDs[maxJobRetryOrdinal-1])+"/retry", `{}`, cookie, "retry-limit-csrf", true)
-	var accepted generated.IngestAccepted
-	if retry100.recorder.Code != http.StatusAccepted || json.Unmarshal(retry100.recorder.Body.Bytes(), &accepted) != nil {
-		t.Fatalf("100th retry status=%d body=%s", retry100.recorder.Code, retry100.recorder.Body.String())
-	}
-	ordinal100 := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+accepted.JobId, "", bearer, "", false)
-	detail = generated.JobDetail{}
 	if ordinal100.recorder.Code != http.StatusOK || json.Unmarshal(ordinal100.recorder.Body.Bytes(), &detail) != nil ||
 		detail.RetryOrdinal == nil || *detail.RetryOrdinal != maxJobRetryOrdinal {
 		t.Fatalf("ordinal 100 detail status=%d body=%s", ordinal100.recorder.Code, ordinal100.recorder.Body.String())
 	}
-	cleanup100 := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/cancellation", `{}`, cookie, "retry-limit-csrf", true)
-	if cleanup100.recorder.Code != http.StatusOK {
-		t.Fatalf("100th retry cleanup status=%d body=%s", cleanup100.recorder.Code, cleanup100.recorder.Body.String())
-	}
-	retry101 := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/retry", `{}`, cookie, "retry-limit-csrf", true)
+	retry101 := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+compactUUID(parentIDs[maxJobRetryOrdinal-1])+"/retry", `{}`, cookie, "retry-limit-csrf", true)
 	if retry101.recorder.Code != http.StatusConflict || !strings.Contains(retry101.recorder.Body.String(), "job retry limit has been reached") {
 		t.Fatalf("101st retry status=%d body=%s", retry101.recorder.Code, retry101.recorder.Body.String())
 	}
-	validateRecordedResponse(t, http.MethodPost, "/api/jobs/"+accepted.JobId+"/retry", retry101.recorder)
+	validateRecordedResponse(t, http.MethodPost, "/api/jobs/"+compactUUID(parentIDs[maxJobRetryOrdinal-1])+"/retry", retry101.recorder)
 
 	goodParent, goodChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	badParent, badChild := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -619,7 +726,7 @@ func TestJobRetryLimitAndSourceLineageIntegration(t *testing.T) {
 	detail = generated.JobDetail{}
 	if good.recorder.Code != http.StatusOK || json.Unmarshal(good.recorder.Body.Bytes(), &detail) != nil ||
 		detail.RetryRootJobId == nil || *detail.RetryRootJobId != compactUUID(childIDs[0]) ||
-		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 1 {
+		detail.RetryOrdinal == nil || *detail.RetryOrdinal != 2 {
 		t.Fatalf("same-source child lineage status=%d body=%s", good.recorder.Code, good.recorder.Body.String())
 	}
 	bad := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+compactUUID(badChild), "", bearer, "", false)

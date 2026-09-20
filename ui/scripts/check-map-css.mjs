@@ -30,7 +30,8 @@ if (!/\.coverage-diagnostic-preparing\s*\{[^}]*min-height:\s*12rem[^}]*overflow:
 if (!/\.coverage-diagnostic-labels button\[aria-pressed="true"\]\s*\{[^}]*background:\s*#19c7c9/.test(css) ||
     !/\.coverage-diagnostic-labels button:focus-visible/.test(css))
   throw new Error("Coverage diagnostic labels must expose visible pressed and keyboard focus states");
-if (!/\.coverage-diagnostic-fit:hover,\s*\.coverage-diagnostic-rerun:not\(:disabled\):hover\s*\{[^}]*border-color:\s*var\(--accent\)/.test(css) ||
+if (!/\.coverage-diagnostic-fit:not\(:disabled\):hover,\s*\.coverage-diagnostic-rerun:not\(:disabled\):hover\s*\{[^}]*border-color:\s*var\(--accent\)/.test(css) ||
+    !/\.coverage-diagnostic-fit:disabled\s*\{[^}]*color:\s*var\(--disabled\)[^}]*cursor:\s*not-allowed/.test(css) ||
     !/\.coverage-diagnostic-copy\s*\{[^}]*cursor:\s*pointer/.test(css))
   throw new Error("Coverage diagnostic actions must expose accent hover borders and pointer cursors");
 if (!/\.map-mode-controls\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/.test(css) ||
@@ -38,6 +39,14 @@ if (!/\.map-mode-controls\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\
     !/\.map-mode-controls\s*\{[^}]*overflow:\s*hidden[^}]*border-radius:\s*var\(--radius-sm\)/.test(css) ||
     !/\.map-mode-controls button \+ button\s*\{[^}]*border-left:\s*1px solid var\(--border-strong\)/.test(css))
   throw new Error("Map mode controls must be equal joined segments inside one rounded frame");
+if (!/@media \(min-width:\s*48rem\)[\s\S]*\.map-sidebar\s*\{[^}]*padding:\s*var\(--space-4\)/.test(css) ||
+    !/@media \(min-width:\s*48rem\)[\s\S]*\.coverage-diagnostic-card\s*\{[^}]*top:\s*var\(--space-4\)[^}]*left:\s*var\(--space-4\)/.test(css) ||
+    !/@media \(min-width:\s*48rem\)[\s\S]*\.coverage-overview-card\s*\{[^}]*top:\s*var\(--space-4\)[^}]*left:\s*var\(--space-4\)/.test(css))
+  throw new Error("Map overlay cards must share the desktop control-panel inset");
+if (!/\.road-coverage-error-dialog\s*\{[^}]*--road-coverage-error-inset:\s*var\(--space-5\)/.test(css) ||
+    !/\.road-coverage-error-dialog \.dialog-heading\s*\{[^}]*padding:\s*var\(--road-coverage-error-inset\)/.test(css) ||
+    !/\.road-coverage-error-dialog \.dialog-actions\s*\{[^}]*padding-inline:\s*var\(--road-coverage-error-inset\)/.test(css))
+  throw new Error("Road Coverage error dialog content and actions must share one horizontal inset");
 if (!/\.map-route-toolbar\s*\{[^}]*grid-template-columns:\s*2\.3rem minmax\(0,\s*1fr\)[^}]*border:\s*1px solid transparent/.test(css) ||
     !/\.map-route-list li\s*\{[^}]*grid-template-columns:\s*2\.3rem minmax\(0,\s*1fr\)/.test(css))
   throw new Error("Bulk and individual route checkboxes must share the same horizontal track");

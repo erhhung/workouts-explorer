@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestCoverageParentPresentationStatus(t *testing.T) {
+	for _, test := range []struct {
+		status  string
+		running int
+		want    string
+	}{{"running", 0, "queued"}, {"running", 1, "running"}, {"running", 2, "running"}, {"queued", 0, "queued"}, {"failed", 0, "failed"}} {
+		if got := coverageParentPresentationStatus(test.status, test.running); got != test.want {
+			t.Errorf("coverageParentPresentationStatus(%q, %d) = %q, want %q", test.status, test.running, got, test.want)
+		}
+	}
+}
+
 func TestJobRequestsAreValidatedByActualRouter(t *testing.T) {
 	handler := testHandler(t)
 	jobID := "018F8E7D7A4C7C03A1C23D4E5F607182"
@@ -57,5 +69,15 @@ func TestRetryParametersAndFailureRedaction(t *testing.T) {
 	code, summary := safeJobFailure(&hostile)
 	if code == nil || summary == nil || strings.Contains(*code+*summary, hostile) {
 		t.Fatalf("hostile failure was not redacted: %v %v", code, summary)
+	}
+}
+
+func TestCoverageFailureRedaction(t *testing.T) {
+	for _, value := range []string{"coverage-route-invalid", "coverage-route-read-failed", "coverage-route-timeout",
+		"coverage-route-too-large", "coverage-osm-unavailable", "coverage-persist-failed"} {
+		code, summary := safeJobFailure(&value)
+		if code == nil || *code != value || summary == nil || *summary == "" {
+			t.Fatalf("coverage failure %q mapped to %v/%v", value, code, summary)
+		}
 	}
 }

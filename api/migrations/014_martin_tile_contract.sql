@@ -101,7 +101,7 @@ GRANT CREATE ON SCHEMA app TO workouts_security_owner;
 ALTER FUNCTION app.raw_route_mvt(integer,integer,integer,json) OWNER TO workouts_security_owner;
 REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 
-UPDATE app.schema_metadata SET schema_version=21,minimum_runtime_version=20 WHERE singleton;
+UPDATE app.schema_metadata SET schema_version=14,minimum_runtime_version=14 WHERE singleton;
 
 -- +goose Down
 SELECT app.assert_no_active_manual_ingest();
@@ -185,4 +185,4 @@ GRANT CREATE ON SCHEMA app TO workouts_security_owner;
 ALTER FUNCTION app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint) OWNER TO workouts_security_owner;
 REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 
-UPDATE app.schema_metadata SET schema_version=20,minimum_runtime_version=19 WHERE singleton;
+UPDATE app.schema_metadata SET schema_version=13,minimum_runtime_version=12 WHERE singleton;

@@ -228,7 +228,7 @@ Priority order:
 1. Source connection checks and deletion
 2. Manual ingest
 3. Scheduled ingest
-4. OSM bootstrap and refresh
+4. OSM bootstrap, refresh, and coverage updates
 
 OSM maintenance is single-flight. High-priority work bypasses ingest-file semaphores and remains intentionally unpooled because it is rare. Duplicate active checks and deletions are coalesced.
 
@@ -254,6 +254,129 @@ Defaults are configurable operator limits:
 Global coordination is stored in PostgreSQL so additional workers cannot exceed the global limit.
 
 Each slot owns one file through discovery selection, optional download, parse, transaction, and cleanup before claiming another file.
+
+### Coverage processing concurrency
+
+Coverage is asynchronous derived work and never extends the critical path of an
+ingest. The ingest transaction records the route-input digest and revision,
+resolves public-map readiness, raises the desired account/region coverage
+watermark, and enqueues or coalesces a `coverage_update`. Workouts and raw routes
+remain available immediately while Coverage identifies pending processing.
+
+A `coverage_update` is an unclaimed account/region parent with one
+`coverage_update_route` child per eligible stale workout revision. A dedicated
+coverage-worker deployment claims only route children. The general worker retains
+independent capacity for source checks, deletion, and ingest; low queue priority
+alone is insufficient because a running job cannot be preempted. Every child is an
+independent route checkpoint, and claim ordering is fair across active
+account/region parents so one large account cannot monopolize capacity.
+
+One route match uses one bounded, read-only OSM snapshot. No application write
+transaction remains open during candidate lookup or decoding. A short fenced
+application transaction then rechecks the route revision, matcher version, and OSM
+generation vector before replacing that route's copied segments, segment matches,
+logical-path attributions, and affected rollups. Stale work cannot commit. Prior
+valid coverage remains visible until its replacement commits, and a newer desired
+OSM generation or route-work revision produces a successor after the current
+target terminates. A failed route child does not stop its siblings.
+
+PostgreSQL coordinates matcher admission across all replicas. Operator-configurable
+limits include global, per-account, and optional per-region slots; the conservative
+default is one active matcher route globally across production and diagnostics,
+and one active production route per account. Synchronous API diagnostics keep
+their request/response, timeout, local gate, and fast `429 Retry-After` behavior,
+but must also acquire the cluster-wide matcher capacity so
+additional API replicas cannot multiply OSM load. Diagnostics are not durable jobs
+and do not preempt an active route; infrequent review retries at a route checkpoint.
+
+Coverage workers use dedicated least-privilege application and OSM credentials,
+small explicit data pools, and reserved application control capacity for claims,
+heartbeats, cancellation checks, and terminal transitions. Pool acquisition,
+statements, locks, individual queries, and route-child matching have
+explicit timeouts. API, Martin, general-worker, and coverage-worker pods have
+separate CPU/memory requests and limits.
+
+The application credential is the dedicated `workouts_coverage_worker` login.
+It can claim, heartbeat, read through fenced functions, persist/fail/supersede a
+coverage child, and run leased reconciliation. It cannot read raw workouts or
+route points directly. The general `workouts_worker` retains transactional
+coverage enqueue authority after ingest but cannot claim or persist coverage.
+
+Coverage processing records queued, running, current, failed, and stale state with
+target/applied route revision, matcher version, OSM generations, timestamps,
+bounded progress, and a safe failure category. Parent results aggregate routes
+total, processed, succeeded, failed, cancelled, and superseded. Mixed success and
+failure produces `partially_succeeded`; failed targets do not advance the fully
+applied account/region watermark or automatically hot-loop. Production tiles and
+statistics read only durable application data and never invoke the matcher or query OSM.
+Retry creates a new non-forking coverage parent from only the preceding attempt's
+eligible failed or cancelled route children. Parent and corresponding route-child
+lineage reuse the Data Sync retry root and ordinals, allowing Run detail to
+navigate First, Second, and every later attempt through the latest without
+rerunning successful or superseded routes.
+Metrics include queue age, matcher duration, slot occupancy, pool wait, query
+timeouts, lease renewal, retries, stale-result rejection, and interactive API/tile
+latency. Matcher concurrency increases above one only after those measurements
+show adequate shared-database and active-user headroom.
+
+OSM promotion emits an immutable monotonic public event in the same transaction
+that activates a generation. Each application database observes only the event
+head and matcher-contract version, raises its own reconciliation revision, and
+seeds every active account without exposing account enumeration to runtime code.
+Coverage workers lease one account at a time, keyset-page routed workouts, resolve
+the current region/generation vector, and enqueue only stale targets. Cursors
+advance after each route; expired leases resume at the last committed cursor.
+Event-driven scans are supplemented by a daily full-account scan so provider
+boundary changes or retained-event gaps cannot strand historical routes.
+
+Production matcher snapshots are restricted to the route child's complete target
+generation vector for candidate and graph expansion. The repeatable-read OSM
+snapshot remains open through the short application persistence transaction, so a
+conflicting region promotion waits for the accepted result to commit. If a target
+generation is already inactive when the snapshot begins, the child is superseded
+rather than failed and reconciliation schedules the current target.
+
+OSM importer version 3 retains bounded named local and national-park polygons only
+inside the generation build schema. Derivation version 16 attaches stable park
+metadata to fully contained segments before canonical partitions are prepared;
+park polygons themselves are not promoted. Local park identity remains scoped by
+authoritative municipality and OSM source. National park identity is instead
+scoped by provider region and OSM source, so one park remains one entity across
+municipal boundaries and may attribute segments without a municipality.
+After park attribution, connectivity scope is the selected named park, otherwise
+the authoritative municipality, otherwise the provider region. Exact shared OSM
+graph nodes merge physical segments when their normalized names and road/path
+classes match when unnamed. Named groups use normalized name without a road/path
+boundary and merge across all exact graph connections. Named road geometry also
+connects within 15 m, extended to 50 m only for two explicitly one-way segments,
+to represent divided carriageways. For unnamed groups, different source ways merge only when exactly
+two eligible segments meet. At a larger unnamed branch, exactly two segments of
+one exact broad class also continue across source ways; other cross-source branches
+remain separate. One source way remains continuous through branches.
+Imported attribution boundaries include `admin_level=8` municipalities and
+`admin_level=6` counties. The smallest covering polygon wins, giving municipality
+scope priority and county scope to otherwise unincorporated geometry; provider
+region is the final fallback. Short non-road municipality islands up to 25 m are
+absorbed into county scope only when both adjacent pieces of the same clipped
+source segment belong to that county with matching name state and exact broad
+class; parks are exempt.
+Named school, college, university, and generic education-ground polygons are also
+retained. Education scope applies only to unnamed segments, outranks park scope
+for those segments, and is exposed by matcher copy as a display-name fallback;
+canonical source names remain unchanged.
+Park scope takes precedence over locality, so contained geometry cannot bridge to
+outside geometry, and municipality scope keeps cities separate. The derivation
+stages deduplicated physical-segment edges and their participating segments, not
+all segment endpoints. Isolated segments become singleton components. Computing
+from physical segments rather than incoming logical IDs also splits legacy
+disconnected geometry, prevents road components from bridging path components,
+and prevents an unnamed branching pedestrian network from becoming one identity.
+Application persistence derives a separate once-per-workout park attribution
+from copied segment tags. A named path without a municipality uses its attributed
+national park as display context, while an actual municipality always wins.
+Other path identity and map geometry remain unchanged, while driveway and
+parking logical paths are omitted from user-facing statistics/history and remain
+visible in Coverage tiles.
 
 ### Source snapshot lifecycle
 
@@ -304,11 +427,9 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 - Encode zero-length multi-line components as route-attributed point features alongside line features; MapLibre renders them as route-colored circles with the same selection and hover semantics.
 - Derive bounds and elevation statistics.
 - Resolve or update workout timezone.
-- Ensure required OSM path data exists for route envelopes.
-- Generate bounded nearby segment candidates and Viterbi-decode sequence-aware connected traversals using distance, quality, topology, timing, and reliable heading evidence.
-- Dissolve decoded spans into one unique workout/physical-segment match geometry and upsert unique workout/logical-path attribution.
-- Rebuild affected logical-path daily and all-time rollups.
-- Advance the account data generation used by private tile URLs.
+- Record required OSM path-data readiness for route envelopes and enqueue or coalesce an account/region coverage parent plus route children without delaying ingest completion.
+- In the dedicated coverage worker, generate bounded nearby segment candidates and Viterbi-decode sequence-aware connected traversals using distance, quality, topology, timing, and reliable heading evidence.
+- Atomically dissolve decoded spans into one unique workout/physical-segment match geometry, upsert unique workout/logical-path attribution, rebuild affected logical-path daily and all-time rollups, and advance the account data generation used by private tile URLs.
 
 ## External Interfaces
 
@@ -602,8 +723,8 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 ## Deferred Decisions
 
 - Exact OSM importer and segment derivation toolchain pending the ADR 0008 spike
-- Tested sequence-matching candidate, emission, transition, gap, confidence, and route-quality rules pending ADR 0009 experiments
-- Coverage bucket boundaries pending ADR 0010 historical-data analysis
+- Future matcher-policy revisions beyond the accepted ADR 0009 v82 baseline
+- Future Coverage bucket revisions beyond the accepted ADR 010 six-class baseline
 - Retention limits for job history and owner-visible diagnostic logs
 - Public base-map provider for externally exposed installations
 - Additional adapters and provider-normalization rules

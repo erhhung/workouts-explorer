@@ -80,6 +80,22 @@ type Worker struct {
 	OSM                        OSM
 }
 
+type CoverageWorker struct {
+	DatabaseURL                string
+	OSMDatabaseURL             string
+	ListenAddress              string
+	OTLPEndpoint               string
+	PollInterval               time.Duration
+	AdmissionInterval          time.Duration
+	LeaseDuration              time.Duration
+	HeartbeatInterval          time.Duration
+	RouteTimeout               time.Duration
+	ReconciliationPollInterval time.Duration
+	ReconciliationScanInterval time.Duration
+	ReconciliationPageSize     int
+	MinimumTraversalMeters     float64
+}
+
 type OSM struct {
 	AutoAddRegions       bool
 	MaxAutoDownloadBytes int64
@@ -387,6 +403,65 @@ func LoadWorker() (Worker, error) {
 		CoverageMinTraversalMeters: coverageMinimum,
 		OSM:                        osm,
 	}, nil
+}
+
+func LoadCoverageWorker() (CoverageWorker, error) {
+	databaseURL := os.Getenv("COVERAGE_WORKER_DATABASE_URL")
+	if databaseURL == "" {
+		return CoverageWorker{}, fmt.Errorf("COVERAGE_WORKER_DATABASE_URL is required")
+	}
+	osmDatabaseURL := os.Getenv("COVERAGE_WORKER_OSM_DATABASE_URL")
+	if osmDatabaseURL == "" {
+		return CoverageWorker{}, fmt.Errorf("COVERAGE_WORKER_OSM_DATABASE_URL is required")
+	}
+	poll, err := durationRange("COVERAGE_WORKER_POLL_INTERVAL", time.Second, 100*time.Millisecond, time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	admission, err := durationRange("COVERAGE_WORKER_ADMISSION_INTERVAL", time.Second, 100*time.Millisecond, time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	lease, err := durationRange("COVERAGE_WORKER_LEASE_DURATION", 4*time.Minute, 30*time.Second, 15*time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	heartbeat, err := durationRange("COVERAGE_WORKER_HEARTBEAT_INTERVAL", 20*time.Second, time.Second, 5*time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	routeTimeout, err := durationRange("COVERAGE_WORKER_ROUTE_TIMEOUT", 3*time.Minute, 5*time.Second, 10*time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	if heartbeat >= lease/2 {
+		return CoverageWorker{}, fmt.Errorf("COVERAGE_WORKER_HEARTBEAT_INTERVAL must be less than half COVERAGE_WORKER_LEASE_DURATION")
+	}
+	if routeTimeout+10*time.Second >= lease {
+		return CoverageWorker{}, fmt.Errorf("COVERAGE_WORKER_ROUTE_TIMEOUT plus cleanup margin must be less than COVERAGE_WORKER_LEASE_DURATION")
+	}
+	reconciliationPoll, err := durationRange("COVERAGE_RECONCILIATION_POLL_INTERVAL", 30*time.Second, time.Second, 5*time.Minute)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	reconciliationScan, err := durationRange("COVERAGE_RECONCILIATION_SCAN_INTERVAL", 24*time.Hour, time.Hour, 30*24*time.Hour)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	reconciliationPageSize, err := integerRange("COVERAGE_RECONCILIATION_PAGE_SIZE", 10, 1, 100)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	minimumTraversal, err := float64Range("COVERAGE_MIN_TRAVERSAL_METERS", 5, 0.1, 100)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	return CoverageWorker{DatabaseURL: databaseURL, OSMDatabaseURL: osmDatabaseURL,
+		ListenAddress: env("COVERAGE_WORKER_LISTEN_ADDRESS", ":8082"), OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		PollInterval: poll, AdmissionInterval: admission, LeaseDuration: lease,
+		HeartbeatInterval: heartbeat, RouteTimeout: routeTimeout,
+		ReconciliationPollInterval: reconciliationPoll, ReconciliationScanInterval: reconciliationScan,
+		ReconciliationPageSize: reconciliationPageSize, MinimumTraversalMeters: minimumTraversal}, nil
 }
 
 func loadOSM() (OSM, error) {

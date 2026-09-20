@@ -4,10 +4,26 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/google/uuid"
 )
+
+func TestRoadCoverageEntityIncludesDynamicRegionName(t *testing.T) {
+	name := "Northern California"
+	row := roadCoverageRow{
+		entityID: uuid.New(), rangeFirstWorkoutID: uuid.New(), rangeLatestWorkoutID: uuid.New(),
+		allTimeFirstWorkoutID: uuid.New(), allTimeLatestWorkoutID: uuid.New(), entityKind: "path",
+		broadClass: "road", regionID: "geofabrik:norcal", regionName: &name, rangeCount: 1,
+		allTimeCount: 1, rangeFirst: time.Now(), rangeLatest: time.Now(), allTimeFirst: time.Now(), allTimeLatest: time.Now(),
+	}
+	entity := row.entity()
+	regionName, err := entity.RegionName.Get()
+	if err != nil || regionName != name {
+		t.Fatalf("regionName=%q err=%v", regionName, err)
+	}
+}
 
 func TestNormalizedMapWorkoutIDsCanonicalizesAndRejectsDuplicates(t *testing.T) {
 	first := generated.UUIDInput("018F1D0A4B2C7A5E8F90123456789ABC")
@@ -23,6 +39,14 @@ func TestNormalizedMapWorkoutIDsCanonicalizesAndRejectsDuplicates(t *testing.T) 
 	}
 	if ids, ok := normalizedMapWorkoutIDs(nil); !ok || ids != nil {
 		t.Fatal("omitted IDs must mean the complete routed range")
+	}
+}
+
+func TestContainsUUIDRequiresExplicitMembership(t *testing.T) {
+	first := uuid.MustParse("018f1d0a-4b2c-7a5e-8f90-123456789abc")
+	second := uuid.MustParse("018f1d0a-4b2c-7a5e-8f90-123456789abd")
+	if !containsUUID([]uuid.UUID{first, second}, second) || containsUUID([]uuid.UUID{first}, second) {
+		t.Fatal("focused workout subset membership was evaluated incorrectly")
 	}
 }
 
@@ -52,6 +76,18 @@ func TestMapTileUpstreamURLUsesOnlyValidatedScope(t *testing.T) {
 		if parsed.Query().Get(key) != value {
 			t.Errorf("%s=%q, want %q", key, parsed.Query().Get(key), value)
 		}
+	}
+	coverageRaw, err := mapTileFunctionUpstreamURL("http://workouts-explorer-tiles:3000/internal", "app.coverage_mvt",
+		selectionID, accountID, sessionID, 42, 12, 655, 1582)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverageURL, _ := url.Parse(coverageRaw)
+	if coverageURL.Path != "/internal/app.coverage_mvt/12/655/1582" || coverageURL.RawQuery != parsed.RawQuery {
+		t.Fatalf("unexpected upstream coverage route: %s", coverageRaw)
+	}
+	if _, err := mapTileFunctionUpstreamURL("http://tiles.invalid", "app.hostile", selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
+		t.Fatal("unknown tile function was accepted")
 	}
 	if _, err := mapTileUpstreamURL("/relative", selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
 		t.Fatal("relative internal tile service URL must be rejected")

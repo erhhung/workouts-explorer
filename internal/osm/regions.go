@@ -19,10 +19,38 @@ type RegionGeneration struct {
 	Generation int64  `json:"generation"`
 }
 
+type ConfiguredRegion struct {
+	RegionID    string `json:"regionId"`
+	DisplayName string `json:"displayName"`
+}
+
 type RouteRegionReadiness struct {
 	State   string
 	Reason  string
 	Regions []RegionGeneration
+}
+
+func ConfiguredRegions(ctx context.Context, pool *pgxpool.Pool) ([]ConfiguredRegion, error) {
+	if pool == nil {
+		return nil, errors.New("OSM database is unavailable")
+	}
+	rows, err := pool.Query(ctx, `SELECT id,display_name FROM osm_catalog.regions WHERE configured ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("read configured OSM regions: %w", err)
+	}
+	defer rows.Close()
+	regions := make([]ConfiguredRegion, 0)
+	for rows.Next() {
+		var region ConfiguredRegion
+		if err := rows.Scan(&region.RegionID, &region.DisplayName); err != nil {
+			return nil, fmt.Errorf("read configured OSM region: %w", err)
+		}
+		regions = append(regions, region)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read configured OSM regions: %w", err)
+	}
+	return regions, nil
 }
 
 func ActiveRegionGenerations(ctx context.Context, pool *pgxpool.Pool) (map[string]int64, error) {

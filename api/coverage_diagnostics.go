@@ -8,16 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/erhhung/workouts-explorer/internal/coverage"
-	"github.com/erhhung/workouts-explorer/internal/coverage/evaluator"
+	"github.com/erhhung/workouts-explorer/internal/coverage/routepipeline"
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,9 +24,6 @@ import (
 
 const (
 	diagnosticOriginalPointLimit = 25000
-	diagnosticSampledPointLimit  = 10000
-	diagnosticSegmentLimit       = 4096
-	diagnosticPortionLimit       = 10000
 )
 
 type coverageDiagnosticSnapshot interface {
@@ -44,6 +39,7 @@ type coverageDiagnosticService struct {
 	enabled                bool
 	timeout                time.Duration
 	gate                   chan struct{}
+	ownerID                string
 	begin                  func(context.Context) (coverageDiagnosticSnapshot, error)
 	minimumTraversalMeters float64
 	roadGeometry           coverage.RoadGeometryRules
@@ -52,6 +48,7 @@ type coverageDiagnosticService struct {
 func newCoverageDiagnosticService(ctx context.Context, cfg config.CoverageDiagnostics) (*coverageDiagnosticService, error) {
 	service := &coverageDiagnosticService{
 		enabled: cfg.Enabled, timeout: cfg.Timeout, minimumTraversalMeters: cfg.MinimumTraversalMeters,
+		ownerID: "coverage-diagnostics-" + uuid.NewString(),
 		roadGeometry: coverage.RoadGeometryRules{
 			MotorLaneWidthMeters: cfg.MotorLaneWidthMeters, BicycleLaneWidthMeters: cfg.BicycleLaneWidthMeters,
 			ParkingLaneWidthMeters: cfg.ParkingLaneWidthMeters, SidewalkSetbackMeters: cfg.SidewalkSetbackMeters,
@@ -90,6 +87,7 @@ type diagnosticWorkout struct {
 	providerLabel string
 	points        []coverage.GeographicObservation
 	mode          coverage.MovementMode
+	regionIDs     []string
 }
 
 type diagnosticEvidence struct {
@@ -97,12 +95,6 @@ type diagnosticEvidence struct {
 	portion coverage.TraversedPortion
 	class   string
 	clipped osm.MatcherClippedPortion
-}
-
-type diagnosticMatchedPortion struct {
-	portion coverage.TraversedPortion
-	class   string
-	window  int
 }
 
 type diagnosticResult struct {
@@ -146,6 +138,18 @@ func (s *Server) CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Requ
 		writeDiagnosticProblem(w, r, status)
 		return
 	}
+	slotID, requestID := uuid.New(), uuid.New()
+	acquired, err := s.acquireDiagnosticMatcherSlot(ctx, *session.accountID, workout.regionIDs, slotID, requestID)
+	if err != nil {
+		writeDiagnosticProblem(w, r, http.StatusServiceUnavailable)
+		return
+	}
+	if !acquired {
+		w.Header().Set("Retry-After", "1")
+		writeProblem(w, r, http.StatusTooManyRequests, "Too Many Requests", "coverage diagnostic capacity is busy")
+		return
+	}
+	defer s.releaseDiagnosticMatcherSlot(*session.accountID, slotID, requestID)
 	result, err := s.evaluateCoverageDiagnostic(ctx, workout, started)
 	if err != nil {
 		status := diagnosticErrorStatus(ctx, err)
@@ -180,6 +184,35 @@ func (s *Server) enterCoverageDiagnostics(ctx context.Context) bool {
 	}
 }
 
+func (s *Server) acquireDiagnosticMatcherSlot(ctx context.Context, accountID uuid.UUID, regions []string, slotID, requestID uuid.UUID) (bool, error) {
+	tx, err := s.accountTransaction(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var acquired bool
+	if err := tx.QueryRow(ctx, `SELECT app.acquire_diagnostic_matcher_slot($1,$2,$3,$4,$5,$6)`, accountID,
+		s.diagnostics.ownerID, slotID, requestID, regions, s.diagnostics.timeout).Scan(&acquired); err != nil {
+		return false, err
+	}
+	return acquired, tx.Commit(ctx)
+}
+
+func (s *Server) releaseDiagnosticMatcherSlot(accountID, slotID, requestID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	tx, err := s.accountTransaction(ctx, accountID)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	var released bool
+	if err := tx.QueryRow(ctx, `SELECT app.release_matcher_slot($1,$2,$3)`, slotID,
+		s.diagnostics.ownerID, requestID).Scan(&released); err == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
 func (s *Server) loadDiagnosticWorkout(ctx context.Context, accountID, workoutID uuid.UUID) (diagnosticWorkout, int) {
 	tx, err := s.accountTransactionWithOptions(ctx, accountID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -192,12 +225,14 @@ func (s *Server) loadDiagnosticWorkout(ctx context.Context, accountID, workoutID
 	var digest []byte
 	var pointCount *int
 	err = tx.QueryRow(ctx, `SELECT state.route_input_revision,state.route_input_sha256,route.point_count,
-		type.type_key,type.provider_label FROM app.workouts workout
+		type.type_key,type.provider_label,COALESCE((SELECT array_agg(region.region_id ORDER BY region.region_id)
+		FROM app.workout_coverage_regions region WHERE region.account_id=workout.account_id AND region.workout_id=workout.id),'{}'::text[])
+		FROM app.workouts workout
 		JOIN app.workout_types type ON type.account_id=workout.account_id AND type.id=workout.workout_type_id
 		LEFT JOIN app.workout_routes route ON route.account_id=workout.account_id AND route.workout_id=workout.id
 		LEFT JOIN app.workout_coverage_states state ON state.account_id=workout.account_id AND state.workout_id=workout.id
 		WHERE workout.account_id=$1 AND workout.id=$2 AND workout.deletion_requested_at IS NULL`, accountID, workoutID).
-		Scan(&revision, &digest, &pointCount, &result.typeKey, &result.providerLabel)
+		Scan(&revision, &digest, &pointCount, &result.typeKey, &result.providerLabel, &result.regionIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return diagnosticWorkout{}, http.StatusNotFound
 	}
@@ -242,27 +277,11 @@ func (s *Server) loadDiagnosticWorkout(ctx context.Context, accountID, workoutID
 }
 
 func diagnosticMovementMode(typeKey, providerLabel string) coverage.MovementMode {
-	value := strings.ToLower(typeKey + " " + providerLabel)
-	for _, token := range []string{"cycl", "bicycl", "bike", "biking"} {
-		if strings.Contains(value, token) {
-			return coverage.MovementBicycle
-		}
-	}
-	for _, token := range []string{"walk", "run", "hik", "foot", "climb", "trek"} {
-		if strings.Contains(value, token) {
-			return coverage.MovementFoot
-		}
-	}
-	return coverage.MovementSharedPublic
+	return routepipeline.MovementMode(typeKey, providerLabel)
 }
 
 func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnosticWorkout, started time.Time) (diagnosticResult, error) {
 	rules := coverage.ExperimentalRules().WithMinimumTraversalMeters(s.diagnostics.minimumTraversalMeters)
-	sampling := coverage.ExperimentalSamplingRules()
-	points := coverage.SampleGeographicObservations(workout.points, sampling, rules)
-	if len(points) > diagnosticSampledPointLimit {
-		return diagnosticResult{}, &diagnosticHTTPError{http.StatusRequestEntityTooLarge}
-	}
 	snapshot, err := s.diagnostics.begin(ctx)
 	if err != nil {
 		return diagnosticResult{}, err
@@ -272,392 +291,50 @@ func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnos
 		defer cancel()
 		_ = snapshot.Close(closeCtx)
 	}()
-	allGenerations, err := snapshot.Generations(ctx)
-	if err != nil {
-		return diagnosticResult{}, err
-	}
 	result := diagnosticResult{runID: uuid.Must(uuid.NewV7()), workout: workout, minimumTraversalMeters: rules.MinTraversalLengthMeters}
-	result.counts.OriginalPoints, result.counts.SampledPoints = len(workout.points), len(points)
-	options := coverage.DefaultOSMEvaluationOptions()
-	options.RoadGeometry = s.diagnostics.roadGeometry
-	options.MaxCandidatesPerObservation = 16
-	options.MovementMode = workout.mode
-	options.Sampling.MinimumDistanceMeters = 0
-	var portions []diagnosticMatchedPortion
-	windowStarts := []int{}
-	windowOrdinal := 0
-	matcherStats := struct {
-		windows, candidates, suppressed, graphNodes, graphEdges int
-		splits                                                  map[coverage.SplitReason]int
-	}{splits: make(map[coverage.SplitReason]int)}
-	for start := 0; start < len(points); {
-		windowStarts = append(windowStarts, start)
-		end := min(start+evaluator.WindowSize, len(points))
-		matched, stats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], rules, options)
-		if err != nil {
-			return diagnosticResult{}, err
-		}
-		matcherStats.windows++
-		matcherStats.candidates += stats.CandidateCount
-		matcherStats.suppressed += stats.SuppressedPedestrianCandidates
-		matcherStats.graphNodes += stats.GraphNodeCount
-		matcherStats.graphEdges += stats.GraphEdgeCount
-		for _, split := range matched.Splits {
-			matcherStats.splits[split.Reason]++
-		}
-		skip := 0
-		if start > 0 {
-			skip = 1
-		}
-		for i := skip; i < len(matched.Observations); i++ {
-			switch matched.Observations[i].Status {
-			case coverage.ObservationMatched:
-				result.counts.MatchedPoints++
-			case coverage.ObservationAmbiguous:
-				result.counts.AmbiguousPoints++
-			case coverage.ObservationRejected:
-				result.counts.RejectedPoints++
-			default:
-				result.counts.UnmatchedPoints++
-			}
-		}
-		result.counts.Traversals += len(matched.Traversals)
-		for _, traversal := range matched.Traversals {
-			class := diagnosticTraversalClass(traversal)
-			for _, portion := range traversal.Portions {
-				portions = append(portions, diagnosticMatchedPortion{portion: portion, class: class, window: windowOrdinal})
-			}
-		}
-		if end == len(points) {
-			break
-		}
-		start = end - 1
-		windowOrdinal++
-	}
-	portions, supplementalStats, err := completeCrossWindowConnectedRoadTurns(ctx, snapshot, points, windowStarts, portions, rules, options)
+	evaluated, err := routepipeline.Evaluate(ctx, snapshot, workout.points, routepipeline.Config{
+		Rules: rules, Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: s.diagnostics.roadGeometry,
+		MovementMode: workout.mode, Limits: routepipeline.DiagnosticLimits(),
+	})
 	if err != nil {
 		return diagnosticResult{}, err
 	}
-	matcherStats.windows += supplementalStats.windows
-	matcherStats.candidates += supplementalStats.candidates
-	matcherStats.suppressed += supplementalStats.suppressed
-	matcherStats.graphNodes += supplementalStats.graphNodes
-	matcherStats.graphEdges += supplementalStats.graphEdges
-	portions, tangentStats, err := replaceCrossWindowRoadTangents(ctx, snapshot, points, windowStarts, portions, rules, options)
-	if err != nil {
-		return diagnosticResult{}, err
+	result.counts = generated.CoverageDiagnosticCounts{
+		OriginalPoints: evaluated.Counts.OriginalPoints, SampledPoints: evaluated.Counts.SampledPoints,
+		MatchedPoints: evaluated.Counts.MatchedPoints, AmbiguousPoints: evaluated.Counts.AmbiguousPoints,
+		UnmatchedPoints: evaluated.Counts.UnmatchedPoints, RejectedPoints: evaluated.Counts.RejectedPoints,
+		Traversals: evaluated.Counts.Traversals, Portions: evaluated.Counts.Portions, UniqueSegments: evaluated.Counts.UniqueSegments,
+		DurationMilliseconds: int(time.Since(started).Milliseconds()),
 	}
-	matcherStats.windows += tangentStats.windows
-	matcherStats.candidates += tangentStats.candidates
-	matcherStats.suppressed += tangentStats.suppressed
-	matcherStats.graphNodes += tangentStats.graphNodes
-	matcherStats.graphEdges += tangentStats.graphEdges
-	if len(portions) > diagnosticPortionLimit {
-		return diagnosticResult{}, &diagnosticHTTPError{http.StatusRequestEntityTooLarge}
+	result.generations, result.unavailableRegions = evaluated.Generations, evaluated.UnavailableRegions
+	for _, evidence := range evaluated.Evidence {
+		result.evidence = append(result.evidence, diagnosticEvidence{id: uuid.Must(uuid.NewV7()), portion: evidence.Portion, class: evidence.Class, clipped: evidence.Clipped})
 	}
-	segments := make(map[uuid.UUID]struct{})
-	uniqueRefs := make([]osm.MatcherPortionRef, 0, len(portions))
-	refIndexes := make(map[osm.MatcherPortionRef]int, len(portions))
-	portionRefs := make([]int, len(portions))
-	for i, item := range portions {
-		segments[item.portion.PhysicalSegmentID] = struct{}{}
-		ref := osm.MatcherPortionRef{SegmentID: item.portion.PhysicalSegmentID, RegionID: item.portion.RegionID,
-			GenerationID: item.portion.GenerationID, Direction: osm.MatcherDirection(item.portion.Direction),
-			SourceFromFraction: item.portion.SourceFromFraction, SourceToFraction: item.portion.SourceToFraction}
-		index, exists := refIndexes[ref]
-		if !exists {
-			index = len(uniqueRefs)
-			refIndexes[ref] = index
-			uniqueRefs = append(uniqueRefs, ref)
-		}
-		portionRefs[i] = index
-	}
-	if len(segments) > diagnosticSegmentLimit {
-		return diagnosticResult{}, &diagnosticHTTPError{http.StatusRequestEntityTooLarge}
-	}
-	clipped := make([]osm.MatcherClippedPortion, len(uniqueRefs))
-	for start := 0; start < len(uniqueRefs); start += diagnosticSegmentLimit {
-		end := min(start+diagnosticSegmentLimit, len(uniqueRefs))
-		batch, err := snapshot.ClipPortions(ctx, uniqueRefs[start:end])
-		if err != nil {
-			return diagnosticResult{}, err
-		}
-		for _, item := range batch {
-			item.Ordinal += start
-			clipped[item.Ordinal] = item
-		}
-	}
-	usedGenerations := make(map[string]struct{})
-	clear(segments)
-	invalidClips := 0
-	for i, item := range portions {
-		clip := clipped[portionRefs[i]]
-		if !validDiagnosticClip(clip) {
-			invalidClips++
-			continue
-		}
-		result.evidence = append(result.evidence, diagnosticEvidence{id: uuid.Must(uuid.NewV7()), portion: item.portion, class: item.class, clipped: clip})
-		segments[clip.SegmentID] = struct{}{}
-		usedGenerations[fmt.Sprintf("%s\x00%d", clip.RegionID, clip.GenerationID)] = struct{}{}
-	}
-	for _, generation := range allGenerations {
-		if _, used := usedGenerations[fmt.Sprintf("%s\x00%d", generation.RegionID, generation.GenerationID)]; used {
-			result.generations = append(result.generations, generation)
-		}
-	}
-	if len(result.generations) != len(usedGenerations) {
-		return diagnosticResult{}, errors.New("OSM generation provenance unavailable")
-	}
-	if len(result.generations) > 256 {
-		return diagnosticResult{}, &diagnosticHTTPError{http.StatusRequestEntityTooLarge}
-	}
-	if len(result.evidence) == 0 {
-		regionPoints := points
-		if len(regionPoints) > 256 {
-			sampled := make([]coverage.GeographicObservation, 256)
-			for i := range sampled {
-				sampled[i] = regionPoints[i*(len(regionPoints)-1)/(len(sampled)-1)]
-			}
-			regionPoints = sampled
-		}
-		matcherPoints := make([]osm.MatcherObservation, len(regionPoints))
-		for i, point := range regionPoints {
-			matcherPoints[i] = osm.MatcherObservation{Longitude: point.Longitude, Latitude: point.Latitude}
-		}
-		result.unavailableRegions, err = snapshot.UnavailableRegions(ctx, matcherPoints)
-		if err != nil {
-			return diagnosticResult{}, err
-		}
-		if len(result.unavailableRegions) > 64 {
-			return diagnosticResult{}, &diagnosticHTTPError{http.StatusRequestEntityTooLarge}
-		}
-	}
-	result.counts.Portions, result.counts.UniqueSegments = len(result.evidence), len(segments)
-	result.counts.DurationMilliseconds = int(time.Since(started).Milliseconds())
 	slog.Info("coverage diagnostic evaluation summary",
-		"movement_mode", workout.mode, "windows", matcherStats.windows,
-		"raw_candidates", matcherStats.candidates, "suppressed_candidates", matcherStats.suppressed,
-		"graph_nodes", matcherStats.graphNodes, "graph_edges", matcherStats.graphEdges,
-		"invalid_clips", invalidClips,
-		"no_candidate_splits", matcherStats.splits[coverage.SplitNoCandidate],
-		"network_splits", matcherStats.splits[coverage.SplitNetwork],
-		"temporal_splits", matcherStats.splits[coverage.SplitTemporal],
-		"spatial_splits", matcherStats.splits[coverage.SplitSpatial],
+		"movement_mode", workout.mode, "windows", evaluated.Stats.Windows,
+		"raw_candidates", evaluated.Stats.Candidates, "suppressed_candidates", evaluated.Stats.Suppressed,
+		"graph_nodes", evaluated.Stats.GraphNodes, "graph_edges", evaluated.Stats.GraphEdges,
+		"invalid_clips", evaluated.Stats.InvalidClips,
+		"no_candidate_splits", evaluated.Stats.Splits[coverage.SplitNoCandidate],
+		"network_splits", evaluated.Stats.Splits[coverage.SplitNetwork],
+		"temporal_splits", evaluated.Stats.Splits[coverage.SplitTemporal],
+		"spatial_splits", evaluated.Stats.Splits[coverage.SplitSpatial],
 		"matched", result.counts.MatchedPoints, "ambiguous", result.counts.AmbiguousPoints,
 		"unmatched", result.counts.UnmatchedPoints, "rejected", result.counts.RejectedPoints)
 	return result, nil
 }
 
 func validDiagnosticClip(clip osm.MatcherClippedPortion) bool {
-	if clip.LengthMeters <= 0 || math.IsNaN(clip.LengthMeters) || math.IsInf(clip.LengthMeters, 0) {
-		return false
-	}
-	var geometry struct {
-		Type        string      `json:"type"`
-		Coordinates [][]float64 `json:"coordinates"`
-	}
-	if json.Unmarshal(clip.GeoJSON, &geometry) != nil || geometry.Type != "LineString" || len(geometry.Coordinates) < 2 {
-		return false
-	}
-	first := geometry.Coordinates[0]
-	if len(first) < 2 || math.IsNaN(first[0]) || math.IsNaN(first[1]) || math.IsInf(first[0], 0) || math.IsInf(first[1], 0) {
-		return false
-	}
-	for _, coordinate := range geometry.Coordinates[1:] {
-		if len(coordinate) >= 2 && !math.IsNaN(coordinate[0]) && !math.IsNaN(coordinate[1]) && !math.IsInf(coordinate[0], 0) && !math.IsInf(coordinate[1], 0) &&
-			(coordinate[0] != first[0] || coordinate[1] != first[1]) {
-			return true
-		}
-	}
-	return false
+	return routepipeline.ValidClip(clip)
 }
-
-func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot coverageDiagnosticSnapshot, points []coverage.GeographicObservation, windowStarts []int, portions []diagnosticMatchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]diagnosticMatchedPortion, struct{ windows, candidates, suppressed, graphNodes, graphEdges int }, error) {
-	stats := struct{ windows, candidates, suppressed, graphNodes, graphEdges int }{}
-	for i := 0; i+1 < len(portions); i++ {
-		before, after := portions[i], portions[i+1]
-		if before.window == after.window || after.window < 0 || after.window >= len(windowStarts) ||
-			before.portion.ContinuityClass != "road" || after.portion.ContinuityClass != "road" ||
-			before.portion.LogicalPathID == "" || before.portion.LogicalPathID == after.portion.LogicalPathID ||
-			before.portion.ToMeter-before.portion.FromMeter < 20 || after.portion.ToMeter-after.portion.FromMeter < 20 ||
-			!directedPortionEndIsClipped(before.portion) || !directedPortionStartIsClipped(after.portion) {
-			continue
-		}
-		start := max(0, windowStarts[after.window]-evaluator.WindowSize/2)
-		end := min(len(points), start+evaluator.WindowSize)
-		start = max(0, end-evaluator.WindowSize)
-		rematched, matchStats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], rules, options)
-		if err != nil {
-			return nil, stats, err
-		}
-		stats.windows++
-		stats.candidates += matchStats.CandidateCount
-		stats.suppressed += matchStats.SuppressedPedestrianCandidates
-		stats.graphNodes += matchStats.GraphNodeCount
-		stats.graphEdges += matchStats.GraphEdgeCount
-		flat := []coverage.TraversedPortion{}
-		for _, traversal := range rematched.Traversals {
-			flat = append(flat, traversal.Portions...)
-		}
-		for j := 0; j+1 < len(flat); j++ {
-			newBefore, newAfter := flat[j], flat[j+1]
-			if newBefore.PhysicalSegmentID != before.portion.PhysicalSegmentID || newBefore.Direction != before.portion.Direction ||
-				newAfter.PhysicalSegmentID != after.portion.PhysicalSegmentID || newAfter.Direction != after.portion.Direction ||
-				newBefore.SourceFromFraction > before.portion.SourceFromFraction+1e-6 || newBefore.SourceToFraction < before.portion.SourceToFraction-1e-6 ||
-				newAfter.SourceFromFraction > after.portion.SourceFromFraction+1e-6 || newAfter.SourceToFraction < after.portion.SourceToFraction-1e-6 {
-				continue
-			}
-			added := (newBefore.ToMeter - newBefore.FromMeter) + (newAfter.ToMeter - newAfter.FromMeter) -
-				(before.portion.ToMeter - before.portion.FromMeter) - (after.portion.ToMeter - after.portion.FromMeter)
-			if added <= 1e-6 || added > 35 {
-				continue
-			}
-			portions[i].portion, portions[i+1].portion = newBefore, newAfter
-			break
-		}
-	}
-	return portions, stats, nil
-}
-
-func replaceCrossWindowRoadTangents(ctx context.Context, snapshot coverageDiagnosticSnapshot, points []coverage.GeographicObservation, windowStarts []int, portions []diagnosticMatchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]diagnosticMatchedPortion, struct{ windows, candidates, suppressed, graphNodes, graphEdges int }, error) {
-	stats := struct{ windows, candidates, suppressed, graphNodes, graphEdges int }{}
-	present := make(map[uuid.UUID]bool)
-	for _, item := range portions {
-		present[item.portion.PhysicalSegmentID] = true
-	}
-	for i := 1; i+1 < len(portions); i++ {
-		before, selected, after := portions[i-1], portions[i], portions[i+1]
-		if before.window != selected.window || selected.window == after.window || after.window < 0 || after.window >= len(windowStarts) ||
-			before.portion.ContinuityClass != "road" || selected.portion.ContinuityClass != "road" || after.portion.ContinuityClass != "road" ||
-			before.portion.LogicalPathID == "" || selected.portion.LogicalPathID == "" || after.portion.LogicalPathID == "" ||
-			before.portion.LogicalPathID == after.portion.LogicalPathID || selected.portion.LogicalPathID == after.portion.LogicalPathID ||
-			selected.portion.SourceFromFraction > 1e-6 || selected.portion.SourceToFraction < 1-1e-6 ||
-			selected.portion.ToMeter-selected.portion.FromMeter < 20 || selected.portion.ToMeter-selected.portion.FromMeter > 60 {
-			continue
-		}
-		const supplementalWindowSize = 192
-		start := max(0, windowStarts[after.window]-128)
-		end := min(len(points), start+supplementalWindowSize)
-		start = max(0, end-supplementalWindowSize)
-		rematched, matchStats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], rules, options)
-		if err != nil {
-			return nil, stats, err
-		}
-		stats.windows++
-		stats.candidates += matchStats.CandidateCount
-		stats.suppressed += matchStats.SuppressedPedestrianCandidates
-		stats.graphNodes += matchStats.GraphNodeCount
-		stats.graphEdges += matchStats.GraphEdgeCount
-		flat := []coverage.TraversedPortion{}
-		for _, traversal := range rematched.Traversals {
-			flat = append(flat, traversal.Portions...)
-		}
-		replaced := false
-		for left := 0; left < len(flat) && !replaced; left++ {
-			if flat[left].PhysicalSegmentID != before.portion.PhysicalSegmentID || flat[left].Direction != before.portion.Direction {
-				continue
-			}
-			for right := left + 3; right < len(flat) && right <= left+6; right++ {
-				if flat[right].PhysicalSegmentID != after.portion.PhysicalSegmentID || flat[right].Direction != after.portion.Direction {
-					continue
-				}
-				var replacement []diagnosticMatchedPortion
-				portions, replacement = replaceCrossWindowTangent(portions, i, flat[left+1:right], flat[right], before, selected, after, present)
-				if len(replacement) == 0 {
-					continue
-				}
-				i += len(replacement) - 1
-				replaced = true
-				break
-			}
-		}
-		if replaced {
-			continue
-		}
-	}
-	return portions, stats, nil
-}
-
-func replaceCrossWindowTangent(portions []diagnosticMatchedPortion, index int, middle []coverage.TraversedPortion, supplementalAfter coverage.TraversedPortion, before, selected, after diagnosticMatchedPortion, present map[uuid.UUID]bool) ([]diagnosticMatchedPortion, []diagnosticMatchedPortion) {
-	distance := 0.0
-	for i, portion := range middle {
-		distance += portion.ToMeter - portion.FromMeter
-		selectedTurnaround := len(middle) >= 2 && i < 2 && portion.PhysicalSegmentID == selected.portion.PhysicalSegmentID &&
-			middle[0].Direction == selected.portion.Direction && middle[1].Direction != selected.portion.Direction
-		if portion.ContinuityClass != "road" || !selectedTurnaround && (portion.PhysicalSegmentID == selected.portion.PhysicalSegmentID || present[portion.PhysicalSegmentID]) {
-			return portions, nil
-		}
-	}
-	if len(middle) < 2 || len(middle) > 5 || distance > 500 {
-		return portions, nil
-	}
-	if selected.portion.LogicalPathID == before.portion.LogicalPathID && selected.portion.SourceFromFraction <= 1e-6 && selected.portion.SourceToFraction >= 1-1e-6 {
-		returned := selected.portion
-		if returned.Direction == coverage.SegmentForward {
-			returned.Direction = coverage.SegmentReverse
-		} else {
-			returned.Direction = coverage.SegmentForward
-		}
-		middle = append([]coverage.TraversedPortion{selected.portion, returned}, middle...)
-		distance += 2 * (selected.portion.ToMeter - selected.portion.FromMeter)
-	}
-	if len(middle) > 5 || distance > 500 {
-		return portions, nil
-	}
-	replacement := make([]diagnosticMatchedPortion, len(middle))
-	for i, portion := range middle {
-		replacement[i] = diagnosticMatchedPortion{portion: portion, class: selected.class, window: after.window}
-		present[portion.PhysicalSegmentID] = true
-	}
-	portions = append(portions, make([]diagnosticMatchedPortion, len(replacement)-1)...)
-	copy(portions[index+len(replacement):], portions[index+1:len(portions)-len(replacement)+1])
-	copy(portions[index:], replacement)
-	afterIndex := index + len(replacement)
-	if supplementalAfter.PhysicalSegmentID == portions[afterIndex].portion.PhysicalSegmentID && supplementalAfter.Direction == portions[afterIndex].portion.Direction {
-		merged := portions[afterIndex].portion
-		merged.FromMeter = math.Min(merged.FromMeter, supplementalAfter.FromMeter)
-		merged.ToMeter = math.Max(merged.ToMeter, supplementalAfter.ToMeter)
-		merged.SourceFromFraction = math.Min(merged.SourceFromFraction, supplementalAfter.SourceFromFraction)
-		merged.SourceToFraction = math.Max(merged.SourceToFraction, supplementalAfter.SourceToFraction)
-		portions[afterIndex].portion = merged
-	}
-	return portions, replacement
-}
-
-func directedPortionEndIsClipped(portion coverage.TraversedPortion) bool {
-	if portion.Direction == coverage.SegmentReverse {
-		return portion.SourceFromFraction > 1e-6
-	}
-	return portion.SourceToFraction < 1-1e-6
-}
-
-func directedPortionStartIsClipped(portion coverage.TraversedPortion) bool {
-	if portion.Direction == coverage.SegmentReverse {
-		return portion.SourceToFraction < 1-1e-6
-	}
-	return portion.SourceFromFraction > 1e-6
-}
-
-func diagnosticTraversalClass(traversal coverage.DecodedTraversal) string {
-	for _, observation := range traversal.Observations {
-		if observation.Status == coverage.ObservationAmbiguous {
-			return "ambiguous"
-		}
-	}
-	return "matched"
-}
-
-type diagnosticHTTPError struct{ status int }
-
-func (e *diagnosticHTTPError) Error() string { return http.StatusText(e.status) }
 
 func diagnosticErrorStatus(ctx context.Context, err error) int {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return http.StatusGatewayTimeout
 	}
-	var status *diagnosticHTTPError
-	if errors.As(err, &status) {
-		return status.status
+	var limit *routepipeline.LimitError
+	if errors.As(err, &limit) {
+		return http.StatusRequestEntityTooLarge
 	}
 	var bounds *osm.MatcherBoundsError
 	var overflow *osm.MatcherOverflowError
@@ -749,9 +426,9 @@ func diagnosticResponse(result diagnosticResult) generated.CoverageDiagnosticRun
 		Overlay: generated.CoverageDiagnosticEvidenceCollection{Type: generated.FeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},
 		Labels:  generated.CoverageDiagnosticLabels{Segments: []generated.CoverageDiagnosticSegmentLabel{}}, UnavailableRegions: []generated.CoverageDiagnosticUnavailableRegion{},
 	}
-	response.Outcome = generated.Evaluated
+	response.Outcome = generated.CoverageDiagnosticRunOutcomeEvaluated
 	if len(result.evidence) == 0 {
-		response.Outcome = generated.NoEvidence
+		response.Outcome = generated.CoverageDiagnosticRunOutcomeNoEvidence
 	}
 	for _, generation := range result.generations {
 		item := generated.CoverageDiagnosticGeneration{RegionId: generation.RegionID, Generation: generation.GenerationID,

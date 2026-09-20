@@ -138,6 +138,35 @@ type MatcherClippedPortion struct {
 	LengthMeters       float64
 }
 
+type MatcherSegmentRef struct {
+	SegmentID    uuid.UUID
+	RegionID     string
+	GenerationID int64
+}
+
+type MatcherSegmentCopy struct {
+	Ordinal                 int
+	SegmentID               uuid.UUID
+	RegionID                string
+	GenerationID            int64
+	DerivationVersion       int
+	LogicalPathID           uuid.UUID
+	LocalityRelationID      *int64
+	LocalityRelationVersion *int
+	LocalityName            *string
+	SourceWayID             int64
+	SourceWayVersion        int
+	SegmentName             *string
+	SegmentNormalizedName   *string
+	PathName                *string
+	PathNormalizedName      *string
+	Highway                 string
+	BroadClass              string
+	Tags                    json.RawMessage
+	GeoJSON                 json.RawMessage
+	LengthMeters            float64
+}
+
 // MatcherBoundsError reports rejected request shape without retaining input data.
 type MatcherBoundsError struct {
 	Field string
@@ -163,8 +192,52 @@ func (e *MatcherOverflowError) Error() string {
 }
 
 type MatcherSnapshot struct {
-	tx     pgx.Tx
-	closed bool
+	tx                 pgx.Tx
+	closed             bool
+	allowedRegions     []string
+	allowedGenerations []int64
+}
+
+var ErrMatcherGenerationChanged = errors.New("OSM matcher generation changed")
+
+func BeginMatcherSnapshotForGenerations(ctx context.Context, pool *pgxpool.Pool, targets []MatcherGeneration) (*MatcherSnapshot, error) {
+	if len(targets) == 0 || len(targets) > 256 {
+		return nil, &MatcherBoundsError{Field: "target generations", Limit: 256}
+	}
+	snapshot, err := BeginMatcherSnapshot(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if target.RegionID == "" || target.GenerationID <= 0 {
+			_ = snapshot.Close(context.WithoutCancel(ctx))
+			return nil, &MatcherBoundsError{Field: "target generation provenance", Limit: 256}
+		}
+		if _, duplicate := seen[target.RegionID]; duplicate {
+			_ = snapshot.Close(context.WithoutCancel(ctx))
+			return nil, &MatcherBoundsError{Field: "unique target regions", Limit: 256}
+		}
+		seen[target.RegionID] = struct{}{}
+		snapshot.allowedRegions = append(snapshot.allowedRegions, target.RegionID)
+		snapshot.allowedGenerations = append(snapshot.allowedGenerations, target.GenerationID)
+	}
+	active, err := snapshot.Generations(ctx)
+	if err != nil {
+		_ = snapshot.Close(context.WithoutCancel(ctx))
+		return nil, err
+	}
+	activeByRegion := make(map[string]int64, len(active))
+	for _, generation := range active {
+		activeByRegion[generation.RegionID] = generation.GenerationID
+	}
+	for _, target := range targets {
+		if activeByRegion[target.RegionID] != target.GenerationID {
+			_ = snapshot.Close(context.WithoutCancel(ctx))
+			return nil, ErrMatcherGenerationChanged
+		}
+	}
+	return snapshot, nil
 }
 
 func BeginMatcherSnapshot(ctx context.Context, pool *pgxpool.Pool) (*MatcherSnapshot, error) {
@@ -213,7 +286,9 @@ func (s *MatcherSnapshot) Close(ctx context.Context) error {
 }
 
 const matcherCandidatesSQL = `
-WITH observations AS (
+WITH allowed AS (
+    SELECT region_id,generation_id FROM unnest($5::text[],$6::bigint[]) input(region_id,generation_id)
+), observations AS (
     SELECT ordinal::integer-1 AS observation_index,
            ST_SetSRID(ST_MakePoint(longitude,latitude),4326) AS location,
            radius_m
@@ -242,15 +317,21 @@ CROSS JOIN LATERAL (
                ST_LineLocatePoint(segment.geom,observation.location) AS fraction
         FROM osm_canonical.path_segments segment
         WHERE ST_DWithin(segment.geom::geography,observation.location::geography,observation.radius_m)
+          AND (COALESCE(cardinality($5::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+              WHERE allowed.region_id=segment.region_id AND allowed.generation_id=segment.generation_id))
           AND NOT EXISTS (
               SELECT 1 FROM osm_canonical.ways preferred_way
               WHERE preferred_way.way_id=segment.source_way_id
+                AND (COALESCE(cardinality($5::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+                    WHERE allowed.region_id=preferred_way.region_id AND allowed.generation_id=preferred_way.generation_id))
                 AND (preferred_way.version,preferred_way.generation_id,preferred_way.region_id)
                     > (segment.source_way_version,segment.generation_id,segment.region_id)
           )
           AND NOT EXISTS (
               SELECT 1 FROM osm_canonical.path_segments preferred_segment
               WHERE preferred_segment.segment_id=segment.segment_id
+                AND (COALESCE(cardinality($5::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+                    WHERE allowed.region_id=preferred_segment.region_id AND allowed.generation_id=preferred_segment.generation_id))
                 AND (preferred_segment.generation_id,preferred_segment.region_id)
                     > (segment.generation_id,segment.region_id)
           )
@@ -287,7 +368,8 @@ func (s *MatcherSnapshot) Candidates(ctx context.Context, observations []Matcher
 	if err := s.queryable(); err != nil {
 		return nil, err
 	}
-	rows, err := s.tx.Query(ctx, matcherCandidatesSQL, longitudes, latitudes, radii, maxPerObservation+1)
+	rows, err := s.tx.Query(ctx, matcherCandidatesSQL, longitudes, latitudes, radii, maxPerObservation+1,
+		s.allowedRegions, s.allowedGenerations)
 	if err != nil {
 		return nil, fmt.Errorf("query OSM matcher candidates: %w", err)
 	}
@@ -326,18 +408,24 @@ func (s *MatcherSnapshot) Candidates(ctx context.Context, observations []Matcher
 }
 
 const matcherIncidentEdgesSQL = `
-WITH requested_nodes AS (
+WITH allowed AS (
+    SELECT region_id,generation_id FROM unnest($3::text[],$4::bigint[]) input(region_id,generation_id)
+), requested_nodes AS (
     SELECT node_id,ordinal::integer FROM unnest($1::uuid[]) WITH ORDINALITY input(node_id,ordinal)
 ), incident_key AS (
     SELECT node.ordinal,node.node_id AS requested_node_id,
            segment.region_id,segment.generation_id,segment.segment_id
     FROM requested_nodes node
     JOIN osm_canonical.path_segments segment ON segment.start_graph_node_id=node.node_id
+     AND (COALESCE(cardinality($3::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+         WHERE allowed.region_id=segment.region_id AND allowed.generation_id=segment.generation_id))
     UNION
     SELECT node.ordinal,node.node_id AS requested_node_id,
            segment.region_id,segment.generation_id,segment.segment_id
     FROM requested_nodes node
     JOIN osm_canonical.path_segments segment ON segment.end_graph_node_id=node.node_id
+     AND (COALESCE(cardinality($3::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+         WHERE allowed.region_id=segment.region_id AND allowed.generation_id=segment.generation_id))
 )
 SELECT key.requested_node_id,segment.segment_id,segment.region_id,segment.generation_id,
        segment.source_way_id,segment.source_way_version,segment.derivation_version,
@@ -354,12 +442,16 @@ JOIN osm_canonical.path_segments segment
 WHERE NOT EXISTS (
     SELECT 1 FROM osm_canonical.ways preferred_way
     WHERE preferred_way.way_id=segment.source_way_id
+       AND (COALESCE(cardinality($3::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+          WHERE allowed.region_id=preferred_way.region_id AND allowed.generation_id=preferred_way.generation_id))
       AND (preferred_way.version,preferred_way.generation_id,preferred_way.region_id)
           > (segment.source_way_version,segment.generation_id,segment.region_id)
 )
 AND NOT EXISTS (
     SELECT 1 FROM osm_canonical.path_segments preferred_segment
     WHERE preferred_segment.segment_id=segment.segment_id
+       AND (COALESCE(cardinality($3::text[]),0)=0 OR EXISTS (SELECT 1 FROM allowed
+          WHERE allowed.region_id=preferred_segment.region_id AND allowed.generation_id=preferred_segment.generation_id))
       AND (preferred_segment.generation_id,preferred_segment.region_id)
           > (segment.generation_id,segment.region_id)
 )
@@ -381,7 +473,7 @@ func (s *MatcherSnapshot) IncidentEdges(ctx context.Context, nodeIDs []uuid.UUID
 	if err := s.queryable(); err != nil {
 		return nil, err
 	}
-	rows, err := s.tx.Query(ctx, matcherIncidentEdgesSQL, nodeIDs, maxEdges+1)
+	rows, err := s.tx.Query(ctx, matcherIncidentEdgesSQL, nodeIDs, maxEdges+1, s.allowedRegions, s.allowedGenerations)
 	if err != nil {
 		return nil, fmt.Errorf("query OSM matcher incident edges: %w", err)
 	}
@@ -516,6 +608,78 @@ func (s *MatcherSnapshot) ClipPortions(ctx context.Context, refs []MatcherPortio
 	}
 	if len(result) != len(refs) {
 		return nil, errors.New("OSM matcher clipped portion query returned an absent reference")
+	}
+	return result, nil
+}
+
+const matcherCopySegmentsSQL = `
+WITH requested AS (
+    SELECT ordinal::integer-1 AS ordinal,region_id,generation_id,segment_id
+    FROM unnest($1::text[],$2::bigint[],$3::uuid[])
+         WITH ORDINALITY AS input(region_id,generation_id,segment_id,ordinal)
+)
+SELECT requested.ordinal,segment.segment_id,segment.region_id,segment.generation_id,
+       segment.derivation_version,segment.logical_path_id,segment.locality_relation_id,
+       locality.relation_version,locality.name,segment.source_way_id,segment.source_way_version,
+	       COALESCE(segment.name,segment.tags->>'workouts:education_name'),
+	       COALESCE(segment.normalized_name,segment.tags->>'workouts:education_normalized_name'),
+	       COALESCE(path.name,segment.tags->>'workouts:education_name'),
+	       COALESCE(path.normalized_name,segment.tags->>'workouts:education_normalized_name'),
+       segment.highway,segment.broad_class,segment.tags,ST_AsGeoJSON(segment.geom)::jsonb,segment.length_m
+FROM requested
+JOIN osm_canonical.path_segments segment
+  ON segment.region_id=requested.region_id AND segment.generation_id=requested.generation_id
+ AND segment.segment_id=requested.segment_id
+LEFT JOIN osm_canonical.localities locality
+  ON locality.region_id=segment.region_id AND locality.generation_id=segment.generation_id
+ AND locality.relation_id=segment.locality_relation_id
+LEFT JOIN osm_active.logical_paths path ON path.logical_path_id=segment.logical_path_id
+ORDER BY requested.ordinal
+LIMIT $4`
+
+func (s *MatcherSnapshot) CopySegments(ctx context.Context, refs []MatcherSegmentRef) ([]MatcherSegmentCopy, error) {
+	if len(refs) == 0 || len(refs) > maxClipPortionRefs {
+		return nil, &MatcherBoundsError{Field: "segment copy reference count", Limit: maxClipPortionRefs}
+	}
+	regions := make([]string, len(refs))
+	generations := make([]int64, len(refs))
+	segments := make([]uuid.UUID, len(refs))
+	seen := make(map[MatcherSegmentRef]struct{}, len(refs))
+	for i, ref := range refs {
+		if ref.SegmentID == uuid.Nil || ref.RegionID == "" || ref.GenerationID <= 0 {
+			return nil, &MatcherBoundsError{Field: "segment copy provenance", Limit: maxClipPortionRefs}
+		}
+		if _, duplicate := seen[ref]; duplicate {
+			return nil, &MatcherBoundsError{Field: "unique segment copy references", Limit: maxClipPortionRefs}
+		}
+		seen[ref] = struct{}{}
+		regions[i], generations[i], segments[i] = ref.RegionID, ref.GenerationID, ref.SegmentID
+	}
+	if err := s.queryable(); err != nil {
+		return nil, err
+	}
+	rows, err := s.tx.Query(ctx, matcherCopySegmentsSQL, regions, generations, segments, len(refs)+1)
+	if err != nil {
+		return nil, fmt.Errorf("query OSM matcher segment copies: %w", err)
+	}
+	defer rows.Close()
+	result := make([]MatcherSegmentCopy, 0, len(refs))
+	for rows.Next() {
+		if len(result) == len(refs) {
+			return nil, &MatcherOverflowError{Operation: "segment copy", Limit: len(refs)}
+		}
+		var item MatcherSegmentCopy
+		if err := rows.Scan(&item.Ordinal, &item.SegmentID, &item.RegionID, &item.GenerationID,
+			&item.DerivationVersion, &item.LogicalPathID, &item.LocalityRelationID,
+			&item.LocalityRelationVersion, &item.LocalityName, &item.SourceWayID, &item.SourceWayVersion,
+			&item.SegmentName, &item.SegmentNormalizedName, &item.PathName, &item.PathNormalizedName,
+			&item.Highway, &item.BroadClass, &item.Tags, &item.GeoJSON, &item.LengthMeters); err != nil {
+			return nil, fmt.Errorf("scan OSM matcher segment copy: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read OSM matcher segment copies: %w", err)
 	}
 	return result, nil
 }

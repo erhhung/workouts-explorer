@@ -10,6 +10,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/coverage"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
@@ -101,16 +102,36 @@ func (r *Runner) updateCoverageReadiness(ctx context.Context, tx pgx.Tx, job cla
 		return fmt.Errorf("encode workout coverage regions: %w", err)
 	}
 	var persisted bool
-	reason := any(nil)
-	if readiness.Reason != "" {
-		reason = readiness.Reason
-	}
 	if err := tx.QueryRow(ctx, `SELECT app.set_workout_coverage_readiness($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		job.accountID, workoutID, revision, readiness.State, reason, regions, job.id, r.workerID, job.lease).Scan(&persisted); err != nil {
+		job.accountID, workoutID, revision, readiness.State, nullableReadinessReason(readiness.Reason), regions, job.id, r.workerID, job.lease).Scan(&persisted); err != nil {
 		return fmt.Errorf("persist workout coverage readiness: %w", err)
 	}
-	_ = changed
+	if readiness.State == "map_data_ready" && len(readiness.Regions) > 0 && (changed || persisted) {
+		routeTargets, err := json.Marshal([]map[string]any{{
+			"jobId": uuid.New(), "workoutId": workoutID, "routeRevision": revision, "generations": readiness.Regions,
+		}})
+		if err != nil {
+			return fmt.Errorf("encode coverage job target: %w", err)
+		}
+		var parentID uuid.UUID
+		var routeCount int
+		var reused bool
+		if err := tx.QueryRow(ctx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update(
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, job.accountID, uuid.New(), readiness.Regions[0].RegionID,
+			readiness.Regions[0].Generation, revision, string(coverage.ExperimentalRulesV1),
+			string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82),
+			r.coverageMinTraversalMeters, routeTargets).Scan(&parentID, &routeCount, &reused); err != nil {
+			return fmt.Errorf("enqueue coverage route: %w", err)
+		}
+	}
 	return nil
+}
+
+func nullableReadinessReason(reason string) any {
+	if reason == "" {
+		return nil
+	}
+	return reason
 }
 
 func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) error {

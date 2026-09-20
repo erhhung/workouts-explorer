@@ -1,6 +1,7 @@
 package osm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -82,10 +83,10 @@ func (p updatePipelineStub) Run(_ context.Context, stage string, _ Generation, _
 }
 
 func validUpdateReport() []byte {
-	return []byte(`{"partitionPrepared":true,"preparedRegionId":"geofabrik:norcal","preparedGenerationId":42,"importerVersion":1,"derivationVersion":2,"provenanceMismatches":0,"sourceVersionMismatches":0,"logicalPathMismatches":0,"missingEndpointIndexes":0,"invalidWays":0,"invalidPathSegments":0,"orphanPathSegments":0,"materialLocalityResiduals":0,"ways":10,"pathSegments":20,"logicalPaths":5}`)
+	return []byte(`{"partitionPrepared":true,"preparedRegionId":"geofabrik:norcal","preparedGenerationId":42,"importerVersion":3,"derivationVersion":16,"provenanceMismatches":0,"sourceVersionMismatches":0,"logicalPathMismatches":0,"missingEndpointIndexes":0,"invalidWays":0,"invalidPathSegments":0,"orphanPathSegments":0,"materialLocalityResiduals":0,"invalidParkAttributions":0,"invalidNationalParkAreas":0,"invalidEducationAttributions":0,"materialEducationResiduals":0,"remainingConnectedAttributionSplits":0,"attributionIdentityLogicalIdEdges":3,"attributionIdentityAffectedLogicalIds":5,"attributionIdentityMergedComponents":2,"attributionScopeRebasedSegments":0,"attributionScopeRebasedLogicalIds":0,"localityScopeSliversAbsorbed":0,"localityScopeSliverLengthMeters":0,"materialParkResiduals":0,"ways":10,"pathSegments":20,"logicalPaths":5}`)
 }
 
-func newTestUpdater(t *testing.T, store *updateStoreStub, pipeline updatePipelineStub) Updater {
+func newTestUpdater(t *testing.T, store *updateStoreStub, pipeline UpdatePipeline) Updater {
 	t.Helper()
 	return Updater{
 		Store: store, Pipeline: pipeline, HTTPClient: http.DefaultClient,
@@ -101,8 +102,8 @@ func newTestUpdater(t *testing.T, store *updateStoreStub, pipeline updatePipelin
 }
 
 func TestUpdaterRunsStagesInOrder(t *testing.T) {
-	if DerivationVersion != 2 {
-		t.Fatalf("DerivationVersion=%d, want 2 for provider-region outside logical paths", DerivationVersion)
+	if ImporterVersion != 3 || DerivationVersion != 16 {
+		t.Fatalf("importer/derivation versions=%d/%d, want 3/16 for educational-ground attribution", ImporterVersion, DerivationVersion)
 	}
 	store := &updateStoreStub{}
 	pipeline := updatePipelineStub{events: &store.events, validation: validUpdateReport()}
@@ -110,7 +111,7 @@ func TestUpdaterRunsStagesInOrder(t *testing.T) {
 	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"versions", "gc", "reserve", "download", "fileinfo", "record-download", "tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip", "prepare-partitions", "validate", "set-validating", "promote", "gc"}
+	want := []string{"versions", "gc", "reserve", "download", "fileinfo", "record-download", "tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip", "attribute-parks", "prepare-partitions", "validate", "set-validating", "promote", "gc"}
 	if !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events = %v, want %v", store.events, want)
 	}
@@ -157,6 +158,30 @@ func TestUpdaterValidationRejectsMissingEndpointIndexes(t *testing.T) {
 	}
 	if store.promoted {
 		t.Fatal("candidate without endpoint indexes was promoted")
+	}
+}
+
+func TestUpdaterValidationRejectsInvalidNationalParkAreas(t *testing.T) {
+	store := &updateStoreStub{}
+	report := strings.Replace(string(validUpdateReport()), `"invalidNationalParkAreas":0`, `"invalidNationalParkAreas":1`, 1)
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: []byte(report)})
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil || !strings.Contains(err.Error(), "invalidNationalParkAreas") {
+		t.Fatalf("expected national park validation error, got %v", err)
+	}
+	if store.promoted {
+		t.Fatal("candidate with an invalid national park was promoted")
+	}
+}
+
+func TestUpdaterValidationRejectsConnectedAttributionSplit(t *testing.T) {
+	store := &updateStoreStub{}
+	report := strings.Replace(string(validUpdateReport()), `"remainingConnectedAttributionSplits":0`, `"remainingConnectedAttributionSplits":1`, 1)
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: []byte(report)})
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil || !strings.Contains(err.Error(), "remainingConnectedAttributionSplits") {
+		t.Fatalf("expected connected attribution split validation error, got %v", err)
+	}
+	if store.promoted {
+		t.Fatal("candidate with a connected attribution split was promoted")
 	}
 }
 
@@ -235,6 +260,244 @@ func TestSafeFailureRedactsAndBoundsSummary(t *testing.T) {
 	if strings.Contains(message, "secret") || strings.Contains(message, "\n") || len([]rune(message)) > 512 {
 		t.Fatalf("unsafe summary %q", message)
 	}
+}
+
+func TestCommandPipelineRunsMutatingSQLStagesInOneTransaction(t *testing.T) {
+	var calls [][]string
+	pipeline := CommandPipeline{
+		DatabaseURL: "postgresql://user:secret@database/osm",
+		Root:        "/pipeline",
+		outputCommand: func(_ context.Context, _ []string, name string, args ...string) (string, error) {
+			if name != "psql" {
+				t.Fatalf("command = %q, want psql", name)
+			}
+			calls = append(calls, append([]string(nil), args...))
+			return "", nil
+		},
+		retryDelays: []time.Duration{},
+	}
+	generation := Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42"}
+	for _, stage := range []string{"postprocess", "derive", "clip", "attribute-parks", "prepare-partitions"} {
+		if _, err := pipeline.Run(context.Background(), stage, generation, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pipeline.Run(context.Background(), "validate", generation, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	for index, args := range calls {
+		hasSingleTransaction := contains(args, "--single-transaction")
+		if index < 5 && !hasSingleTransaction {
+			t.Errorf("mutating call %d omitted --single-transaction: %v", index, args)
+		}
+		if index == 5 && hasSingleTransaction {
+			t.Errorf("validate unexpectedly uses --single-transaction: %v", args)
+		}
+	}
+	if got := calls[3]; !contains(got, "--file") || !contains(got, "/pipeline/attribute-parks.sql") {
+		t.Fatalf("attribute-parks args = %v", got)
+	}
+}
+
+func TestTransientPostgresFailureClassification(t *testing.T) {
+	transient := []string{
+		"SSL error: unexpected EOF while reading",
+		"connection to server was lost",
+		"connection to server was closed",
+		"server closed the connection unexpectedly",
+		"read: connection reset by peer",
+		"write failed: broken pipe",
+		"timeout connecting to host",
+		"net/http: TLS handshake timeout",
+		"dial tcp: i/o timeout",
+		"could not connect to server",
+		"connect: connection refused",
+		"canceling statement due to conflict with recovery",
+		"serialization failure (SQLSTATE 40001)",
+		"terminating connection due to administrator command",
+	}
+	for _, message := range transient {
+		t.Run(message, func(t *testing.T) {
+			if !isTransientPostgresFailure(errors.New(strings.ToUpper(message))) {
+				t.Fatalf("did not classify %q", message)
+			}
+		})
+	}
+	for _, message := range []string{
+		"ERROR: syntax error at or near SELECT",
+		"ERROR: duplicate key value violates unique constraint",
+		"validation did not return one JSON object",
+		"statement timeout",
+	} {
+		if isTransientPostgresFailure(errors.New(message)) {
+			t.Errorf("classified permanent failure %q as transient", message)
+		}
+	}
+	if isTransientPostgresFailure(context.Canceled) || isTransientPostgresFailure(context.DeadlineExceeded) {
+		t.Fatal("classified context cancellation as transient")
+	}
+}
+
+func TestCommandPipelineRetriesOnlyFailedStageAndLogsSafely(t *testing.T) {
+	store := &updateStoreStub{}
+	var stages []string
+	var log strings.Builder
+	attributeAttempts := 0
+	pipeline := CommandPipeline{
+		DatabaseURL: "postgresql://user:secret@database/osm",
+		Root:        "/pipeline",
+		Log:         &log,
+		outputCommand: func(_ context.Context, _ []string, name string, args ...string) (string, error) {
+			switch name {
+			case "osmium":
+				if contains(args, "--version") {
+					return "osmium version 1.19.0", nil
+				}
+				if contains(args, "fileinfo") {
+					return `{"header":{"option":{"osmosis_replication_timestamp":"2026-08-27T21:00:00Z"}}}`, nil
+				}
+				stages = append(stages, args[0])
+			case "osm2pgsql":
+				if contains(args, "--version") {
+					return "osm2pgsql version 2.3.1", nil
+				}
+				stages = append(stages, "osm2pgsql")
+			case "psql":
+				stage := sqlStage(args)
+				stages = append(stages, stage)
+				if stage == "attribute-parks" {
+					attributeAttempts++
+					if attributeAttempts == 1 {
+						return "", &commandFailure{name: "psql", output: "connect postgresql://user:secret@database/osm: SSL error: unexpected EOF while reading", cause: errors.New("exit status 2")}
+					}
+				}
+				if stage == "validate" {
+					return string(validUpdateReport()), nil
+				}
+			}
+			return "", nil
+		},
+		retryDelays: []time.Duration{0, 0, 0, 0},
+	}
+	updater := newTestUpdater(t, store, pipeline)
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+		t.Fatal(err)
+	}
+	wantStages := []string{"tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip", "attribute-parks", "attribute-parks", "prepare-partitions", "validate"}
+	if !reflect.DeepEqual(stages, wantStages) {
+		t.Fatalf("stage attempts = %v, want %v", stages, wantStages)
+	}
+	if len(store.failures) != 0 || contains(store.events, "drop-schema") {
+		t.Fatalf("successful retry failed or dropped generation: %v", store.events)
+	}
+	if message := log.String(); !strings.Contains(message, "attribute-parks") || !strings.Contains(message, "attempt 1/5") || !strings.Contains(message, "retrying in 0s") || strings.Contains(message, "secret") {
+		t.Fatalf("unsafe or incomplete retry log %q", message)
+	}
+}
+
+func TestCommandPipelineStreamsOutputAndReportsLongRunningProgress(t *testing.T) {
+	var log bytes.Buffer
+	pipeline := CommandPipeline{Log: &log, progressInterval: 5 * time.Millisecond}
+	output, err := pipeline.output(context.Background(), nil, "sh", "-c", "sleep 0.03; printf progress-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "progress-output" {
+		t.Fatalf("output = %q", output)
+	}
+	message := log.String()
+	if !strings.Contains(message, "running OSM tool sh") ||
+		!strings.Contains(message, "OSM tool sh still running") ||
+		!strings.Contains(message, "progress-output") {
+		t.Fatalf("missing streamed progress in %q", message)
+	}
+}
+
+func TestCommandPipelineDoesNotRetryPermanentFailureOrCancellation(t *testing.T) {
+	generation := Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42"}
+	for _, test := range []struct {
+		name string
+		ctx  func() context.Context
+		err  error
+	}{
+		{name: "permanent", ctx: context.Background, err: errors.New("ERROR: syntax error at or near SELECT")},
+		{name: "canceled", ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, err: context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			pipeline := CommandPipeline{DatabaseURL: "postgresql://database/osm", Root: "/pipeline", retryDelays: []time.Duration{0, 0, 0, 0}, outputCommand: func(context.Context, []string, string, ...string) (string, error) {
+				calls++
+				return "", test.err
+			}}
+			if _, err := pipeline.Run(test.ctx(), "attribute-parks", generation, "", ""); err == nil {
+				t.Fatal("expected failure")
+			}
+			if calls != 1 {
+				t.Fatalf("calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestCommandPipelineRetryExhaustionUsesUpdaterCleanup(t *testing.T) {
+	store := &updateStoreStub{}
+	attributeAttempts := 0
+	stageCounts := make(map[string]int)
+	pipeline := CommandPipeline{
+		DatabaseURL: "postgresql://database/osm",
+		Root:        "/pipeline",
+		outputCommand: func(_ context.Context, _ []string, name string, args ...string) (string, error) {
+			switch name {
+			case "osmium":
+				if contains(args, "--version") {
+					return "osmium version 1.19.0", nil
+				}
+				if contains(args, "fileinfo") {
+					return `{"header":{"option":{"timestamp":"2026-08-27T21:00:00Z"}}}`, nil
+				}
+			case "osm2pgsql":
+				if contains(args, "--version") {
+					return "osm2pgsql version 2.3.1", nil
+				}
+				stageCounts["osm2pgsql"]++
+			case "psql":
+				stage := sqlStage(args)
+				stageCounts[stage]++
+				if stage == "attribute-parks" {
+					attributeAttempts++
+					return "", errors.New("connection to server was lost")
+				}
+			}
+			return "", nil
+		},
+		retryDelays: []time.Duration{0, 0, 0, 0},
+	}
+	updater := newTestUpdater(t, store, pipeline)
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil {
+		t.Fatal("expected retries to be exhausted")
+	}
+	if attributeAttempts != 5 || stageCounts["derive"] != 1 || stageCounts["clip"] != 1 {
+		t.Fatalf("unexpected stage counts: attributes=%d all=%v", attributeAttempts, stageCounts)
+	}
+	if !reflect.DeepEqual(store.events[len(store.events)-2:], []string{"fail", "drop-schema"}) {
+		t.Fatalf("missing updater cleanup: %v", store.events)
+	}
+}
+
+func sqlStage(args []string) string {
+	for index, arg := range args {
+		if arg == "--file" && index+1 < len(args) {
+			stage := strings.TrimSuffix(filepath.Base(args[index+1]), ".sql")
+			if stage == "derive-compact" {
+				return "derive"
+			}
+			if stage == "clip-localities" {
+				return "clip"
+			}
+			return stage
+		}
+	}
+	return ""
 }
 
 func contains(values []string, target string) bool {

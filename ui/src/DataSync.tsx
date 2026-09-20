@@ -34,7 +34,7 @@ const STATUS_LABELS: Record<JobStatus, string> = {
 };
 const PAGE_SIZE = 25;
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as Array<[JobStatus, string]>;
-const OPERATION_OPTIONS = [["manual_sync", "Manual sync"], ["automated_sync", "Automated sync"], ["workout_deletion", "Workout deletion"]] as const;
+const OPERATION_OPTIONS = [["manual_sync", "Manual sync"], ["automated_sync", "Automated sync"], ["workout_deletion", "Workout deletion"], ["coverage_update", "Coverage update"]] as const;
 
 function validDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -72,12 +72,32 @@ function interval(seconds: number) {
 }
 
 function historyOperation(job: JobSummary) {
+	if (job.operation === "coverage_update") return "Coverage update";
   return job.operation === "workout_deletion" ? "Workout deletion" : job.trigger === "manual" ? "Manual sync" : "Automated sync";
 }
 
 function historyResults(job: JobSummary) {
+	if (job.operation === "coverage_update") return `${job.routeStats?.processed ?? job.progress.current} of ${job.routeStats?.total ?? job.progress.total} routes`;
   if (job.operation === "workout_deletion") return `${job.progress.current} of ${job.progress.total} deleted`;
   return `${job.progress.filesSucceeded} files / ${job.progress.workoutsCreated} new`;
+}
+
+function CoverageProgress({ job }: { job: JobDetail }) {
+	const stats = job.routeStats;
+	if (!stats || stats.total === 0) return <p className="sync-progress sync-progress--unknown">Preparing routes</p>;
+	return <div className="sync-progress"><span>{stats.processed} of {stats.total} routes</span><progress value={Math.min(stats.processed, stats.total)} max={stats.total} /></div>;
+}
+
+function CoverageResults({ job }: { job: JobDetail }) {
+	const stats = job.routeStats;
+	if (!stats) return null;
+	return <dl className="result-counts">
+		<div><dt>Routes Processed</dt><dd>{stats.processed}</dd></div>
+		<div><dt>Routes Succeeded</dt><dd>{stats.succeeded}</dd></div>
+		<div><dt>Routes Failed</dt><dd>{stats.failed}</dd></div>
+		<div><dt>Routes Canceled</dt><dd>{stats.cancelled}</dd></div>
+		<div><dt>Routes Superseded</dt><dd>{stats.superseded}</dd></div>
+	</dl>;
 }
 
 function NextRun({ value, preferences }: { value?: string; preferences: Preferences }) {
@@ -99,6 +119,10 @@ function sourceType(value: string) {
 function StatusBadge({ status, cancelRequested = false, style }: { status: JobStatus; cancelRequested?: boolean; style?: CSSProperties }) {
   const cancellationRequested = cancelRequested && ACTIVE_STATUSES.has(status);
   return <span className={`sync-status sync-status--${cancellationRequested ? "cancellation" : status}`} style={style}>{cancellationRequested ? "Cancellation requested" : STATUS_LABELS[status]}</span>;
+}
+
+function StatusText({ status }: { status: JobStatus }) {
+	return <span className={`sync-status-text sync-status-text--${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
 function Progress({ progress, status, style }: { progress: JobProgress; status: JobStatus; style?: CSSProperties }) {
@@ -201,26 +225,29 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
   onRetry: () => void;
   onSelectJob: (jobId: string) => void;
 }) {
-  const deletion = job.operation === "workout_deletion";
-  return <article className="sync-card job-detail-card">
-    <div className="sync-card-heading"><div><p className="card-kicker">Job {job.id.slice(0, 8)}</p><h2>{deletion ? "Workout deletion" : "Run detail"}</h2></div><StatusBadge status={job.status} cancelRequested={job.cancelRequested} /></div>
-    <dl className="job-metadata">
-      <div><dt>{deletion ? "Operation" : "Trigger"}</dt><dd>{deletion ? "Workout deletion" : job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div>
-      <div><dt>{deletion ? "Targets" : "Sources"}</dt><dd>{deletion ? job.progress.total : job.children.length || (job.source ? 1 : 0)}</dd></div>
+	const deletion = job.operation === "workout_deletion";
+	const coverage = job.operation === "coverage_update";
+	const waitingAfterStart = coverage && job.status === "queued" && Boolean(job.startedAt);
+	return <article className="sync-card job-detail-card">
+		<div className="sync-card-heading"><div><p className="card-kicker">Job {job.id.slice(0, 8)}</p><h2>{deletion ? "Workout deletion" : coverage ? "Coverage update" : "Run detail"}</h2></div><StatusBadge status={job.status} cancelRequested={job.cancelRequested} /></div>
+		<dl className="job-metadata">
+			<div><dt>{deletion || coverage ? "Operation" : "Trigger"}</dt><dd>{deletion ? "Workout deletion" : coverage ? "Coverage update" : job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div>
+			<div><dt>{deletion ? "Targets" : coverage ? "Routes" : "Sources"}</dt><dd>{deletion ? job.progress.total : coverage ? job.routeStats?.total ?? job.children.length : job.children.length || (job.source ? 1 : 0)}</dd></div>
       <div><dt>Queued</dt><dd>{dateTime(job.createdAt, preferences)}</dd></div>
-      <div><dt>Started</dt><dd>{dateTime(job.startedAt, preferences)}</dd></div>
+      <div><dt>{coverage ? "First started" : "Started"}</dt><dd>{dateTime(job.startedAt, preferences)}</dd></div>
+      {waitingAfterStart && <div><dt>Waiting since</dt><dd>{dateTime(job.updatedAt, preferences)}</dd></div>}
       <div><dt>Finished</dt><dd>{dateTime(job.terminalAt, preferences)}</dd></div>
-      {job.retryRootJobId && job.retryOrdinal != null
-        ? <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd className="retry-ordinal"><span>{ordinal(job.retryOrdinal)}</span>{job.retryOrdinal > 1 && job.retryOfJobId && <small className="retry-previous">|&nbsp; view <a href={`/data-sync/jobs/${job.retryOfJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryOfJobId!); }}>{ordinal(job.retryOrdinal - 1).toLowerCase()}</a></small>}</dd></div>
-        : job.latestRetryJobId && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd className="visually-hidden">Latest retry in chain</dd></div>}
-    </dl>
-    {!deletion && <Progress progress={job.progress} status={job.status} />}
-    {!deletion && (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
+			{job.retryRootJobId && job.retryOrdinal != null && job.retryOrdinal > 1
+				? <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd className="retry-ordinal"><span>{ordinal(job.retryOrdinal)}</span>{job.retryOrdinal > 1 && job.retryOfJobId && <small className="retry-previous">|&nbsp; view <a href={`/data-sync/jobs/${job.retryOfJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryOfJobId!); }}>{ordinal(job.retryOrdinal - 1).toLowerCase()}</a></small>}</dd></div>
+				: job.latestRetryJobId && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd className="visually-hidden">Latest retry in chain</dd></div>}
+		</dl>
+		{coverage ? <CoverageProgress job={job} /> : !deletion && <Progress progress={job.progress} status={job.status} />}
+		{coverage ? <CoverageResults job={job} /> : !deletion && (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
     {job.failureSummary && <p className="failure-copy"><strong>Run issue:</strong> {job.failureSummary}</p>}
-    {job.children.length > 0 && <section className="source-runs" aria-labelledby="source-runs-heading"><h3 id="source-runs-heading">Source runs</h3>{job.children.map((child) => <article key={child.id} className="source-run">
-      <div className="source-run-heading"><div><strong>{child.source?.displayName ?? "Source unavailable"}</strong> <span>({child.source ? sourceType(child.source.sourceType) : "Type unavailable"})</span></div><StatusBadge status={child.status} cancelRequested={child.cancelRequested} style={{ position: "relative", top: ".2rem" }} /></div>
-      <Progress progress={child.progress} status={child.status} style={{ margin: ".7rem 0 -.3rem 0" }} />
-      {(!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && <Results progress={child.progress} results={child.results} status={child.status} />}
+		{job.children.length > 0 && <section className="source-runs" aria-labelledby="source-runs-heading"><h3 id="source-runs-heading">{coverage ? "Route runs" : "Source runs"}</h3>{job.children.map((child) => <article key={child.id} className="source-run">
+			<div className="source-run-heading"><div><strong>{coverage ? child.coverageRoute?.workoutType ?? "Workout unavailable" : child.source?.displayName ?? "Source unavailable"}</strong> <span>({coverage ? child.coverageRoute?.localStartDate ? calendarDate(child.coverageRoute.localStartDate) : dateTime(child.coverageRoute?.startedAt, preferences) : child.source ? sourceType(child.source.sourceType) : "Type unavailable"})</span></div><StatusBadge status={child.status} cancelRequested={child.cancelRequested} style={{ position: "relative", top: ".2rem" }} /></div>
+			{coverage ? <p className="sync-no-data">{child.coverageRoute?.resultOutcome?.replace("_", " ") ?? (ACTIVE_STATUSES.has(child.status) ? "Processing" : "No result")}{child.coverageRoute?.durationMilliseconds != null ? ` / ${child.coverageRoute.durationMilliseconds.toLocaleString()} ms` : ""}</p> : <Progress progress={child.progress} status={child.status} style={{ margin: ".7rem 0 -.3rem 0" }} />}
+			{!coverage && (!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && <Results progress={child.progress} results={child.results} status={child.status} />}
       {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
     </article>)}</section>}
     {!deletion && (ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && <div className="job-actions">
@@ -228,8 +255,8 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
       {RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry run"}</button>}
     </div>}
     {deletion && RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <div className="job-actions"><button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry deletion"}</button></div>}
-    {!deletion && <div className="artifact-group" aria-label="Run records">
-      <ArtifactDisclosure key={`${job.id}-files`} jobId={job.id} kind="files" preferences={preferences} />
+		{!deletion && <div className="artifact-group" aria-label="Run records">
+			{!coverage && <ArtifactDisclosure key={`${job.id}-files`} jobId={job.id} kind="files" preferences={preferences} />}
       <ArtifactDisclosure key={`${job.id}-events`} jobId={job.id} kind="events" preferences={preferences} />
       <ArtifactDisclosure key={`${job.id}-logs`} jobId={job.id} kind="logs" preferences={preferences} />
     </div>}
@@ -261,6 +288,9 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   const [formErrorArea, setFormErrorArea] = useState<"sources" | "dates" | "request" | null>(null);
   const formErrorRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
+  const historyResultsRef = useRef<HTMLDivElement>(null);
+  const pendingHistoryPageScroll = useRef<{ x: number; y: number } | undefined>(undefined);
+  const [historyResultsMinHeight, setHistoryResultsMinHeight] = useState<number>();
   const [announcement, setAnnouncement] = useState("");
   const previousStatus = useRef<JobStatus | undefined>(undefined);
   const formErrorId = useId();
@@ -302,10 +332,39 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   const historyParams = new URLSearchParams({ page: String(historyPage), pageSize: String(PAGE_SIZE) });
   if (operationFilter) historyParams.set("operation", operationFilter);
   if (statusFilter) historyParams.set("status", statusFilter);
+  const historyQueryKey = ["jobs", historyPage, operationFilter, statusFilter] as const;
   const jobs = useQuery({
-    queryKey: ["jobs", historyPage, operationFilter, statusFilter],
+    queryKey: historyQueryKey,
     queryFn: ({ signal }) => api<JobList>(`/api/jobs?${historyParams}`, { signal }),
+    refetchInterval: (query) => query.state.data?.items.some((job) => ACTIVE_STATUSES.has(job.status)) ? pollingIntervalSeconds * 1000 : false,
+    placeholderData: (previousData, previousQuery) => {
+      const previousKey = previousQuery?.queryKey;
+      const sameFilters = previousKey?.length === historyQueryKey.length &&
+        previousKey[0] === "jobs" && previousKey[2] === operationFilter && previousKey[3] === statusFilter;
+      return sameFilters && previousKey?.[1] !== historyPage ? previousData : undefined;
+    },
   });
+
+  function changeHistoryPage(nextPage: number) {
+    pendingHistoryPageScroll.current = { x: window.scrollX, y: window.scrollY };
+    const currentHeight = historyResultsRef.current?.getBoundingClientRect().height;
+    if (currentHeight) setHistoryResultsMinHeight((height) => Math.max(height ?? 0, currentHeight));
+    setHistoryPage(nextPage);
+  }
+
+  function resetHistoryPage() {
+    pendingHistoryPageScroll.current = undefined;
+    setHistoryResultsMinHeight(undefined);
+    setHistoryPage(1);
+  }
+
+  useEffect(() => {
+    if (!pendingHistoryPageScroll.current || jobs.isFetching || jobs.isPlaceholderData || !jobs.isSuccess) return;
+    const position = pendingHistoryPageScroll.current;
+    pendingHistoryPageScroll.current = undefined;
+    const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+    return () => window.cancelAnimationFrame(frame);
+  }, [jobs.dataUpdatedAt, jobs.isFetching, jobs.isPlaceholderData, jobs.isSuccess]);
 
   function selectJob(jobId: string, command?: string) {
     navigate(`/data-sync/jobs/${jobId}`);
@@ -442,19 +501,19 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
 
     <section className="history-section" aria-labelledby="history-heading">
       <div className="history-heading"><div><p className="card-kicker">Task history</p><h2 id="history-heading">Recent activity</h2></div><div className="history-filters">
-        <HistoryFilter label="Operation" value={operationFilter} allLabel="All operations" options={OPERATION_OPTIONS} onChange={(value) => { setOperationFilter(value); setHistoryPage(1); }} />
-        <HistoryFilter label="Status" value={statusFilter} allLabel="All statuses" options={STATUS_OPTIONS} onChange={(value) => { setStatusFilter(value); setHistoryPage(1); }} />
+        <HistoryFilter label="Operation" value={operationFilter} allLabel="All operations" options={OPERATION_OPTIONS} onChange={(value) => { setOperationFilter(value); resetHistoryPage(); }} />
+        <HistoryFilter label="Status" value={statusFilter} allLabel="All statuses" options={STATUS_OPTIONS} onChange={(value) => { setStatusFilter(value); resetHistoryPage(); }} />
       </div></div>
       {jobs.isPending && <p className="sync-history-state" role="status">Loading task history...</p>}
       {jobs.isError && <QueryError copy="Task history is unavailable." retry={() => void jobs.refetch()} />}
       {jobs.data?.items.length === 0 && <p className="sync-history-state">No tasks match these filters.</p>}
-      {jobs.data && jobs.data.items.length > 0 && <div aria-busy={jobs.isFetching}>
-        <div className="sync-history-table"><table><thead><tr><th scope="col">Started</th><th scope="col">Operation</th><th scope="col">Results</th><th scope="col">Status</th><th scope="col"><span className="visually-hidden">Action</span></th></tr></thead><tbody>{jobs.data.items.map((job) => <tr key={job.id}>
-          <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td><td>{historyOperation(job)}</td><td>{historyResults(job)}</td><td><span className={`sync-status-text sync-status-text--${job.status}`}>{STATUS_LABELS[job.status]}</span></td><td><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></td>
+      {jobs.data && jobs.data.items.length > 0 && <div ref={historyResultsRef} className="sync-history-results" style={historyResultsMinHeight ? { minHeight: historyResultsMinHeight } : undefined} aria-busy={jobs.isFetching}>
+        <div className="sync-history-table"><table><colgroup><col className="history-started-column" /><col className="history-operation-column" /><col className="history-results-column" /><col className="history-status-column" /><col className="history-action-column" /></colgroup><thead><tr><th scope="col">Started</th><th scope="col">Operation</th><th scope="col">Results</th><th scope="col">Status</th><th scope="col"><span className="visually-hidden">Action</span></th></tr></thead><tbody>{jobs.data.items.map((job) => <tr key={job.id}>
+          <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td><td>{historyOperation(job)}</td><td>{historyResults(job)}</td><td><StatusText status={job.status} /></td><td><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></td>
         </tr>)}</tbody></table></div>
-        <div className="sync-history-cards">{jobs.data.items.map((job) => <article key={job.id}><div><time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time><StatusBadge status={job.status} /></div><dl><div><dt>Operation</dt><dd>{historyOperation(job)}</dd></div><div><dt>Results</dt><dd>{historyResults(job)}</dd></div></dl><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></article>)}</div>
+        <div className="sync-history-cards">{jobs.data.items.map((job) => <article key={job.id}><div><time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time><StatusText status={job.status} /></div><dl><div><dt>Operation</dt><dd>{historyOperation(job)}</dd></div><div><dt>Results</dt><dd>{historyResults(job)}</dd></div></dl><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></article>)}</div>
       </div>}
-      {jobs.data && jobs.data.pagination.totalPages > 1 && <nav className="pagination" aria-label="Task history pages"><button type="button" className="secondary" disabled={historyPage <= 1 || jobs.isFetching} onClick={() => setHistoryPage((page) => page - 1)}>Previous</button><span>Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}</span><button type="button" className="secondary" disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching} onClick={() => setHistoryPage((page) => page + 1)}>Next</button></nav>}
+      {jobs.data && jobs.data.pagination.totalPages > 1 && <nav className="pagination" aria-label="Task history pages"><button type="button" className="secondary" disabled={historyPage <= 1 || jobs.isFetching} onClick={() => changeHistoryPage(historyPage - 1)}>Previous</button><span>Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}</span><button type="button" className="secondary" disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching} onClick={() => changeHistoryPage(historyPage + 1)}>Next</button></nav>}
     </section>
   </main>;
 }

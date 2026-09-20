@@ -248,6 +248,11 @@ paths:
         Returns a privacy-proxied avatar or generated fallback for the authenticated identity. Conditional requests may supply standard cache validators.
       tags: [account]
       security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - name: fallback
+          in: query
+          description: Return the generated fallback directly without contacting Gravatar. Intended for previewing the authenticated identity's fallback.
+          schema: {type: boolean, default: false}
       responses:
         '200': {description: Privacy-proxied avatar or generated fallback, headers: {Cache-Control: {schema: {type: string}}, ETag: {schema: {type: string}}}, content: {image/png: {schema: {type: string, format: binary}}, image/jpeg: {schema: {type: string, format: binary}}, image/webp: {schema: {type: string, format: binary}}, image/svg+xml: {schema: {type: string, format: binary}}}}
         '304': {description: Not modified}
@@ -372,7 +377,7 @@ paths:
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
         - {name: status, in: query, schema: {$ref: '#/components/schemas/JobStatus'}}
-        - {name: operation, in: query, schema: {type: string, enum: [manual_sync, automated_sync, workout_deletion]}}
+        - {name: operation, in: query, schema: {type: string, enum: [manual_sync, automated_sync, workout_deletion, coverage_update]}}
       responses:
         '200': {description: Top-level task history, content: {application/json: {schema: {$ref: '#/components/schemas/JobList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
@@ -593,6 +598,66 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '502': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/coverage-tiles/{generation}/{z}/{x}/{y}.pbf:
+    parameters:
+      - {$ref: '#/components/parameters/MapSelectionID'}
+      - {name: generation, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      - {name: z, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 22}}
+      - {name: x, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 4194303}}
+      - {name: y, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 4194303}}
+    get:
+      operationId: getMapSelectionCoverageTile
+      description: >-
+        Proxies one private aggregate Coverage vector tile for an unexpired map selection owned by the authenticated account and session.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      responses:
+        '200': {description: Private aggregate Coverage Mapbox vector tile, content: {application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '502': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/coverage/paths:
+    parameters: [{$ref: '#/components/parameters/MapSelectionID'}]
+    get:
+      operationId: listMapSelectionCoveragePaths
+      description: Returns exact, paginated road and park coverage for all current routed workouts in the map selection date range.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: search, in: query, schema: {type: string, maxLength: 256}}
+        - {name: sort, in: query, schema: {type: string, enum: [rangeCount:desc, rangeCount:asc, name:asc, name:desc, cityOrRegion:asc, cityOrRegion:desc, rangeFirst:asc, rangeFirst:desc, allTimeFirst:asc, allTimeFirst:desc, rangeLatest:asc, rangeLatest:desc, allTimeLatest:asc, allTimeLatest:desc], default: 'rangeCount:desc'}}
+      responses:
+        '200': {description: Paginated road coverage entities, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}:
+    parameters:
+      - {$ref: '#/components/parameters/MapSelectionID'}
+      - {name: entityKind, in: path, required: true, schema: {type: string, enum: [path, park]}}
+      - {name: entityId, in: path, required: true, schema: {$ref: '#/components/schemas/UUIDInput'}}
+    get:
+      operationId: getMapSelectionCoverageEntity
+      description: Returns exact date-range coverage geometry, identity, statistics, raw bounds, and server-expanded fit bounds for one path or park.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      responses:
+        '200': {description: Exact road coverage entity detail, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageDetail'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
   /api/workouts:
     get:
@@ -1062,7 +1127,7 @@ components:
     Preferences:
       type: object
       additionalProperties: false
-      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, initialized]
+      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, coverageDiagnosticsEnabled, initialized]
       properties:
         theme: {type: string, enum: [dark, light]}
         units: {type: string, enum: [imperial, metric]}
@@ -1071,6 +1136,7 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
+        coverageDiagnosticsEnabled: {type: boolean}
         initialized: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     PreferencesPatch:
@@ -1085,6 +1151,7 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
+        coverageDiagnosticsEnabled: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     HealthAutoExportLocalConfig:
       type: object
@@ -1161,7 +1228,7 @@ components:
       enum: [queued, running, succeeded, partially_succeeded, failed, cancelled]
     JobTrigger:
       type: string
-      enum: [manual, scheduled]
+      enum: [manual, scheduled, system]
     JobProgress:
       type: object
       additionalProperties: false
@@ -1186,16 +1253,106 @@ components:
         generation: {type: integer, format: int64, minimum: 1}
         displayName: {type: string, minLength: 1, maxLength: 200}
         sourceType: {type: string, minLength: 1, maxLength: 64}
+    CoverageRouteStats:
+      type: object
+      additionalProperties: false
+      required: [total, processed, running, succeeded, failed, cancelled, superseded]
+      properties:
+        total: {type: integer, minimum: 0}
+        processed: {type: integer, minimum: 0}
+        running: {type: integer, minimum: 0}
+        succeeded: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0}
+        cancelled: {type: integer, minimum: 0}
+        superseded: {type: integer, minimum: 0}
+    RoadCoverageEntity:
+      type: object
+      additionalProperties: false
+      required: [entityId, entityKind, broadClass, name, localityName, regionId, regionName, rangeWorkoutCount, rangeFirstDate, rangeFirstWorkoutId, rangeLatestDate, rangeLatestWorkoutId, allTimeWorkoutCount, allTimeFirstDate, allTimeFirstWorkoutId, allTimeLatestDate, allTimeLatestWorkoutId, bounds]
+      properties:
+        entityId: {$ref: '#/components/schemas/CompactUUID'}
+        entityKind: {type: string, enum: [path, park]}
+        name: {type: string, nullable: true}
+        localityName: {type: string, nullable: true}
+        regionId: {type: string, minLength: 1, maxLength: 129}
+        regionName: {type: string, minLength: 1, maxLength: 256, nullable: true}
+        broadClass: {type: string, enum: [road, cycleway, footway, trail, park, other]}
+        rangeWorkoutCount: {type: integer, format: int64, minimum: 1}
+        rangeFirstDate: {type: string, format: date}
+        rangeFirstWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        rangeLatestDate: {type: string, format: date}
+        rangeLatestWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        allTimeWorkoutCount: {type: integer, format: int64, minimum: 1}
+        allTimeFirstDate: {type: string, format: date}
+        allTimeFirstWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        allTimeLatestDate: {type: string, format: date}
+        allTimeLatestWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        bounds: {$ref: '#/components/schemas/RouteBounds'}
+    RoadCoverageList:
+      type: object
+      additionalProperties: false
+      required: [pagination, items]
+      properties:
+        pagination: {$ref: '#/components/schemas/Pagination'}
+        items: {type: array, items: {$ref: '#/components/schemas/RoadCoverageEntity'}}
+    RoadCoverageDetail:
+      type: object
+      additionalProperties: false
+      required: [entityId, entityKind, broadClass, name, localityName, regionId, regionName, rangeWorkoutCount, rangeFirstDate, rangeFirstWorkoutId, rangeLatestDate, rangeLatestWorkoutId, allTimeWorkoutCount, allTimeFirstDate, allTimeFirstWorkoutId, allTimeLatestDate, allTimeLatestWorkoutId, bounds, geometry, fitBounds]
+      properties:
+        entityId: {$ref: '#/components/schemas/CompactUUID'}
+        entityKind: {type: string, enum: [path, park]}
+        name: {type: string, nullable: true}
+        localityName: {type: string, nullable: true}
+        regionId: {type: string, minLength: 1, maxLength: 129}
+        regionName: {type: string, minLength: 1, maxLength: 256, nullable: true}
+        broadClass: {type: string, enum: [road, cycleway, footway, trail, park, other]}
+        rangeWorkoutCount: {type: integer, format: int64, minimum: 1}
+        rangeFirstDate: {type: string, format: date}
+        rangeFirstWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        rangeLatestDate: {type: string, format: date}
+        rangeLatestWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        allTimeWorkoutCount: {type: integer, format: int64, minimum: 1}
+        allTimeFirstDate: {type: string, format: date}
+        allTimeFirstWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        allTimeLatestDate: {type: string, format: date}
+        allTimeLatestWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        bounds: {$ref: '#/components/schemas/RouteBounds'}
+        geometry: {$ref: '#/components/schemas/CoverageGeoJSONGeometry'}
+        fitBounds: {$ref: '#/components/schemas/RouteBounds'}
+    CoverageJobContext:
+      type: object
+      additionalProperties: false
+      required: [regionId, targetOsmGeneration, targetWorkRevision, rulesVersion, samplingVersion, pathPolicyVersion]
+      properties:
+        regionId: {type: string, minLength: 1, maxLength: 129}
+        targetOsmGeneration: {type: integer, format: int64, minimum: 1}
+        targetWorkRevision: {type: integer, format: int64, minimum: 1}
+        rulesVersion: {type: string, minLength: 1, maxLength: 128}
+        samplingVersion: {type: string, minLength: 1, maxLength: 128}
+        pathPolicyVersion: {type: string, minLength: 1, maxLength: 128}
+    CoverageRouteContext:
+      type: object
+      additionalProperties: false
+      required: [workoutId, startedAt, workoutType]
+      properties:
+        workoutId: {$ref: '#/components/schemas/CompactUUID'}
+        startedAt: {type: string, format: date-time}
+        localStartDate: {type: string, format: date, nullable: true}
+        workoutType: {type: string, minLength: 1, maxLength: 4096}
+        resultOutcome: {type: string, enum: [applied, no_evidence, superseded]}
+        durationMilliseconds: {type: integer, minimum: 0}
     JobSummary:
       type: object
       additionalProperties: false
       required: [id, trigger, status, progress, createdAt, updatedAt]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
-        operation: {type: string, enum: [data_sync, workout_deletion]}
+        operation: {type: string, enum: [data_sync, workout_deletion, coverage_update]}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
         progress: {$ref: '#/components/schemas/JobProgress'}
+        routeStats: {$ref: '#/components/schemas/CoverageRouteStats'}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
         startedAt: {type: string, format: date-time}
@@ -1206,13 +1363,16 @@ components:
       required: [id, trigger, status, attempt, progress, children, retriedByJobIds, createdAt, updatedAt, cancelRequested]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
-        operation: {type: string, enum: [data_sync, workout_deletion]}
+        operation: {type: string, enum: [data_sync, workout_deletion, coverage_update]}
         parentJobId: {$ref: '#/components/schemas/CompactUUID'}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
         attempt: {type: integer, minimum: 0}
         progress: {$ref: '#/components/schemas/JobProgress'}
         source: {$ref: '#/components/schemas/JobSourceContext'}
+        coverage: {$ref: '#/components/schemas/CoverageJobContext'}
+        coverageRoute: {$ref: '#/components/schemas/CoverageRouteContext'}
+        routeStats: {$ref: '#/components/schemas/CoverageRouteStats'}
         children: {type: array, items: {$ref: '#/components/schemas/JobDetail'}}
         results: {type: object, additionalProperties: false, properties: {filesSucceeded: {type: integer, format: int64, minimum: 0}, filesFailed: {type: integer, format: int64, minimum: 0}, workoutsCreated: {type: integer, format: int64, minimum: 0}, workoutsUpdated: {type: integer, format: int64, minimum: 0}, workoutsUnchanged: {type: integer, format: int64, minimum: 0}, workoutsRejected: {type: integer, format: int64, minimum: 0}}}
         createdAt: {type: string, format: date-time}
@@ -1419,6 +1579,7 @@ components:
           maxItems: 5000
           uniqueItems: true
           items: {$ref: '#/components/schemas/UUIDInput'}
+        focusedWorkoutId: {$ref: '#/components/schemas/UUIDInput'}
     MapSelectionWorkoutType:
       type: object
       additionalProperties: false
@@ -1456,7 +1617,7 @@ components:
     MapSelection:
       type: object
       additionalProperties: false
-      required: [id, expiresAt, dataGeneration, range, bounds, workouts, routeTileUrl]
+      required: [id, expiresAt, dataGeneration, range, bounds, workouts, focusedWorkoutId, routeTileUrl, coverageTileUrl]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         expiresAt: {type: string, format: date-time}
@@ -1464,7 +1625,9 @@ components:
         range: {$ref: '#/components/schemas/ResolvedDateRange'}
         bounds: {allOf: [{$ref: '#/components/schemas/RouteBounds'}], nullable: true}
         workouts: {type: array, maxItems: 5000, items: {$ref: '#/components/schemas/MapSelectionWorkout'}}
+        focusedWorkoutId: {allOf: [{$ref: '#/components/schemas/CompactUUID'}], nullable: true}
         routeTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/route-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
+        coverageTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/coverage-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
     ExactMetric:
       type: object
       additionalProperties: false
@@ -1642,6 +1805,23 @@ components:
           minItems: 2
           maxItems: 250000
           items: {type: array, minItems: 2, maxItems: 3, items: {type: number, format: double}}
+    GeoJSONMultiLineString:
+      type: object
+      additionalProperties: false
+      required: [type, coordinates]
+      properties:
+        type: {type: string, enum: [MultiLineString]}
+        coordinates:
+          type: array
+          minItems: 1
+          items:
+            type: array
+            minItems: 2
+            items: {type: array, minItems: 2, maxItems: 3, items: {type: number, format: double}}
+    CoverageGeoJSONGeometry:
+      oneOf:
+        - {$ref: '#/components/schemas/GeoJSONLineString'}
+        - {$ref: '#/components/schemas/GeoJSONMultiLineString'}
     WorkoutGeoJSONFeature:
       type: object
       additionalProperties: false

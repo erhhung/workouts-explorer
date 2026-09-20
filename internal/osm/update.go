@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	ImporterVersion   = 1
-	DerivationVersion = 2
+	ImporterVersion   = 3
+	DerivationVersion = 16
 	ExpectedOsmium    = "1.19.0"
 	ExpectedOsm2pgsql = "2.3.1"
 )
@@ -61,7 +61,7 @@ type Updater struct {
 
 var pipelineStages = []string{
 	"tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip",
-	"prepare-partitions", "validate",
+	"attribute-parks", "prepare-partitions", "validate",
 }
 
 var databaseURLPattern = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s]+`)
@@ -158,7 +158,11 @@ func validateReport(output []byte, generation Generation) (json.RawMessage, erro
 		"importerVersion": ImporterVersion, "derivationVersion": DerivationVersion,
 		"sourceVersionMismatches": 0, "logicalPathMismatches": 0, "invalidWays": 0,
 		"invalidPathSegments": 0, "orphanPathSegments": 0, "materialLocalityResiduals": 0,
-		"missingEndpointIndexes": 0,
+		"invalidParkAttributions": 0, "materialParkResiduals": 0,
+		"invalidEducationAttributions": 0, "materialEducationResiduals": 0,
+		"invalidNationalParkAreas":            0,
+		"remainingConnectedAttributionSplits": 0,
+		"missingEndpointIndexes":              0,
 	}
 	if report["partitionPrepared"] != true || report["preparedRegionId"] != generation.RegionID {
 		return nil, errors.New("candidate is not partition-prepared for this generation")

@@ -6,7 +6,7 @@ import (
 )
 
 func TestTimezoneMigrationLookupAndPromotionContract(t *testing.T) {
-	contents, err := Files.ReadFile("00002_timezone_boundaries.sql")
+	contents, err := Files.ReadFile("002_timezone_boundaries.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

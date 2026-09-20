@@ -504,7 +504,7 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 	for index := range current.WorkoutColumns {
 		columns[index] = string(current.WorkoutColumns[index])
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$9`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), *session.accountID)
+	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,coverage_diagnostics_enabled=$9,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$10`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), current.CoverageDiagnosticsEnabled, *session.accountID)
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
@@ -516,13 +516,19 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 	writeJSON(w, http.StatusOK, current)
 }
 
-func (s *Server) GetMyAvatar(w http.ResponseWriter, r *http.Request) {
+func (s *Server) GetMyAvatar(w http.ResponseWriter, r *http.Request, params generated.GetMyAvatarParams) {
 	session, ok := s.requireSession(w, r, "user")
 	if !ok {
 		return
 	}
-	entry := s.avatars.get(r.Context(), session.canonicalEmail, session.fullName)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	var entry avatarEntry
+	if params.Fallback != nil && *params.Fallback {
+		entry = fallbackAvatar(session.fullName)
+		entry.cacheControl = "private, no-store"
+	} else {
+		entry = s.avatars.get(r.Context(), session.canonicalEmail, session.fullName)
+	}
+	w.Header().Set("Cache-Control", entry.cacheControl)
 	w.Header().Set("ETag", entry.etag)
 	w.Header().Set("Content-Type", entry.contentType)
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
@@ -731,11 +737,11 @@ func readPreferencesTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, forU
 	var result generated.Preferences
 	var columns []string
 	var dateRange *string
-	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,initialized_at IS NOT NULL FROM app.preferences WHERE account_id=$1`
+	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,coverage_diagnostics_enabled,initialized_at IS NOT NULL FROM app.preferences WHERE account_id=$1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.Initialized)
+	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.CoverageDiagnosticsEnabled, &result.Initialized)
 	if err != nil {
 		return generated.Preferences{}, err
 	}
@@ -771,6 +777,9 @@ func applyPreferencesPatch(value *generated.Preferences, patch generated.Prefere
 	}
 	if patch.PageSize != nil {
 		value.PageSize = *patch.PageSize
+	}
+	if patch.CoverageDiagnosticsEnabled != nil {
+		value.CoverageDiagnosticsEnabled = *patch.CoverageDiagnosticsEnabled
 	}
 	if patch.DateRange.IsSpecified() {
 		value.DateRange = patch.DateRange

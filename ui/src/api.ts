@@ -28,6 +28,7 @@ export interface Preferences {
   clockFormat: "12h" | "24h";
   workoutColumns: WorkoutColumn[];
   pageSize: number;
+  coverageDiagnosticsEnabled: boolean;
   initialized: boolean;
   dateRange?: DateRangePreference | null;
 }
@@ -201,7 +202,43 @@ export interface MapSelection {
   range: { startDate: string; endDate: string };
   bounds: null | { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
   workouts: MapSelectionWorkout[];
+  focusedWorkoutId: string | null;
   routeTileUrl: string;
+  coverageTileUrl: string;
+}
+
+export type RoadCoverageSortField = "rangeCount" | "name" | "cityOrRegion" | "rangeFirst" | "allTimeFirst" | "rangeLatest" | "allTimeLatest";
+export interface RoadCoverageSort { field: RoadCoverageSortField; direction: WorkoutSortDirection }
+
+export interface RoadCoverageEntity {
+  entityId: string;
+  entityKind: "path" | "park";
+  name: string | null;
+  localityName: string | null;
+  regionId: string;
+  regionName: string | null;
+  broadClass: "road" | "cycleway" | "footway" | "trail" | "park" | "other";
+  rangeWorkoutCount: number;
+  rangeFirstDate: string;
+  rangeFirstWorkoutId: string;
+  rangeLatestDate: string;
+  rangeLatestWorkoutId: string;
+  allTimeWorkoutCount: number;
+  allTimeFirstDate: string;
+  allTimeFirstWorkoutId: string;
+  allTimeLatestDate: string;
+  allTimeLatestWorkoutId: string;
+  bounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+}
+
+export interface RoadCoverageList {
+  pagination: Pagination;
+  items: RoadCoverageEntity[];
+}
+
+export interface RoadCoverageDetail extends RoadCoverageEntity {
+  geometry: { type: "LineString"; coordinates: number[][] } | { type: "MultiLineString"; coordinates: number[][][] };
+  fitBounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
 }
 
 export type CoverageDiagnosticOverallLabel = "correct" | "incorrect" | "uncertain";
@@ -296,7 +333,7 @@ export type CoverageDiagnosticRun = Omit<CoverageDiagnosticRunThroughV60, "pathP
 
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
 export type JobStatus = "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
-export type JobTrigger = "manual" | "scheduled";
+export type JobTrigger = "manual" | "scheduled" | "system";
 export type NotificationState = "unresolved" | "remind" | "resolved" | "dismissed";
 export type NotificationSeverity = "info" | "warning" | "error";
 
@@ -329,7 +366,7 @@ export interface JobSourceContext {
 
 export interface JobSummary {
   id: string;
-  operation?: "data_sync" | "workout_deletion";
+  operation?: "data_sync" | "workout_deletion" | "coverage_update";
   trigger: JobTrigger;
   status: JobStatus;
   progress: JobProgress;
@@ -337,6 +374,35 @@ export interface JobSummary {
   updatedAt: string;
   startedAt?: string;
   terminalAt?: string;
+  routeStats?: CoverageRouteStats;
+}
+
+export interface CoverageRouteStats {
+  total: number;
+  processed: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  superseded: number;
+}
+
+export interface CoverageJobContext {
+  regionId: string;
+  targetOsmGeneration: number;
+  targetWorkRevision: number;
+  rulesVersion: string;
+  samplingVersion: string;
+  pathPolicyVersion: string;
+}
+
+export interface CoverageRouteContext {
+  workoutId: string;
+  startedAt: string;
+  localStartDate?: string | null;
+  workoutType: string;
+  resultOutcome?: "applied" | "no_evidence" | "superseded";
+  durationMilliseconds?: number;
 }
 
 export interface JobResults {
@@ -356,6 +422,8 @@ export interface JobDetail extends JobSummary {
   latestRetryOrdinal?: number;
   attempt: number;
   source?: JobSourceContext;
+  coverage?: CoverageJobContext;
+  coverageRoute?: CoverageRouteContext;
   children: JobDetail[];
   results?: JobResults;
   failureCode?: string;

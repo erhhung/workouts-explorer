@@ -30,6 +30,7 @@ const preferences = {
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
   initialized: true,
+  coverageDiagnosticsEnabled: false,
   dateRange: "last30Days",
 };
 const emptySummary = { range: { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" }, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] };
@@ -399,7 +400,8 @@ describe("authenticated shell", () => {
     };
     authenticatedFetch((path, method) => {
       if (path === "/api/config" && method === "GET") return json({ ...publicConfig, features: { coverageMatcherDiagnostics: true } });
-      if (path === "/api/map-selections" && method === "POST") return json({ id: "A".repeat(32), expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: routeWorkout.bounds, workouts: [routeWorkout], routeTileUrl: `/api/map-selections/${"A".repeat(32)}/routes/{z}/{x}/{y}` });
+      if (path === "/api/me/preferences" && method === "GET") return json({ ...preferences, coverageDiagnosticsEnabled: true });
+      if (path === "/api/map-selections" && method === "POST") return json({ id: "A".repeat(32), expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: routeWorkout.bounds, workouts: [routeWorkout], routeTileUrl: `/api/map-selections/${"A".repeat(32)}/routes/{z}/{x}/{y}`, coverageTileUrl: `/api/map-selections/${"A".repeat(32)}/coverage/{z}/{x}/{y}` });
       if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
       return undefined as never;
     });
@@ -408,6 +410,11 @@ describe("authenticated shell", () => {
     expect(coverage).toBeDisabled();
     await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/05\/2026/ }));
     await waitFor(() => expect(coverage).toBeEnabled());
+    await userEvent.click(coverage);
+    expect(coverage).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("link", { name: "Summary" }));
+    await userEvent.click(screen.getByRole("link", { name: "Map" }));
+    expect(await screen.findByRole("button", { name: "Routes" })).toHaveAttribute("aria-pressed", "true");
   });
 
 	test("keeps every route checked when first opening Map through Show on map", async () => {
@@ -457,7 +464,7 @@ describe("authenticated shell", () => {
         selectionBodies.push(body);
         const selected = body.workoutIds === undefined ? routeWorkouts : routeWorkouts.filter((workout) => body.workoutIds?.includes(workout.id));
         const id = selectionBodies.length.toString(16).toUpperCase().padStart(32, "A");
-        return json({ id, expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: null, workouts: selected, routeTileUrl: `/api/map-selections/${id}/routes/{z}/{x}/{y}` });
+        return json({ id, expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), dataGeneration: 1, range: { startDate: "2026-07-07", endDate: "2026-08-05" }, bounds: null, workouts: selected, routeTileUrl: `/api/map-selections/${id}/routes/{z}/{x}/{y}`, coverageTileUrl: `/api/map-selections/${id}/coverage/{z}/{x}/{y}` });
       }
       if (path.startsWith("/api/map-selections/") && method === "DELETE") return new Response(null, { status: 204 });
       return undefined as never;
@@ -467,6 +474,8 @@ describe("authenticated shell", () => {
     const hiking = await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" });
     await user.click(hiking);
     await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual([routeWorkouts[0].id]));
+    await user.click(screen.getByRole("button", { name: "Coverage" }));
+    expect(screen.getByRole("button", { name: "Coverage" })).toHaveAttribute("aria-pressed", "true");
 
     await user.click(screen.getByRole("link", { name: "Summary" }));
     await user.click(await screen.findByRole("button", { name: "Duration" }));
@@ -475,6 +484,7 @@ describe("authenticated shell", () => {
 
     expect(await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Coverage" })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual([routeWorkouts[0].id]));
 
     await user.click(screen.getByRole("link", { name: "Summary" }));
@@ -663,15 +673,15 @@ describe("authenticated shell", () => {
     const dialog = await screen.findByRole("dialog", { name: "Preferences" });
     expect(screen.getByLabelText("Username", { selector: "input[readonly]" })).toHaveValue("trailrunner");
     expect(screen.getByLabelText("E-mail", { selector: "input[readonly]" })).toHaveValue("avery@example.test");
-    for (const label of ["Theme", "Units", "Time zone", "First weekday", "Clock format", "Workouts per page"]) {
+    for (const label of ["Theme", "Units", "Time zone", "First weekday", "Clock format", "Table rows per page"]) {
       expect(screen.getByLabelText(label).parentElement).toHaveClass("select-control");
     }
     await user.clear(screen.getByLabelText("Full name"));
     await user.type(screen.getByLabelText("Full name"), "Avery Summit");
     await user.selectOptions(screen.getByLabelText("Theme"), "light");
     await user.selectOptions(screen.getByLabelText("Units"), "metric");
-    expect([...screen.getByLabelText("Workouts per page").querySelectorAll("option")].map((option) => option.value)).toEqual(["25", "50", "75", "100"]);
-    await user.selectOptions(screen.getByLabelText("Workouts per page"), "50");
+    expect([...screen.getByLabelText("Table rows per page").querySelectorAll("option")].map((option) => option.value)).toEqual(["25", "50", "75", "100"]);
+    await user.selectOptions(screen.getByLabelText("Table rows per page"), "50");
     await user.click(screen.getByRole("checkbox", { name: "Distance" }));
     await user.click(screen.getByRole("checkbox", { name: "Pace" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -726,7 +736,7 @@ describe("authenticated shell", () => {
     expect(initialization).toEqual({
       body: {
         theme: "dark", units: "imperial", timezone: "America/Los_Angeles", firstWeekday: "monday",
-        clockFormat: "12h", workoutColumns: ["date", "type", "distance", "duration"], pageSize: 25,
+        clockFormat: "12h", workoutColumns: ["date", "type", "distance", "duration"], pageSize: 25, coverageDiagnosticsEnabled: false,
       },
       csrf: session.csrfToken,
     });
@@ -777,7 +787,7 @@ describe("authenticated shell", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
-    const pageSize = await screen.findByLabelText("Workouts per page");
+    const pageSize = await screen.findByLabelText("Table rows per page");
     expect(pageSize.tagName).toBe("SELECT");
     expect([...pageSize.querySelectorAll("option")].map((option) => option.value)).toEqual(["25"]);
     expect(patchAttempted).toBe(false);
@@ -875,7 +885,7 @@ describe("authenticated shell", () => {
     authenticatedFetch();
     const view = renderApp();
     const avatar = await screen.findByRole("button", { name: /Open account menu/ });
-    expect(avatar.querySelector("img")).toHaveAttribute("src", "/api/me/avatar");
+    expect(avatar.querySelector("img")).toHaveAttribute("src", "/api/me/avatar?v=2");
     expect(view.container.innerHTML).not.toMatch(/gravatar/i);
     expect(JSON.stringify(profile)).not.toMatch(/gravatar/i);
   });

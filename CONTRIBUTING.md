@@ -100,6 +100,16 @@ make migration-test
 make compose-down
 ```
 
+When a verification requires a temporary Docker container but the Docker daemon
+is unavailable, try a disposable Buildah container before skipping the check.
+Buildah is daemonless: create a working container with `buildah from`, copy or
+mount the required test artifacts, and use `buildah run` to start the service and
+execute the verification in the same container invocation. This is particularly
+useful for PostgreSQL/PostGIS migration tests because the database can listen on
+its container-local Unix socket. Remove the working container and temporary test
+artifacts after the run. Do not place credentials in the image, command output,
+or repository.
+
 The migration command holds a PostgreSQL advisory lock and is idempotent. API
 and worker never migrate on startup. Kubernetes receives these URLs from an
 existing Secret selected by Helm values; the chart never creates credentials.

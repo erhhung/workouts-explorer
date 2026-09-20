@@ -7,7 +7,7 @@ import (
 )
 
 func TestCanonicalRegionMigrationContract(t *testing.T) {
-	contents, err := Files.ReadFile("00003_canonical_regions.sql")
+	contents, err := Files.ReadFile("003_canonical_regions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestPromotionScriptDelegatesToCanonicalFunction(t *testing.T) {
 }
 
 func TestStorageBoundedPartitionMigrationContract(t *testing.T) {
-	contents, err := Files.ReadFile("00004_storage_bounded_partitions.sql")
+	contents, err := Files.ReadFile("004_storage_bounded_partitions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestPartitionValidationContract(t *testing.T) {
 }
 
 func TestTolerantLogicalPathPromotionMigrationContract(t *testing.T) {
-	contents, err := Files.ReadFile("00006_tolerant_logical_path_promotion.sql")
+	contents, err := Files.ReadFile("006_tolerant_logical_path_promotion.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +197,163 @@ func TestOutsideLogicalPathsAreProviderRegionScoped(t *testing.T) {
 	}
 }
 
+func TestPromotionEventsMigrationContract(t *testing.T) {
+	contents, err := Files.ReadFile("007_promotion_events.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(contents)
+	for _, required := range []string{
+		"CREATE TABLE osm_catalog.promotion_events", "UNIQUE (region_id,generation_id)",
+		"CREATE TRIGGER generations_record_promotion_event", "NEW.state='active'",
+		"CREATE FUNCTION osm_catalog.read_promotion_events", "ORDER BY event.id",
+		"CREATE FUNCTION osm_catalog.promotion_event_head",
+		"schema_version=7,minimum_runtime_version=6",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("promotion event migration missing %q", required)
+		}
+	}
+}
+
+func TestConnectedAttributionPromotionMigrationContract(t *testing.T) {
+	contents, err := Files.ReadFile("008_connected_attribution_promotion.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"RENAME TO promote_region_generation_v7",
+		"'remainingConnectedAttributionSplits',0",
+		"PERFORM osm_catalog.promote_region_generation_v7",
+		"schema_version=8,minimum_runtime_version=8",
+	} {
+		if !strings.Contains(string(contents), required) {
+			t.Errorf("connected attribution promotion migration missing %q", required)
+		}
+	}
+}
+
+func TestParkAttributionDerivationContract(t *testing.T) {
+	for name, fragments := range map[string][]string{
+		"../../../osm/import.lua": {"park_ways", "park_relations", "object.is_closed", "object:as_polygon()",
+			"tags.boundary == 'national_park'", "tags.protected_area == 'national_park'", "string.lower(protection_title)",
+			"education_ways", "education_relations", "tags.amenity == 'school'", "tags.amenity == 'university'", "tags.landuse == 'education'"},
+		"../../../osm/postprocess.sql": {"park_areas", "'national_park'", "area_m2 BETWEEN 500 AND 25000000",
+			"area_m2 BETWEEN 1000000 AND 100000000000", "park_kind='national_park' OR tags->>'protect_class' IS DISTINCT FROM '2'",
+			"WHEN 'protected_area' THEN 3 WHEN 'national_park' THEN 4", "admin_level' IN ('6','8')",
+			"education_areas", "education_kind='school'", "education_kind='university'", "area_m2 BETWEEN 5000 AND 500000000"},
+		"../../../osm/attribute-parks.sql": {"ST_Difference(segment.geom,candidate.geom)", "workouts:park_id",
+			"locality.admin_level=8", "county.admin_level=6", "middle.length_m<=25",
+			"workouts:park_kind", "workouts-explorer/osm-park/v1", "workouts-explorer/osm-national-park/v1", ":'OSM_REGION_ID'",
+			"workouts:education_id", "workouts:education_name", "workouts-explorer/osm-education/v1:",
+			"ORDER BY candidate.type_priority,candidate.area_m2", "attribution_identity_edges",
+			"workouts-explorer/osm-attribution-group/v2:", "attribution_identity_branch_nodes", "attribution_identity_branch_classes", "AND edge.unnamed", "left_source_way_id<>edge.right_source_way_id",
+			"workouts-explorer/osm-named-road-proximity/v1:", "ST_DWithin(a.geom::geography,candidate.geom::geography,50)", "a.oneway AND candidate.oneway",
+			"parent_segment_id", "workouts-explorer/osm-logical-path/v12:group:", "remaining_connected_splits",
+			"TRUNCATE logical_paths", "GROUP BY logical_path_id"},
+		"../../../osm/validate.sql": {"qualifyingParkAreas", "qualifyingNationalParkAreas", "invalidNationalParkAreas",
+			"parkAttributedSegments", "nationalParkAttributedSegments", "attributionIdentityLogicalIdEdges",
+			"attributionIdentityAffectedLogicalIds", "attributionIdentityMergedComponents", "attributionScopeRebasedSegments",
+			"attributionScopeRebasedLogicalIds", "remainingConnectedAttributionSplits",
+			"invalidParkAttributions", "materialParkResiduals", "qualifyingEducationAreas",
+			"educationAttributedSegments", "invalidEducationAttributions", "materialEducationResiduals"},
+	} {
+		contents, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(string(contents), fragment) {
+				t.Errorf("%s missing %q", name, fragment)
+			}
+		}
+	}
+}
+
+func TestConnectedAttributionIdentityFixtureContract(t *testing.T) {
+	contents, err := os.ReadFile("../../../osm/testdata/connected-attribution-identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"E5A7797B8C532C72E23085275E2EBA82", "CAEF72F19BB476189D79274DC9B267EE",
+		"'named-road'", "'named-footway'", "'other-city'", "'park-contained'",
+		"'different-name'", "'disconnected'", "broad-class boundary",
+	} {
+		if !strings.Contains(string(contents), fragment) {
+			t.Errorf("connected attribution fixture missing %q", fragment)
+		}
+	}
+}
+
+func TestConnectedAttributionIdentityUsesIndexedTopologyAndClass(t *testing.T) {
+	contents, err := os.ReadFile("../../../osm/attribute-parks.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(contents)
+	start := strings.Index(sql, "CREATE UNLOGGED TABLE attribution_identity_edges")
+	end := strings.Index(sql, "\\echo 'OSM progress: rewriting segments with merged logical path identities'")
+	if start < 0 || end <= start {
+		t.Fatal("connected attribution component derivation block is missing")
+	}
+	derivation := sql[start:end]
+	if !strings.Contains(sql, "WHEN normalized_name IS NOT NULL THEN 'named'") ||
+		!strings.Contains(sql, "WHEN broad_class='road' THEN 'road' ELSE 'path' END AS attribution_class") {
+		t.Error("connected attribution group does not preserve named bridging and unnamed road/path boundaries")
+	}
+	for _, required := range []string{
+		"group_id uuid NOT NULL",
+		"b.start_graph_node_id=a.start_graph_node_id",
+		"b.end_graph_node_id=a.start_graph_node_id",
+		"b.start_graph_node_id=a.end_graph_node_id",
+		"b.end_graph_node_id=a.end_graph_node_id",
+		"SET enable_hashjoin = off", "SET enable_mergejoin = off",
+	} {
+		if !strings.Contains(derivation, required) {
+			t.Errorf("connected attribution derivation missing bounded join contract %q", required)
+		}
+	}
+	componentStart := strings.Index(derivation, "CREATE UNLOGGED TABLE attribution_identity_components")
+	if componentStart < 0 {
+		t.Fatal("connected attribution component table is missing")
+	}
+	edgeDefinition := derivation[:componentStart]
+	if strings.Contains(edgeDefinition, "scope_kind text") || strings.Contains(edgeDefinition, "name_key text") {
+		t.Error("cross-logical-ID edges repeat scope/name text instead of using the compact group UUID")
+	}
+}
+
+func TestConnectedAttributionValidationUsesRecordedRequiredEdges(t *testing.T) {
+	contents, err := os.ReadFile("../../../osm/validate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(contents)
+	if !strings.Contains(sql, "SELECT remaining_connected_splits FROM :\"OSM_BUILD_SCHEMA\".attribution_identity_stats") {
+		t.Error("validation does not use the exact required-edge split count recorded during derivation")
+	}
+	if strings.Contains(sql, "b.start_graph_node_id=a.start_graph_node_id") {
+		t.Error("validation repeats the expensive endpoint graph derivation")
+	}
+}
+
+func TestNationalParkSelectiveFilterContract(t *testing.T) {
+	contents, err := os.ReadFile("../../../internal/osm/update_pipeline.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"w/protected_area=national_park", "w/protection_title",
+		"r/protected_area=national_park", "r/protection_title", "w/amenity=school,college,university",
+		"r/amenity=school,college,university", "w/landuse=education", "r/landuse=education"} {
+		if !strings.Contains(string(contents), fragment) {
+			t.Errorf("selective filter is missing %q", fragment)
+		}
+	}
+}
+
 func TestMatcherEndpointIndexMigrationContract(t *testing.T) {
-	contents, err := Files.ReadFile("00005_matcher_endpoint_indexes.sql")
+	contents, err := Files.ReadFile("005_matcher_endpoint_indexes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,9 @@ SELECT set_config('workouts_explorer.osm_region_id', :'OSM_REGION_ID', false);
 SELECT set_config('workouts_explorer.osm_generation_id', :'OSM_GENERATION_ID', false);
 SELECT set_config('workouts_explorer.osm_build_schema', :'OSM_BUILD_SCHEMA', false);
 
+\echo 'OSM progress: converting rewritten candidate segments to logged storage'
+ALTER TABLE :"OSM_BUILD_SCHEMA".path_segments SET LOGGED;
+
 DO $prepare$
 DECLARE
     table_name name;

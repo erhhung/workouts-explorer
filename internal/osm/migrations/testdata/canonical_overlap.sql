@@ -64,14 +64,14 @@ DECLARE
     rollback_a bigint;
     active_before bigint;
 BEGIN
-    PERFORM osm_catalog.promote_region_generation('fixture:region-a',generation_a,('osm_build_'||generation_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',generation_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0));
-    PERFORM osm_catalog.promote_region_generation('fixture:region-b',generation_b,('osm_build_'||generation_b)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-b','preparedGenerationId',generation_b,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0));
+    PERFORM osm_catalog.promote_region_generation('fixture:region-a',generation_a,('osm_build_'||generation_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',generation_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0,'remainingConnectedAttributionSplits',0));
+    PERFORM osm_catalog.promote_region_generation('fixture:region-b',generation_b,('osm_build_'||generation_b)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-b','preparedGenerationId',generation_b,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0,'remainingConnectedAttributionSplits',0));
     IF (SELECT version FROM osm_active.ways WHERE way_id=10)<>4 THEN RAISE EXCEPTION 'newer source way version did not win'; END IF;
     IF EXISTS(SELECT 1 FROM osm_active.path_segments WHERE segment_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') THEN RAISE EXCEPTION 'segment from superseded source way is visible'; END IF;
     IF (SELECT count(*) FROM osm_active.path_segments WHERE segment_id='cccccccc-cccc-cccc-cccc-cccccccccccc')<>1 THEN RAISE EXCEPTION 'exact segment identity was not deduplicated'; END IF;
 
     replacement_a := pg_temp.make_candidate('fixture:region-a',3);
-    PERFORM osm_catalog.promote_region_generation('fixture:region-a',replacement_a,('osm_build_'||replacement_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',replacement_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0));
+    PERFORM osm_catalog.promote_region_generation('fixture:region-a',replacement_a,('osm_build_'||replacement_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',replacement_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0,'remainingConnectedAttributionSplits',0));
     IF NOT EXISTS(SELECT 1 FROM osm_active.ways WHERE way_id=10 AND version=4) THEN RAISE EXCEPTION 'replacing one region removed the other region'; END IF;
     IF NOT EXISTS(SELECT 1 FROM osm_active.ways WHERE way_id=30) THEN RAISE EXCEPTION 'replacement region is not visible'; END IF;
     IF NOT EXISTS(SELECT 1 FROM osm_catalog.storage_gc WHERE generation_id=generation_a AND object_kind='relation' AND state='queued') THEN RAISE EXCEPTION 'retired region leaves were not queued for GC'; END IF;
@@ -79,7 +79,7 @@ BEGIN
     active_before := replacement_a;
     rollback_a := pg_temp.make_candidate('fixture:region-a',3);
     BEGIN
-        PERFORM osm_catalog.promote_region_generation('fixture:region-a',rollback_a,('osm_build_'||rollback_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',rollback_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0));
+        PERFORM osm_catalog.promote_region_generation('fixture:region-a',rollback_a,('osm_build_'||rollback_a)::name,jsonb_build_object('partitionPrepared',true,'preparedRegionId','fixture:region-a','preparedGenerationId',rollback_a,'importerVersion',1,'derivationVersion',1,'provenanceMismatches',0,'sourceVersionMismatches',0,'logicalPathMismatches',0,'remainingConnectedAttributionSplits',0));
         RAISE EXCEPTION 'forced rollback';
     EXCEPTION WHEN raise_exception THEN
         NULL;

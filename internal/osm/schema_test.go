@@ -3,6 +3,8 @@ package osm
 import (
 	"context"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,8 +12,8 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 6 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 6", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 8 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 8", SupportedSchemaVersion)
 	}
 }
 
@@ -29,5 +31,17 @@ func TestSharedOSMReadiness(t *testing.T) {
 	defer pool.Close()
 	if !Ready(ctx, pool) {
 		t.Fatal("shared OSM database is not ready")
+	}
+	regions, err := ConfiguredRegions(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.IsSortedFunc(regions, func(a, b ConfiguredRegion) int { return strings.Compare(a.RegionID, b.RegionID) }) {
+		t.Fatalf("configured regions are not sorted: %+v", regions)
+	}
+	for _, region := range regions {
+		if region.RegionID == "" || region.DisplayName == "" {
+			t.Fatalf("invalid configured region: %+v", region)
+		}
 	}
 }

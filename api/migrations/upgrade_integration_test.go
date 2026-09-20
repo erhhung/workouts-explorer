@@ -111,7 +111,8 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=22 AND minimum_runtime_version=21
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=19 AND minimum_runtime_version=18
+		AND (SELECT COALESCE(max(version_id) FILTER (WHERE is_applied),0) FROM public.goose_db_version)=19
 		AND EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL
@@ -123,11 +124,38 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND to_regclass('app.workout_coverage_regions') IS NOT NULL
 		AND to_regclass('app.coverage_diagnostic_runs') IS NOT NULL
 		AND to_regclass('app.coverage_diagnostic_evidence') IS NOT NULL
+		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.preferences'::regclass
+			AND attname='coverage_diagnostics_enabled' AND NOT attisdropped)
+		AND to_regclass('app.coverage_job_contexts') IS NOT NULL
+		AND to_regclass('app.coverage_route_job_contexts') IS NOT NULL
+		AND to_regclass('app.coverage_paths') IS NOT NULL
+		AND to_regclass('app.workout_segment_matches') IS NOT NULL
+		AND to_regclass('app.account_path_daily_rollups') IS NOT NULL
+		AND to_regclass('app.coverage_reconciliation_accounts') IS NOT NULL
+		AND to_regclass('app.coverage_region_catalog') IS NOT NULL
+		AND to_regprocedure('app.sync_coverage_region_catalog(jsonb)') IS NOT NULL
+		AND to_regclass('app.coverage_parks') IS NOT NULL
+		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.coverage_parks'::regclass
+			AND attname='park_kind' AND attnotnull AND NOT attisdropped)
+		AND to_regclass('app.workout_park_attributions') IS NOT NULL
+		AND to_regprocedure('app.coverage_mvt(integer,integer,integer,json)') IS NOT NULL
+		AND to_regprocedure('app.claim_next_coverage_route(text,uuid,interval,integer)') IS NOT NULL
+		AND has_function_privilege('workouts_coverage_worker','app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE')
+		AND has_function_privilege('workouts_coverage_worker','app.persist_coverage_route(uuid,text,uuid,integer,jsonb,jsonb)','EXECUTE')
+		AND has_function_privilege('workouts_coverage_worker','app.sync_coverage_region_catalog(jsonb)','EXECUTE')
+		AND NOT has_function_privilege('workouts_worker','app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE')
+		AND NOT has_function_privilege('workouts_worker','app.sync_coverage_region_catalog(jsonb)','EXECUTE')
 		AND to_regprocedure('app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)') IS NOT NULL
 		AND to_regprocedure('app.set_workout_coverage_readiness(uuid,uuid,bigint,text,text,jsonb,uuid,text,uuid)') IS NOT NULL
 		AND to_regclass('app.account_data_generations') IS NOT NULL
 		AND to_regclass('app.map_selections') IS NOT NULL
 		AND to_regclass('app.map_selection_workouts') IS NOT NULL
+		AND to_regclass('app.park_owned_unnamed_coverage_function_backup') IS NULL
+		AND to_regclass('app.diagnostic_persistence_function_backup') IS NULL
+		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.map_selections'::regclass
+			AND attname='focused_workout_id' AND NOT attisdropped)
+		AND to_regprocedure('app.map_selection_coverage_entities(uuid,uuid,uuid,bigint,text)') IS NOT NULL
+		AND to_regprocedure('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)') IS NOT NULL
 		AND to_regclass('app.workout_routes_route_gist_idx') IS NOT NULL
 		AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
 			AND attname='route' AND NOT attisdropped)

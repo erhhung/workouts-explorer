@@ -182,7 +182,7 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	}
 	userToken := bearerSession.AccessToken
 	initialPreferences := getPreferences(t, server, userToken)
-	if initialPreferences.Initialized || initialPreferences.Theme != "dark" || initialPreferences.Units != "imperial" || initialPreferences.Timezone != "UTC" ||
+	if initialPreferences.Initialized || initialPreferences.CoverageDiagnosticsEnabled || initialPreferences.Theme != "dark" || initialPreferences.Units != "imperial" || initialPreferences.Timezone != "UTC" ||
 		initialPreferences.FirstWeekday != "monday" || initialPreferences.ClockFormat != "12h" || initialPreferences.PageSize != 25 ||
 		len(initialPreferences.WorkoutColumns) != 4 || initialPreferences.WorkoutColumns[0] != "date" || initialPreferences.WorkoutColumns[1] != "type" ||
 		initialPreferences.WorkoutColumns[2] != "duration" || initialPreferences.WorkoutColumns[3] != "distance" {
@@ -197,6 +197,11 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	initializedPreferences := getPreferences(t, server, userToken)
 	if !initializedPreferences.Initialized || initializedPreferences.Timezone != "America/Denver" || !initializedPreferences.DateRange.IsSpecified() || !initializedPreferences.DateRange.IsNull() {
 		t.Fatalf("preference initialization was not persisted: %+v", initializedPreferences)
+	}
+	diagnosticsSet := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"coverageDiagnosticsEnabled":true}`, userToken, "")
+	server.UpdateMyPreferences(diagnosticsSet.recorder, diagnosticsSet.request, generated.UpdateMyPreferencesParams{})
+	if diagnosticsSet.recorder.Code != http.StatusOK || !getPreferences(t, server, userToken).CoverageDiagnosticsEnabled {
+		t.Fatalf("coverage diagnostics preference was not persisted: %s", diagnosticsSet.recorder.Body.String())
 	}
 	secondInitialize := callEndpoint(http.MethodPatch, "/api/me/preferences?initializeOnly=true", `{"timezone":"America/Los_Angeles"}`, userToken, "")
 	server.UpdateMyPreferences(secondInitialize.recorder, secondInitialize.request, generated.UpdateMyPreferencesParams{InitializeOnly: &initializeOnly})

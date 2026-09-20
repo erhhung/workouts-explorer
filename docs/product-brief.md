@@ -46,10 +46,10 @@ Each user owns one personal workout account. Users cannot access another account
 5. The user selects Routes or Coverage.
 6. Routes are colored by workout type; hovering highlights the topmost, most recent workout route.
 7. Long pause gaps split a workout into separate map segments instead of drawing false connections between distant resumed points.
-8. Coverage uses fixed blue count buckets so frequently visited paths do not flatten the rest of the scale.
+8. Coverage uses fixed amber count buckets, with a matching magenta sequence for the focused workout, so frequently visited paths do not flatten the rest of the scale.
 9. The user filters the map to any subset of workouts with a bulk checkbox above the workout checkboxes.
-10. The user opens Coverage stats over the map without unloading it, then inspects locality-scoped path counts and all-time first and latest visit dates.
-11. The user can return directly from a Path Coverage row to that path on the map.
+10. The user opens Road Coverage over the map without unloading it, then searches, sorts, and pages through locality-scoped road, path, and park counts and visit dates.
+11. The user can return directly from a Road Coverage name or visit date to the entity or workout on the map.
 
 ### Keep data synchronized
 
@@ -131,9 +131,9 @@ Each user owns one personal workout account. Users cannot access another account
 - One dissolved traversed geometry per workout and physical segment, preserving disjoint visited spans without filling gaps
 - Locality-scoped logical roads and paths for distinct-workout attribution
 - One attribution per workout and logical path using the earliest accepted segment match
-- Fixed blue count buckets for coverage
+- Paired fixed amber aggregate and magenta focused count buckets for coverage
 - Authenticated private vector tiles
-- Path Coverage table in a non-destructive full-map-area panel with sortable statistics and Show on map actions
+- Searchable, sortable, paginated Road Coverage dialog with direct entity and workout map navigation
 - Extensible public base-map style families with paired light and dark variants
 - Workout-type style defaults, a Smooth fallback, and a current-visit style selector
 - Provider-specific visible attribution and direct or privately cached public base-map resources
@@ -185,6 +185,7 @@ The following are architectural non-goals at the expected scale:
 - Summary counts and totals match normalized provider aggregates for representative fixtures.
 - Raw routes and path coverage are visible for selected date ranges and workout subsets.
 - Each locality-scoped logical path counts a workout at most once, even when several member segments are traversed repeatedly in that workout.
+- Fully contained national-park paths are attributed even outside municipal boundaries; named paths use the national park as City/Region context only when no municipality exists.
 - Account isolation tests prevent cross-account access to records, tiles, jobs, logs, exports, and notifications.
 - Source secrets, GPS coordinates, and health values do not appear in logs or telemetry.
 - Ordinary API queries complete within 500 ms at p95 under a documented representative homelab benchmark.

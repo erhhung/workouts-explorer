@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type MapGeoJSONFeature, type MapMouseEvent, type StyleSpecification, type VectorTileSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -20,6 +20,11 @@ import {
   type MapSelectionWorkout,
   type Preferences,
   type PublicConfig,
+  type RoadCoverageDetail,
+  type RoadCoverageEntity,
+  type RoadCoverageList,
+  type RoadCoverageSort,
+  type RoadCoverageSortField,
   type WorkoutColumn,
   type WorkoutSort,
 } from "./api";
@@ -31,15 +36,42 @@ const HOVER_LAYER = "private-workout-route-hover";
 const ROUTE_MARKERS_LAYER = "private-workout-route-markers";
 const HOVER_MARKERS_LAYER = "private-workout-route-marker-hover";
 const ROUTES_SOURCE = "private-workout-routes";
+const COVERAGE_SOURCE = "private-workout-coverage";
+const COVERAGE_LAYER = "private-workout-coverage";
+const COVERAGE_PARK_LAYER = "private-workout-coverage-parks";
+const COVERAGE_FOCUS_LAYER = "private-workout-coverage-focus";
+const COVERAGE_PARK_FOCUS_LAYER = "private-workout-coverage-parks-focus";
+const COVERAGE_HIGHLIGHT_SOURCE = "private-workout-coverage-highlight";
+const COVERAGE_HIGHLIGHT_LAYER = "private-workout-coverage-highlight";
 const ROUTE_ENDPOINTS_SOURCE = "private-workout-route-endpoints";
 const ROUTE_START_LAYER = "private-workout-route-start";
 const ROUTE_FINISH_LAYER = "private-workout-route-finish";
 const DIAGNOSTIC_SOURCE = "coverage-diagnostic-overlay";
 const DIAGNOSTIC_RAW_ROUTE_SOURCE = "coverage-diagnostic-raw-route";
+const DIAGNOSTIC_BUSY_RETRY_DELAY_MS = 2000;
 const DIAGNOSTIC_RAW_ROUTE_LAYER = "coverage-diagnostic-raw-route";
 const DIAGNOSTIC_DIRECTION_SOURCE = "coverage-diagnostic-direction";
 const DIAGNOSTIC_DIRECTION_LAYER = "coverage-diagnostic-direction";
 const DIAGNOSTIC_DIRECTION_IMAGE = "coverage-diagnostic-direction-triangle";
+
+function waitForDiagnosticRetry(signal: AbortSignal, delayMilliseconds: number) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+    const aborted = () => { window.clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+    const timer = window.setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, delayMilliseconds);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+export async function retryInitialDiagnosticBusy<T>(request: () => Promise<T>, signal: AbortSignal, delayMilliseconds = DIAGNOSTIC_BUSY_RETRY_DELAY_MS) {
+  try {
+    return await request();
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 429) throw error;
+  }
+  await waitForDiagnosticRetry(signal, delayMilliseconds);
+  return request();
+}
 const DIAGNOSTIC_MATCHED_LAYER = "coverage-diagnostic-matched";
 const DIAGNOSTIC_AMBIGUOUS_LAYER = "coverage-diagnostic-ambiguous";
 const DIAGNOSTIC_SELECTED_LAYER = "coverage-diagnostic-selected";
@@ -48,6 +80,9 @@ const DIAGNOSTIC_EVIDENCE_LAYERS = [DIAGNOSTIC_MATCHED_LAYER, DIAGNOSTIC_AMBIGUO
 const DIAGNOSTIC_LAYERS = [DIAGNOSTIC_RAW_ROUTE_LAYER, DIAGNOSTIC_DIRECTION_LAYER, ...DIAGNOSTIC_EVIDENCE_LAYERS] as const;
 const ROUTE_LAYERS = [ROUTES_LAYER, ROUTE_MARKERS_LAYER, HOVER_LAYER, HOVER_MARKERS_LAYER, ROUTE_START_LAYER, ROUTE_FINISH_LAYER] as const;
 const ROUTE_HOVER_DELAY_MS = 250;
+const COVERAGE_HOVER_DELAY_MS = 750;
+export const COVERAGE_HIGHLIGHT_DURATION_MS = 3000;
+const COVERAGE_HIGHLIGHT_IDLE_FALLBACK_MS = 30000;
 const DIAGNOSTIC_HOVER_DELAY_MS = 250;
 const ROUTE_FINISH_MARKER_SIZE = 22;
 const ROUTE_START_MARKER_RADIUS = ROUTE_FINISH_MARKER_SIZE / Math.sqrt(Math.PI) * 0.9 * 0.97 * 0.95;
@@ -61,11 +96,78 @@ const QUICK_RANGES: ReadonlyArray<[DateRangeEnum, string]> = [
 ];
 const ROUTE_PALETTE = ["#ef9b61", "#75bda6", "#e2c86e", "#68a9df", "#e07a9a", "#9f91df", "#69c3c8", "#d7a65c"];
 const SEMANTIC_ROUTE_COLORS = { walk: "#43d5e5", hiking: "#8ed081", cycling: "#69aef5" } as const;
+const COVERAGE_RANGE_COLORS = ["#d95d0b", "#ed7d0c", "#f59e0b", "#f7b928", "#f9d64a", "#fff176"] as const;
+const COVERAGE_FOCUS_COLORS = ["#ff008c", "#ff5fb4", "#ff8bc8", "#ffaad2", "#ffc9e1", "#ffd8f0"] as const;
+const NON_FOCUSED_COVERAGE_LAYERS = [COVERAGE_LAYER, COVERAGE_PARK_LAYER] as const;
+const COVERAGE_LAYERS = [COVERAGE_LAYER, COVERAGE_PARK_LAYER, COVERAGE_FOCUS_LAYER, COVERAGE_PARK_FOCUS_LAYER] as const;
 
-export function selectionRequest(range: DateRangePreference, timezone: string, workoutIds?: string[]) {
+function coverageColorExpression(colors: readonly string[]) {
+  return ["match", ["get", "count_bucket"], 1, colors[0], 2, colors[1], 3, colors[2], 4, colors[3], 5, colors[4], 6, colors[5], colors[0]] as never;
+}
+
+export function startCoverageHighlightBlink(setOpacity: (opacity: number) => void, onReady: (ready: () => void) => () => void) {
+	let countdownStarted = false;
+	let stopped = false;
+	let visible = true;
+	let finishTimer: number | undefined;
+	let fallbackTimer: number | undefined;
+	let removeReadyListener: () => void = () => {};
+	setOpacity(1);
+	const blinkTimer = window.setInterval(() => { visible = !visible; setOpacity(visible ? 1 : 0); }, 250);
+	const finish = () => {
+		if (stopped) return;
+		stopped = true;
+		window.clearInterval(blinkTimer);
+		if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+		removeReadyListener();
+		setOpacity(0);
+	};
+	const startCountdown = () => {
+		if (countdownStarted || stopped) return;
+		countdownStarted = true;
+		if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+		removeReadyListener();
+		finishTimer = window.setTimeout(finish, COVERAGE_HIGHLIGHT_DURATION_MS);
+	};
+	removeReadyListener = onReady(startCountdown);
+	if (countdownStarted) removeReadyListener();
+	else fallbackTimer = window.setTimeout(startCountdown, COVERAGE_HIGHLIGHT_IDLE_FALLBACK_MS);
+	return () => {
+		if (stopped) return;
+		stopped = true;
+		window.clearInterval(blinkTimer);
+		if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+		if (finishTimer !== undefined) window.clearTimeout(finishTimer);
+		removeReadyListener();
+		setOpacity(0);
+	};
+}
+
+export function onMapContextReady(map: MapLibreMap, ready: () => void) {
+	let stopped = false;
+	const check = () => {
+		if (stopped) return;
+		if (map.isStyleLoaded() && !map.isMoving() && map.areTilesLoaded()) ready();
+	};
+	map.on("render", check);
+	map.on("moveend", check);
+	map.on("sourcedata", check);
+	const initialCheck = window.setTimeout(check, 0);
+	return () => {
+		if (stopped) return;
+		stopped = true;
+		window.clearTimeout(initialCheck);
+		map.off("render", check);
+		map.off("moveend", check);
+		map.off("sourcedata", check);
+	};
+}
+
+export function selectionRequest(range: DateRangePreference, timezone: string, workoutIds?: string[], focusedWorkoutId?: string) {
   const explicit = EXPLICIT_RANGE.exec(range);
   const selector = explicit ? { startDate: explicit[1], endDate: explicit[2] } : { dateRangeEnum: range, tz: timezone };
-  return workoutIds === undefined ? selector : { ...selector, workoutIds };
+  const selected = workoutIds === undefined ? selector : { ...selector, workoutIds };
+  return focusedWorkoutId ? { ...selected, focusedWorkoutId } : selected;
 }
 
 export function requestedWorkoutIds(search: string) {
@@ -88,6 +190,11 @@ function rangeLabel(range: DateRangePreference) {
   const quick = QUICK_RANGES.find(([value]) => value === range);
   const explicit = EXPLICIT_RANGE.exec(range);
   return quick?.[1] ?? (explicit ? `${formatDateOnly(explicit[1])} to ${formatDateOnly(explicit[2])}` : "Last 30 days");
+}
+
+function formatCoveragePopupDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${Number(match[2])}/${Number(match[3])}/${match[1]}` : value;
 }
 
 function formatWorkoutDate(workout: MapSelectionWorkout, preferences: Preferences) {
@@ -144,9 +251,9 @@ export function privateRouteTileUnauthorized(event: unknown) {
 	if (!event) return false;
 	const tileError = event as { sourceId?: string; error?: { status?: number; url?: string } };
 	if (tileError.error?.status !== 401) return false;
-	if (tileError.sourceId === ROUTES_SOURCE) return true;
+	if (tileError.sourceId === ROUTES_SOURCE || tileError.sourceId === COVERAGE_SOURCE) return true;
 	try {
-		return /^\/api\/map-selections\/[^/]+\/route-tiles\/[^/]+\/[^/]+\/[^/]+\/[^/]+\.pbf$/.test(new URL(tileError.error.url ?? "", window.location.origin).pathname);
+		return /^\/api\/map-selections\/[^/]+\/(?:route|coverage)-tiles\/[^/]+\/[^/]+\/[^/]+\/[^/]+\.pbf$/.test(new URL(tileError.error.url ?? "", window.location.origin).pathname);
 	} catch {
 		return false;
 	}
@@ -166,6 +273,9 @@ type RawRoutePoints = { points: RawRoutePoint[] };
 type RawRouteFeature = { type: "Feature"; geometry: { type: "MultiLineString"; coordinates: number[][][] }; properties: Record<string, unknown> };
 type RawRouteEndpoints = { type: "FeatureCollection"; features: Array<{ type: "Feature"; geometry: { type: "Point"; coordinates: number[] }; properties: { kind: "start" | "finish" } }> };
 type RawRouteDirectionMarkers = { type: "FeatureCollection"; features: Array<{ type: "Feature"; geometry: { type: "Point"; coordinates: number[] }; properties: { bearing: number } }> };
+type CoverageHighlight = { key: number; geometry: RoadCoverageDetail["geometry"]; fitBounds: RouteBounds };
+export type MapMode = "routes" | "coverage";
+export type RoadCoverageCache = { key: string; loadedAt: number; entities: RoadCoverageEntity[] };
 
 export function buildSegmentedRawRoute(points: RawRoutePoint[]): RawRouteFeature | undefined {
   if (points.length < 2) return undefined;
@@ -267,11 +377,12 @@ export function formatRoutePopupDistance(workout: MapSelectionWorkout, units: Pr
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${unit}`;
 }
 
-function MapCanvas({ family, preferences, selection, workouts, fitPadding, hoveredWorkoutId, fitRequest, focusRequest, diagnosticEnabled, diagnosticMode, rawRouteHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal, onDiagnosticHover, onDiagnosticLock, onHover, onRouteClick, onBaseMapError, onBaseMapReady, onRouteTilesUnavailable }: {
+function MapCanvas({ family, preferences, selection, workouts, fitPadding, hoveredWorkoutId, fitRequest, focusRequest, coverageHighlight, diagnosticEnabled, productionCoverageEnabled, diagnosticMode, routeHidingEnabled, nonFocusedRoutesHidden, rawRouteHidden, nonFocusedCoverageHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal, onDiagnosticHover, onDiagnosticLock, onHover, onRouteClick, onBaseMapError, onBaseMapReady, onRouteTilesUnavailable }: {
   family: BaseMapFamily; preferences: Preferences; selection?: MapSelection; workouts: MapSelectionWorkout[];
   fitPadding: number; hoveredWorkoutId?: string; fitRequest?: { key: number; bounds: RouteBounds; focusCanvas?: boolean };
   focusRequest: number;
-  diagnosticEnabled: boolean; diagnosticMode: boolean; rawRouteHidden: boolean; diagnosticRawRoute?: RawRouteFeature; directionRoute?: RawRouteFeature; rawRouteEndpoints?: RawRouteEndpoints; rawRouteEndpointsVisible: boolean; diagnostic?: CoverageDiagnosticRun; highlightedPortionOrdinal?: number;
+  coverageHighlight?: CoverageHighlight;
+  diagnosticEnabled: boolean; productionCoverageEnabled: boolean; diagnosticMode: boolean; routeHidingEnabled: boolean; nonFocusedRoutesHidden: boolean; rawRouteHidden: boolean; nonFocusedCoverageHidden: boolean; diagnosticRawRoute?: RawRouteFeature; directionRoute?: RawRouteFeature; rawRouteEndpoints?: RawRouteEndpoints; rawRouteEndpointsVisible: boolean; diagnostic?: CoverageDiagnosticRun; highlightedPortionOrdinal?: number;
   onDiagnosticHover: (ordinal?: number) => void; onDiagnosticLock: (ordinal: number) => void;
   onHover: (id?: string) => void; onRouteClick: (id: string) => void; onBaseMapError: () => void; onBaseMapReady: () => void; onRouteTilesUnavailable: () => void;
 }) {
@@ -279,7 +390,9 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   const mapRef = useRef<MapLibreMap | undefined>(undefined);
   const selectionRef = useRef(selection);
   const routeUrlRef = useRef(selection?.routeTileUrl);
+  const coverageUrlRef = useRef(selection?.coverageTileUrl);
   const installedRouteUrlRef = useRef<string | undefined>(undefined);
+  const installedCoverageUrlRef = useRef<string | undefined>(undefined);
   const onRouteTilesUnavailableRef = useRef(onRouteTilesUnavailable);
 	const onRouteClickRef = useRef(onRouteClick);
   const hoverRef = useRef(hoveredWorkoutId);
@@ -288,8 +401,11 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   const styleUrlRef = useRef(family.styles[preferences.theme]);
   const routeColorsRef = useRef(routeColors(selection?.workouts ?? []));
   const diagnosticEnabledRef = useRef(diagnosticEnabled);
+  const productionCoverageEnabledRef = useRef(productionCoverageEnabled);
   const diagnosticModeRef = useRef(diagnosticMode);
   const rawRouteHiddenRef = useRef(rawRouteHidden);
+  const nonFocusedRoutesHiddenRef = useRef(nonFocusedRoutesHidden);
+  const nonFocusedCoverageHiddenRef = useRef(nonFocusedCoverageHidden);
   const diagnosticRawRouteRef = useRef(diagnosticRawRoute);
 	const directionRouteRef = useRef(directionRoute);
   const installedDiagnosticRawRouteRef = useRef<RawRouteFeature | undefined>(undefined);
@@ -300,13 +416,18 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   const installedRawRouteEndpointsRef = useRef<RawRouteEndpoints | undefined>(undefined);
   const diagnosticRef = useRef(diagnostic);
   const highlightedPortionRef = useRef(highlightedPortionOrdinal);
+  const coverageHighlightRef = useRef(coverageHighlight);
   const styleLoadedRef = useRef(false);
   const fallbackInstalledRef = useRef(false);
+  const baseMapRetryTimerRef = useRef<number | undefined>(undefined);
   const defaultViewportSetRef = useRef(false);
   const popupRef = useRef<maplibregl.Popup | undefined>(undefined);
   const popupTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const popupWorkoutRef = useRef<string | undefined>(undefined);
   const popupLocationRef = useRef<maplibregl.LngLat | undefined>(undefined);
+  const coveragePopupAbortRef = useRef<AbortController | undefined>(undefined);
+  const coveragePopupEntityRef = useRef<string | undefined>(undefined);
+  const stopCoverageBlinkRef = useRef<() => void>(() => undefined);
   const fallbackStyleRef = useRef({ version: 8 as const, sources: {}, layers: [{ id: "fallback-background", type: "background" as const, paint: { "background-color": preferences.theme === "dark" ? "#0b1514" : "#f3f0e7" } }] });
 
   function syncPrivateLayers(map: MapLibreMap) {
@@ -330,16 +451,46 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     if (!map.getLayer(ROUTES_LAYER)) map.addLayer({
         id: ROUTES_LAYER, type: "line", source: ROUTES_SOURCE, "source-layer": "routes",
         layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "sort_order"] },
-        paint: { "line-color": colorExpression as never, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 2, 14, 4], "line-opacity": 0.82 },
+        paint: { "line-color": colorExpression as never, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 2, 14, 4], "line-opacity": nonFocusedRoutesHiddenRef.current ? 0 : 0.82, "line-opacity-transition": RAW_ROUTE_FADE },
       });
-    else map.setPaintProperty(ROUTES_LAYER, "line-color", colorExpression as never);
+    else { map.setPaintProperty(ROUTES_LAYER, "line-color", colorExpression as never); map.setPaintProperty(ROUTES_LAYER, "line-opacity", nonFocusedRoutesHiddenRef.current ? 0 : 0.82); }
     if (!map.getLayer(ROUTE_MARKERS_LAYER)) map.addLayer({
         id: ROUTE_MARKERS_LAYER, type: "circle", source: ROUTES_SOURCE, "source-layer": "routes",
         filter: ["==", ["geometry-type"], "Point"],
         layout: { "circle-sort-key": ["get", "sort_order"] },
-        paint: { "circle-color": colorExpression as never, "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3, 14, 5], "circle-opacity": 0.9 },
+        paint: { "circle-color": colorExpression as never, "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3, 14, 5], "circle-opacity": nonFocusedRoutesHiddenRef.current ? 0 : 0.9, "circle-opacity-transition": RAW_ROUTE_FADE },
       });
-    else map.setPaintProperty(ROUTE_MARKERS_LAYER, "circle-color", colorExpression as never);
+    else { map.setPaintProperty(ROUTE_MARKERS_LAYER, "circle-color", colorExpression as never); map.setPaintProperty(ROUTE_MARKERS_LAYER, "circle-opacity", nonFocusedRoutesHiddenRef.current ? 0 : 0.9); }
+    if (coverageUrlRef.current && productionCoverageEnabledRef.current) {
+      const coverageURL = absoluteRouteTileTemplate(coverageUrlRef.current, window.location.origin);
+      let coverageSource = map.getSource(COVERAGE_SOURCE);
+      if (coverageSource && installedCoverageUrlRef.current !== coverageURL) {
+        for (const layer of [...COVERAGE_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer);
+        map.removeSource(COVERAGE_SOURCE);
+        coverageSource = undefined;
+      }
+      if (!coverageSource) map.addSource(COVERAGE_SOURCE, { type: "vector", tiles: [coverageURL], minzoom: 0, maxzoom: 22 });
+      installedCoverageUrlRef.current = coverageURL;
+      const visibility = diagnosticModeRef.current && productionCoverageEnabledRef.current ? "visible" : "none";
+      const definitions = [
+        { id: COVERAGE_LAYER, sourceLayer: "coverage", colors: COVERAGE_RANGE_COLORS, width: [2, 5] },
+        { id: COVERAGE_PARK_LAYER, sourceLayer: "coverage_parks", colors: COVERAGE_RANGE_COLORS, width: [3, 6] },
+        { id: COVERAGE_FOCUS_LAYER, sourceLayer: "coverage_focus", colors: COVERAGE_FOCUS_COLORS, width: [4, 8] },
+        { id: COVERAGE_PARK_FOCUS_LAYER, sourceLayer: "coverage_parks_focus", colors: COVERAGE_FOCUS_COLORS, width: [5, 9] },
+      ] as const;
+      for (const definition of definitions) {
+        if (!map.getLayer(definition.id)) map.addLayer({
+          id: definition.id, type: "line", source: COVERAGE_SOURCE, "source-layer": definition.sourceLayer,
+          layout: { visibility, "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": coverageColorExpression(definition.colors), "line-width": ["interpolate", ["linear"], ["zoom"], 5, definition.width[0], 14, definition.width[1]], "line-opacity": NON_FOCUSED_COVERAGE_LAYERS.includes(definition.id as never) && nonFocusedCoverageHiddenRef.current ? 0 : 0.94, "line-opacity-transition": RAW_ROUTE_FADE },
+        });
+        else {
+          map.setLayoutProperty(definition.id, "visibility", visibility);
+          map.setPaintProperty(definition.id, "line-color", coverageColorExpression(definition.colors));
+          map.setPaintProperty(definition.id, "line-opacity", NON_FOCUSED_COVERAGE_LAYERS.includes(definition.id as never) && nonFocusedCoverageHiddenRef.current ? 0 : 0.94);
+        }
+      }
+    }
     if (!map.getLayer(HOVER_LAYER)) map.addLayer({
         id: HOVER_LAYER, type: "line", source: ROUTES_SOURCE, "source-layer": "routes",
         filter: ["==", ["get", "workout_id"], hoverRef.current ?? ""],
@@ -379,7 +530,6 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   }
 
   function syncDiagnosticLayers(map: MapLibreMap) {
-    const rawRouteVisibility = diagnosticModeRef.current && rawRouteHiddenRef.current ? "none" : "visible";
     const hasMemoryRoute = Boolean(diagnosticRawRouteRef.current);
     const useMemoryRoute = diagnosticModeRef.current && hasMemoryRoute;
     if (hasMemoryRoute) {
@@ -452,9 +602,9 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 			if (coverageHandoffTimerRef.current !== undefined) window.clearTimeout(coverageHandoffTimerRef.current);
 			coverageHandoffTimerRef.current = undefined;
 			coverageHandoffCompleteRef.current = false;
-			for (const layer of [ROUTES_LAYER, ROUTE_MARKERS_LAYER]) if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", diagnosticModeRef.current ? "none" : "visible");
-			for (const layer of [HOVER_LAYER, HOVER_MARKERS_LAYER]) if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", rawRouteVisibility);
+			for (const layer of [ROUTES_LAYER, ROUTE_MARKERS_LAYER, HOVER_LAYER, HOVER_MARKERS_LAYER]) if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", diagnosticModeRef.current ? "none" : "visible");
 		}
+		for (const layer of COVERAGE_LAYERS) if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", diagnosticModeRef.current && productionCoverageEnabledRef.current ? "visible" : "none");
     if (!diagnosticEnabledRef.current || !diagnosticRef.current) {
       for (const layer of [...DIAGNOSTIC_EVIDENCE_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer);
       if (map.getSource(DIAGNOSTIC_SOURCE)) map.removeSource(DIAGNOSTIC_SOURCE);
@@ -490,19 +640,41 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 		for (const layer of [ROUTE_FINISH_LAYER, ROUTE_START_LAYER]) if (map.getLayer(layer)) map.moveLayer(layer);
   }
 
+  function syncCoverageHighlight(map: MapLibreMap) {
+    const highlight = coverageHighlightRef.current;
+    const source = map.getSource(COVERAGE_HIGHLIGHT_SOURCE) as GeoJSONSource | undefined;
+    if (!highlight) {
+      if (map.getLayer(COVERAGE_HIGHLIGHT_LAYER)) map.removeLayer(COVERAGE_HIGHLIGHT_LAYER);
+      if (source) map.removeSource(COVERAGE_HIGHLIGHT_SOURCE);
+      return;
+    }
+    const feature = { type: "Feature" as const, geometry: highlight.geometry, properties: {} };
+    if (!source) map.addSource(COVERAGE_HIGHLIGHT_SOURCE, { type: "geojson", data: feature });
+    else source.setData(feature);
+    if (!map.getLayer(COVERAGE_HIGHLIGHT_LAYER)) map.addLayer({
+      id: COVERAGE_HIGHLIGHT_LAYER, type: "line", source: COVERAGE_HIGHLIGHT_SOURCE,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 14, 10], "line-opacity": 0 },
+    });
+    else map.moveLayer(COVERAGE_HIGHLIGHT_LAYER);
+  }
+
   function syncMapLayers(map: MapLibreMap) {
     syncPrivateLayers(map);
     syncDiagnosticLayers(map);
+    syncCoverageHighlight(map);
   }
 
   function preservePrivateLayers(previous: StyleSpecification | undefined, next: StyleSpecification) {
     if (!previous?.sources[ROUTES_SOURCE]) return next;
     const sources: StyleSpecification["sources"] = { ...next.sources, [ROUTES_SOURCE]: previous.sources[ROUTES_SOURCE] };
+    if (previous.sources[COVERAGE_SOURCE]) sources[COVERAGE_SOURCE] = previous.sources[COVERAGE_SOURCE];
+    if (previous.sources[COVERAGE_HIGHLIGHT_SOURCE]) sources[COVERAGE_HIGHLIGHT_SOURCE] = previous.sources[COVERAGE_HIGHLIGHT_SOURCE];
     if (previous.sources[DIAGNOSTIC_SOURCE]) sources[DIAGNOSTIC_SOURCE] = previous.sources[DIAGNOSTIC_SOURCE];
     if (previous.sources[DIAGNOSTIC_RAW_ROUTE_SOURCE]) sources[DIAGNOSTIC_RAW_ROUTE_SOURCE] = previous.sources[DIAGNOSTIC_RAW_ROUTE_SOURCE];
 		if (previous.sources[DIAGNOSTIC_DIRECTION_SOURCE]) sources[DIAGNOSTIC_DIRECTION_SOURCE] = previous.sources[DIAGNOSTIC_DIRECTION_SOURCE];
 		if (previous.sources[ROUTE_ENDPOINTS_SOURCE]) sources[ROUTE_ENDPOINTS_SOURCE] = previous.sources[ROUTE_ENDPOINTS_SOURCE];
-    const privateLayers = previous.layers.filter((layer) => [...ROUTE_LAYERS, ...DIAGNOSTIC_LAYERS].includes(layer.id as never));
+    const privateLayers = previous.layers.filter((layer) => [...ROUTE_LAYERS, ...DIAGNOSTIC_LAYERS, ...COVERAGE_LAYERS, COVERAGE_HIGHLIGHT_LAYER].includes(layer.id as never));
     return { ...next, sources, layers: [...next.layers, ...privateLayers] };
   }
 
@@ -510,6 +682,9 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
     popupTimerRef.current = undefined;
     popupWorkoutRef.current = undefined;
+    coveragePopupEntityRef.current = undefined;
+    coveragePopupAbortRef.current?.abort();
+    coveragePopupAbortRef.current = undefined;
     popupRef.current?.remove();
     popupRef.current = undefined;
   }
@@ -523,6 +698,31 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const date = document.createElement("span"); date.className = "map-route-tooltip-date"; date.textContent = timing.date;
     const times = document.createElement("span"); times.className = "map-route-tooltip-times"; times.textContent = timing.timeRange;
     content.append(type, distance, date, times);
+    return content;
+  }
+
+  function coveragePopupContent(detail: RoadCoverageDetail) {
+    const content = document.createElement("div");
+    content.className = "map-route-tooltip map-coverage-tooltip";
+    const title = document.createElement("strong");
+    title.className = "map-coverage-tooltip-title";
+    title.textContent = coverageEntityName(detail);
+    const place = document.createElement("span");
+    place.className = "map-coverage-tooltip-place";
+    place.textContent = coverageEntityPlace(detail);
+    content.append(title, place);
+    const rows: Array<[string, string]> = [
+      ["Workouts", detail.rangeWorkoutCount.toLocaleString()],
+      ["Earliest visit", formatCoveragePopupDate(detail.rangeFirstDate)],
+      ["First visit ever", formatCoveragePopupDate(detail.allTimeFirstDate)],
+      ["Most recent visit", formatCoveragePopupDate(detail.rangeLatestDate)],
+      ["Last visit ever", formatCoveragePopupDate(detail.allTimeLatestDate)],
+    ];
+    for (const [label, value] of rows) {
+      const term = document.createElement("span"); term.textContent = label;
+      const description = document.createElement("strong"); description.textContent = value;
+      content.append(term, description);
+    }
     return content;
   }
 
@@ -543,7 +743,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 			window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
 			return;
 		}
-		if (privateRouteTileUnavailable(event, routeUrlRef.current)) {
+		if (privateRouteTileUnavailable(event, routeUrlRef.current) || privateRouteTileUnavailable(event, coverageUrlRef.current)) {
 			onRouteTilesUnavailableRef.current();
 			return;
 		}
@@ -551,6 +751,14 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
       fallbackInstalledRef.current = true;
       onBaseMapError();
       map.setStyle(fallbackStyleRef.current);
+      if (baseMapRetryTimerRef.current === undefined) {
+        baseMapRetryTimerRef.current = window.setTimeout(() => {
+          baseMapRetryTimerRef.current = undefined;
+          styleLoadedRef.current = false;
+          fallbackInstalledRef.current = false;
+          map.setStyle(styleUrlRef.current, { transformStyle: preservePrivateLayers });
+        }, 5000);
+      }
     };
     const hover = (event: MapMouseEvent) => {
       const feature = topmostFeature(map.queryRenderedFeatures(event.point, { layers: [ROUTES_LAYER, ROUTE_MARKERS_LAYER] }));
@@ -572,6 +780,48 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
       }, 750);
     };
     const leave = () => { onHover(undefined); map.getCanvas().style.cursor = ""; removePopup(); };
+		const hoverCoverage = (event: MapMouseEvent) => {
+			if (!diagnosticModeRef.current || !productionCoverageEnabledRef.current) return;
+			const features = map.queryRenderedFeatures(event.point, { layers: [COVERAGE_PARK_LAYER, COVERAGE_LAYER] });
+			const feature = features.find((candidate) => candidate.properties?.entity_kind === "path" && typeof candidate.properties?.name === "string" && candidate.properties.name.trim())
+				?? features.find((candidate) => candidate.properties?.entity_kind === "park") ?? features[0];
+			const entityID = typeof feature?.properties?.entity_id === "string" ? feature.properties.entity_id.toUpperCase() : undefined;
+			const entityKind = feature?.properties?.entity_kind === "park" ? "park" : feature?.properties?.entity_kind === "path" ? "path" : undefined;
+			map.getCanvas().style.cursor = feature ? "pointer" : "";
+			if (!entityID || !entityKind || !selectionRef.current) { removePopup(); return; }
+			const key = `${entityKind}:${entityID}`;
+			popupLocationRef.current = event.lngLat;
+			if (popupRef.current && coveragePopupEntityRef.current === key) { popupRef.current.setLngLat(event.lngLat); return; }
+			if (coveragePopupEntityRef.current === key && (popupTimerRef.current || coveragePopupAbortRef.current)) return;
+			removePopup();
+			coveragePopupEntityRef.current = key;
+			popupTimerRef.current = setTimeout(() => {
+				popupTimerRef.current = undefined;
+				const activeSelection = selectionRef.current;
+				if (!activeSelection || coveragePopupEntityRef.current !== key) return;
+				const controller = new AbortController();
+				coveragePopupAbortRef.current = controller;
+				const loadDetail = async () => {
+					for (let attempt = 0; ; attempt++) {
+						try {
+							return await api<RoadCoverageDetail>(`/api/map-selections/${encodeURIComponent(activeSelection.id)}/coverage/${entityKind}/${encodeURIComponent(entityID)}?generation=${activeSelection.dataGeneration}`, { signal: controller.signal });
+						} catch (error) {
+							if (error instanceof ApiError && error.status === 404) onRouteTilesUnavailableRef.current();
+							if (!(error instanceof ApiError) || error.status !== 503 || attempt > 0) throw error;
+							await new Promise((resolve) => window.setTimeout(resolve, 250));
+						}
+					}
+				};
+				void loadDetail()
+					.then((detail) => {
+						if (controller.signal.aborted || coveragePopupEntityRef.current !== key || !popupLocationRef.current) return;
+						popupRef.current = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12, className: "map-route-popup map-coverage-popup", maxWidth: "none" })
+							.setLngLat(popupLocationRef.current).setDOMContent(coveragePopupContent(detail)).addTo(map);
+					})
+					.catch(() => undefined)
+					.finally(() => { if (coveragePopupAbortRef.current === controller) coveragePopupAbortRef.current = undefined; });
+			}, COVERAGE_HOVER_DELAY_MS);
+		};
 		const clickRoute = (event: MapMouseEvent) => {
 			if (diagnosticModeRef.current) return;
 			const feature = topmostFeature(map.queryRenderedFeatures(event.point, { layers: [ROUTES_LAYER, ROUTE_MARKERS_LAYER] }));
@@ -611,6 +861,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     map.on("mouseleave", ROUTES_LAYER, leave);
     map.on("mousemove", ROUTE_MARKERS_LAYER, hover);
     map.on("mouseleave", ROUTE_MARKERS_LAYER, leave);
+		map.on("mousemove", hoverCoverage);
 		map.on("click", clickRoute);
     map.on("mousemove", DIAGNOSTIC_HIT_LAYER, hoverDiagnosticPortion);
     map.on("click", DIAGNOSTIC_HIT_LAYER, lockDiagnosticPortion);
@@ -619,26 +870,30 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     styleLoadedRef.current = false;
     fallbackInstalledRef.current = false;
     map.setStyle(family.styles[preferences.theme], { transformStyle: preservePrivateLayers });
-    return () => { if (coverageHandoffTimerRef.current !== undefined) window.clearTimeout(coverageHandoffTimerRef.current); map.off("style.load", restore); map.off("load", restoreMissedInitialStyle); map.off("load", showDefaultViewport); map.off("error", styleError); map.off("moveend", refreshDirectionMarkers); map.off("mousemove", ROUTES_LAYER, hover); map.off("mouseleave", ROUTES_LAYER, leave); map.off("mousemove", ROUTE_MARKERS_LAYER, hover); map.off("mouseleave", ROUTE_MARKERS_LAYER, leave); map.off("click", clickRoute); map.off("mousemove", DIAGNOSTIC_HIT_LAYER, hoverDiagnosticPortion); map.off("click", DIAGNOSTIC_HIT_LAYER, lockDiagnosticPortion); removePopup(); for (const layer of [...DIAGNOSTIC_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer); if (map.getSource(DIAGNOSTIC_SOURCE)) map.removeSource(DIAGNOSTIC_SOURCE); if (map.getSource(DIAGNOSTIC_DIRECTION_SOURCE)) map.removeSource(DIAGNOSTIC_DIRECTION_SOURCE); if (map.getSource(DIAGNOSTIC_RAW_ROUTE_SOURCE)) map.removeSource(DIAGNOSTIC_RAW_ROUTE_SOURCE); map.remove(); mapRef.current = undefined; };
+    return () => { if (coverageHandoffTimerRef.current !== undefined) window.clearTimeout(coverageHandoffTimerRef.current); if (baseMapRetryTimerRef.current !== undefined) window.clearTimeout(baseMapRetryTimerRef.current); stopCoverageBlinkRef.current(); map.off("style.load", restore); map.off("load", restoreMissedInitialStyle); map.off("load", showDefaultViewport); map.off("error", styleError); map.off("moveend", refreshDirectionMarkers); map.off("mousemove", ROUTES_LAYER, hover); map.off("mouseleave", ROUTES_LAYER, leave); map.off("mousemove", ROUTE_MARKERS_LAYER, hover); map.off("mouseleave", ROUTE_MARKERS_LAYER, leave); map.off("mousemove", hoverCoverage); map.off("click", clickRoute); map.off("mousemove", DIAGNOSTIC_HIT_LAYER, hoverDiagnosticPortion); map.off("click", DIAGNOSTIC_HIT_LAYER, lockDiagnosticPortion); removePopup(); for (const layer of [...DIAGNOSTIC_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer); if (map.getSource(DIAGNOSTIC_SOURCE)) map.removeSource(DIAGNOSTIC_SOURCE); if (map.getSource(DIAGNOSTIC_DIRECTION_SOURCE)) map.removeSource(DIAGNOSTIC_DIRECTION_SOURCE); if (map.getSource(DIAGNOSTIC_RAW_ROUTE_SOURCE)) map.removeSource(DIAGNOSTIC_RAW_ROUTE_SOURCE); map.remove(); mapRef.current = undefined; };
   }, []);
 
   useEffect(() => {
     routeUrlRef.current = selection?.routeTileUrl;
+    coverageUrlRef.current = selection?.coverageTileUrl;
     selectionRef.current = selection;
     routeColorsRef.current = routeColors(selection?.workouts ?? []);
     workoutsRef.current = workouts;
     preferencesRef.current = preferences;
     const map = mapRef.current;
     if (map && styleLoadedRef.current) syncMapLayers(map);
-  }, [preferences, selection?.id, selection?.routeTileUrl, workouts]);
+  }, [preferences, selection?.id, selection?.routeTileUrl, selection?.coverageTileUrl, workouts]);
 
 	useEffect(() => { onRouteTilesUnavailableRef.current = onRouteTilesUnavailable; }, [onRouteTilesUnavailable]);
 	useEffect(() => { onRouteClickRef.current = onRouteClick; }, [onRouteClick]);
 
   useEffect(() => {
     diagnosticEnabledRef.current = diagnosticEnabled;
+    productionCoverageEnabledRef.current = productionCoverageEnabled;
     diagnosticModeRef.current = diagnosticMode;
     rawRouteHiddenRef.current = rawRouteHidden;
+    nonFocusedRoutesHiddenRef.current = nonFocusedRoutesHidden;
+    nonFocusedCoverageHiddenRef.current = nonFocusedCoverageHidden;
     diagnosticRawRouteRef.current = diagnosticRawRoute;
 		directionRouteRef.current = directionRoute;
     rawRouteEndpointsRef.current = rawRouteEndpoints;
@@ -648,7 +903,20 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const map = mapRef.current;
 		if (map && styleLoadedRef.current) syncMapLayers(map);
     if (map?.getLayer(DIAGNOSTIC_SELECTED_LAYER)) map.setFilter(DIAGNOSTIC_SELECTED_LAYER, ["==", ["get", "portionOrdinal"], highlightedPortionOrdinal ?? -1]);
-  }, [diagnosticEnabled, diagnosticMode, rawRouteHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal]);
+  }, [diagnosticEnabled, productionCoverageEnabled, diagnosticMode, routeHidingEnabled, nonFocusedRoutesHidden, rawRouteHidden, nonFocusedCoverageHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal]);
+
+  useEffect(() => {
+    coverageHighlightRef.current = coverageHighlight;
+    const map = mapRef.current;
+    if (!map || !styleLoadedRef.current) return;
+    syncCoverageHighlight(map);
+    if (!coverageHighlight) return;
+    map.fitBounds([[coverageHighlight.fitBounds.minimumLongitude, coverageHighlight.fitBounds.minimumLatitude], [coverageHighlight.fitBounds.maximumLongitude, coverageHighlight.fitBounds.maximumLatitude]], { padding: fitPadding, duration: 350 });
+    const opacity = (value: number) => { if (map.getLayer(COVERAGE_HIGHLIGHT_LAYER)) map.setPaintProperty(COVERAGE_HIGHLIGHT_LAYER, "line-opacity", value); };
+    stopCoverageBlinkRef.current();
+    stopCoverageBlinkRef.current = startCoverageHighlightBlink(opacity, (ready) => onMapContextReady(map, ready));
+    return () => stopCoverageBlinkRef.current();
+  }, [coverageHighlight?.key]);
 
   useEffect(() => {
     if (!diagnosticMode || !diagnostic) return;
@@ -660,6 +928,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const nextStyle = family.styles[preferences.theme];
     fallbackStyleRef.current = { version: 8, sources: {}, layers: [{ id: "fallback-background", type: "background", paint: { "background-color": preferences.theme === "dark" ? "#0b1514" : "#f3f0e7" } }] };
     if (map && styleUrlRef.current !== nextStyle) {
+      if (baseMapRetryTimerRef.current !== undefined) { window.clearTimeout(baseMapRetryTimerRef.current); baseMapRetryTimerRef.current = undefined; }
       styleUrlRef.current = nextStyle;
       styleLoadedRef.current = false;
       fallbackInstalledRef.current = false;
@@ -678,6 +947,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const map = mapRef.current;
     const bounds = fitRequest?.bounds;
     if (map && fallbackInstalledRef.current) {
+      if (baseMapRetryTimerRef.current !== undefined) { window.clearTimeout(baseMapRetryTimerRef.current); baseMapRetryTimerRef.current = undefined; }
       styleLoadedRef.current = false;
       fallbackInstalledRef.current = false;
       map.setStyle(styleUrlRef.current, { transformStyle: preservePrivateLayers });
@@ -692,7 +962,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 		if (focusRequest > 0) mapRef.current?.getCanvas().focus({ preventScroll: true });
 	}, [focusRequest]);
 
-  return <div ref={containerRef} className="map-canvas" role="application" aria-label="Workout route map" aria-keyshortcuts={diagnosticMode ? "Space" : undefined} />;
+  return <div ref={containerRef} className="map-canvas" role="application" aria-label="Workout route map" aria-keyshortcuts={(routeHidingEnabled || diagnosticMode && (diagnosticEnabled || productionCoverageEnabled)) ? "Space" : undefined} />;
 }
 
 function workoutSortValue(workout: MapSelectionWorkout, field: WorkoutColumn) {
@@ -773,12 +1043,221 @@ function DiagnosticReviewCard({ run, pending, error, selectedPortionOrdinal, sav
   </section>;
 }
 
-export default function MapPage({ config, preferences, csrfToken, dateRange, onDateRangeSelected, sort = DEFAULT_WORKOUT_SORT, persistedWorkoutIds, onWorkoutSelectionChange, persistedAvailableWorkouts, onAvailableWorkoutsChange, persistedFocusedWorkoutId, onFocusedWorkoutChange }: {
+const COVERAGE_BUCKET_LABELS = ["1 workout", "2 workouts", "3-5 workouts", "6-10 workouts", "11-25 workouts", "26+ workouts"];
+
+function CoverageOverviewCard({ fitDisabled, onFit, onOpen }: { fitDisabled: boolean; onFit: () => void; onOpen: () => void }) {
+  return <section className="coverage-overview-card" aria-label="Coverage statistics">
+    <header><div><span className="coverage-diagnostic-eyebrow">Checked routes</span><h2>Road coverage</h2></div><button type="button" className="coverage-diagnostic-fit" disabled={fitDisabled} onClick={onFit}>Fit</button></header>
+    <div className="coverage-legend" aria-label="Coverage workout count legend">{COVERAGE_BUCKET_LABELS.map((label, index) => <div key={label}><span className="coverage-swatch-pair" aria-hidden="true"><span style={{ background: COVERAGE_RANGE_COLORS[index] }} /><span style={{ background: COVERAGE_FOCUS_COLORS[index] }} /></span><span>{label}</span></div>)}</div>
+    <button type="button" className="secondary coverage-rankings-button" onClick={onOpen}>Coverage by road...</button>
+  </section>;
+}
+
+const ROAD_COVERAGE_COLUMNS: ReadonlyArray<{ field: RoadCoverageSortField; label: string; initial: "asc" | "desc" }> = [
+  { field: "rangeCount", label: "Workouts", initial: "desc" },
+  { field: "name", label: "Road/Path/Park", initial: "asc" },
+  { field: "cityOrRegion", label: "City/County/Region", initial: "asc" },
+  { field: "rangeFirst", label: "Earliest visit", initial: "asc" },
+  { field: "allTimeFirst", label: "First visit ever", initial: "asc" },
+  { field: "rangeLatest", label: "Most recent visit", initial: "desc" },
+  { field: "allTimeLatest", label: "Last visit ever", initial: "desc" },
+];
+const ROAD_COVERAGE_FETCH_PAGE_SIZE = 100;
+const TABLE_LOADING_DELAY_MS = 500;
+const ROAD_COVERAGE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
+function coverageEntityName(entity: RoadCoverageEntity) {
+  if (entity.name) return entity.name;
+  if (entity.entityKind === "park") return "Unnamed park";
+  return entity.broadClass === "road" ? "Unnamed road" : "Unnamed path";
+}
+
+export function coverageRegionLabel(regionId: string) {
+  const slug = regionId.includes(":") ? regionId.slice(regionId.lastIndexOf(":") + 1) : regionId;
+  return slug.split(/[-_]+/).filter(Boolean).map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(" ") || regionId;
+}
+
+function coverageEntityPlace(entity: Pick<RoadCoverageEntity, "localityName" | "regionId" | "regionName">) {
+  return entity.localityName ?? entity.regionName ?? coverageRegionLabel(entity.regionId);
+}
+
+function RoadCoverageDialog({ open, selection, pageSize, cache, onCacheChange, onOpenChange, onReturnFocus, onSelectionUnavailable, onShowEntity, onShowWorkout }: {
+  open: boolean; selection?: MapSelection; pageSize: number; onOpenChange: (open: boolean) => void;
+  cache?: RoadCoverageCache; onCacheChange?: (cache?: RoadCoverageCache) => void;
+  onReturnFocus: () => void;
+  onSelectionUnavailable: () => void;
+  onShowEntity: (entity: RoadCoverageEntity) => Promise<void>; onShowWorkout: (workoutId: string) => void;
+}) {
+  const searchID = useId();
+  const [input, setInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<RoadCoverageSort>({ field: "rangeCount", direction: "desc" });
+  const [entities, setEntities] = useState<RoadCoverageEntity[]>();
+  const [loading, setLoading] = useState(false);
+  const [showLoading, setShowLoading] = useState(false);
+  const [rowSlots, setRowSlots] = useState(2);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [showUnnamed, setShowUnnamed] = useState(false);
+  const [error, setError] = useState<{ message: string; retry: () => void }>();
+  const previousRangeKey = useRef<string | undefined>(undefined);
+  const rangeKey = selection ? `${selection.range.startDate}/${selection.range.endDate}` : undefined;
+  useEffect(() => {
+    if (!open) {
+      setError(undefined); setEntities(undefined);
+    }
+  }, [open]);
+  useEffect(() => {
+    if (!rangeKey) return;
+    if (previousRangeKey.current && previousRangeKey.current !== rangeKey) {
+      setInput(""); setSearch(""); setShowUnnamed(false); setPage(1);
+    }
+    previousRangeKey.current = rangeKey;
+  }, [rangeKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { setSearch(input.trim()); setPage(1); }, 500);
+    return () => window.clearTimeout(timer);
+  }, [input]);
+  useEffect(() => {
+    if (!open || !selection) return;
+    const cacheKey = `${selection.range.startDate}/${selection.range.endDate}@${selection.dataGeneration}`;
+    if (cache?.key === cacheKey && Date.now() - cache.loadedAt < ROAD_COVERAGE_CACHE_MAX_AGE_MS) {
+      const viewportRows = Math.max(5, Math.floor((window.innerHeight - 330) / 34));
+      const initialVisibleCount = cache.entities.filter((entity) => entity.entityKind !== "path" || Boolean(entity.name)).length;
+      setRowSlots(Math.max(1, Math.min(pageSize, viewportRows, initialVisibleCount || 1)));
+      setEntities(cache.entities); setLoading(false); setShowLoading(false); setError(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    const loadingTimer = window.setTimeout(() => setShowLoading(true), TABLE_LOADING_DELAY_MS);
+    const loadPage = (requestedPage: number) => {
+      const params = new URLSearchParams({ generation: String(selection.dataGeneration), page: String(requestedPage), pageSize: String(ROAD_COVERAGE_FETCH_PAGE_SIZE), sort: "rangeCount:desc" });
+      return api<RoadCoverageList>(`/api/map-selections/${encodeURIComponent(selection.id)}/coverage/paths?${params}`, { signal: controller.signal });
+    };
+    setEntities(undefined); setLoading(true); setShowLoading(false); setError(undefined); setRowSlots(2);
+    void (async () => {
+      const first = await loadPage(1);
+      const items = [...first.items];
+      for (let nextPage = 2; nextPage <= first.pagination.totalPages; nextPage += 3) {
+        const batch = await Promise.all(Array.from({ length: Math.min(3, first.pagination.totalPages - nextPage + 1) }, (_, offset) => loadPage(nextPage + offset)));
+        for (const result of batch) items.push(...result.items);
+      }
+      if (controller.signal.aborted) return;
+      window.clearTimeout(loadingTimer);
+      const viewportRows = Math.max(5, Math.floor((window.innerHeight - 330) / 34));
+      const initialVisibleCount = items.filter((entity) => entity.entityKind !== "path" || Boolean(entity.name)).length;
+      setRowSlots(Math.max(1, Math.min(pageSize, viewportRows, initialVisibleCount || 1)));
+      setEntities(items); setLoading(false); setShowLoading(false);
+      onCacheChange?.({ key: cacheKey, loadedAt: Date.now(), entities: items });
+    })().catch((loadError) => {
+      if (controller.signal.aborted) return;
+      window.clearTimeout(loadingTimer);
+      if (loadError instanceof ApiError && loadError.status === 404) {
+        setEntities(undefined); setLoading(true); setShowLoading(true); setError(undefined);
+        onSelectionUnavailable();
+        return;
+      }
+      setLoading(false); setShowLoading(false);
+      setError({ message: "Road coverage could not be loaded.", retry: () => setLoadAttempt((value) => value + 1) });
+    });
+    return () => { controller.abort(); window.clearTimeout(loadingTimer); };
+  }, [cache?.key, loadAttempt, open, pageSize, selection?.dataGeneration, selection?.id]);
+  const visibleEntities = useMemo(() => {
+    if (!entities) return [];
+    const needle = search.toLocaleLowerCase();
+    const eligible = showUnnamed ? entities : entities.filter((entity) => entity.entityKind !== "path" || Boolean(entity.name));
+    const filtered = needle ? eligible.filter((entity) => [coverageEntityName(entity), coverageEntityPlace(entity)].join(" ").toLocaleLowerCase().includes(needle)) : eligible;
+    const value = (entity: RoadCoverageEntity): string | number => {
+      switch (sort.field) {
+        case "rangeCount": return entity.rangeWorkoutCount;
+        case "name": return coverageEntityName(entity);
+        case "cityOrRegion": return coverageEntityPlace(entity);
+        case "rangeFirst": return entity.rangeFirstDate;
+        case "allTimeFirst": return entity.allTimeFirstDate;
+        case "rangeLatest": return entity.rangeLatestDate;
+        case "allTimeLatest": return entity.allTimeLatestDate;
+      }
+    };
+    return [...filtered].sort((left, right) => {
+      const leftValue = value(left), rightValue = value(right);
+      const comparison = typeof leftValue === "number" && typeof rightValue === "number" ? leftValue - rightValue : String(leftValue).localeCompare(String(rightValue), undefined, { sensitivity: "base" });
+      if (comparison) return sort.direction === "asc" ? comparison : -comparison;
+      if (sort.field !== "name") {
+        const nameComparison = coverageEntityName(left).localeCompare(coverageEntityName(right), undefined, { sensitivity: "base" });
+        if (nameComparison) return nameComparison;
+      }
+      if (sort.field !== "cityOrRegion") {
+        const placeComparison = coverageEntityPlace(left).localeCompare(coverageEntityPlace(right), undefined, { sensitivity: "base" });
+        if (placeComparison) return placeComparison;
+      }
+      return left.entityKind.localeCompare(right.entityKind) || left.entityId.localeCompare(right.entityId);
+    });
+  }, [entities, search, showUnnamed, sort.direction, sort.field]);
+  const totalPages = Math.ceil(visibleEntities.length / pageSize);
+  const pageItems = visibleEntities.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => {
+    if (!open || !entities) return;
+    if (totalPages === 0 && page !== 1) setPage(1);
+    else if (totalPages > 0 && page > totalPages) setPage(totalPages);
+  }, [entities, open, page, totalPages]);
+  const inRange = (date: string) => Boolean(selection && date >= selection.range.startDate && date <= selection.range.endDate);
+  const updateSort = (field: RoadCoverageSortField) => {
+    const column = ROAD_COVERAGE_COLUMNS.find((candidate) => candidate.field === field)!;
+    setSort((current) => current.field === field ? { field, direction: current.direction === "asc" ? "desc" : "asc" } : { field, direction: column.initial });
+    setPage(1);
+  };
+  const dateLink = (date: string, workoutId: string, enabled = true) => enabled
+    ? <button type="button" className="coverage-table-link" onClick={() => { onOpenChange(false); onShowWorkout(workoutId); }}>{formatDateOnly(date)}</button>
+    : <span>{formatDateOnly(date)}</span>;
+  const showEntity = (entity: RoadCoverageEntity) => {
+    setError(undefined);
+    void onShowEntity(entity).catch((showError) => {
+      if (showError instanceof ApiError && showError.status === 404) {
+        onCacheChange?.(undefined);
+        setEntities(undefined); setLoading(true); setShowLoading(false);
+        setLoadAttempt((value) => value + 1);
+        return;
+      }
+      setError({ message: "That road coverage could not be shown on the map.", retry: () => showEntity(entity) });
+    });
+  };
+  if (error) return <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content road-coverage-error-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); onReturnFocus(); }}>
+      <div className="dialog-heading"><div><Dialog.Title>Road Coverage</Dialog.Title><Dialog.Description>{error.message}</Dialog.Description></div></div>
+      <div className="dialog-actions"><button type="button" onClick={error.retry}>Retry</button><Dialog.Close type="button" className="secondary">Close</Dialog.Close></div>
+    </Dialog.Content></Dialog.Portal>
+  </Dialog.Root>;
+  return <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content road-coverage-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); onReturnFocus(); }}>
+      <div className="dialog-heading"><div><Dialog.Title>Road Coverage</Dialog.Title><Dialog.Description className="visually-hidden">Coverage rankings for this date range.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Road Coverage">&times;</Dialog.Close></div>
+      <div className="coverage-search"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /></svg><label className="visually-hidden" htmlFor={searchID}>Search roads, paths, parks, cities, or regions</label><input id={searchID} type="search" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Search roads, paths, parks, cities, or regions" /></div>
+      <div className={`road-coverage-table-wrap${entities ? "" : " is-loading"}`} aria-busy={loading} style={{ "--road-coverage-row-slots": rowSlots } as CSSProperties}>
+        <table className="workout-table road-coverage-table"><thead><tr>{ROAD_COVERAGE_COLUMNS.map((column) => {
+          const selected = sort.field === column.field;
+          return <th key={column.field} scope="col" aria-sort={selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}><button type="button" onClick={() => updateSort(column.field)}><span className="column-label">{column.label}</span><span className="sort-indicator" aria-hidden="true">{selected ? (sort.direction === "asc" ? <>&#9650;</> : <>&#9660;</>) : <>&#9650; &#9660;</>}</span></button></th>;
+        })}</tr></thead><tbody>{showLoading && <tr className="road-coverage-state-row"><td colSpan={ROAD_COVERAGE_COLUMNS.length} role="status">Loading coverage...</td></tr>}{!loading && pageItems.map((entity) => <tr key={`${entity.entityKind}-${entity.entityId}`}>
+          <td><span className="coverage-count-lane">{entity.rangeWorkoutCount.toLocaleString()}</span></td>
+          <td><button type="button" className="coverage-table-link" onClick={() => showEntity(entity)}>{coverageEntityName(entity)}</button></td>
+          <td>{coverageEntityPlace(entity)}</td>
+          <td>{dateLink(entity.rangeFirstDate, entity.rangeFirstWorkoutId)}</td>
+          <td>{dateLink(entity.allTimeFirstDate, entity.allTimeFirstWorkoutId, inRange(entity.allTimeFirstDate))}</td>
+          <td>{dateLink(entity.rangeLatestDate, entity.rangeLatestWorkoutId)}</td>
+          <td>{dateLink(entity.allTimeLatestDate, entity.allTimeLatestWorkoutId, inRange(entity.allTimeLatestDate))}</td>
+        </tr>)}{!loading && pageItems.length === 0 && <tr className="road-coverage-state-row"><td colSpan={ROAD_COVERAGE_COLUMNS.length}>No roads, paths, or parks match this search.</td></tr>}</tbody></table>
+      </div>
+      {entities && <footer className="road-coverage-footer"><label className="road-coverage-unnamed"><input type="checkbox" checked={showUnnamed} onChange={(event) => { setShowUnnamed(event.target.checked); setPage(1); }} />Show unnamed roads and paths</label><nav className="pagination" aria-label="Road coverage pages"><button type="button" className="secondary" disabled={page <= 1 || totalPages === 0} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {Math.max(1, page)} of {Math.max(1, totalPages)}</span><button type="button" className="secondary" disabled={totalPages === 0 || page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</button></nav></footer>}
+    </Dialog.Content></Dialog.Portal>
+  </Dialog.Root>;
+}
+
+export default function MapPage({ config, preferences, csrfToken, dateRange, onDateRangeSelected, sort = DEFAULT_WORKOUT_SORT, persistedWorkoutIds, onWorkoutSelectionChange, persistedAvailableWorkouts, onAvailableWorkoutsChange, persistedFocusedWorkoutId, onFocusedWorkoutChange, persistedMapMode, onMapModeChange, roadCoverageCache, onRoadCoverageCacheChange }: {
   config: PublicConfig; preferences: Preferences; csrfToken: string; dateRange: DateRangePreference;
   onDateRangeSelected: (range: DateRangePreference) => void; sort?: WorkoutSort;
   persistedWorkoutIds?: string[]; onWorkoutSelectionChange?: (workoutIds?: string[]) => void;
   persistedAvailableWorkouts?: MapSelectionWorkout[]; onAvailableWorkoutsChange?: (workouts: MapSelectionWorkout[]) => void;
   persistedFocusedWorkoutId?: string; onFocusedWorkoutChange?: (workoutId?: string) => void;
+  persistedMapMode?: MapMode; onMapModeChange?: (mode: MapMode) => void;
+  roadCoverageCache?: RoadCoverageCache; onRoadCoverageCacheChange?: (cache?: RoadCoverageCache) => void;
 }) {
   const [selection, setSelection] = useState<MapSelection>();
   const [selectionPending, setSelectionPending] = useState(true);
@@ -792,7 +1271,11 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const [localFocusedWorkoutId, setLocalFocusedWorkoutId] = useState<string>();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
-  const [mapMode, setMapMode] = useState<"routes" | "coverage">("routes");
+  const [localMapMode, setLocalMapMode] = useState<MapMode>("routes");
+  const mapMode = preferences.coverageDiagnosticsEnabled ? localMapMode : onMapModeChange ? persistedMapMode ?? "routes" : localMapMode;
+  const setMapMode = (mode: MapMode) => preferences.coverageDiagnosticsEnabled ? setLocalMapMode(mode) : onMapModeChange ? onMapModeChange(mode) : setLocalMapMode(mode);
+  const [roadCoverageOpen, setRoadCoverageOpen] = useState(false);
+  const [coverageHighlight, setCoverageHighlight] = useState<CoverageHighlight>();
   const [diagnostic, setDiagnostic] = useState<CoverageDiagnosticRun>();
 	const [singleRawRoute, setSingleRawRoute] = useState<{ workoutId: string; route?: RawRouteFeature; endpoints?: RawRouteEndpoints }>();
   const [diagnosticPending, setDiagnosticPending] = useState(false);
@@ -804,12 +1287,15 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const [labelSavePending, setLabelSavePending] = useState(false);
   const [labelSaveError, setLabelSaveError] = useState("");
   const [rawRouteHidden, setRawRouteHidden] = useState(false);
+  const [nonFocusedRoutesHidden, setNonFocusedRoutesHidden] = useState(false);
+  const [nonFocusedCoverageHidden, setNonFocusedCoverageHidden] = useState(false);
 	const requestedIds = useRef(requestedWorkoutIds(window.location.search)).current;
   const initialListFocusId = useRef(requestedIds.length === 1 ? requestedIds[0] : persistedFocusedWorkoutId).current;
 	const [listScrollRequest, setListScrollRequest] = useState<{ key: number; workoutId: string } | undefined>(() => initialListFocusId ? { key: 1, workoutId: initialListFocusId } : undefined);
   const [localWorkoutIds, setLocalWorkoutIds] = useState<string[] | undefined>(() => requestedIds.length ? requestedIds : undefined);
   const selectedWorkoutIds = onWorkoutSelectionChange ? persistedWorkoutIds : localWorkoutIds;
   const focusedWorkoutId = onFocusedWorkoutChange ? persistedFocusedWorkoutId : localFocusedWorkoutId;
+  const selectionFocusedWorkoutId = focusedWorkoutId ?? (requestedIds.length === 1 ? requestedIds[0] : undefined);
   const [localAvailableWorkouts, setLocalAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
   const availableWorkouts = onAvailableWorkoutsChange ? persistedAvailableWorkouts ?? [] : localAvailableWorkouts;
   const rangeSaveSequence = useRef(0);
@@ -925,7 +1411,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const createSelection = async (workoutIds?: string[]) => {
       for (let attempt = 0; ; attempt++) {
         try {
-          return await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, workoutIds)), signal: controller.signal }, csrfToken);
+          return await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, workoutIds, selectionFocusedWorkoutId)), signal: controller.signal }, csrfToken);
         } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 503 || attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length) throw error;
           await new Promise((resolve) => setTimeout(resolve, MAP_SELECTION_RETRY_DELAYS_MS[attempt]));
@@ -966,7 +1452,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
       })
       .catch((error) => { if (active && !(error instanceof DOMException && error.name === "AbortError")) { setSelectionError("Routes could not be prepared for this map."); setSelectionPending(false); } });
     return () => { active = false; controller.abort(); };
-  }, [csrfToken, dateRange, preferences.timezone, selectedWorkoutIds?.join(",") ?? "all", selectionRefresh]);
+  }, [csrfToken, dateRange, preferences.timezone, selectedWorkoutIds?.join(",") ?? "all", selectionFocusedWorkoutId, selectionRefresh]);
 
 	useEffect(() => {
 		if (!selection) return;
@@ -986,6 +1472,9 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     if (activeSelectionRef.current) void api<void>(`/api/map-selections/${encodeURIComponent(activeSelectionRef.current)}`, { method: "DELETE" }, csrfToken).catch(() => undefined);
   }, [csrfToken]);
 
+  useEffect(() => { setCoverageHighlight(undefined); }, [dateRange, selection?.dataGeneration]);
+  useEffect(() => { if (preferences.coverageDiagnosticsEnabled) setLocalMapMode("routes"); }, [preferences.coverageDiagnosticsEnabled]);
+
   const focusedWorkout = availableWorkouts.find((workout) => workout.id === focusedWorkoutId);
   const automaticFamilyId = focusedWorkout ? resolveBaseFamily(config.baseMaps, [focusedWorkout]) : selection ? resolveBaseFamily(config.baseMaps, selection.workouts) : config.baseMaps.fallbackFamilyId;
   const familyId = overrideFamilyId && config.baseMaps.families.some((family) => family.id === overrideFamilyId) ? overrideFamilyId : automaticFamilyId;
@@ -993,16 +1482,19 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const preferredHighlightId = hoveredWorkoutId ?? focusedWorkoutId ?? (requestedIds.length === 1 ? requestedIds[0] : undefined);
   const highlightedWorkoutId = preferredHighlightId && visibleWorkoutIds.has(preferredHighlightId) ? preferredHighlightId : undefined;
   const visibleFocusedWorkoutId = focusedWorkoutId && visibleWorkoutIds.has(focusedWorkoutId) ? focusedWorkoutId : undefined;
+  const focusedCoverageBounds = visibleFocusedWorkoutId ? focusedWorkout?.bounds : undefined;
   const displayedFocusedWorkoutId = hoveredWorkoutId && hoveredWorkoutId !== visibleFocusedWorkoutId ? undefined : visibleFocusedWorkoutId;
 	const endpointRawWorkoutId = visibleFocusedWorkoutId ?? (visibleWorkoutIds.size === 1 ? [...visibleWorkoutIds][0] : undefined);
-	const rawRouteWorkoutId = mapMode === "routes" ? highlightedWorkoutId ?? endpointRawWorkoutId : visibleFocusedWorkoutId;
+	const rawRouteWorkoutId = mapMode === "routes" ? highlightedWorkoutId ?? endpointRawWorkoutId : preferences.coverageDiagnosticsEnabled ? visibleFocusedWorkoutId : undefined;
 	const loadedRawRoute = rawRouteWorkoutId && singleRawRoute?.workoutId === rawRouteWorkoutId ? singleRawRoute : rawRouteWorkoutId ? rawRouteCacheRef.current.get(rawRouteWorkoutId) : undefined;
 	const displayedSingleRawRoute = endpointRawWorkoutId && singleRawRoute?.workoutId === endpointRawWorkoutId ? singleRawRoute : endpointRawWorkoutId ? rawRouteCacheRef.current.get(endpointRawWorkoutId) : undefined;
-	const directionRawRoute = mapMode === "routes" && highlightedWorkoutId ? loadedRawRoute?.route : mapMode === "coverage" ? displayedSingleRawRoute?.route : undefined;
-	const markerRawRoute = mapMode === "routes" && highlightedWorkoutId ? loadedRawRoute : displayedSingleRawRoute;
-	const showRawRouteEndpoints = mapMode === "coverage" || Boolean(highlightedWorkoutId) || visibleWorkoutIds.size === 1;
-  const diagnosticFeatureEnabled = config.features.coverageMatcherDiagnostics;
-  const diagnosticCompatible = diagnosticFeatureEnabled && Boolean(visibleFocusedWorkoutId && selection?.workouts.some((workout) => workout.id === visibleFocusedWorkoutId)) && !selectionPending && !selectionError;
+	const directionRawRoute = mapMode === "routes" && highlightedWorkoutId ? loadedRawRoute?.route : mapMode === "coverage" && preferences.coverageDiagnosticsEnabled ? displayedSingleRawRoute?.route : undefined;
+	const markerRawRoute = mapMode === "routes" && highlightedWorkoutId ? loadedRawRoute : preferences.coverageDiagnosticsEnabled ? displayedSingleRawRoute : undefined;
+	const showRawRouteEndpoints = mapMode === "coverage" ? preferences.coverageDiagnosticsEnabled : Boolean(highlightedWorkoutId) || visibleWorkoutIds.size === 1;
+	const diagnosticFeatureEnabled = config.features.coverageMatcherDiagnostics && preferences.coverageDiagnosticsEnabled;
+	const diagnosticCompatible = diagnosticFeatureEnabled && Boolean(visibleFocusedWorkoutId && selection?.workouts.some((workout) => workout.id === visibleFocusedWorkoutId)) && !selectionPending && !selectionError;
+	const productionCoverageCompatible = !preferences.coverageDiagnosticsEnabled && Boolean(selection && visibleWorkoutIds.size) && !selectionPending && !selectionError;
+	const coverageCompatible = preferences.coverageDiagnosticsEnabled ? diagnosticCompatible : productionCoverageCompatible;
   const allRoutesSelected = availableWorkouts.length > 0 && availableWorkouts.every((workout) => visibleWorkoutIds.has(workout.id));
   const statusMessage = rangeError || baseMapError || selectionError || (selectionPending ? "Updating routes..." : "");
   const dismissibleStatusError = !rangeError && Boolean(baseMapError || selectionError);
@@ -1015,22 +1507,28 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     setHoveredPortionOrdinal(undefined);
     setLockedPortionOrdinal(undefined);
     setLabelSaveError("");
-    setMapMode("routes");
-  }, [focusedWorkoutId, dateRange, selectedWorkoutIds?.join(",") ?? "all"]);
+		if (preferences.coverageDiagnosticsEnabled) setMapMode("routes");
+	}, [focusedWorkoutId, dateRange, selectedWorkoutIds?.join(",") ?? "all", preferences.coverageDiagnosticsEnabled]);
 
   useEffect(() => {
-    const active = mapMode === "coverage" && Boolean(diagnostic);
-    if (!active) { setRawRouteHidden(false); return; }
+    const diagnosticActive = mapMode === "coverage" && Boolean(diagnostic);
+    const productionActive = mapMode === "coverage" && !preferences.coverageDiagnosticsEnabled && Boolean(visibleFocusedWorkoutId);
+    const routesActive = mapMode === "routes" && Boolean(visibleFocusedWorkoutId);
+    if (!diagnosticActive && !productionActive && !routesActive) { setRawRouteHidden(false); setNonFocusedRoutesHidden(false); setNonFocusedCoverageHidden(false); return; }
     const editableTarget = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true']"));
     const keyDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.repeat || editableTarget(event.target)) return;
       event.preventDefault();
-      setRawRouteHidden(true);
+      if (diagnosticActive) setRawRouteHidden(true);
+      if (productionActive) setNonFocusedCoverageHidden(true);
+      if (routesActive) setNonFocusedRoutesHidden(true);
     };
     const restore = (event?: KeyboardEvent) => {
       if (event && event.code !== "Space") return;
       if (event) event.preventDefault();
       setRawRouteHidden(false);
+      setNonFocusedRoutesHidden(false);
+      setNonFocusedCoverageHidden(false);
     };
     const restoreOnBlur = () => restore();
     window.addEventListener("keydown", keyDown);
@@ -1041,8 +1539,10 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
       window.removeEventListener("keyup", restore);
       window.removeEventListener("blur", restoreOnBlur);
       setRawRouteHidden(false);
+      setNonFocusedRoutesHidden(false);
+      setNonFocusedCoverageHidden(false);
     };
-  }, [mapMode, diagnostic?.id]);
+  }, [mapMode, diagnostic?.id, preferences.coverageDiagnosticsEnabled, visibleFocusedWorkoutId]);
 
 	useEffect(() => {
 		if (!rawRouteWorkoutId) { setSingleRawRoute(undefined); return; }
@@ -1061,7 +1561,8 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const controller = new AbortController();
     const sequence = ++diagnosticSequenceRef.current;
     setDiagnosticPending(true); setDiagnosticError(""); requestDiagnosticHover(undefined); setLockedPortionOrdinal(undefined);
-    void api<CoverageDiagnosticRun>(`/api/workouts/${encodeURIComponent(visibleFocusedWorkoutId)}/coverage-diagnostic-runs`, { method: "POST", body: "{}", signal: controller.signal }, csrfToken)
+    const requestDiagnostic = () => api<CoverageDiagnosticRun>(`/api/workouts/${encodeURIComponent(visibleFocusedWorkoutId)}/coverage-diagnostic-runs`, { method: "POST", body: "{}", signal: controller.signal }, csrfToken);
+    void retryInitialDiagnosticBusy(requestDiagnostic, controller.signal)
       .then((created) => {
         if (controller.signal.aborted || sequence !== diagnosticSequenceRef.current) return;
         const normalized = { ...created, id: created.id.toUpperCase(), workoutId: created.workoutId.toUpperCase() };
@@ -1071,7 +1572,10 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
       })
       .catch((error) => {
         if (controller.signal.aborted || sequence !== diagnosticSequenceRef.current || (error instanceof DOMException && error.name === "AbortError")) return;
-        setDiagnosticPending(false); setDiagnosticError("The diagnostic overlay could not be prepared.");
+        setDiagnosticPending(false);
+        setDiagnosticError(error instanceof ApiError && error.status === 429
+          ? "The diagnostic overlay could not be prepared because all available workers are currently busy. Please try again later."
+          : "The diagnostic overlay could not be prepared.");
       });
     return () => { controller.abort(); diagnosticSequenceRef.current++; };
   }, [csrfToken, dateRange, diagnosticCompatible, diagnosticRetry, focusedWorkoutId, mapMode, selection?.id, selectedWorkoutIds?.join(",") ?? "all"]);
@@ -1114,6 +1618,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const current = selectedWorkoutIds ?? availableWorkouts.map((item) => item.id);
     if (!current.includes(workout.id)) updateWorkoutSelection([...current, workout.id].sort());
     setFitRequest((currentRequest) => ({ key: (currentRequest?.key ?? 0) + 1, bounds: workout.bounds }));
+    setCanvasFocusRequest((value) => value + 1);
   }
 
 	function focusWorkoutFromMap(workoutId: string) {
@@ -1153,10 +1658,22 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     }
   }
 
+  async function showCoverageEntity(entity: RoadCoverageEntity) {
+    if (!selection) throw new Error("Map selection is unavailable");
+    const detail = await api<RoadCoverageDetail>(`/api/map-selections/${encodeURIComponent(selection.id)}/coverage/${entity.entityKind}/${encodeURIComponent(entity.entityId)}?generation=${selection.dataGeneration}`);
+    setRoadCoverageOpen(false);
+    setCoverageHighlight((current) => ({ key: (current?.key ?? 0) + 1, geometry: detail.geometry, fitBounds: detail.fitBounds }));
+  }
+
+  function showCoverageWorkout(workoutId: string) {
+    setMapMode("coverage");
+    focusWorkoutFromMap(workoutId.toUpperCase());
+  }
+
   const controls = (suffix: string) => <>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select date range"><span>Date range</span><strong>{rangeLabel(dateRange)}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}>{QUICK_RANGES.map(([value, label]) => <DropdownMenu.Item key={value} onSelect={() => void selectRange(value)}>{label}{dateRange === value && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}<DropdownMenu.Separator /><DropdownMenu.Item onSelect={() => setCustomOpen(true)}>Custom...{EXPLICIT_RANGE.test(dateRange) && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select base map"><span>Base map</span><strong>{overrideFamilyId ? family?.label : `Automatic / ${family?.label ?? "Unavailable"}`}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}><DropdownMenu.Item onSelect={() => setOverrideFamilyId(undefined)}>Automatic{!overrideFamilyId && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item><DropdownMenu.Separator />{config.baseMaps.families.map((candidate) => <DropdownMenu.Item key={candidate.id} onSelect={() => setOverrideFamilyId(candidate.id)}>{candidate.label}{overrideFamilyId === candidate.id && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-    <fieldset className="map-workout-filter"><legend>Workout routes</legend><div className="map-route-toolbar"><label className="map-route-toggle"><input type="checkbox" aria-label="Select all workout routes" checked={allRoutesSelected} disabled={!availableWorkouts.length} onChange={toggleAllWorkouts} /></label><div className="map-mode-controls" role="group" aria-label="Map mode"><button type="button" aria-pressed={mapMode === "routes"} onClick={() => setMapMode("routes")}>Routes</button><button type="button" aria-pressed={mapMode === "coverage"} disabled={!diagnosticCompatible} onClick={() => setMapMode("coverage")}>Coverage</button></div></div><div className="map-filter-options">{availableWorkouts.length ? <WorkoutRouteList workouts={availableWorkouts} preferences={preferences} sort={sort} visibleIDs={selectedWorkoutIds} highlightedWorkoutId={highlightedWorkoutId} focusedWorkoutId={displayedFocusedWorkoutId} scrollRequest={listScrollRequest} onToggle={toggleWorkout} onFocus={focusWorkout} onHover={requestRouteHover} /> : <p className="map-routes-empty">No workout routes in this range.</p>}</div></fieldset>
+		<fieldset className="map-workout-filter"><legend>Workout routes</legend><div className="map-route-toolbar"><label className="map-route-toggle"><input type="checkbox" aria-label="Select all workout routes" checked={allRoutesSelected} disabled={!availableWorkouts.length} onChange={toggleAllWorkouts} /></label><div className="map-mode-controls" role="group" aria-label="Map mode"><button type="button" aria-pressed={mapMode === "routes"} onClick={() => { setMapMode("routes"); setCanvasFocusRequest((value) => value + 1); }}>Routes</button><button type="button" aria-pressed={mapMode === "coverage"} disabled={!coverageCompatible} onClick={() => { setMapMode("coverage"); setCanvasFocusRequest((value) => value + 1); }}>Coverage</button></div></div><div className="map-filter-options">{availableWorkouts.length ? <WorkoutRouteList workouts={availableWorkouts} preferences={preferences} sort={sort} visibleIDs={selectedWorkoutIds} highlightedWorkoutId={highlightedWorkoutId} focusedWorkoutId={displayedFocusedWorkoutId} scrollRequest={listScrollRequest} onToggle={toggleWorkout} onFocus={focusWorkout} onHover={requestRouteHover} /> : <p className="map-routes-empty">No workout routes in this range.</p>}</div></fieldset>
     <button type="button" className="secondary map-fit-button" disabled={!selection?.bounds} onClick={() => selection?.bounds && setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds: selection.bounds! }))}>Fit routes</button>
   </>;
 
@@ -1165,13 +1682,15 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     <aside className="map-sidebar" aria-label="Map controls"><div className="map-controls">{controls("desktop")}</div></aside>
     <section className="map-stage" aria-live="polite">
       {statusMessage && <div className="map-banner" role="status"><span>{statusMessage}</span>{dismissibleStatusError && <button type="button" className="map-banner-dismiss" aria-label={baseMapError ? "Dismiss base map warning" : "Dismiss route preparation error"} onClick={dismissStatusError}>&times;</button>}</div>}
-      {family && <MapCanvas family={family} preferences={preferences} selection={selection} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} focusRequest={canvasFocusRequest} diagnosticEnabled={diagnosticFeatureEnabled} diagnosticMode={mapMode === "coverage"} rawRouteHidden={rawRouteHidden} diagnosticRawRoute={displayedSingleRawRoute?.route} directionRoute={directionRawRoute} rawRouteEndpoints={markerRawRoute?.endpoints} rawRouteEndpointsVisible={showRawRouteEndpoints} diagnostic={diagnostic} highlightedPortionOrdinal={hoveredPortionOrdinal ?? lockedPortionOrdinal} onDiagnosticHover={requestDiagnosticHover} onDiagnosticLock={setLockedPortionOrdinal} onHover={requestRouteHover} onRouteClick={focusWorkoutFromMap} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available.")} onBaseMapReady={() => setBaseMapError("")} onRouteTilesUnavailable={refreshSelection} />}
-      {mapMode === "coverage" && <DiagnosticReviewCard run={diagnostic} pending={diagnosticPending} error={diagnosticError} selectedPortionOrdinal={lockedPortionOrdinal} savePending={labelSavePending} saveError={labelSaveError}
+      {family && <MapCanvas family={family} preferences={preferences} selection={selection} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} focusRequest={canvasFocusRequest} coverageHighlight={coverageHighlight} diagnosticEnabled={diagnosticFeatureEnabled} productionCoverageEnabled={!preferences.coverageDiagnosticsEnabled} diagnosticMode={mapMode === "coverage"} routeHidingEnabled={mapMode === "routes" && Boolean(visibleFocusedWorkoutId)} nonFocusedRoutesHidden={nonFocusedRoutesHidden} rawRouteHidden={rawRouteHidden} nonFocusedCoverageHidden={nonFocusedCoverageHidden} diagnosticRawRoute={preferences.coverageDiagnosticsEnabled ? displayedSingleRawRoute?.route : undefined} directionRoute={directionRawRoute} rawRouteEndpoints={markerRawRoute?.endpoints} rawRouteEndpointsVisible={showRawRouteEndpoints} diagnostic={diagnostic} highlightedPortionOrdinal={hoveredPortionOrdinal ?? lockedPortionOrdinal} onDiagnosticHover={requestDiagnosticHover} onDiagnosticLock={setLockedPortionOrdinal} onHover={requestRouteHover} onRouteClick={focusWorkoutFromMap} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available. Retrying in 5 seconds...")} onBaseMapReady={() => setBaseMapError("")} onRouteTilesUnavailable={refreshSelection} />}
+		{mapMode === "coverage" && preferences.coverageDiagnosticsEnabled && <DiagnosticReviewCard run={diagnostic} pending={diagnosticPending} error={diagnosticError} selectedPortionOrdinal={lockedPortionOrdinal} savePending={labelSavePending} saveError={labelSaveError}
         onRetry={() => { setDiagnostic(undefined); setDiagnosticRetry((value) => value + 1); }}
         onFit={() => { const bounds = diagnostic && diagnosticBounds(diagnostic.overlay); if (bounds) setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds, focusCanvas: true })); }}
 			onCopyFocus={() => setCanvasFocusRequest((value) => value + 1)}
         onOverallLabel={(overall) => diagnostic && void saveDiagnosticLabels({ ...diagnostic.labels, overall })}
-        onSegmentLabel={(portionOrdinal, label) => { if (!diagnostic) return; const segments = [...diagnostic.labels.segments.filter((item) => item.portionOrdinal !== portionOrdinal), { portionOrdinal, label }].sort((left, right) => left.portionOrdinal - right.portionOrdinal); void saveDiagnosticLabels({ ...diagnostic.labels, segments }); }} />}
+			onSegmentLabel={(portionOrdinal, label) => { if (!diagnostic) return; const segments = [...diagnostic.labels.segments.filter((item) => item.portionOrdinal !== portionOrdinal), { portionOrdinal, label }].sort((left, right) => left.portionOrdinal - right.portionOrdinal); void saveDiagnosticLabels({ ...diagnostic.labels, segments }); }} />}
+		{mapMode === "coverage" && !preferences.coverageDiagnosticsEnabled && selection && !roadCoverageOpen && <CoverageOverviewCard fitDisabled={!focusedCoverageBounds} onFit={() => { if (focusedCoverageBounds) setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds: focusedCoverageBounds, focusCanvas: true })); }} onOpen={() => setRoadCoverageOpen(true)} />}
+      <RoadCoverageDialog open={roadCoverageOpen} selection={selection} pageSize={preferences.pageSize} cache={roadCoverageCache} onCacheChange={onRoadCoverageCacheChange} onOpenChange={(open) => { setRoadCoverageOpen(open); if (!open) setCanvasFocusRequest((value) => value + 1); }} onReturnFocus={() => setCanvasFocusRequest((value) => value + 1)} onSelectionUnavailable={refreshSelection} onShowEntity={showCoverageEntity} onShowWorkout={showCoverageWorkout} />
       {family && <div className="map-attribution" aria-label={`Active map attribution for ${family.label}`}><span>{family.attribution.text}</span>{family.attribution.links.map((link) => <a key={`${link.label}-${link.url}`} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>}
       <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}><Dialog.Trigger asChild><button type="button" className="mobile-map-sheet-trigger">Routes and controls</button></Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="map-sheet-overlay" /><Dialog.Content id="mobile-map-sheet" className="mobile-map-sheet"><div className="mobile-sheet-handle" aria-hidden="true" /><div className="mobile-sheet-heading"><div><Dialog.Title>Routes and controls</Dialog.Title><Dialog.Description>Filter visible workouts and choose how the base map is presented.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Routes and controls">&times;</Dialog.Close></div><div className="map-controls">{controls("mobile")}</div></Dialog.Content></Dialog.Portal></Dialog.Root>
     </section>

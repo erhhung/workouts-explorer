@@ -113,6 +113,24 @@ worker:
     sizeLimit: 2Gi
   resources: {}
 
+coverageWorker:
+  image: workouts-worker
+  replicas: 1
+  databaseSecret:
+    name: workouts-explorer-database
+    key: coverageWorkerDatabaseUrl
+  osmDatabaseKey: osmDatabaseUrl
+  databaseTLSSecret: workouts-explorer-database-tls
+  pollInterval: 1s
+  admissionInterval: 1s
+  leaseDuration: 4m
+  heartbeatInterval: 20s
+  routeTimeout: 180s
+  reconciliationPollInterval: 30s
+  reconciliationScanInterval: 24h
+  reconciliationPageSize: 10
+  resources: {}
+
 osm:
   autoAddRegions: false
   maxAutoDownloadBytes: 1073741824

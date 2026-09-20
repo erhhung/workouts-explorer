@@ -14,6 +14,7 @@ const preferences: Preferences = {
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
   initialized: true,
+  coverageDiagnosticsEnabled: false,
   dateRange: "last30Days",
 };
 const range = { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" };
@@ -731,23 +732,39 @@ describe("Summary", () => {
     await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
 
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading workouts...")).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Loading workouts...", {}, { timeout: 1500 })).toHaveAttribute("role", "status");
+    expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.queryByText("No workouts in this range.")).not.toBeInTheDocument();
     resolveRange(json(workoutPage()));
     expect(await screen.findByRole("table")).toBeInTheDocument();
   });
 
   test("uses server pagination and mobile rows expose expansion semantics and details", async () => {
+    const pageTwoWorkout = { ...workout, id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", sourceId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", type: { ...workout.type, key: "walking", displayName: "Walking" } };
+    let resolvePageTwo!: (response: Response) => void;
+    const deferredPageTwo = new Promise<Response>((resolve) => { resolvePageTwo = resolve; });
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const requestedPage = new URL(path, "https://test").searchParams.get("page");
-      return Promise.resolve(json(workoutPage(Number(requestedPage))));
+      return requestedPage === "2" ? deferredPageTwo : Promise.resolve(json(workoutPage(1, [workout])));
     });
     renderSummary();
     const next = await screen.findByRole("button", { name: "Next" });
+    const table = screen.getByRole("table"), rows = within(table).getAllByRole("row").slice(1);
+    const results = table.closest<HTMLElement>(".workout-results")!;
+    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 900, height: 500, top: 0, right: 900, bottom: 500, left: 0, toJSON: () => ({}) });
+    const scrollTo = vi.spyOn(window, "scrollTo");
     await userEvent.click(next);
+    expect(screen.getByRole("table")).toBe(table);
+    expect(within(table).getAllByRole("row").slice(1)).toEqual(rows);
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveStyle({ minHeight: "500px" });
+    expect(screen.queryByText("Loading workouts...")).not.toBeInTheDocument();
+    resolvePageTwo(json(workoutPage(2, [pageTwoWorkout])));
     expect(await screen.findByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    await waitFor(() => expect(within(table).getByText("Walking")).toBeVisible());
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(0, 0));
     const mobileButton = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
     const mobileCard = mobileButton.closest(".mobile-workout")!;
     expect(mobileButton).toHaveAttribute("aria-expanded", "false");
