@@ -12,24 +12,24 @@ import (
 
 type attributionEdge struct {
 	segmentID, logicalID, sourceWay, educationID, parkID, regionID string
-	localityID, normalizedName                                     string
+	localityID, name, normalizedName                               string
 	broadClass, startNode, endNode                                 string
 }
 
 func TestAttributionUsesStorageBoundedSegmentRewrite(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "..", "osm", "attribute-parks.sql"))
+	script, err := os.ReadFile(filepath.Join("..", "..", "osm", "identity-rewrite-batched.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(script)
 	for _, required := range []string{
-		"CREATE UNLOGGED TABLE path_segments_rewritten",
+		"CREATE TABLE IF NOT EXISTS path_segments_rewritten",
 		"INSERT INTO path_segments_rewritten",
 		"DROP TABLE path_segments;",
 		"ALTER TABLE path_segments_rewritten RENAME TO path_segments;",
 	} {
 		if !strings.Contains(text, required) {
-			t.Errorf("attribute script missing %q", required)
+			t.Errorf("identity rewrite script missing %q", required)
 		}
 	}
 	if strings.Contains(text, "UPDATE path_segments segment\nSET logical_path_id=component.merged_logical_path_id") {
@@ -50,7 +50,11 @@ func referenceAttributionPathIDs(edges []attributionEdge) map[string]string {
 		}
 		key := group{nameKey: "U", scopeKind: "region", scopeID: edge.regionID, broadClass: attributionClass}
 		if edge.normalizedName != "" {
-			key.nameKey = "N:" + edge.normalizedName
+			identityName := edge.normalizedName
+			if edge.name != "" {
+				identityName = strings.ToLower(strings.Join(strings.Fields(edge.name), " "))
+			}
+			key.nameKey = "N:" + identityName
 			key.broadClass = "named"
 		}
 		if edge.localityID != "" {
@@ -72,7 +76,7 @@ func referenceAttributionPathIDs(edges []attributionEdge) map[string]string {
 		return digest[:8] + "-" + digest[8:12] + "-" + digest[12:16] + "-" + digest[16:20] + "-" + digest[20:]
 	}
 	groupID := func(key group) string {
-		identity := fmt.Sprintf("workouts-explorer/osm-attribution-group/v2:%d:%s:%d:%s:name:%d:%s:class:%d:%s",
+		identity := fmt.Sprintf("workouts-explorer/osm-attribution-group/v3:%d:%s:%d:%s:name:%d:%s:class:%d:%s",
 			len(key.scopeKind), key.scopeKind, len(key.scopeID), key.scopeID,
 			len(key.nameKey), key.nameKey, len(key.broadClass), key.broadClass)
 		return md5UUID(identity)
@@ -196,6 +200,22 @@ func TestNamedAttributionMergesAcrossCrossWayBranches(t *testing.T) {
 	ids := referenceAttributionPathIDs(edges)
 	if ids["meteor-one"] != ids["meteor-two"] || ids["meteor-one"] != ids["meteor-three"] {
 		t.Fatalf("named road was split at a cross-way branch: %v", ids)
+	}
+}
+
+func TestNamedAttributionPreservesDirectionalRoadLabels(t *testing.T) {
+	edges := []attributionEdge{
+		{segmentID: "east-one", name: "East Homestead Road", normalizedName: "homestead road", localityID: "cupertino", regionID: "norcal", broadClass: "road", startNode: "a", endNode: "shared"},
+		{segmentID: "east-two", name: " east   HOMESTEAD road ", normalizedName: "homestead road", localityID: "cupertino", regionID: "norcal", broadClass: "road", startNode: "shared", endNode: "b"},
+		{segmentID: "west", name: "West Homestead Road", normalizedName: "homestead road", localityID: "cupertino", regionID: "norcal", broadClass: "road", startNode: "shared", endNode: "c"},
+		{segmentID: "plain", name: "Homestead Road", normalizedName: "homestead road", localityID: "cupertino", regionID: "norcal", broadClass: "road", startNode: "shared", endNode: "d"},
+	}
+	ids := referenceAttributionPathIDs(edges)
+	if ids["east-one"] != ids["east-two"] {
+		t.Fatalf("case/whitespace-equivalent East labels split: %v", ids)
+	}
+	if ids["east-one"] == ids["west"] || ids["east-one"] == ids["plain"] || ids["west"] == ids["plain"] {
+		t.Fatalf("directional and plain labels merged at a shared node: %v", ids)
 	}
 }
 

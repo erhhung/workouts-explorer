@@ -279,6 +279,11 @@ describe("DataSync", () => {
 				status: "succeeded", results: undefined, routeStats: undefined, children: [], coverageRoute: {
 					workoutId: "55555555555555555555555555555555", startedAt: "2026-08-05T08:00:00Z",
 					localStartDate: "2026-08-05", workoutType: "Outdoor Run", resultOutcome: "applied", durationMilliseconds: 1234,
+					targetGenerations: [
+						{ regionId: "geofabrik:north", generation: 7, latest: true },
+						{ regionId: "geofabrik:north", generation: 2, latest: false },
+						{ regionId: "geofabrik:south", generation: 9, latest: false },
+					],
 				} }],
 		};
 		baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json(coverageJob) : undefined);
@@ -288,6 +293,14 @@ describe("DataSync", () => {
 		expect(within(region).getByText("Routes Processed").closest("div")).toHaveTextContent("3");
 		expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
 		expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
+		const routeRun = region.querySelector(".coverage-route-run")!;
+		expect(routeRun.querySelector(".coverage-route-title")).toHaveTextContent("Outdoor Run (2026 M08 5)");
+		const generations = within(routeRun as HTMLElement).getByRole("table", { name: "OSM generations" });
+		expect([...generations.querySelectorAll("tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent))).toEqual([
+			["geofabrik:north", "7"], ["geofabrik:north", "2"], ["geofabrik:south", "9"],
+		]);
+		expect(within(generations).getByText("7")).toHaveClass("is-latest");
+		expect(within(generations).getByText("2")).not.toHaveClass("is-latest");
 		expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
 		expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
 		expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute("href", `/data-sync/jobs/${first}`);

@@ -85,6 +85,11 @@ Invitation listing, resend, and revocation remain sequenced for Milestone 9.
 
 ## Database Verification
 
+SQL formatting conventions, Goose directive requirements, dollar-quote tags,
+and the repository policy for using `pg_format` are documented in
+[`docs/sql-style.md`](docs/sql-style.md). Apply that guide to application
+migrations, OSM migrations, and psql pipeline scripts.
+
 Infrastructure installs PostGIS and creates the migration, API, worker, and tile
 login roles. For local verification, `compose.yaml` starts PostgreSQL 18 with
 PostGIS 3.6, restricts host trust to the loopback-published port, and initializes
@@ -144,7 +149,7 @@ operator remains responsible for configuring the tile role's database
 authentication to match `tileServer.databaseSecret`.
 
 For a development container without a local container runtime, the same topology
-can run in a dedicated vCluster. Publish the three images and run the test with:
+can run in a dedicated vCluster. Publish the four images and run the test with:
 
 ```sh
 make publish-dev-images
@@ -169,9 +174,8 @@ The image registry defaults to `CI_REGISTRY_PATH` when
 `WORKOUTS_TEST_IMAGE_REGISTRY` is unset. Both commands default to one
 `dev-YYYYMMDD` tag based on the local date. Repeated builds on the same day
 overwrite that tag, and the vCluster test forces a rollout so Kubernetes repulls
-the updated images. Publication deletes older `dev-*` Harbor tags for these three
-repositories while preserving commit-SHA and release tags. Set
-`WORKOUTS_TEST_IMAGE_TAG` only when an intentionally different tag is needed.
+the updated images. See [Development image publication](#development-image-publication)
+for component selection, explicit tags, and Harbor cleanup behavior.
 
 The test uses kubeconfig context `xdev` by default. Persistent PostgreSQL runs in
 namespace `postgresql`, and the application runs in namespace
@@ -234,14 +238,67 @@ private image project, create a pull Secret in `workouts-explorer` and set
 
 ## Packaging
 
+### Development image publication
+
+`scripts/publish-dev-images.sh` accepts zero or more component names from `api`,
+`ui`, `worker`, and `osm`. With no component arguments, it builds and pushes all
+four images using the default local-date tag `dev-YYYYMMDD`:
+
+```sh
+./scripts/publish-dev-images.sh
+```
+
+Pass one or more space-separated component names to publish only those images:
+
+```sh
+./scripts/publish-dev-images.sh osm
+./scripts/publish-dev-images.sh api worker
+./scripts/publish-dev-images.sh api ui worker osm
+```
+
+`make publish-dev-images` invokes the script with no component arguments, so it
+always publishes all four images. It then runs the UI artifact check. Use the
+script directly for a component subset; component names are not Make arguments.
+
+Set `WORKOUTS_IMAGE_TAG` to build and push a specific tag instead of the
+default date-derived tag:
+
+```sh
+WORKOUTS_IMAGE_TAG=feature-map-fix \
+  ./scripts/publish-dev-images.sh api ui
+
+WORKOUTS_IMAGE_TAG=release-candidate-2 make publish-dev-images
+```
+
+Use the same variable to replace an older tag that already exists in Harbor.
+This is useful when a running Job or deployment deliberately references a stable
+development tag rather than today's `dev-YYYYMMDD` tag:
+
+```sh
+WORKOUTS_IMAGE_TAG=dev-20260925 \
+  ./scripts/publish-dev-images.sh osm
+```
+
+The push moves that Harbor tag to the newly built image. Workloads using a
+mutable tag must have `imagePullPolicy: Always` and must be recreated or rolled
+out before they pull the replacement digest; existing pods continue running
+their original digest.
+
+Before building, publication removes older `dev-*` Harbor tags from each
+selected component repository while preserving commit-SHA and release tags. The
+value of `WORKOUTS_IMAGE_TAG` is the one tag retained. Consequently,
+republishing an older tag such as `dev-20260925` deletes other `dev-*` tags,
+including newer date tags, from the selected repositories. It does not clean
+repositories for components omitted from the command.
+
 `make helm` validates and renders the chart with ingress disabled. Each
 Dockerfile produces a non-root OCI image through Buildah. Run `make images` to
-build all three images with the eight-character Git commit tag and the semver in
+build all four images with the eight-character Git commit tag and the semver in
 `VERSION`. The API image also contains `/app/provision-roles`, `/app/migrate`,
 and `/app/bootstrap-admin` for ordered Argo CD/Helm hook Jobs. CI uses the same
 Buildah target and coordinated tags.
 Before either `make images` or `make publish-dev-images` builds, the workflow
-removes older local tags for the three Workouts Explorer images and runs
+removes older local tags for the four Workouts Explorer images and runs
 `buildah rmi --prune`. This keeps Buildah's VFS layer store within the dev
 container's inode and storage limits without touching unrelated local images.
 Trusted `main` pushes publish both tags to Harbor using the

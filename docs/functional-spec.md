@@ -575,17 +575,17 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 
 1. The map fits selected route extents with configured padding.
 2. Configured base-map style families each provide light and dark variants; the active variant follows the application theme.
-3. The initial family is the one mapped from the visible routed workout types when every type resolves to the same family.
-4. Mixed mappings, an unmapped type, no visible routed workouts, or any otherwise indeterminate selection uses the configured fallback family, initially Alidade Smooth.
+3. With no focused workout, the initial automatic family is the configured fallback family, initially Alidade Smooth, regardless of which routes are checked.
+4. Automatic family selection is sticky across checkbox visibility changes. Checking routes, unchecking the final route, or using the bulk checkbox never changes the active base map.
 5. Workout-type mappings use provider labels normalized with the same Unicode and case-folding rules as ingest.
-6. A user can select any configured family; that choice overrides automatic selection for the current Map visit but still follows theme changes. In automatic mode, clicking a workout selects the family mapped to that workout type.
+6. A user can select any configured family; that choice overrides automatic selection for the current Map visit but still follows theme changes. In automatic mode, focusing a workout by clicking its label/date area selects the family mapped to that workout type. Clearing focus retains that family until another workout is focused.
 7. Leaving and reopening Map restores automatic family selection from the visible routed workouts.
-8. A style or theme change preserves the camera, date range, workout filter, selected route, route order, hover state where still applicable, and private route overlay while only the public base-style resources change.
+8. A style or theme change preserves the camera, date range, workout filter, selected route, route order, hover state where still applicable, and private route overlay while only the public base-style resources change. Hovering over a route checkbox never activates route hover; only the label/date focus area and map geometry do.
 9. Routes use easily distinguished colors by workout type.
 10. Routes render oldest first and newest last.
 11. Hovering near overlapping routes selects the topmost, most recent route.
 12. The selected route is highlighted bright purple in full.
-13. One compact Workouts list allows any subset within the period. The checkbox area toggles visibility; clicking the remainder of a row makes the route visible, fits it in the viewport, and retains every other checked route.
+13. One compact Workouts list allows any subset within the period. The checkbox area changes only route/Coverage visibility and never changes hover, focus, base-map family, or camera position. Unchecking the focused workout clears focus. Clicking the remainder of a row makes the route visible, focuses and fits it in the viewport, and retains every other checked route.
 14. Private route tiles require authenticated account access.
 15. Changing route visibility replaces the immutable tile capability in the background without removing the map or public base style.
 16. Hovering a route highlights the full route and matching visible list row. After the standard tooltip delay, an auto-sized two-line popup shows workout type and distance, then the start date and compact start/end times.
@@ -594,6 +594,32 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
 19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map, and camera when the mode changes.
 20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
+
+### Space-Key Layer Visibility
+
+With a workout focused and keyboard focus on the map, holding Space temporarily
+isolates the relevant route or Coverage evidence. Releasing Space restores the
+hidden layers; losing window focus also restores them. The shortcut does not
+intercept typing or activation in inputs, buttons, links, or other editable
+controls, and does not change the camera, selected workouts, or tile capability.
+
+| Mode | Fades out while Space is held; fades in on release | Stays visible |
+| --- | --- | --- |
+| Routes | Non-focused raw routes, including dots representing zero-length segments | Focused magenta route, directional markers, and start/finish markers |
+| Production Coverage | Non-focused coverage layers, including park coverage | Focused coverage and the current coverage highlight |
+| Diagnostic Coverage | Raw route, directional markers, and start/finish markers | Diagnostic evidence overlay, including selected traversal evidence |
+
+Zero-length route segments have no drawable line length, so they render as small
+dots in the workout-type color. These dots are not markers for every GPS sample
+and are distinct from directional triangles and start/finish markers.
+
+Both fade directions take **400ms**, with no delay. Layers fade through paint
+opacity rather than being removed or immediately setting layout visibility to
+`none`. Directional-marker opacity transitions are enabled only in diagnostic
+Coverage mode; Routes mode explicitly uses a zero-duration transition, including
+after switching back from diagnostics, so its markers do not fade. In Routes
+mode, delayed hover can temporarily take precedence over persistent focus for
+the magenta route and its markers; Space does not hide that highlighted overlay.
 
 ### Validation
 
@@ -639,17 +665,17 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 7. Durable segment evidence contains at most one match per workout and physical segment. Overlapping or contiguous decoded traversal spans are dissolved regardless of direction, so repeated passes and GPS jitter neither create duplicate matches nor inflate covered length.
 8. Genuinely disjoint visited spans on one physical segment remain separate components of that match's `MultiLineString`; persistence never fills the untraversed gap between them.
 9. One logical path receives at most one attribution from a workout, even when the workout matches several member segments or traverses them repeatedly.
-9a. A qualifying named local park receives at most one visit attribution from a workout when any matched segment is fully contained in that park and an authoritative named municipality. A qualifying named national park may receive the same attribution without a municipality and remains one region/source-scoped entity across municipal boundaries. Local eligible geometry wins an overlap before national-park geometry. The selected park is a separate connectivity scope, so contained paths never bridge to outside paths; unnamed contained geometry belongs only to the selected park in user-facing tiles and statistics.
-9b. Named school, college, university, and generic education-ground polygons may attribute fully contained roads/paths only when the segment has no formal OSM name. The smallest containing education area wins. Education scope outranks park scope for those unnamed segments and exposes the institution name as the Road Coverage display-name fallback, while the municipality/county remains geographic context. Formally named campus roads/paths retain their source name and normal scope.
+9a. A qualifying named local park receives at most one visit attribution from a workout when any matched segment is fully contained in that park and an authoritative named municipality. A qualifying named state or national park may receive the same attribution without a municipality and remains one region/source-scoped entity across municipal boundaries. State and national parks take precedence when park polygons overlap because they provide the regional context. The selected park is a separate connectivity scope, so contained paths never bridge to outside paths. Unnamed local-park geometry belongs only to the park in user-facing tiles and statistics; unnamed state- and national-park roads and paths retain their individual path identities in addition to the park visit.
+9b. Named school, college, university, and generic education-ground polygons may attribute fully contained roads/paths only when the segment has no formal OSM name. The smallest containing education area wins. Education scope outranks park scope for those unnamed segments and exposes one educational-ground identity, visit history, bounds, and aggregate geometry keyed by `education_id`, while the municipality/county remains geographic context. Connectivity components and road/path classes do not create duplicate school rows. Formally named campus roads/paths retain their source name and normal path identity.
 10. The path attribution retains the earliest positive-length decoded member-segment traversal from that workout. Point projections and detailed traversals remain available in diagnostics, raw routes support rematching, and dissolved segment evidence supports durable rendering.
 11. Only decoded spans traversed by at least one checked workout render as covered; unvisited spans of a matched segment or logical path do not render as visited.
 12. Every rendered entity uses its exact date-range distinct-workout count and bucket, independent of the checked subset. Coverage ignores workout type for coloring.
 13. Fixed amber-orange-yellow count buckets represent ordinary road/path/park coverage; the focused workout's exact attributed geometry uses the corresponding purple-magenta-pink bucket.
 14. A 750-millisecond map hover shows exact date-range count, earliest and most recent date-range visits, and first and last all-time visits. The popup uses numeric `M/D/YYYY` dates.
 15. Road Coverage rows show the same four dates and retain the earliest workout on a tied date as their navigation target.
-16. Unnamed entities display a type-specific fallback while retaining locality and stable identity. Road Coverage labels its context column **City/County/Region**. A named path without a municipality uses county context when available, otherwise its attributed national park name, then the authoritative user-facing region label such as `Northern California`, never a provider-qualified key such as `geofabrik:norcal`.
+16. Unnamed entities display a type-specific fallback while retaining locality and stable identity: **Unnamed road**, **Bike path**, **Pedestrian path**, **Trail**, or **Unnamed path**. Road Coverage labels its context column **City/County/Region**. A road or path attributed to a state or national park uses that park as its display context ahead of an administrative locality; otherwise it uses municipality, county, then the authoritative user-facing region label such as `Northern California`, never a provider-qualified key such as `geofabrik:norcal`.
 17. Coverage mode shows a compact Road coverage legend with **Fit** and **Coverage by road...** actions. Fit is disabled without a focused workout; otherwise it retains the legend, fits that workout's coverage, and returns focus to the map canvas. The legend is hidden while its modal dialog is open.
-18. The dialog loads the complete date-range result in bounded pages, then provides client-side literal case-insensitive search, sortable columns, and preference-sized pagination for roads, paths, and parks. Search matches only the displayed Road/Path/Park and City/County/Region text, uses the browser-native search cancel control, and suppresses autofill background changes. Equal primary sort values use displayed Road/Path/Park name ascending, then displayed City/County/Region ascending, before an invisible stable identity tie-break. The shell caches that complete result for five minutes by resolved date range and account data generation, so tab changes, capability replacement, entity navigation, and ordinary reopen do not reload unchanged data; same-range refresh preserves search, unnamed visibility, sort, and a clamped current page. A resolved date-range change clears search, unchecks unnamed visibility, and returns to page 1. **Show unnamed roads and paths** defaults off; when enabled, fallback names such as `Unnamed road` and `Unnamed path` participate in search. Pagination displays at least `Page 1 of 1`. A load longer than half a second shows `Loading coverage...` in the framed table body; a failed load replaces the table dialog with a compact Retry/Close error dialog.
+18. The dialog loads the complete date-range result in bounded pages, then provides client-side literal case-insensitive search, sortable columns, and preference-sized pagination for roads, paths, and parks. Search matches only the displayed Road/Path/Park and City/County/Region text, uses the browser-native search cancel control, and suppresses autofill background changes. Equal primary sort values use displayed Road/Path/Park name ascending, then displayed City/County/Region ascending, before an invisible stable identity tie-break. The shell caches that complete result for five minutes by resolved date range and account data generation, so tab changes, capability replacement, entity navigation, and ordinary reopen do not reload unchanged data; same-range refresh preserves search, unnamed visibility, sort, and a clamped current page. A resolved date-range change clears search, unchecks unnamed visibility, and returns to page 1. **Show unnamed roads and paths** defaults off; when enabled, type-specific fallback names participate in search. Pagination displays at least `Page 1 of 1`. A load longer than half a second shows `Loading coverage...` in the framed table body; a failed load replaces the table dialog with a compact Retry/Close error dialog.
 19. Closing Road Coverage reveals the existing mounted map. The X button or Escape dismisses it.
 20. Clicking an entity name closes the dialog, fits its date-range geometry with a minimum 500-meter extent, and starts blinking it white immediately. The three-second highlight duration begins only after camera movement ends and MapLibre reports all requested base/Coverage tiles loaded; render and source events drive this check so the blink itself cannot prevent readiness, and a bounded fallback handles failed tile sources. Clicking an eligible visit date closes the dialog, selects and centers that workout in Coverage mode, and scrolls its route row into view.
 21. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
@@ -657,6 +683,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 23. With coverage diagnostics disabled, Coverage hides raw GPS route layers, displays durable checked-route coverage, and overlays only the focused workout's attributed coverage.
 24. With coverage diagnostics enabled, the Coverage button retains the route-review workflow: it computes and displays diagnostic evidence for only the selected route and exposes the diagnostic labeling controls.
 25. Ingested workouts and raw routes become available without waiting for asynchronous coverage matching. Production Coverage uses current durable results, identifies checked routes omitted as pending, failed, or unavailable, and refreshes after a committed coverage generation rather than running the matcher from a tile or statistics request.
+25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable workouts are not polled indefinitely. Polling stops when every checked workout has a current or stale applied result.
 26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
 27. Coverage processing creates one account/region parent run with one child per eligible workout route. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful.
 
@@ -687,7 +714,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Given a route genuinely turns at an intersection, when subsequent points support the connected turn, then both positively traversed roads receive attribution.
 - Given a heavily visited logical path, when coverage renders, then fixed buckets do not force all low-count paths into one near-zero shade.
 - Given an unnamed trail, when inspected, then it appears with N/A rather than being omitted.
-- Given named and unnamed paths wholly inside Yosemite National Park outside any municipality, when Coverage renders, then the named path remains separately visible with `Yosemite National Park` as City/Region, the unnamed path belongs only to the park, and the park entity has no fabricated municipality.
+- Given named and unnamed paths wholly inside Yosemite National Park, when Coverage renders, then each path remains separately visible with `Yosemite National Park` as City/Region, unnamed paths use a type-specific fallback such as `Bike path`, and the park entity has no fabricated municipality.
 - Given the date range or workout subset changes, when path details render, then first and latest visit remain the all-time date-only extrema.
 - Given Coverage stats is open, when it is closed or Show on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
 - Given coverage diagnostics is disabled, when Coverage is selected, then covered geometry and statistics aggregate all checked routes.

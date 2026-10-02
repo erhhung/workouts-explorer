@@ -163,6 +163,7 @@ spec:
             - {name: COVERAGE_RECONCILIATION_SCAN_INTERVAL, value: {{ .Values.coverageWorker.reconciliationScanInterval | quote }}}
             - {name: COVERAGE_RECONCILIATION_PAGE_SIZE, value: {{ .Values.coverageWorker.reconciliationPageSize | quote }}}
             - {name: COVERAGE_MIN_TRAVERSAL_METERS, value: {{ .Values.worker.coverageMinTraversalMeters | quote }}}
+            - {name: OSM_AUTO_ADD_REGIONS, value: {{ .Values.osm.autoAddRegions | quote }}}
             - name: COVERAGE_WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.databaseSecret.key is required" .Values.coverageWorker.databaseSecret.key }}}}
             - name: COVERAGE_WORKER_OSM_DATABASE_URL

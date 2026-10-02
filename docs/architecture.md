@@ -336,13 +336,14 @@ conflicting region promotion waits for the accepted result to commit. If a targe
 generation is already inactive when the snapshot begins, the child is superseded
 rather than failed and reconciliation schedules the current target.
 
-OSM importer version 3 retains bounded named local and national-park polygons only
-inside the generation build schema. Derivation version 16 attaches stable park
+OSM importer version 3 retains bounded named local, state, and national-park polygons only
+inside the generation build schema. Derivation version 17 attaches stable park
 metadata to fully contained segments before canonical partitions are prepared;
 park polygons themselves are not promoted. Local park identity remains scoped by
-authoritative municipality and OSM source. National park identity is instead
-scoped by provider region and OSM source, so one park remains one entity across
-municipal boundaries and may attribute segments without a municipality.
+authoritative municipality and OSM source. State and national park identity is
+instead scoped by provider region and OSM source, so one regional park remains
+one entity across municipal boundaries and may attribute segments without a
+municipality.
 After park attribution, connectivity scope is the selected named park, otherwise
 the authoritative municipality, otherwise the provider region. Exact shared OSM
 graph nodes merge physical segments when their normalized names and road/path
@@ -372,8 +373,10 @@ from physical segments rather than incoming logical IDs also splits legacy
 disconnected geometry, prevents road components from bridging path components,
 and prevents an unnamed branching pedestrian network from becoming one identity.
 Application persistence derives a separate once-per-workout park attribution
-from copied segment tags. A named path without a municipality uses its attributed
-national park as display context, while an actual municipality always wins.
+from copied segment tags. State- and national-park roads and paths retain their
+individual identities and use the attributed park as display context ahead of
+municipality or county context. Unnamed local-park geometry remains represented
+only by its park entity in user-facing reads.
 Other path identity and map geometry remain unchanged, while driveway and
 parking logical paths are omitted from user-facing statistics/history and remain
 visible in Coverage tiles.
@@ -484,6 +487,7 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; in Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels and regenerated after map movement; each bearing is averaged from three GPS points before and after the marker so loops remain readable without depending on physical-distance spacing.
 - Clicking a visible route feature in Routes mode immediately focuses and fits that workout, ensures it is checked, and issues a one-time centered scroll for its route-list row. Clicking a route-list row performs the same focus/fit selection without automatic list scrolling.
 - In Routes mode, start/finish markers use the same cached raw-route owner as the direction arrows: delayed hover takes precedence over persistent focus, and both endpoint markers are moved above the magenta route and direction-marker layers.
+- Map's Space-key isolation follows the [three-mode layer visibility contract](functional-spec.md#space-key-layer-visibility). Hidden layers fade out and back in over 400ms without source teardown; directional markers use that transition only in diagnostic Coverage, with zero-duration opacity changes in Routes mode.
 - Before matching exists, the application stores a canonical route-input digest and monotonic revision plus pre-matcher readiness only. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; this records only region generation provenance and truthfully remains processing `not_started`, with no covered-path claim.
 - Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
 - Coverage updates are account-owned and single-flight by account/region. Desired and applied OSM-generation watermarks guarantee that a promotion racing an active coverage job produces a successor rather than losing rematch work.

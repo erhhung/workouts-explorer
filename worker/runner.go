@@ -41,6 +41,7 @@ func (e loggedExecutionError) Unwrap() error { return e.err }
 type Runner struct {
 	db                         *pgxpool.Pool
 	osmDB                      *pgxpool.Pool
+	osmAutoAddRegions          bool
 	coverageMinTraversalMeters float64
 	logger                     *slog.Logger
 	keys                       *sourcecrypto.Keyring
@@ -71,6 +72,7 @@ type claimedJob struct {
 type RunnerOptions struct {
 	FileConcurrency            int
 	OSMDatabase                *pgxpool.Pool
+	OSMAutoAddRegions          bool
 	CoverageMinTraversalMeters float64
 }
 
@@ -105,6 +107,7 @@ func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecry
 	return &Runner{
 		db:                         db,
 		osmDB:                      options.OSMDatabase,
+		osmAutoAddRegions:          options.OSMAutoAddRegions,
 		coverageMinTraversalMeters: options.CoverageMinTraversalMeters,
 		logger:                     logger,
 		keys:                       keys,

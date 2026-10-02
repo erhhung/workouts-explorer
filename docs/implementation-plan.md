@@ -508,10 +508,10 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   and supports segments without a municipality. Derivation 5 gives connected
   same-name national-park segments one logical path across broad-class changes,
   while retaining separate IDs for disconnected components. Application migration 018
-  persists nullable-locality national park visits and rollups. Migration 019 uses
-  an attributed national park as the display context for a named path only when
-  no municipality exists. Driveway and parking geometry retains current matching
-  and tile behavior but is filtered from user-facing path statistics/history.
+  persists nullable-locality regional park visits and rollups. Migration 019
+  retains individual unnamed state- and national-park paths and uses the regional
+  park as road/path display context ahead of municipality or county. Driveway and parking geometry retains current
+  matching and tile behavior but is filtered from user-facing path statistics/history.
 - Cumulative migration 013 persists the owner diagnostics preference. With it disabled,
   Coverage uses aggregate checked-workout MVT and the accepted legend/path stats;
   with it enabled, Coverage retains selected-route matcher review. Cumulative

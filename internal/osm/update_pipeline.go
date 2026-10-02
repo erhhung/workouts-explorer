@@ -3,6 +3,7 @@ package osm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,18 @@ type CommandPipeline struct {
 
 var postgresRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
 
+var pipelineSQLFiles = map[string]string{
+	"postprocess": "postprocess.sql", "derive": "derive-batched.sql",
+	"clip-candidates": "clip-localities-candidates.sql", "clip-replacements": "clip-localities-replacements.sql",
+	"clip-apply": "clip-localities-apply.sql", "clip-residual": "clip-localities-residual.sql", "clip-finalize": "clip-localities-finalize.sql",
+	"attribute-parks-tags": "attribute-parks-batched.sql", "attribute-education": "attribute-education-batched.sql",
+	"attribute-slivers": "attribute-slivers-batched.sql", "identity-segments": "identity-segments-batched.sql",
+	"identity-edges": "identity-edges-batched.sql", "identity-proximity": "identity-proximity-batched.sql",
+	"identity-components": "identity-components.sql", "identity-propagate": "identity-propagate-batched.sql",
+	"identity-label-overrides": "identity-label-overrides-batched.sql", "identity-rewrite": "identity-rewrite-batched.sql",
+	"prepare-partitions": "prepare-partitions.sql", "validate": "validate.sql",
+}
+
 type commandFailure struct {
 	name   string
 	output string
@@ -45,15 +58,47 @@ func (e *commandFailure) Error() string {
 func (e *commandFailure) Unwrap() error { return e.cause }
 
 func (p CommandPipeline) Versions(ctx context.Context) (ToolVersions, error) {
-	osmium, err := p.output(ctx, nil, "osmium", "--version")
+	quiet := p
+	quiet.Log = nil
+	osmium, err := quiet.output(ctx, nil, "osmium", "--version")
 	if err != nil {
 		return ToolVersions{}, err
 	}
-	osm2pgsql, err := p.output(ctx, nil, "osm2pgsql", "--version")
+	osm2pgsql, err := quiet.output(ctx, nil, "osm2pgsql", "--version")
 	if err != nil {
 		return ToolVersions{}, err
 	}
 	return ToolVersions{Osmium: reportedVersion(osmium, "osmium"), Osm2pgsql: reportedVersion(osm2pgsql, "osm2pgsql")}, nil
+}
+
+func (p CommandPipeline) StageFence(stage string) (string, error) {
+	value := []byte("pipeline-v1:" + stage)
+	if name, ok := pipelineSQLFiles[stage]; ok {
+		contents, err := os.ReadFile(filepath.Join(p.Root, name))
+		if err != nil {
+			return "", err
+		}
+		value = append(contents, []byte("\npipeline-v2:"+stage)...)
+	}
+	sum := sha256.Sum256(value)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func (p CommandPipeline) Maintain(ctx context.Context, stage string, generation Generation) error {
+	if stage != "identity-propagate" {
+		return nil
+	}
+	if generation.ID < 1 || generation.SchemaName != fmt.Sprintf("osm_build_%d", generation.ID) {
+		return fmt.Errorf("invalid build schema %q", generation.SchemaName)
+	}
+	environment, _, err := postgresConnectionEnvironment(p.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	statement := fmt.Sprintf("VACUUM %q.attribution_identity_components", generation.SchemaName)
+	_, err = p.outputWithProgress(ctx, environment, "OSM maintenance identity-propagate vacuum", "OSM maintenance identity-propagate vacuum", "psql",
+		"-X", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", statement)
+	return err
 }
 
 func reportedVersion(output, tool string) string {
@@ -131,35 +176,49 @@ func (p CommandPipeline) Run(ctx context.Context, stage string, generation Gener
 	case "osm2pgsql":
 		_, err := p.output(ctx, environment, "osm2pgsql", "--database", databaseName, "--create", "--slim", "--drop", "--output=flex", "--style", filepath.Join(p.Root, "import.lua"), "--schema", generation.SchemaName, "--middle-schema", generation.SchemaName, filtered)
 		return nil, err
-	case "postprocess", "derive", "clip", "attribute-parks", "identity-eval", "prepare-partitions", "validate":
-		files := map[string]string{"postprocess": "postprocess.sql", "derive": "derive-compact.sql", "clip": "clip-localities.sql", "attribute-parks": "attribute-parks.sql", "identity-eval": "attribute-parks.sql", "prepare-partitions": "prepare-partitions.sql", "validate": "validate.sql"}
+	case "postprocess", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate":
 		args := []string{"-X", "--no-psqlrc"}
-		if stage != "validate" {
+		if stage != "validate" && !batchStages[stage] {
 			args = append(args, "--single-transaction")
 		}
 		args = append(args, variables...)
-		if stage == "identity-eval" {
-			args = append(args, "--set=OSM_SKIP_PARK_ATTRIBUTION=1")
-		}
 		if stage == "validate" {
 			args = append(args, "--tuples-only", "--no-align")
 		}
-		args = append(args, "--file", filepath.Join(p.Root, files[stage]))
-		return p.runPostgresStage(ctx, stage, environment, args)
+		args = append(args, "--file", filepath.Join(p.Root, pipelineSQLFiles[stage]))
+		if atomicSQLStages[stage] {
+			checkpoint := fmt.Sprintf(`SELECT osm_catalog.complete_generation_stage(%d,'%s',checkpoint.batch_count,
+				checkpoint.cursor||'{"done":true}'::jsonb,checkpoint.rows_processed)
+				FROM osm_catalog.generation_stages checkpoint WHERE checkpoint.generation_id=%d AND checkpoint.stage='%s'`,
+				generation.ID, stage, generation.ID, stage)
+			args = append(args, "--command", checkpoint)
+		}
+		return p.runPostgresStage(ctx, stage, generation.BatchSize, environment, args)
 	default:
 		return nil, fmt.Errorf("unknown OSM stage %q", stage)
 	}
 }
 
-func (p CommandPipeline) runPostgresStage(ctx context.Context, stage string, environment, args []string) ([]byte, error) {
+func (p CommandPipeline) runPostgresStage(ctx context.Context, stage string, batchSize int, environment, args []string) ([]byte, error) {
 	delays := p.retryDelays
 	if delays == nil {
 		delays = postgresRetryDelays
 	}
+	if sqlCheckpointStage(stage) {
+		delays = nil
+	}
 	maximumAttempts := len(delays) + 1
 	for attempt := 1; ; attempt++ {
-		label := fmt.Sprintf("OSM stage %s attempt %d/%d", stage, attempt, maximumAttempts)
-		output, err := p.outputWithProgress(ctx, environment, label, "psql", args...)
+		progressLabel := fmt.Sprintf("OSM batch %s", stage)
+		label := progressLabel
+		if batchSize > 0 {
+			label += fmt.Sprintf(" (batch size: %d)", batchSize)
+		}
+		if maximumAttempts > 1 {
+			label = fmt.Sprintf("%s attempt %d/%d", label, attempt, maximumAttempts)
+			progressLabel = fmt.Sprintf("%s attempt %d/%d", progressLabel, attempt, maximumAttempts)
+		}
+		output, err := p.outputWithProgress(ctx, environment, label, progressLabel, "psql", args...)
 		if err == nil {
 			return []byte(output), nil
 		}
@@ -269,12 +328,45 @@ func postgresConnectionEnvironment(raw string) ([]string, string, error) {
 }
 
 func (p CommandPipeline) output(ctx context.Context, environment []string, name string, args ...string) (string, error) {
-	return p.outputWithProgress(ctx, environment, "OSM tool "+name, name, args...)
+	label := "OSM tool " + name
+	return p.outputWithProgress(ctx, environment, label, label, name, args...)
 }
 
 type lockedWriter struct {
 	mu sync.Mutex
 	w  io.Writer
+}
+
+type carriageReturnLineWriter struct {
+	mu          sync.Mutex
+	w           io.Writer
+	pendingCRLF bool
+}
+
+func (w *carriageReturnLineWriter) Write(value []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	normalized := make([]byte, 0, len(value))
+	for _, character := range value {
+		if w.pendingCRLF {
+			w.pendingCRLF = false
+			if character == '\n' {
+				continue
+			}
+		}
+		if character == '\r' {
+			normalized = append(normalized, '\n')
+			w.pendingCRLF = true
+			continue
+		}
+		normalized = append(normalized, character)
+	}
+	if len(normalized) > 0 {
+		if _, err := w.w.Write(normalized); err != nil {
+			return 0, err
+		}
+	}
+	return len(value), nil
 }
 
 func (w *lockedWriter) Write(value []byte) (int, error) {
@@ -283,7 +375,7 @@ func (w *lockedWriter) Write(value []byte) (int, error) {
 	return w.w.Write(value)
 }
 
-func (p CommandPipeline) outputWithProgress(ctx context.Context, environment []string, label, name string, args ...string) (string, error) {
+func (p CommandPipeline) outputWithProgress(ctx context.Context, environment []string, label, progressLabel, name string, args ...string) (string, error) {
 	interval := p.progressInterval
 	if interval == 0 {
 		interval = time.Minute
@@ -291,7 +383,7 @@ func (p CommandPipeline) outputWithProgress(ctx context.Context, environment []s
 	var log io.Writer
 	if p.Log != nil {
 		log = &lockedWriter{w: p.Log}
-		_, _ = fmt.Fprintf(log, "running %s\n", label)
+		_, _ = fmt.Fprintf(log, "Running %s\n", label)
 	}
 	started := time.Now()
 	done := make(chan struct{})
@@ -307,7 +399,7 @@ func (p CommandPipeline) outputWithProgress(ctx context.Context, environment []s
 				case <-done:
 					return
 				case <-ticker.C:
-					_, _ = fmt.Fprintf(log, "%s still running (elapsed %s)\n", label, time.Since(started).Round(time.Second))
+					_, _ = fmt.Fprintf(log, "%s still running (elapsed %s)\n", progressLabel, time.Since(started).Round(time.Second))
 				}
 			}
 		}()
@@ -328,8 +420,12 @@ func (p CommandPipeline) outputWithProgress(ctx context.Context, environment []s
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if log != nil {
-		command.Stdout = io.MultiWriter(&stdout, log)
-		command.Stderr = io.MultiWriter(&stderr, log)
+		commandLog := log
+		if name == "osm2pgsql" {
+			commandLog = &carriageReturnLineWriter{w: log}
+		}
+		command.Stdout = io.MultiWriter(&stdout, commandLog)
+		command.Stderr = io.MultiWriter(&stderr, commandLog)
 	}
 	if err := command.Run(); err != nil {
 		if ctx.Err() != nil {

@@ -1,12 +1,9 @@
 -- +goose Up
-
 -- +goose StatementBegin
-CREATE FUNCTION app.repair_orphaned_source_jobs()
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE FUNCTION app.repair_orphaned_source_jobs () RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     orphan record;
     repaired_count integer := 0;
@@ -48,16 +45,15 @@ BEGIN
     PERFORM set_config('app.job_transition', COALESCE(prior_transition, ''), true);
     RETURN repaired_count;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION app.read_worker_job_log_context(job_id uuid, claiming_worker text, current_lease_token uuid)
-RETURNS TABLE(owner_username text, source_name text, source_type text)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE FUNCTION app.read_worker_job_log_context (job_id uuid, claiming_worker text, current_lease_token uuid) RETURNS TABLE (owner_username text, source_name text, source_type text) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     target_account_id uuid;
     target_administrator_id uuid;
@@ -104,19 +100,17 @@ BEGIN
     END;
     PERFORM set_config('app.account_id', COALESCE(prior_account_id, ''), true);
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- Owner-visible source-file failures are recorded through the same worker
 -- identity and lease fence as the job log context.
 -- +goose StatementBegin
-CREATE FUNCTION app.record_source_file_failure_log(target_job_id uuid,claiming_worker text,current_lease_token uuid,
-    target_file_id uuid)
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE FUNCTION app.record_source_file_failure_log (target_job_id uuid, claiming_worker text, current_lease_token uuid, target_file_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     target_account uuid;
     target_parent uuid;
@@ -124,61 +118,92 @@ DECLARE
     target_name text;
     target_summary text;
 BEGIN
-    SELECT job.account_id,job.parent_job_id,context.source_id,file.relative_name,file.failure_summary
-      INTO target_account,target_parent,target_source,target_name,target_summary
+    SELECT job.account_id, job.parent_job_id, context.source_id, file.relative_name, file.failure_summary
+      INTO target_account, target_parent, target_source, target_name, target_summary
       FROM app.jobs job
-      JOIN app.job_source_contexts context ON context.job_id=job.id AND context.account_id=job.account_id
-      JOIN app.source_files file ON file.job_id=job.id AND file.account_id=job.account_id AND file.source_id=context.source_id
-     WHERE job.id=target_job_id AND job.account_id=app.current_account_id()
-       AND job.kind IN ('manual_ingest_source','scheduled_ingest_source')
-       AND file.id=target_file_id AND file.state='failed' AND file.failure_summary IS NOT NULL;
+      JOIN app.job_source_contexts context ON context.job_id = job.id AND context.account_id = job.account_id
+      JOIN app.source_files file ON file.job_id = job.id AND file.account_id = job.account_id AND file.source_id = context.source_id
+     WHERE job.id = target_job_id AND job.account_id = app.current_account_id()
+       AND job.kind IN ('manual_ingest_source', 'scheduled_ingest_source')
+       AND file.id = target_file_id AND file.state = 'failed' AND file.failure_summary IS NOT NULL;
     IF NOT FOUND THEN RETURN false; END IF;
-    PERFORM 1 FROM app.sources source WHERE source.id=target_source AND source.account_id=target_account FOR UPDATE;
+    PERFORM 1 FROM app.sources source WHERE source.id = target_source AND source.account_id = target_account FOR UPDATE;
     IF NOT FOUND THEN RETURN false; END IF;
-    PERFORM 1 FROM app.jobs parent WHERE parent.id=target_parent AND parent.account_id=target_account
-       AND parent.kind IN ('manual_ingest','scheduled_ingest') FOR UPDATE;
+    PERFORM 1 FROM app.jobs parent WHERE parent.id = target_parent AND parent.account_id = target_account
+       AND parent.kind IN ('manual_ingest', 'scheduled_ingest') FOR UPDATE;
     IF NOT FOUND THEN RETURN false; END IF;
-    PERFORM 1 FROM app.jobs job WHERE job.id=target_job_id AND job.account_id=target_account
-       AND job.parent_job_id=target_parent AND job.status='running' AND job.cancel_requested_at IS NULL
-       AND job.worker_id=claiming_worker AND job.lease_token=current_lease_token
-       AND job.lease_expires_at>=clock_timestamp() FOR UPDATE;
+    PERFORM 1 FROM app.jobs job WHERE job.id = target_job_id AND job.account_id = target_account
+       AND job.parent_job_id = target_parent AND job.status = 'running' AND job.cancel_requested_at IS NULL
+       AND job.worker_id = claiming_worker AND job.lease_token = current_lease_token
+       AND job.lease_expires_at >= clock_timestamp() FOR UPDATE;
     IF NOT FOUND THEN RETURN false; END IF;
-    IF (SELECT count(*) FROM app.job_logs WHERE job_id=target_job_id AND account_id=target_account)>=2000 THEN RETURN false; END IF;
-    INSERT INTO app.job_logs(account_id,job_id,severity,code,redacted_message,fields)
-    VALUES(target_account,target_job_id,'error','source-file-failed',
-        left(target_name,480)||': '||left(target_summary,512),
-        jsonb_build_object('operation','import','reason','invalid-data'));
+    IF (SELECT count( * ) FROM app.job_logs WHERE job_id = target_job_id AND account_id = target_account) >= 2000 THEN RETURN false; END IF;
+    INSERT INTO app.job_logs(account_id, job_id, severity, code, redacted_message, fields)
+    VALUES(target_account, target_job_id, 'error', 'source-file-failed',
+        left(target_name, 480) || ': ' || left(target_summary, 512),
+        jsonb_build_object('operation', 'import', 'reason', 'invalid-data'));
     RETURN true;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
-REVOKE ALL ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid)
-    FROM PUBLIC, workouts_api, workouts_worker;
-REVOKE ALL ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid)
-    FROM PUBLIC, workouts_api, workouts_worker;
-REVOKE ALL ON FUNCTION app.repair_orphaned_source_jobs()
-    FROM PUBLIC, workouts_api, workouts_worker;
+REVOKE ALL ON FUNCTION app.read_worker_job_log_context (uuid, text, uuid)
+FROM
+    PUBLIC,
+    workouts_api,
+    workouts_worker;
+
+REVOKE ALL ON FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid)
+FROM
+    PUBLIC,
+    workouts_api,
+    workouts_worker;
+
+REVOKE ALL ON FUNCTION app.repair_orphaned_source_jobs ()
+FROM
+    PUBLIC,
+    workouts_api,
+    workouts_worker;
+
 GRANT CREATE ON SCHEMA app TO workouts_security_owner;
-ALTER FUNCTION app.repair_orphaned_source_jobs() OWNER TO workouts_security_owner;
-ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_security_owner;
-ALTER FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) OWNER TO workouts_security_owner;
-REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
-GRANT EXECUTE ON FUNCTION app.repair_orphaned_source_jobs() TO workouts_migration;
-SELECT app.repair_orphaned_source_jobs();
-REVOKE EXECUTE ON FUNCTION app.repair_orphaned_source_jobs() FROM workouts_migration;
-ALTER FUNCTION app.repair_orphaned_source_jobs() OWNER TO workouts_migration;
-DROP FUNCTION app.repair_orphaned_source_jobs();
-GRANT EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) TO workouts_worker;
-GRANT EXECUTE ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) TO workouts_worker;
+
+ALTER FUNCTION app.repair_orphaned_source_jobs () OWNER TO workouts_security_owner;
+
+ALTER FUNCTION app.read_worker_job_log_context (uuid, text, uuid) OWNER TO workouts_security_owner;
+
+ALTER FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid) OWNER TO workouts_security_owner;
+
+REVOKE CREATE ON SCHEMA app
+FROM
+    workouts_security_owner;
+
+GRANT
+EXECUTE ON FUNCTION app.repair_orphaned_source_jobs () TO workouts_migration;
+
+SELECT
+    app.repair_orphaned_source_jobs ();
+
+REVOKE
+EXECUTE ON FUNCTION app.repair_orphaned_source_jobs ()
+FROM
+    workouts_migration;
+
+ALTER FUNCTION app.repair_orphaned_source_jobs () OWNER TO workouts_migration;
+
+DROP FUNCTION app.repair_orphaned_source_jobs ();
+
+GRANT
+EXECUTE ON FUNCTION app.read_worker_job_log_context (uuid, text, uuid) TO workouts_worker;
+
+GRANT
+EXECUTE ON FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid) TO workouts_worker;
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability () RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     snapshot_source_id uuid;
     parent_id uuid;
@@ -239,16 +264,15 @@ BEGIN
        AND capability.transaction_id = NEW.transaction_id;
     RETURN NULL;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.fence_ingest_job(job_id uuid, claiming_worker text, current_lease_token uuid)
-RETURNS TABLE(source_id uuid)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.fence_ingest_job (job_id uuid, claiming_worker text, current_lease_token uuid) RETURNS TABLE (source_id uuid) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     snapshot_source_id uuid;
     parent_id uuid;
@@ -312,17 +336,15 @@ BEGIN
     source_id := snapshot_source_id;
     RETURN NEXT;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal(claiming_worker text, new_lease_token uuid,
-    lease_duration interval, include_manual_ingest boolean)
-RETURNS TABLE(job_id uuid, account_id uuid, kind text)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal (claiming_worker text, new_lease_token uuid, lease_duration interval, include_manual_ingest boolean) RETURNS TABLE (job_id uuid, account_id uuid, kind text) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     candidate_job_id uuid;
     candidate_account_id uuid;
@@ -387,16 +409,15 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION app.assert_no_active_scheduled_ingest()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE FUNCTION app.assert_no_active_scheduled_ingest () RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 BEGIN
     LOCK TABLE app.jobs, app.job_config_snapshots IN SHARE ROW EXCLUSIVE MODE;
     IF EXISTS (
@@ -410,29 +431,47 @@ BEGIN
         RAISE EXCEPTION 'cannot downgrade while scheduled ingest jobs or snapshots are active' USING ERRCODE = '55006';
     END IF;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
-REVOKE ALL ON FUNCTION app.assert_no_active_scheduled_ingest() FROM PUBLIC, workouts_api, workouts_worker;
-GRANT CREATE ON SCHEMA app TO workouts_security_owner;
-ALTER FUNCTION app.assert_no_active_scheduled_ingest() OWNER TO workouts_security_owner;
-REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
-GRANT EXECUTE ON FUNCTION app.assert_no_active_scheduled_ingest() TO workouts_migration;
+REVOKE ALL ON FUNCTION app.assert_no_active_scheduled_ingest ()
+FROM
+    PUBLIC,
+    workouts_api,
+    workouts_worker;
 
-UPDATE app.schema_metadata SET schema_version = 5, minimum_runtime_version = 1;
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+
+ALTER FUNCTION app.assert_no_active_scheduled_ingest () OWNER TO workouts_security_owner;
+
+REVOKE CREATE ON SCHEMA app
+FROM
+    workouts_security_owner;
+
+GRANT
+EXECUTE ON FUNCTION app.assert_no_active_scheduled_ingest () TO workouts_migration;
+
+UPDATE app.schema_metadata
+SET
+    schema_version = 5,
+    minimum_runtime_version = 1;
 
 -- +goose Down
-SELECT app.assert_no_active_scheduled_ingest();
-UPDATE app.schema_metadata SET schema_version = 4, minimum_runtime_version = 1;
+SELECT
+    app.assert_no_active_scheduled_ingest ();
+
+UPDATE app.schema_metadata
+SET
+    schema_version = 4,
+    minimum_runtime_version = 1;
 
 -- Restore migration-4's manual-only ingest plumbing exactly.
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.clear_ingest_write_capability () RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     snapshot_source_id uuid;
     parent_id uuid;
@@ -487,16 +526,15 @@ BEGIN
        AND capability.transaction_id = NEW.transaction_id;
     RETURN NULL;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.fence_ingest_job(job_id uuid, claiming_worker text, current_lease_token uuid)
-RETURNS TABLE(source_id uuid)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.fence_ingest_job (job_id uuid, claiming_worker text, current_lease_token uuid) RETURNS TABLE (source_id uuid) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     snapshot_source_id uuid;
     parent_id uuid;
@@ -554,17 +592,15 @@ BEGIN
     source_id := snapshot_source_id;
     RETURN NEXT;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal(claiming_worker text, new_lease_token uuid,
-    lease_duration interval, include_manual_ingest boolean)
-RETURNS TABLE(job_id uuid, account_id uuid, kind text)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, app
-AS $$
+CREATE OR REPLACE FUNCTION app.claim_next_worker_job_internal (claiming_worker text, new_lease_token uuid, lease_duration interval, include_manual_ingest boolean) RETURNS TABLE (job_id uuid, account_id uuid, kind text) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = pg_catalog,
+    app AS $function$
 DECLARE
     candidate_job_id uuid;
     candidate_account_id uuid;
@@ -628,16 +664,33 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$$;
+$function$;
+
 -- +goose StatementEnd
 
-REVOKE EXECUTE ON FUNCTION app.assert_no_active_scheduled_ingest() FROM workouts_migration;
-ALTER FUNCTION app.assert_no_active_scheduled_ingest() OWNER TO workouts_migration;
-DROP FUNCTION app.assert_no_active_scheduled_ingest();
+REVOKE
+EXECUTE ON FUNCTION app.assert_no_active_scheduled_ingest ()
+FROM
+    workouts_migration;
 
-REVOKE EXECUTE ON FUNCTION app.read_worker_job_log_context(uuid,text,uuid) FROM workouts_worker;
-ALTER FUNCTION app.read_worker_job_log_context(uuid,text,uuid) OWNER TO workouts_migration;
-DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid);
-REVOKE EXECUTE ON FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) FROM workouts_worker;
-ALTER FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid) OWNER TO workouts_migration;
-DROP FUNCTION app.record_source_file_failure_log(uuid,text,uuid,uuid);
+ALTER FUNCTION app.assert_no_active_scheduled_ingest () OWNER TO workouts_migration;
+
+DROP FUNCTION app.assert_no_active_scheduled_ingest ();
+
+REVOKE
+EXECUTE ON FUNCTION app.read_worker_job_log_context (uuid, text, uuid)
+FROM
+    workouts_worker;
+
+ALTER FUNCTION app.read_worker_job_log_context (uuid, text, uuid) OWNER TO workouts_migration;
+
+DROP FUNCTION app.read_worker_job_log_context (uuid, text, uuid);
+
+REVOKE
+EXECUTE ON FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid)
+FROM
+    workouts_worker;
+
+ALTER FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid) OWNER TO workouts_migration;
+
+DROP FUNCTION app.record_source_file_failure_log (uuid, text, uuid, uuid);

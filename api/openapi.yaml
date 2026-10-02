@@ -640,6 +640,24 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/coverage-focus/{workoutId}:
+    parameters:
+      - {$ref: '#/components/parameters/MapSelectionID'}
+      - {$ref: '#/components/parameters/WorkoutID'}
+    get:
+      operationId: getMapSelectionCoverageFocus
+      description: Returns complete applied Coverage geometry for one workout in an owned map selection.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      responses:
+        '200': {description: Focused workout Coverage GeoJSON, content: {application/json: {schema: {$ref: '#/components/schemas/CoverageFocusFeatureCollection'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}:
     parameters:
       - {$ref: '#/components/parameters/MapSelectionID'}
@@ -1334,14 +1352,27 @@ components:
     CoverageRouteContext:
       type: object
       additionalProperties: false
-      required: [workoutId, startedAt, workoutType]
+      required: [workoutId, startedAt, workoutType, targetGenerations]
       properties:
         workoutId: {$ref: '#/components/schemas/CompactUUID'}
         startedAt: {type: string, format: date-time}
         localStartDate: {type: string, format: date, nullable: true}
         workoutType: {type: string, minLength: 1, maxLength: 4096}
+        targetGenerations:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: {$ref: '#/components/schemas/CoverageGenerationTarget'}
         resultOutcome: {type: string, enum: [applied, no_evidence, superseded]}
         durationMilliseconds: {type: integer, minimum: 0}
+    CoverageGenerationTarget:
+      type: object
+      additionalProperties: false
+      required: [regionId, generation, latest]
+      properties:
+        regionId: {type: string, minLength: 1, maxLength: 129}
+        generation: {type: integer, format: int64, minimum: 1}
+        latest: {type: boolean}
     JobSummary:
       type: object
       additionalProperties: false
@@ -1610,10 +1641,11 @@ components:
     CoverageReadiness:
       type: object
       additionalProperties: false
-      required: [state]
+      required: [mapDataStatus, processingStatus, resultStatus]
       properties:
-        state: {type: string, enum: [pending, unavailable, notProcessed]}
-        reason: {type: string, enum: [region_not_active, no_provider_region]}
+        mapDataStatus: {type: string, enum: [pending, unavailable, ready]}
+        processingStatus: {type: string, enum: [unprocessed, queued, running, current, failed, stale]}
+        resultStatus: {type: string, enum: [none, current, stale]}
     MapSelection:
       type: object
       additionalProperties: false
@@ -1822,6 +1854,28 @@ components:
       oneOf:
         - {$ref: '#/components/schemas/GeoJSONLineString'}
         - {$ref: '#/components/schemas/GeoJSONMultiLineString'}
+    CoverageFocusFeatureCollection:
+      type: object
+      additionalProperties: false
+      required: [type, features]
+      properties:
+        type: {type: string, enum: [FeatureCollection]}
+        features:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, properties, geometry]
+            properties:
+              type: {type: string, enum: [Feature]}
+              properties:
+                type: object
+                additionalProperties: false
+                required: [entityKind, countBucket]
+                properties:
+                  entityKind: {type: string, enum: [path, park]}
+                  countBucket: {type: integer, minimum: 1, maximum: 6}
+              geometry: {$ref: '#/components/schemas/CoverageGeoJSONGeometry'}
     WorkoutGeoJSONFeature:
       type: object
       additionalProperties: false

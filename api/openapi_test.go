@@ -102,6 +102,21 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Errorf("owner response schema %s is not closed", name)
 		}
 	}
+	coverageReadiness := document.Components.Schemas["CoverageReadiness"].Value
+	for name, expected := range map[string][]any{
+		"mapDataStatus":    {"pending", "unavailable", "ready"},
+		"processingStatus": {"unprocessed", "queued", "running", "current", "failed", "stale"},
+		"resultStatus":     {"none", "current", "stale"},
+	} {
+		property := coverageReadiness.Properties[name].Value
+		if property == nil {
+			t.Errorf("coverage readiness lacks %s", name)
+			continue
+		}
+		if !slices.Contains(coverageReadiness.Required, name) || !slices.Equal(property.Enum, expected) {
+			t.Errorf("coverage readiness %s enum=%v required=%v, want %v", name, property.Enum, coverageReadiness.Required, expected)
+		}
+	}
 	for _, name := range []string{"RoadCoverageEntity", "RoadCoverageDetail"} {
 		schema := document.Components.Schemas[name].Value
 		regionName := schema.Properties["regionName"]

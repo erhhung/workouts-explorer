@@ -2,13 +2,12 @@ package osm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,6 +23,7 @@ type IdentityEvaluationConfig struct {
 	MaximumSegments   int64
 	KeepScratchSchema bool
 	Log               io.Writer
+	StoragePreflight  StoragePreflight
 }
 
 type IdentityEvaluationReport struct {
@@ -120,6 +120,10 @@ var defaultIdentityRegressions = []identityRegression{
 	{name: "Mountain View Yorkshire Way road-cycleway continuation", locality: "Mountain View", expectation: "same", ways: []int64{8928169, 799582568}},
 	{name: "Mountain View Franklin Avenue park crossing", locality: "Mountain View", expectation: "same", ways: []int64{8953535, 723201843}},
 	{name: "Los Altos Foothill Expressway divided carriageways", locality: "Los Altos", expectation: "same", ways: []int64{23797638, 36767298, 25025733}},
+	{name: "Cupertino East West and plain Homestead labels", locality: "Cupertino", expectation: "three", ways: []int64{8948219, 95412064, 343498590}},
+	{name: "Los Altos West Homestead boundary sliver", locality: "Los Altos", expectation: "same", ways: []int64{8932692, 289295557, 289295555}},
+	{name: "Mountain View East and West El Camino Real", locality: "Mountain View", expectation: "different", ways: []int64{4809373, 4809368}},
+	{name: "Sunnyvale East and West El Camino Real", locality: "Sunnyvale", expectation: "different", ways: []int64{50108416, 50108418}},
 }
 
 var defaultIdentityContextChecks = []struct {
@@ -132,7 +136,7 @@ var defaultIdentityContextChecks = []struct {
 
 func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_ IdentityEvaluationReport, err error) {
 	started := time.Now()
-	if config.OSM == nil || config.OSMDatabaseURL == "" || config.PipelineRoot == "" || config.RegionID == "" || config.MaximumSegments < 1 {
+	if config.OSM == nil || config.OSMDatabaseURL == "" || config.PipelineRoot == "" || config.RegionID == "" || config.MaximumSegments < 1 || config.StoragePreflight == nil {
 		return IdentityEvaluationReport{}, fmt.Errorf("identity evaluation configuration is incomplete")
 	}
 	if !config.FullRegion && len(config.Localities) == 0 {
@@ -165,21 +169,39 @@ func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_
 	if report.Identity.Segments > config.MaximumSegments {
 		return report, fmt.Errorf("identity evaluation selection exceeds the segment limit (%d > %d)", report.Identity.Segments, config.MaximumSegments)
 	}
+	if _, err := config.StoragePreflight.Check(ctx); err != nil {
+		return report, fmt.Errorf("identity evaluation reservation storage preflight: %w", err)
+	}
 
-	schema := "osm_identity_eval_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	pipeline := CommandPipeline{DatabaseURL: config.OSMDatabaseURL, Root: config.PipelineRoot, Log: config.Log}
+	versions, err := pipeline.Versions(ctx)
+	if err != nil {
+		return report, fmt.Errorf("validate identity evaluation tools: %w", err)
+	}
+	if versions.Osmium != ExpectedOsmium || versions.Osm2pgsql != ExpectedOsm2pgsql {
+		return report, fmt.Errorf("unexpected identity evaluation tool versions")
+	}
+	store := PostgreSQLUpdateStore{Pool: config.OSM}
+	evaluationGeneration, err := store.ReserveEvaluation(ctx, config.RegionID, versions)
+	if err != nil {
+		return report, fmt.Errorf("reserve identity evaluation generation: %w", err)
+	}
+	schema := evaluationGeneration.SchemaName
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if config.KeepScratchSchema {
 		report.ScratchSchema = schema
 	}
-	if _, err := config.OSM.Exec(ctx, `CREATE SCHEMA `+quotedSchema); err != nil {
-		return report, fmt.Errorf("create identity evaluation schema")
-	}
 	defer func() {
-		if !config.KeepScratchSchema {
-			_, dropErr := config.OSM.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+quotedSchema+` CASCADE`)
-			if err == nil && dropErr != nil {
-				err = fmt.Errorf("drop identity evaluation schema")
-			}
+		cleanupContext := context.Background()
+		if config.KeepScratchSchema {
+			return
+		}
+		cleanupErr := store.DropBuildSchema(cleanupContext, schema)
+		if cleanupErr == nil {
+			cleanupErr = store.Fail(cleanupContext, evaluationGeneration, "identity evaluation completed; scratch schema removed")
+		}
+		if cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("clean identity evaluation generation: %w", cleanupErr))
 		}
 	}()
 
@@ -187,6 +209,9 @@ func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_
 	segmentColumns := `segment_id,source_way_id,source_way_version,derivation_version,start_node_index,end_node_index,
 		boundary_piece,start_graph_node_id,end_graph_node_id,name,normalized_name,highway,broad_class,tags,
 		motor_forward_allowed,motor_reverse_allowed,geom,locality_relation_id,logical_path_id,length_m`
+	if _, err := config.StoragePreflight.Check(ctx); err != nil {
+		return report, fmt.Errorf("identity evaluation segment-copy storage preflight: %w", err)
+	}
 	if _, err := config.OSM.Exec(ctx, `CREATE UNLOGGED TABLE `+quotedSchema+`.path_segments AS SELECT `+segmentColumns+
 		` FROM osm_canonical.path_segments segment WHERE `+selection, arguments...); err != nil {
 		return report, fmt.Errorf("copy identity evaluation segments")
@@ -204,9 +229,15 @@ func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_
 		`CREATE TABLE ` + quotedSchema + `.education_areas(source_type text,source_id bigint,version integer,name text,normalized_name text,education_kind text,geom geometry,type_priority integer,area_m2 double precision)`,
 	}
 	for _, statement := range setupStatements {
+		if _, err := config.StoragePreflight.Check(ctx); err != nil {
+			return report, fmt.Errorf("identity evaluation setup storage preflight: %w", err)
+		}
 		if _, err := config.OSM.Exec(ctx, statement); err != nil {
 			return report, fmt.Errorf("prepare identity evaluation schema")
 		}
+	}
+	if _, err := config.StoragePreflight.Check(ctx); err != nil {
+		return report, fmt.Errorf("identity evaluation locality-update storage preflight: %w", err)
 	}
 	result, err := config.OSM.Exec(ctx, `WITH county_segments AS (
 		SELECT segment.segment_id,ST_LineInterpolatePoint(segment.geom,0.5) midpoint
@@ -228,8 +259,7 @@ func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_
 	report.Durations.ScratchSetupMS = time.Since(setupStarted).Milliseconds()
 
 	identityStarted := time.Now()
-	pipeline := CommandPipeline{DatabaseURL: config.OSMDatabaseURL, Root: config.PipelineRoot, Log: config.Log}
-	if _, err := pipeline.Run(ctx, "identity-eval", Generation{ID: report.Baseline.GenerationID, RegionID: config.RegionID, SchemaName: schema}, "", ""); err != nil {
+	if err := runIdentityEvaluationStages(ctx, store, pipeline, config.StoragePreflight, evaluationGeneration); err != nil {
 		return report, err
 	}
 	report.Durations.IdentityMS = time.Since(identityStarted).Milliseconds()
@@ -246,6 +276,38 @@ func EvaluateIdentities(ctx context.Context, config IdentityEvaluationConfig) (_
 	}
 	report.Durations.TotalMS = time.Since(started).Milliseconds()
 	return report, nil
+}
+
+func runIdentityEvaluationStages(ctx context.Context, store PostgreSQLUpdateStore, pipeline CommandPipeline, preflight StoragePreflight, generation Generation) error {
+	for order, stage := range identityPipelineStages {
+		fence, err := pipeline.StageFence(stage)
+		if err != nil {
+			return err
+		}
+		if err := store.StartStage(ctx, generation.ID, stage, order, fence); err != nil {
+			return err
+		}
+		for {
+			if _, err := preflight.Check(ctx); err != nil {
+				return fmt.Errorf("identity evaluation stage %s storage preflight: %w", stage, err)
+			}
+			if _, err := pipeline.Run(ctx, stage, generation, "", ""); err != nil {
+				_ = store.FailStage(context.WithoutCancel(ctx), generation, stage, safeFailure(err))
+				return fmt.Errorf("identity evaluation stage %s: %w", stage, err)
+			}
+			completed, err := store.StageCompleted(ctx, generation.ID, stage)
+			if err != nil {
+				return err
+			}
+			if completed {
+				break
+			}
+			if atomicSQLStages[stage] {
+				return fmt.Errorf("identity evaluation stage %s omitted its terminal checkpoint", stage)
+			}
+		}
+	}
+	return nil
 }
 
 func identityRegressionWays() []int64 {
@@ -358,6 +420,8 @@ func readIdentityEvaluation(ctx context.Context, pool *pgxpool.Pool, schema stri
 		passed := len(identities) == 1
 		if regression.expectation == "different" {
 			passed = len(identities) >= 2
+		} else if regression.expectation == "three" {
+			passed = len(identities) == 3
 		}
 		locality := regression.locality
 		if locality == "" {

@@ -120,7 +120,7 @@ and a logical-path row. Forty-nine geometrically complex pieces could not be
 covered by one municipality within 1 cm and therefore deterministically abstain
 from municipal attribution while remaining available for matching.
 
-Named road identity removes one leading spelled-out cardinal direction from the
+Through derivation version 18, named road identity removes one leading spelled-out cardinal direction from the
 OSM display name before grouping; the original display name remains on each
 physical segment. This groups `East El Camino Real` and `West El Camino Real` as
 `El Camino Real, Sunnyvale`, which contains 343 physical segments and 12,134.2
@@ -206,29 +206,33 @@ span uses the logical path count and bucket.
 Named park polygons are generation-local derivation input. Qualifying
 `leisure=park` areas from 500 m² through 25 km² and qualifying
 `leisure=nature_reserve` or `boundary=protected_area` areas from 1,000 m² through
-10 km² may attribute a fully contained locality-clipped segment. Authoritative
-national-park tagging is `boundary=national_park`,
+10 km² may attribute a fully contained locality-clipped segment. State parks use
+case-insensitive `protection_title=State Park` or `park:type=state_park`.
+Authoritative national-park tagging is `boundary=national_park`,
 `protected_area=national_park`, or case-insensitive
 `protection_title=National Park`; these named areas qualify from 1 km² through
 100,000 km², including when `protect_class=2`. Unrelated `protect_class=2`,
 invalid polygons, unnamed polygons, and material partial overlaps abstain. Local
-parks still require an authoritative named municipality. Overlap selection
-prefers local park, nature reserve, protected area, then national park; then
-smaller area, relation before way, and source ID.
+parks still require an authoritative named municipality. State and national parks
+take precedence in overlap selection because they supply regional context; ties
+then prefer smaller area, relation before way, and source ID.
 
 Park attribution is additive for named trails and roads and never replaces
 physical segment identity. It supplies the highest-priority connectivity scope
 for both named and unnamed logical identity. Stable local park identity combines municipal locality
-relation, OSM source type, and OSM source ID. Stable national park identity uses a
-distinct namespace and combines provider region, OSM source type, and OSM source
-ID, making one park one entity across municipalities. This allows one workout to
+relation, OSM source type, and OSM source ID. Stable state and national park
+identity uses a distinct namespace and combines provider region, OSM source type,
+and OSM source ID, making one park one entity across municipalities. This allows one workout to
 contribute once to both a named logical path and the containing park visit. A
-named path without a municipality uses an attributed national park name as
-display context; an actual municipality always wins, and local parks are never
-used for that fallback.
-User-facing reads assign an unnamed segment inside a qualifying park only to the
-park; an unnamed logical path remains visible and countable only for traversed
-member geometry outside attributed parks.
+A state- or national-park-attributed road or path uses the park name as its
+application display context ahead of municipality or county context. Local parks
+are never used for that fallback.
+User-facing reads assign an unnamed segment inside a qualifying local park only
+to the park. Educational-ground-attributed unnamed roads and paths similarly
+roll up to one application entity per `education_id`, regardless of connectivity
+component or path class. Named campus roads and paths retain their normal path
+identity. State- and national-park-attributed unnamed roads and paths retain their
+individual application identities in addition to the park visit.
 
 The version-6 implementation first scope-rebases the bounded park-attributed
 subset so a legacy locality ID cannot remain shared across a park boundary. It
@@ -302,6 +306,26 @@ colleges, and universities. Only canonical segments with no formal normalized na
 receive education tags/scope; named campus roads and paths are unchanged. Matcher
 copy coalesces the education name only at the application boundary, preserving
 canonical source provenance and avoiding an application schema migration.
+Derivation version 17 recognizes explicitly tagged state parks as regional parks,
+gives state and national parks precedence over overlapping local park polygons,
+and exposes either regional park as application display context for all contained
+roads and paths without changing road logical identity scope.
+Derivation version 18 computes named-road graph components across locality
+boundaries before deriving locality-scoped IDs. A road that follows or repeatedly
+crosses a municipal boundary therefore remains one identity per municipality,
+without allowing identities themselves to span municipalities.
+
+Derivation version 20 preserves the case/whitespace-normalized original OSM
+display label in the named attribution-group key. `East`, `West`, and plain road
+labels therefore form independent graph/proximity components even though the
+persisted search normalization may share one direction-stripped base name. After
+component propagation, a dedicated checkpointed stage examines road components
+of at most 25 meters. A short component is absorbed only when its graph endpoints
+identify exactly one different component with the same base name and locality;
+ambiguous fragments remain independent. This removes municipal-boundary/name
+transition slivers without recombining substantial directional roads. The final
+logical-path UUID continues to include the propagated component and locality,
+so no identity spans municipalities.
 Driveway, parking-aisle, and parking-area geometry remains eligible for matching
 and Coverage rendering under the accepted matcher policy, but those ordinary
 logical paths are excluded from user-facing path statistics and history. Their

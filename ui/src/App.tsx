@@ -115,8 +115,8 @@ function navigate(to: string, replace = false) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function AppLink({ to, children, className, current }: { to: string; children: ReactNode; className?: string; current?: boolean }) {
-  return <a className={className} href={to} aria-current={current ? "page" : undefined} onClick={(event) => { event.preventDefault(); navigate(to); }}>{children}</a>;
+function AppLink({ to, children, className, current, onNavigate }: { to: string; children: ReactNode; className?: string; current?: boolean; onNavigate?: () => void }) {
+  return <a className={className} href={to} aria-current={current ? "page" : undefined} onClick={(event) => { event.preventDefault(); onNavigate?.(); navigate(to); }}>{children}</a>;
 }
 
 function Mark({ compact = false }: { compact?: boolean }) {
@@ -403,6 +403,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
   const [mapAvailableWorkouts, setMapAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
   const [mapFocusedWorkoutId, setMapFocusedWorkoutId] = useState<string>();
   const [mapMode, setMapMode] = useState<MapMode>("routes");
+  const [mapCanvasFocusRequest, setMapCanvasFocusRequest] = useState(0);
   const [roadCoverageCache, setRoadCoverageCache] = useState<RoadCoverageCache>();
   useEffect(() => {
     let active = true;
@@ -469,7 +470,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
     <div className="shell">
       <header className="app-header">
         <AppLink to="/" className="wordmark"><Mark compact /><span>Workouts Explorer</span></AppLink>
-        <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute && !mapRoute}>Summary</AppLink><AppLink to="/map" current={mapRoute}>Map</AppLink><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
+        <nav aria-label="Primary"><AppLink to="/" current={!dataSyncRoute && !mapRoute}>Summary</AppLink><AppLink to="/map" current={mapRoute} onNavigate={() => setMapCanvasFocusRequest((value) => value + 1)}>Map</AppLink><AppLink to="/data-sync" current={dataSyncRoute}>Data Sync</AppLink></nav>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger ref={avatarTriggerRef} className="avatar-trigger" aria-label={`Open account menu for ${data.profile.fullName}`}>{avatar}<span className="avatar-name">{data.profile.fullName}</span><span className="menu-chevron" aria-hidden="true">v</span></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
@@ -489,7 +490,7 @@ function Shell({ session, config, path }: { session: Session; config: PublicConf
         <div className="about-copy"><Mark /><p>Workouts Explorer turns your personal activity history into routes you can revisit, compare, and understand without giving up ownership of the journey.</p><p className="version">Milestone 6 &middot; Raw Route Map</p></div>
       </Modal>
       {dataSyncRoute ? <DataSync csrfToken={session.csrfToken} preferences={data.preferences} pollingIntervalSeconds={config.pollingIntervalSeconds} selectedJobId={canonicalJobId} navigate={navigate} /> : mapRoute ?
-        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} persistedWorkoutIds={mapWorkoutIds} onWorkoutSelectionChange={setMapWorkoutIds} persistedAvailableWorkouts={mapAvailableWorkouts} onAvailableWorkoutsChange={setMapAvailableWorkouts} persistedFocusedWorkoutId={mapFocusedWorkoutId} onFocusedWorkoutChange={setMapFocusedWorkoutId} persistedMapMode={mapMode} onMapModeChange={setMapMode} roadCoverageCache={roadCoverageCache} onRoadCoverageCacheChange={setRoadCoverageCache} /></Suspense> :
+        <Suspense fallback={<main className="center-state" aria-busy="true"><Mark /><p role="status">Opening your map...</p></main>}><MapPage config={config} preferences={data.preferences} csrfToken={session.csrfToken} dateRange={selectedRange} onDateRangeSelected={selectDateRange} sort={workoutSort} persistedWorkoutIds={mapWorkoutIds} onWorkoutSelectionChange={setMapWorkoutIds} persistedAvailableWorkouts={mapAvailableWorkouts} onAvailableWorkoutsChange={setMapAvailableWorkouts} persistedFocusedWorkoutId={mapFocusedWorkoutId} onFocusedWorkoutChange={setMapFocusedWorkoutId} persistedMapMode={mapMode} onMapModeChange={setMapMode} roadCoverageCache={roadCoverageCache} onRoadCoverageCacheChange={setRoadCoverageCache} explicitCanvasFocusRequest={mapCanvasFocusRequest} /></Suspense> :
         <Summary preferences={data.preferences} csrfToken={session.csrfToken} selectedDateRange={visitRange} onDateRangeSelected={selectDateRange} selectedSort={workoutSort} onSortChange={setWorkoutSort} selectedPage={summaryPage} onPageChange={setSummaryPage} onShowOnMap={(workoutId) => { const canonicalID = workoutId.toUpperCase(); setMapWorkoutIds((current) => current === undefined || current.includes(canonicalID) ? current : [...current, canonicalID].sort()); setMapFocusedWorkoutId(canonicalID); navigate(`/map?workoutId=${encodeURIComponent(canonicalID)}`); }} onDateRangeSaved={(dateRange) => { setVisitRange(dateRange); setData((current) => current ? { ...current, preferences: { ...current.preferences, dateRange } } : current); }} />}
     </div>
   );

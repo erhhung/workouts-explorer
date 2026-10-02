@@ -55,6 +55,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		PollInterval: cfg.ReconciliationPollInterval, ScanInterval: cfg.ReconciliationScanInterval,
 		LeaseDuration: cfg.LeaseDuration, PageSize: cfg.ReconciliationPageSize,
 		MinimumTraversalMeters: cfg.MinimumTraversalMeters,
+		OSMAutoAddRegions:      cfg.OSMAutoAddRegions,
 	})
 	server := &http.Server{Addr: cfg.ListenAddress, Handler: workerapp.NewHandler(db, osmDB, logger),
 		ReadHeaderTimeout: config.ReadHeaderTimeout(), ReadTimeout: config.ReadTimeout(),

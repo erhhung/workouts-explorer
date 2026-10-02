@@ -241,8 +241,13 @@ func TestLoadCoverageWorker(t *testing.T) {
 	if cfg.ListenAddress != ":8082" || cfg.LeaseDuration != 4*time.Minute || cfg.HeartbeatInterval != 20*time.Second ||
 		cfg.RouteTimeout != 3*time.Minute || cfg.PollInterval != time.Second || cfg.AdmissionInterval != time.Second ||
 		cfg.ReconciliationPollInterval != 30*time.Second || cfg.ReconciliationScanInterval != 24*time.Hour ||
-		cfg.ReconciliationPageSize != 10 || cfg.MinimumTraversalMeters != 5 {
+		cfg.ReconciliationPageSize != 10 || cfg.MinimumTraversalMeters != 5 || cfg.OSMAutoAddRegions {
 		t.Fatalf("unexpected coverage worker defaults: %+v", cfg)
+	}
+	t.Setenv("OSM_AUTO_ADD_REGIONS", "true")
+	configured, err := LoadCoverageWorker()
+	if err != nil || !configured.OSMAutoAddRegions {
+		t.Fatalf("coverage worker auto-add policy was not loaded: %+v err=%v", configured, err)
 	}
 }
 

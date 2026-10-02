@@ -97,6 +97,7 @@ func (r *Runner) updateCoverageReadiness(ctx context.Context, tx pgx.Tx, job cla
 	if err != nil {
 		return err
 	}
+	readiness = routeReadinessForAutoAddPolicy(readiness, r.osmAutoAddRegions)
 	regions, err := json.Marshal(readiness.Regions)
 	if err != nil {
 		return fmt.Errorf("encode workout coverage regions: %w", err)
@@ -125,6 +126,13 @@ func (r *Runner) updateCoverageReadiness(ctx context.Context, tx pgx.Tx, job cla
 		}
 	}
 	return nil
+}
+
+func routeReadinessForAutoAddPolicy(readiness osm.RouteRegionReadiness, autoAddRegions bool) osm.RouteRegionReadiness {
+	if readiness.State == "pending" && !autoAddRegions {
+		return osm.RouteRegionReadiness{State: "unavailable", Reason: "no_provider_region", Regions: []osm.RegionGeneration{}}
+	}
+	return readiness
 }
 
 func nullableReadinessReason(reason string) any {

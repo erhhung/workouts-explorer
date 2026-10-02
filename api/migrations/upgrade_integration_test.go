@@ -18,6 +18,77 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+func TestFacilityCoverageIdentityDowngrade(t *testing.T) {
+	db := openTestDatabases(t)
+	tx, err := db.migration.Begin(db.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(db.ctx)
+	var shippedDefinitions []string
+	rows, err := tx.Query(db.ctx, `SELECT definition FROM app.education_coverage_function_backup ORDER BY definition`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var definition string
+		if err := rows.Scan(&definition); err != nil {
+			t.Fatal(err)
+		}
+		shippedDefinitions = append(shippedDefinitions, definition)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(shippedDefinitions) != 3 {
+		t.Fatalf("019 backup definitions=%d, want 3", len(shippedDefinitions))
+	}
+	security := `SELECT string_agg(concat_ws('|',procedure.proname,owner_role.rolname,procedure.prosecdef,
+		procedure.provolatile,procedure.proconfig::text,procedure.proacl::text),'\n' ORDER BY procedure.proname)
+		FROM pg_proc procedure JOIN pg_roles owner_role ON owner_role.oid=procedure.proowner
+		WHERE procedure.oid IN ('app.coverage_mvt(integer,integer,integer,json)'::regprocedure,
+		'app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)'::regprocedure,
+		'app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)'::regprocedure)`
+	var originalSecurity, restoredSecurity string
+	if err := tx.QueryRow(db.ctx, security).Scan(&originalSecurity); err != nil {
+		t.Fatal(err)
+	}
+	source, err := migrations.Files.ReadFile("020_facility_coverage_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(source), "-- +goose Down")
+	if _, err := tx.Exec(db.ctx, parts[1]); err != nil {
+		t.Fatalf("020 Down: %v", err)
+	}
+	var restoredDefinitions []string
+	if err := tx.QueryRow(db.ctx, `SELECT array_agg(definition ORDER BY definition) FROM (VALUES
+		(pg_get_functiondef('app.coverage_mvt(integer,integer,integer,json)'::regprocedure)),
+		(pg_get_functiondef('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)'::regprocedure)),
+		(pg_get_functiondef('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)'::regprocedure))) saved(definition)`).Scan(&restoredDefinitions); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(shippedDefinitions, "\n") != strings.Join(restoredDefinitions, "\n") {
+		t.Fatal("020 Down did not restore exact shipped 019 definitions")
+	}
+	if err := tx.QueryRow(db.ctx, security).Scan(&restoredSecurity); err != nil {
+		t.Fatal(err)
+	}
+	if restoredSecurity != originalSecurity {
+		t.Fatal("020 Down changed ownership, SECURITY DEFINER, search paths, stability, or ACLs")
+	}
+	if _, err := tx.Exec(db.ctx, parts[0]); err != nil {
+		t.Fatalf("020 reapply after Down: %v", err)
+	}
+	if err := tx.QueryRow(db.ctx, security).Scan(&restoredSecurity); err != nil {
+		t.Fatal(err)
+	}
+	if restoredSecurity != originalSecurity {
+		t.Fatal("020 reapply changed the security contract")
+	}
+}
+
 func TestCleanSchemaV1Upgrade(t *testing.T) {
 	migrationURL := os.Getenv("UPGRADE_MIGRATION_DATABASE_URL")
 	apiURL := os.Getenv("UPGRADE_API_DATABASE_URL")
@@ -111,8 +182,8 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=19 AND minimum_runtime_version=18
-		AND (SELECT COALESCE(max(version_id) FILTER (WHERE is_applied),0) FROM public.goose_db_version)=19
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=20 AND minimum_runtime_version=18
+		AND (SELECT COALESCE(max(version_id) FILTER (WHERE is_applied),0) FROM public.goose_db_version)=20
 		AND EXISTS(SELECT 1 FROM pg_extension WHERE extname='postgis')
 		AND to_regclass('app.sources') IS NOT NULL
 		AND to_regclass('app.job_config_snapshots') IS NOT NULL

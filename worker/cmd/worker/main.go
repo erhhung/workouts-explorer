@@ -122,6 +122,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	runner := workerapp.NewRunnerWithOptions(db, logger, keys, cfg.LocalSourceRoots, workerapp.RunnerOptions{
 		FileConcurrency:            cfg.FileConcurrency,
 		OSMDatabase:                osmDB,
+		OSMAutoAddRegions:          cfg.OSM.AutoAddRegions,
 		CoverageMinTraversalMeters: cfg.CoverageMinTraversalMeters,
 	})
 	scheduler := workerapp.NewScheduler(db, logger, keys, cfg.LocalSourceRoots, workerapp.SchedulerOptions{

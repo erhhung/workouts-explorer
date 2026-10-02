@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ApiError, SESSION_EXPIRED_EVENT, type BaseMapsConfig, type DateRangePreference, type MapSelection, type Preferences, type PublicConfig } from "./api";
+import { ApiError, SESSION_EXPIRED_EVENT, type BaseMapsConfig, type DateRangePreference, type MapSelection, type MapSelectionWorkout, type Preferences, type PublicConfig } from "./api";
 import MapPage, { absoluteRouteTileTemplate, buildRawRouteDirectionMarkers, buildRawRouteEndpoints, buildSegmentedRawRoute, COVERAGE_HIGHLIGHT_DURATION_MS, coverageRegionLabel, formatRoutePopupDetails, formatRoutePopupDistance, onMapContextReady, pointyDirectionMarkerImage, privateRouteTileUnauthorized, privateRouteTileUnavailable, requestedWorkoutIds, resolveBaseFamily, retryInitialDiagnosticBusy, routeColor, routeColors, routeEndpointOutline, selectionRequest, sortMapWorkouts, startCoverageHighlightBlink, type RoadCoverageCache } from "./MapPage";
 
 const mapInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
@@ -31,10 +31,17 @@ vi.mock("maplibre-gl", () => ({
         const layer = this.layers.get(id) as { layout?: Record<string, unknown> } | undefined;
         if (layer) layer.layout = { ...layer.layout, [property]: value };
       });
-			moveLayer = vi.fn();
+			moveLayer = vi.fn((id: string) => {
+				const layer = this.layers.get(id);
+				if (layer) {
+					this.layers.delete(id);
+					this.layers.set(id, layer);
+				}
+			});
       jumpTo = vi.fn();
-      setStyle = vi.fn((style: unknown) => { if (typeof style !== "string") mapBehavior.styleLoaded = true; if (typeof style !== "string" || mapBehavior.emitSetStyleLoad) this.handlers.get("style.load")?.(); });
-      getStyle = vi.fn(() => ({}));
+      style: { layers?: Array<{ id: string }> };
+      setStyle = vi.fn((style: unknown) => { this.style = typeof style === "string" ? { layers: [] } : style as { layers?: Array<{ id: string }> }; if (typeof style !== "string") mapBehavior.styleLoaded = true; if (typeof style !== "string" || mapBehavior.emitSetStyleLoad) this.handlers.get("style.load")?.(); });
+      getStyle = vi.fn(() => this.style);
       isStyleLoaded = vi.fn(() => mapBehavior.styleLoaded);
       isMoving = vi.fn(() => mapBehavior.moving);
       areTilesLoaded = vi.fn(() => mapBehavior.tilesLoaded);
@@ -54,6 +61,7 @@ vi.mock("maplibre-gl", () => ({
       });
       off = vi.fn();
       constructor(public options: unknown) {
+				this.style = (options as { style: { layers?: Array<{ id: string }> } }).style;
         (options as { container: HTMLElement }).container.append(this.canvas);
         mapInstances.push(this);
       }
@@ -93,8 +101,8 @@ const selection: MapSelection = {
   bounds: { minimumLongitude: -105.3, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40.1 },
   focusedWorkoutId: null,
   workouts: [
-    { id: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-08T12:00:00Z", endedAt: "2026-08-08T13:45:00Z", duration: "6300", localStartDate: "2026-08-08", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: { value: "8.25", unit: "km" }, pace: { value: "5", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevationGain: { value: "100", unit: "m" }, coverageReadiness: { state: "notProcessed" } },
-    { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: true, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: { value: "300", unit: "kcal" }, heartRate: { value: "100", unit: "count/min" }, elevationGain: { value: "250", unit: "m" }, coverageReadiness: { state: "pending", reason: "region_not_active" } },
+    { id: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", type: { id: "11111111111111111111111111111111", key: "running", name: "Running" }, startedAt: "2026-08-08T12:00:00Z", endedAt: "2026-08-08T13:45:00Z", duration: "6300", localStartDate: "2026-08-08", partialRoute: false, bounds: { minimumLongitude: -105.3, minimumLatitude: 39.9, maximumLongitude: -105.2, maximumLatitude: 40.1 }, distance: { value: "8.25", unit: "km" }, pace: { value: "5", unit: "min/km" }, calories: { value: "500", unit: "kcal" }, heartRate: { value: "120", unit: "count/min" }, elevationGain: { value: "100", unit: "m" }, coverageReadiness: { mapDataStatus: "ready", processingStatus: "current", resultStatus: "current" } },
+    { id: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", type: { id: "22222222222222222222222222222222", key: "hiking", name: "Hiking" }, startedAt: "2026-08-01T12:00:00Z", endedAt: "2026-08-01T13:00:00Z", duration: "3600", localStartDate: "2026-08-01", partialRoute: true, bounds: { minimumLongitude: -105.2, minimumLatitude: 39.8, maximumLongitude: -105.1, maximumLatitude: 40 }, distance: null, pace: null, calories: { value: "300", unit: "kcal" }, heartRate: { value: "100", unit: "count/min" }, elevationGain: { value: "250", unit: "m" }, coverageReadiness: { mapDataStatus: "ready", processingStatus: "current", resultStatus: "current" } },
   ],
   routeTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/route-tiles/7/{z}/{x}/{y}.pbf",
   coverageTileUrl: "/api/map-selections/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/coverage-tiles/7/{z}/{x}/{y}.pbf",
@@ -258,6 +266,22 @@ describe("map contract helpers", () => {
 });
 
 describe("MapPage", () => {
+	test("moves keyboard focus to the canvas for an explicit tab-navigation request", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+			if (String(input) === "/api/map-selections" && init?.method === "POST") return Promise.resolve(json(selection));
+			if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+			throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+		});
+		const props = { config, preferences, csrfToken: "csrf-map", dateRange: "last30Days" as const, onDateRangeSelected: vi.fn() };
+		const view = render(<MapPage {...props} explicitCanvasFocusRequest={0} />);
+		await screen.findByRole("checkbox", { name: /Show Running/ });
+		const map = mapInstances.at(-1)!;
+		map.canvas.blur();
+		expect(document.activeElement).not.toBe(map.canvas);
+		view.rerender(<MapPage {...props} explicitCanvasFocusRequest={1} />);
+		await waitFor(() => expect(document.activeElement).toBe(map.canvas));
+	});
+
 	test("retries an initial busy diagnostic once and keeps later failures", async () => {
 		const controller = new AbortController();
 		const succeeds = vi.fn()
@@ -338,9 +362,10 @@ describe("MapPage", () => {
     expect(map.addSource).toHaveBeenCalledWith("coverage-diagnostic-raw-route", { type: "geojson", data: rawRoute });
 		expect(map.addSource.mock.calls.filter((call: any[]) => call[0] === "coverage-diagnostic-raw-route")).toHaveLength(rawSourceAdds);
 		expect(preloadedRawSource.setData).not.toHaveBeenCalled();
-		expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "coverage-diagnostic-raw-route")?.[0].paint["line-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
+		expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "coverage-diagnostic-raw-route")?.[0].paint["line-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
 		expect(map.addImage).toHaveBeenCalledWith("coverage-diagnostic-direction-triangle", expect.objectContaining({ width: 11, height: 15 }));
-		expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "coverage-diagnostic-direction")?.[0]).toMatchObject({ type: "symbol", layout: { "icon-image": "coverage-diagnostic-direction-triangle", "icon-rotate": ["get", "bearing"] } });
+		expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "coverage-diagnostic-direction")?.[0]).toMatchObject({ type: "symbol", layout: { "icon-image": "coverage-diagnostic-direction-triangle", "icon-rotate": ["get", "bearing"] }, paint: { "icon-opacity-transition": { duration: 0, delay: 0 } } });
+		expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-direction", "icon-opacity-transition", { duration: 400, delay: 0 });
 		const directionSource = map.sources.get("coverage-diagnostic-direction");
 		directionSource.setData.mockClear();
 		act(() => map.handlers.get("moveend")?.());
@@ -348,9 +373,9 @@ describe("MapPage", () => {
 		expect(map.addSource).toHaveBeenCalledWith("private-workout-route-endpoints", { type: "geojson", data: rawRouteEndpoints });
 		const startLayer = map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-route-start")?.[0];
 		const finishLayer = map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-route-finish")?.[0];
-		expect(startLayer.paint["circle-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
-		expect(startLayer.paint["circle-stroke-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
-		expect(finishLayer.paint["text-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
+		expect(startLayer.paint["circle-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
+		expect(startLayer.paint["circle-stroke-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
+		expect(finishLayer.paint["text-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
 		expect(startLayer.paint).toMatchObject({ "circle-color": "#20a464", "circle-radius": 22 / Math.sqrt(Math.PI) * 0.9 * 0.97 * 0.95, "circle-stroke-color": "#334155" });
 		expect(finishLayer.layout["text-field"]).toBe("■");
 		expect(finishLayer.paint["text-halo-color"]).toBe("#334155");
@@ -373,11 +398,14 @@ describe("MapPage", () => {
     const requestCount = requests.length;
     fireEvent.keyDown(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-raw-route", "line-opacity", 0));
+		expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-direction", "icon-opacity", 0);
+		expect(map.setLayoutProperty).not.toHaveBeenCalledWith("coverage-diagnostic-direction", "visibility", "none");
 		expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-start", "circle-opacity", 0);
 		expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-start", "circle-stroke-opacity", 0);
 		expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-finish", "text-opacity", 0);
     fireEvent.keyUp(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-raw-route", "line-opacity", 1));
+		expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-direction", "icon-opacity", 0.95);
 		expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-start", "circle-opacity", 1);
 		expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-finish", "text-opacity", 1);
     expect(requests).toHaveLength(requestCount);
@@ -433,7 +461,9 @@ describe("MapPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     await waitFor(() => expect(requests).toContainEqual({ path: `/api/coverage-diagnostic-runs/${diagnostic.id}/labels`, method: "PATCH", body: { overall: "correct", segments: diagnostic.labels.segments }, csrf: "csrf-map" }));
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Correct" }));
+    map.setPaintProperty.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "Routes" }));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("coverage-diagnostic-direction", "icon-opacity-transition", { duration: 0, delay: 0 });
     expect(screen.queryByRole("region", { name: "Coverage diagnostic review" })).not.toBeInTheDocument();
     expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-routes", "visibility", "visible");
     await userEvent.click(coverage);
@@ -547,13 +577,13 @@ describe("MapPage", () => {
     expect(screen.getByRole("button", { name: "Coverage" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Select all workout routes" })).toBeChecked();
     expect(screen.queryByText("Coverage map data is pending")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Active map attribution for Outdoor")).toHaveTextContent("Outdoor mapMap data");
-    expect(screen.getByRole("link", { name: "Map data" })).toHaveAttribute("href", "https://attribution.example.test");
+    expect(screen.getByLabelText("Active map attribution for Road")).toHaveTextContent("Road map");
+    expect(screen.queryByRole("link", { name: "Map data" })).not.toBeInTheDocument();
     expect(requests[0]).toEqual({ path: "/api/map-selections", method: "POST", body: { dateRangeEnum: "last30Days", tz: "America/Denver" }, csrf: "csrf-map" });
     await waitFor(() => expect(mapInstances.length).toBeGreaterThan(0));
     const map = mapInstances.at(-1)!;
     await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl}`] }));
-    expect(map.addLayer.mock.calls.some((call: any[]) => call[0]["source-layer"] === "routes" && call[0].layout["line-sort-key"][1] === "sort_order")).toBe(true);
+    expect(map.addLayer.mock.calls.some((call: any[]) => call[0]["source-layer"] === "routes" && call[0].layout["line-sort-key"][1] === "sortOrder")).toBe(true);
     expect([...map.sources.keys()].some((id) => id.toLowerCase().includes("coverage"))).toBe(false);
     expect([...map.layers.keys()].some((id) => id.toLowerCase().includes("coverage"))).toBe(false);
     const routeLayer = map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-routes")?.[0];
@@ -614,20 +644,20 @@ describe("MapPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /City\/County\/Region/ }));
     expect(screen.getByRole("columnheader", { name: /City\/County\/Region/ })).toHaveAttribute("aria-sort", "ascending");
     expect(within(screen.getByRole("table")).getAllByRole("button", { name: /Alpha Road|Example Park/ }).map((button) => button.textContent)).toEqual(["Alpha Road", "Example Park"]);
-    expect(screen.queryByRole("button", { name: "Unnamed path" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pedestrian path" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
-    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Pedestrian path" })).toBeVisible();
     expect(screen.getAllByText("Northern California").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: /Workouts/ }));
-    expect(within(screen.getByRole("table")).getAllByRole("button", { name: /Example Park|Alpha Road|Unnamed path/ }).map((button) => button.textContent)).toEqual(["Example Park", "Alpha Road", "Unnamed path"]);
+    expect(within(screen.getByRole("table")).getAllByRole("button", { name: /Example Park|Alpha Road|Pedestrian path/ }).map((button) => button.textContent)).toEqual(["Example Park", "Alpha Road", "Pedestrian path"]);
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "northern california" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible(), { timeout: 1000 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Pedestrian path" })).toBeVisible(), { timeout: 1000 });
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "path" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Road" })).not.toBeInTheDocument(), { timeout: 1000 });
-    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "unnamed" } });
+    expect(screen.getByRole("button", { name: "Pedestrian path" })).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "pedestrian" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Road" })).not.toBeInTheDocument(), { timeout: 1000 });
-    expect(screen.getByRole("button", { name: "Unnamed path" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Pedestrian path" })).toBeVisible();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "not present" } });
     await waitFor(() => expect(screen.getByText("No roads, paths, or parks match this search.")).toBeVisible(), { timeout: 1000 });
     expect(screen.getByText("Page 1 of 1", { selector: ".pagination span" })).toBeVisible();
@@ -639,16 +669,26 @@ describe("MapPage", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument());
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage", { type: "vector", tiles: [`${window.location.origin}${selection.coverageTileUrl}`], minzoom: 0, maxzoom: 22 }));
+    expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage-focus", expect.objectContaining({ type: "geojson" }));
     expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage")?.[0]["source-layer"]).toBe("coverage");
-    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0]["source-layer"]).toBe("coverage_focus");
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0].filter).toEqual(["==", ["get", "entityKind"], "path"]);
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0].source).toBe("private-workout-coverage-focus");
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage")?.[0].paint["line-color"][1]).toEqual(["get", "countBucket"]);
+    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0].paint["line-color"][1]).toEqual(["get", "countBucket"]);
+    expect(map.moveLayer).toHaveBeenCalledWith("private-workout-coverage-focus");
+    expect(map.moveLayer).toHaveBeenCalledWith("private-workout-coverage-parks-focus");
     expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage-focus")?.[0].paint["line-color"]).toContain("#ffd8f0");
-    expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-coverage")?.[0].paint["line-opacity-transition"]).toEqual({ duration: 150, delay: 0 });
+    for (const layer of ["private-workout-coverage", "private-workout-coverage-parks"]) {
+      expect(map.addLayer.mock.calls.find((call: any[]) => call[0].id === layer)?.[0].paint["line-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
+    }
     expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-coverage", "visibility", "visible");
     expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-routes", "visibility", "none");
     expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage-highlight", expect.objectContaining({ type: "geojson" }));
     expect(map.fitBounds).toHaveBeenCalledWith([[-105.205, 39.995], [-105.185, 40.015]], { padding: 48, duration: 350 });
     expect(screen.getByRole("application", { name: "Workout route map" })).toHaveAttribute("aria-keyshortcuts", "Space");
     map.setPaintProperty.mockClear();
+    map.setLayoutProperty.mockClear();
+    map.removeLayer.mockClear(); map.removeSource.mockClear();
     fireEvent.keyDown(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage", "line-opacity", 0));
     expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage-parks", "line-opacity", 0);
@@ -657,6 +697,12 @@ describe("MapPage", () => {
     expect(map.setPaintProperty).not.toHaveBeenCalledWith("private-workout-coverage-highlight", "line-opacity", 0);
     fireEvent.keyUp(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage", "line-opacity", 0.94));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-coverage-parks", "line-opacity", 0.94);
+    for (const layer of ["private-workout-coverage", "private-workout-coverage-parks"]) {
+      expect(map.setLayoutProperty).not.toHaveBeenCalledWith(layer, "visibility", "none");
+      expect(map.removeLayer).not.toHaveBeenCalledWith(layer);
+    }
+    expect(map.removeSource).not.toHaveBeenCalled();
     const requestsAfterInitialLoad = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length;
     await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
     expect(await screen.findByRole("button", { name: "Example Park" })).toBeVisible();
@@ -665,6 +711,187 @@ describe("MapPage", () => {
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length).toBe(requestsAfterInitialLoad);
     expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input).includes("coverage-diagnostic-runs"))).toBe(false);
+  });
+
+  test("switches pink production Coverage to delayed list hover without replacing persistent focus", async () => {
+    const focusedSelection = { ...selection, focusedWorkoutId: selection.workouts[0].id };
+    const focusGeometry = (offset: number) => ({ type: "FeatureCollection", features: [{ type: "Feature", properties: { entityKind: "path", countBucket: 1 }, geometry: { type: "LineString", coordinates: [[-105.2 + offset, 40], [-105.19 + offset, 40.01]] } }] });
+    const focusRequests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(focusedSelection));
+      if (path.includes("/coverage-focus/")) { focusRequests.push(path); return Promise.resolve(json(path.includes(selection.workouts[1].id) ? focusGeometry(0.01) : focusGeometry(0))); }
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    const onFocusedWorkoutChange = vi.fn();
+    render(<MapPage config={config} preferences={{ ...preferences, coverageDiagnosticsEnabled: false }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={onFocusedWorkoutChange} />);
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+    const map = mapInstances.at(-1)!;
+    const aggregateSources = () => map.addSource.mock.calls.filter((call: any[]) => call[0] === "private-workout-coverage");
+    await waitFor(() => expect(focusRequests.some((path) => path.includes(selection.workouts[0].id))).toBe(true));
+    const focusSource = map.getSource("private-workout-coverage-focus") as { setData: ReturnType<typeof vi.fn> };
+    const aggregateAddsBeforeHover = aggregateSources().length;
+    const aggregateRemovalsBeforeHover = map.removeSource.mock.calls.filter((call: any[]) => call[0] === "private-workout-coverage").length;
+    const fitsBeforeHover = map.fitBounds.mock.calls.length;
+    const stylesBeforeHover = map.setStyle.mock.calls.length;
+
+    vi.useFakeTimers();
+    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ });
+    fireEvent.pointerEnter(hikingButton);
+    await act(async () => { await vi.advanceTimersByTimeAsync(249); });
+    expect(focusRequests.filter((path) => path.includes(selection.workouts[1].id))).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(focusRequests.filter((path) => path.includes(selection.workouts[1].id))).toHaveLength(1);
+    expect(focusSource.setData).toHaveBeenLastCalledWith(focusGeometry(0.01));
+    expect(aggregateSources()).toHaveLength(aggregateAddsBeforeHover);
+    expect(map.removeSource.mock.calls.filter((call: any[]) => call[0] === "private-workout-coverage")).toHaveLength(aggregateRemovalsBeforeHover);
+    expect(map.fitBounds).toHaveBeenCalledTimes(fitsBeforeHover);
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeHover);
+    expect(onFocusedWorkoutChange).not.toHaveBeenCalled();
+
+    fireEvent.pointerLeave(hikingButton.closest("ol")!);
+    await act(async () => { await Promise.resolve(); });
+    expect(focusSource.setData).toHaveBeenLastCalledWith(focusGeometry(0));
+    expect(aggregateSources()).toHaveLength(aggregateAddsBeforeHover);
+    expect(map.removeSource.mock.calls.filter((call: any[]) => call[0] === "private-workout-coverage")).toHaveLength(aggregateRemovalsBeforeHover);
+    expect(focusRequests.filter((path) => path.includes(selection.workouts[0].id))).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  test("shows Coverage readiness, disables result-less focus, and polls until a result is applied", async () => {
+    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+    const pendingSelection: MapSelection = {
+      ...selection,
+      workouts: [
+        { ...selection.workouts[0], coverageReadiness: { mapDataStatus: "ready", processingStatus: "queued", resultStatus: "none" } },
+        { ...selection.workouts[1], coverageReadiness: { mapDataStatus: "ready", processingStatus: "failed", resultStatus: "stale" } },
+      ],
+    };
+    const currentSelection: MapSelection = {
+      ...pendingSelection,
+      id: "D".repeat(32),
+      workouts: [
+        { ...pendingSelection.workouts[0], coverageReadiness: { mapDataStatus: "ready", processingStatus: "current", resultStatus: "current" } },
+        pendingSelection.workouts[1],
+      ],
+    };
+    let selectionPosts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input); const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") {
+        selectionPosts++;
+        return Promise.resolve(json(selectionPosts < 3 ? pendingSelection : currentSelection));
+      }
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    const running = await screen.findByRole("button", { name: /Running.*8\/08\/2026/ });
+    expect(running.querySelector(".route-swatch")).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+    const unavailableRunning = screen.getByRole("button", { name: /Coverage pending.*Running.*8\/08\/2026/ });
+    const staleHiking = screen.getByRole("button", { name: /Coverage stale.*Hiking.*8\/01\/2026/ });
+    expect(unavailableRunning).toBeDisabled();
+    expect(unavailableRunning.closest("li")).toHaveClass("is-coverage-unavailable");
+    expect(unavailableRunning.querySelector(".coverage-route-status--pending")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for coverage update")).toHaveAttribute("role", "tooltip");
+    expect(staleHiking).toBeEnabled();
+    expect(staleHiking.querySelector(".coverage-route-status--stale")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Running.*8\/08\/2026/ })?.querySelector(".route-swatch")).not.toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+    expect(selectionPosts).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(selectionPosts).toBe(2);
+    expect(screen.getByRole("button", { name: /Coverage pending.*Running.*8\/08\/2026/ })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(selectionPosts).toBe(3);
+    const currentRunning = screen.getByRole("button", { name: /Coverage current.*Running.*8\/08\/2026/ });
+    expect(currentRunning).toBeEnabled();
+    expect(currentRunning.querySelector(".coverage-route-status--current")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(selectionPosts).toBe(3);
+    vi.useRealTimers();
+  });
+
+  test("explains unavailable map data and failed Coverage updates on disabled rows", async () => {
+    const unavailableSelection: MapSelection = {
+      ...selection,
+      workouts: [
+        { ...selection.workouts[0], coverageReadiness: { mapDataStatus: "unavailable", processingStatus: "unprocessed", resultStatus: "none" } },
+        { ...selection.workouts[1], coverageReadiness: { mapDataStatus: "ready", processingStatus: "failed", resultStatus: "none" } },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/map-selections" && init?.method === "POST") return Promise.resolve(json(unavailableSelection));
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+    render(<MapPage config={config} preferences={{ ...preferences, coverageDiagnosticsEnabled: false }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    const coverageMode = screen.getByRole("button", { name: "Coverage" });
+    await waitFor(() => expect(coverageMode).toBeEnabled());
+    fireEvent.click(coverageMode);
+
+    const unavailable = screen.getByRole("button", { name: /Coverage unavailable.*Running/ });
+    const failed = screen.getByRole("button", { name: /Coverage failed.*Hiking/ });
+    expect(unavailable).toBeDisabled();
+    expect(failed).toBeDisabled();
+    expect(unavailable.querySelector(".coverage-route-status--unavailable")).toBeInTheDocument();
+    expect(failed.querySelector(".coverage-route-status--failed")).toBeInTheDocument();
+    expect(screen.getByText("Map data not available")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Coverage update failed")).toHaveAttribute("role", "tooltip");
+  });
+
+  test("renders every Coverage status with its production indicator and tooltip", async () => {
+    const readinessStates: MapSelectionWorkout["coverageReadiness"][] = [
+      { mapDataStatus: "ready", processingStatus: "current", resultStatus: "current" },
+      { mapDataStatus: "ready", processingStatus: "stale", resultStatus: "stale" },
+      { mapDataStatus: "pending", processingStatus: "unprocessed", resultStatus: "none" },
+      { mapDataStatus: "ready", processingStatus: "queued", resultStatus: "none" },
+      { mapDataStatus: "ready", processingStatus: "failed", resultStatus: "none" },
+      { mapDataStatus: "unavailable", processingStatus: "unprocessed", resultStatus: "none" },
+    ];
+    const previewSelection: MapSelection = {
+      ...selection,
+      workouts: Array.from({ length: 6 }, (_, index) => ({
+        ...selection.workouts[0],
+        id: String.fromCharCode(68 + index).repeat(32),
+        startedAt: `2026-08-${String(8 - index).padStart(2, "0")}T12:00:00Z`,
+        localStartDate: `2026-08-${String(8 - index).padStart(2, "0")}`,
+        coverageReadiness: readinessStates[index],
+      })),
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/map-selections" && init?.method === "POST") return Promise.resolve(json(previewSelection));
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+    render(<MapPage config={config} preferences={{ ...preferences, coverageDiagnosticsEnabled: false }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    expect(await screen.findAllByRole("checkbox", { name: /Show Running/ })).toHaveLength(6);
+    const coverageMode = screen.getByRole("button", { name: "Coverage" });
+    await waitFor(() => expect(coverageMode).toBeEnabled());
+    fireEvent.click(coverageMode);
+
+    expect(document.querySelectorAll(".coverage-route-status--current")).toHaveLength(1);
+    expect(document.querySelectorAll(".coverage-route-status--stale")).toHaveLength(1);
+    expect(document.querySelectorAll(".coverage-route-status--pending")).toHaveLength(2);
+    expect(document.querySelectorAll(".coverage-route-status--failed")).toHaveLength(1);
+    expect(document.querySelectorAll(".coverage-route-status--unavailable")).toHaveLength(1);
+    expect(document.querySelector(".coverage-route-status--current")).toHaveTextContent("✓");
+    expect(document.querySelector(".coverage-route-status--failed")).toHaveTextContent("✗");
+    expect(document.querySelector(".coverage-route-status--unavailable")).toHaveTextContent("×");
+    expect(screen.getByText("Waiting for map data")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Waiting for coverage update")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Coverage update failed")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Map data not available")).toHaveAttribute("role", "tooltip");
+
+    fireEvent.click(screen.getByRole("button", { name: /Coverage current.*Running/ }));
+    expect(new URL(window.location.href).searchParams.get("workoutId")).toBe("D".repeat(32));
   });
 
   test("shows delayed exact road coverage details after one transient failure without exposing a raw focused route", async () => {
@@ -678,20 +905,22 @@ describe("MapPage", () => {
       if (path === `/api/map-selections/${selection.id}/coverage/path/${entityID}?generation=${selection.dataGeneration}`) {
         detailAttempts++;
         if (detailAttempts === 1) return Promise.resolve(json({ title: "Service Unavailable" }, 503));
-        return Promise.resolve(json({ entityId: entityID, entityKind: "path", name: "Juniper Road", localityName: null, regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "road", rangeWorkoutCount: 3, rangeFirstDate: "2025-10-25", rangeFirstWorkoutId: selection.workouts[0].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 8, allTimeFirstDate: "2024-04-02", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds, fitBounds: selection.bounds, geometry: { type: "LineString", coordinates: [[-105.2, 40], [-105.19, 40.01]] } }));
+        return Promise.resolve(json({ entityId: entityID, entityKind: "path", name: null, localityName: "Yosemite National Park", regionId: "geofabrik:norcal", regionName: "Northern California", broadClass: "cycleway", rangeWorkoutCount: 3, rangeFirstDate: "2025-10-25", rangeFirstWorkoutId: selection.workouts[0].id, rangeLatestDate: "2026-08-05", rangeLatestWorkoutId: selection.workouts[0].id, allTimeWorkoutCount: 8, allTimeFirstDate: "2024-04-02", allTimeFirstWorkoutId: selection.workouts[1].id, allTimeLatestDate: "2026-08-05", allTimeLatestWorkoutId: selection.workouts[0].id, bounds: selection.bounds, fitBounds: selection.bounds, geometry: { type: "LineString", coordinates: [[-105.2, 40], [-105.19, 40.01]] } }));
       }
       if (method === "DELETE") return Promise.resolve(json(undefined, 204));
       throw new Error(`Unexpected request ${method} ${path}`);
     });
-    render(<MapPage config={config} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
+    const diagnosticConfig = { ...config, features: { coverageMatcherDiagnostics: true } };
+    const view = render(<MapPage config={diagnosticConfig} preferences={productionPreferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
     await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
     const map = mapInstances.at(-1)!;
     map.queryRenderedFeatures.mockImplementation((_point: unknown, options: { layers?: string[] }) => options.layers?.some((layer) => layer.includes("coverage")) ? [
-      { properties: { entity_id: "D".repeat(32), entity_kind: "park", name: "Yosemite National Park" } },
-      { properties: { entity_id: entityID, entity_kind: "path", name: "Juniper Road" } },
+      { properties: { entityId: "D".repeat(32), entityKind: "park", name: "Yosemite National Park" } },
+      { properties: { entityId: entityID, entityKind: "path", name: null, localityName: "Yosemite National Park" } },
     ] : []);
     vi.useFakeTimers();
     act(() => map.handlers.get("mousemove")?.({ point: { x: 50, y: 50 }, lngLat: { lng: -105.2, lat: 40 } }));
+    expect(map.queryRenderedFeatures).toHaveBeenCalledWith([[47, 47], [53, 53]], { layers: ["private-workout-coverage-parks", "private-workout-coverage"] });
     act(() => vi.advanceTimersByTime(749));
     expect(popupInstances).toHaveLength(0);
     await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); await Promise.resolve(); });
@@ -699,10 +928,12 @@ describe("MapPage", () => {
     await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve(); });
     expect(popupInstances).toHaveLength(1);
     expect(detailAttempts).toBe(2);
-    expect(popupInstances[0].content).toHaveTextContent("Juniper RoadNorthern CaliforniaWorkouts3Earliest visit10/25/2025First visit ever4/2/2024Most recent visit8/5/2026Last visit ever8/5/2026");
+    expect(popupInstances[0].content).toHaveTextContent("Bike pathYosemite National ParkWorkouts3Earliest visit10/25/2025First visit ever4/2/2024Most recent visit8/5/2026Last visit ever8/5/2026");
     expect(map.setLayoutProperty).toHaveBeenCalledWith("private-workout-routes", "visibility", "none");
     expect(map.getLayer("coverage-diagnostic-raw-route")).toBeUndefined();
     vi.useRealTimers();
+    view.rerender(<MapPage config={diagnosticConfig} preferences={{ ...productionPreferences, coverageDiagnosticsEnabled: true }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} persistedFocusedWorkoutId={selection.workouts[0].id} onFocusedWorkoutChange={vi.fn()} />);
+    await waitFor(() => expect(popupInstances[0].remove).toHaveBeenCalled());
   });
 
   test("replaces a failed Road Coverage table with a compact retryable error dialog", async () => {
@@ -774,7 +1005,7 @@ describe("MapPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
     await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Unnamed path" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Pedestrian path" }));
     expect(await screen.findByRole("button", { name: "Replacement Path" })).toBeVisible();
     expect(listRequests).toBe(2);
     expect(screen.queryByText("That road coverage could not be shown on the map.")).not.toBeInTheDocument();
@@ -962,7 +1193,7 @@ describe("MapPage", () => {
     ));
     expect(map.fitBounds).toHaveBeenCalledTimes(1);
     const highlightLayer = map.addLayer.mock.calls.find((call: any[]) => call[0].id === "private-workout-route-hover")?.[0];
-    expect(highlightLayer.filter).toEqual(["==", ["get", "workout_id"], requested.id]);
+    expect(highlightLayer.filter).toEqual(["==", ["get", "workoutId"], requested.id]);
     expect(highlightLayer.paint["line-color"]).toBe("#c026ff");
     expect(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")).toHaveClass("is-hovered", "is-focused");
 		expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "nearest" });
@@ -1026,31 +1257,52 @@ describe("MapPage", () => {
     });
     render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
     const checkbox = await screen.findByRole("checkbox", { name: /Show Running/ });
-    const row = screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")!;
+    const focusButton = screen.getByRole("button", { name: /Running.*8\/08\/2026/ });
+    const row = focusButton.closest("li")!;
     vi.useFakeTimers();
-    fireEvent.pointerEnter(row);
+    fireEvent.pointerEnter(checkbox.closest("label")!);
+    act(() => vi.advanceTimersByTime(250));
+    expect(row).not.toHaveClass("is-hovered");
+    fireEvent.pointerLeave(checkbox.closest("label")!);
+    fireEvent.pointerEnter(focusButton);
     act(() => vi.advanceTimersByTime(249));
     expect(row).not.toHaveClass("is-hovered");
     act(() => vi.advanceTimersByTime(1));
     expect(row).toHaveClass("is-hovered");
+    fireEvent.pointerEnter(checkbox.closest("label")!);
+    expect(row).not.toHaveClass("is-hovered");
+    fireEvent.pointerEnter(focusButton);
+    act(() => vi.advanceTimersByTime(250));
+    expect(row).toHaveClass("is-hovered");
     fireEvent.click(checkbox);
     expect(checkbox).not.toBeChecked();
     expect(row).not.toHaveClass("is-hovered", "is-focused");
-    fireEvent.pointerLeave(row);
-    fireEvent.pointerEnter(row);
+    fireEvent.pointerLeave(focusButton);
+    fireEvent.pointerEnter(focusButton);
     act(() => vi.advanceTimersByTime(250));
     expect(row).not.toHaveClass("is-hovered", "is-focused");
     fireEvent.click(checkbox);
     expect(checkbox).toBeChecked();
-    expect(row).toHaveClass("is-focused");
-    const hikingRow = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")!;
-    fireEvent.pointerEnter(hikingRow);
+    expect(row).not.toHaveClass("is-focused");
+    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ });
+    const hikingRow = hikingButton.closest("li")!;
+    fireEvent.pointerEnter(hikingButton);
     act(() => vi.advanceTimersByTime(250));
     expect(hikingRow).toHaveClass("is-hovered");
     expect(row).not.toHaveClass("is-hovered", "is-focused");
-    fireEvent.pointerLeave(hikingRow);
+    // Crossing the inter-row gap leaves the button but remains inside the list.
+    act(() => vi.advanceTimersByTime(500));
+    expect(hikingRow).toHaveClass("is-hovered");
+    fireEvent.pointerEnter(focusButton);
+    act(() => vi.advanceTimersByTime(249));
+    expect(hikingRow).toHaveClass("is-hovered");
+    expect(row).not.toHaveClass("is-hovered");
+    act(() => vi.advanceTimersByTime(1));
+    expect(row).toHaveClass("is-hovered");
+    expect(hikingRow).not.toHaveClass("is-hovered");
+    fireEvent.pointerLeave(focusButton.closest("ol")!);
     expect(hikingRow).not.toHaveClass("is-hovered", "is-focused");
-    expect(row).toHaveClass("is-hovered", "is-focused");
+    expect(row).not.toHaveClass("is-hovered", "is-focused");
   });
 
   test("fits a clicked workout without making its checkbox the item action", async () => {
@@ -1061,15 +1313,24 @@ describe("MapPage", () => {
     const map = mapInstances.at(-1)!;
     await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-105.3, 39.8], [-105.1, 40.1]], { padding: 48, duration: 350 }));
     const fitsBeforeToggle = map.fitBounds.mock.calls.length;
+    const stylesBeforeToggle = map.setStyle.mock.calls.length;
     const user = userEvent.setup();
     await user.click(checkbox);
     expect(map.fitBounds).toHaveBeenCalledTimes(fitsBeforeToggle);
+    await user.click(checkbox);
+    expect(map.fitBounds).toHaveBeenCalledTimes(fitsBeforeToggle);
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeToggle);
+    expect(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")).not.toHaveClass("is-focused");
     await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
     expect(map.fitBounds).toHaveBeenLastCalledWith([[-105.3, 39.9], [-105.2, 40.1]], { padding: 48, duration: 350 });
     expect(map.setStyle).toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.objectContaining({ transformStyle: expect.any(Function) }));
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     expect(screen.getByRole("application", { name: "Workout route map" })).toHaveAttribute("aria-keyshortcuts", "Space");
+    expect(map.getLayer("private-workout-routes").paint["line-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
+    expect(map.getLayer("private-workout-route-markers").paint["circle-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
     map.setPaintProperty.mockClear();
+    map.setLayoutProperty.mockClear();
+    map.removeLayer.mockClear(); map.removeSource.mockClear();
     fireEvent.keyDown(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-routes", "line-opacity", 0));
     expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-markers", "circle-opacity", 0);
@@ -1081,10 +1342,18 @@ describe("MapPage", () => {
     fireEvent.keyUp(window, { key: " ", code: "Space" });
     await waitFor(() => expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-routes", "line-opacity", 0.82));
     expect(map.setPaintProperty).toHaveBeenCalledWith("private-workout-route-markers", "circle-opacity", 0.9);
+    for (const layer of ["private-workout-routes", "private-workout-route-markers", "private-workout-route-hover", "private-workout-route-marker-hover"]) {
+      expect(map.setLayoutProperty).not.toHaveBeenCalledWith(layer, "visibility", "none");
+      expect(map.removeLayer).not.toHaveBeenCalledWith(layer);
+    }
+    expect(map.removeSource).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Routes" }));
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
+    await user.click(checkbox);
+    expect(new URL(window.location.href).searchParams.has("workoutId")).toBe(false);
+    expect(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")).not.toHaveClass("is-focused");
   });
 
   test("replaces a stale empty source when a route is re-enabled", async () => {
@@ -1127,6 +1396,8 @@ describe("MapPage", () => {
     render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
     const user = userEvent.setup();
     const bulk = await screen.findByRole("checkbox", { name: "Select all workout routes" });
+    const map = mapInstances.at(-1)!;
+    const stylesBeforeVisibilityChanges = map.setStyle.mock.calls.length;
     expect(bulk).toBeChecked();
     expect(bulk.closest(".map-route-toolbar")).toBeInTheDocument();
     expect(bulk.closest(".map-route-toggle")).toBeInTheDocument();
@@ -1135,16 +1406,20 @@ describe("MapPage", () => {
     await user.click(bulk);
     await waitFor(() => expect(screen.getAllByRole("checkbox", { name: /Show / }).every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true));
     expect(bulk).not.toBeChecked();
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeVisibilityChanges);
 
     await user.click(bulk);
     await waitFor(() => expect(screen.getAllByRole("checkbox", { name: /Show / }).every((checkbox) => (checkbox as HTMLInputElement).checked)).toBe(true));
     expect(bulk).toBeChecked();
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeVisibilityChanges);
 
     await user.click(screen.getByRole("checkbox", { name: /Show Running/ }));
     expect(bulk).not.toBeChecked();
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeVisibilityChanges);
     await user.click(bulk);
     expect(screen.getAllByRole("checkbox", { name: /Show / }).every((checkbox) => (checkbox as HTMLInputElement).checked)).toBe(true);
     expect(bulk).toBeChecked();
+    expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeVisibilityChanges);
   });
 
   test("delays the two-line route popup and synchronizes the workout highlight", async () => {
@@ -1159,7 +1434,7 @@ describe("MapPage", () => {
     render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
     await screen.findByRole("checkbox", { name: /Show Running/ });
     const map = mapInstances.at(-1)!;
-    map.queryRenderedFeatures.mockReturnValue([{ properties: { workout_id: selection.workouts[0].id, sort_order: 1 } }]);
+    map.queryRenderedFeatures.mockReturnValue([{ properties: { workoutId: selection.workouts[0].id, sortOrder: 1 } }]);
     vi.useFakeTimers();
     act(() => map.handlers.get("mousemove")?.({ point: { x: 50, y: 50 }, lngLat: { lng: -105.2, lat: 40 } }));
     const row = screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li");
@@ -1185,6 +1460,82 @@ describe("MapPage", () => {
     vi.useRealTimers();
   });
 
+	test("keeps direction markers above recreated magenta layers when changing focused routes", async () => {
+		let selectionCount = 0;
+		vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+			const path = String(input); const method = init?.method ?? "GET";
+			if (path === "/api/map-selections" && method === "POST") {
+				selectionCount++;
+				return Promise.resolve(json({ ...selection,
+					routeTileUrl: `/api/map-selections/${selection.id}/route-tiles/${selectionCount}/{z}/{x}/{y}.pbf`,
+				}));
+			}
+			if (path.endsWith("/route/points") && method === "GET") return Promise.resolve(json(rawRoutePoints));
+			if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+			throw new Error(`Unexpected request ${method} ${path}`);
+		});
+		render(<MapPage config={config} preferences={{ ...preferences, coverageDiagnosticsEnabled: false }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+		await screen.findByRole("checkbox", { name: /Show Running/ });
+		const map = mapInstances.at(-1)!;
+		for (const name of [/Running.*8\/08\/2026/, /Hiking.*8\/01\/2026/, /Running.*8\/08\/2026/]) {
+			const previousSelections = selectionCount;
+			await userEvent.click(screen.getByRole("button", { name }));
+			// Changing the selected set still replaces the capability without losing overlay order.
+			const otherRoute = name.source.startsWith("Running") ? /Show Hiking/ : /Show Running/;
+			await userEvent.click(screen.getByRole("checkbox", { name: otherRoute }));
+			await waitFor(() => expect(selectionCount).toBeGreaterThan(previousSelections));
+			await waitFor(() => {
+				const layers = [...map.layers.keys()];
+				const direction = layers.indexOf("coverage-diagnostic-direction");
+				expect(direction).toBeGreaterThan(layers.indexOf("private-workout-route-hover"));
+				expect(layers).toContain("private-workout-route-marker-hover");
+				expect(direction).toBeGreaterThan(layers.indexOf("private-workout-route-marker-hover"));
+				expect(layers.indexOf("private-workout-route-finish")).toBeGreaterThan(direction);
+				expect(layers.indexOf("private-workout-route-start")).toBeGreaterThan(direction);
+			});
+			await userEvent.click(screen.getByRole("checkbox", { name: otherRoute }));
+		}
+		expect(mapInstances).toHaveLength(1);
+		expect(map.removeLayer).toHaveBeenCalledWith("private-workout-route-hover");
+	});
+
+	test("focuses selected raw routes without renewing capabilities or tearing down rendered layers", async () => {
+		const sameFamilyConfig = { ...config, baseMaps: { ...baseMaps, fallbackFamilyId: "outdoor" } };
+		const requests: string[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+			const path = String(input); const method = init?.method ?? "GET";
+			requests.push(`${method} ${path}`);
+			if (path === "/api/map-selections" && method === "POST") return Promise.resolve(json(selection));
+			if (path.endsWith("/route/points") && method === "GET") return Promise.resolve(json(rawRoutePoints));
+			if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+			throw new Error(`Unexpected request ${method} ${path}`);
+		});
+		render(<MapPage config={sameFamilyConfig} preferences={{ ...preferences, coverageDiagnosticsEnabled: false }} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+		await screen.findByRole("checkbox", { name: /Show Running/ });
+		const map = mapInstances.at(-1)!;
+		const routeSource = map.getSource("private-workout-routes");
+		const routeLayer = map.getLayer("private-workout-routes");
+		map.fitBounds.mockClear();
+		map.removeSource.mockClear(); map.removeLayer.mockClear(); map.setStyle.mockClear();
+		for (const [name, workout] of [[/Running.*8\/08\/2026/, selection.workouts[0]], [/Hiking.*8\/01\/2026/, selection.workouts[1]]] as const) {
+			await userEvent.click(screen.getByRole("button", { name }));
+			await waitFor(() => expect(map.getLayer("coverage-diagnostic-direction")).toBeTruthy());
+			expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity-transition"]).toEqual({ duration: 0, delay: 0 });
+			expect(map.fitBounds).toHaveBeenLastCalledWith(
+				[[workout.bounds.minimumLongitude, workout.bounds.minimumLatitude], [workout.bounds.maximumLongitude, workout.bounds.maximumLatitude]],
+				{ padding: 48, duration: 350 },
+			);
+			expect(map.setFilter).toHaveBeenCalledWith("private-workout-route-hover", ["==", ["get", "workoutId"], workout.id]);
+			expect(map.getSource("private-workout-routes")).toBe(routeSource);
+			expect(map.getLayer("private-workout-routes")).toBe(routeLayer);
+		}
+		expect(requests.filter((request) => request === "POST /api/map-selections")).toHaveLength(1);
+		expect(map.removeSource).not.toHaveBeenCalledWith("private-workout-routes");
+		expect(map.removeLayer).not.toHaveBeenCalledWith("private-workout-route-hover");
+		expect(map.setStyle).not.toHaveBeenCalled();
+		expect(mapInstances).toHaveLength(1);
+	});
+
 	test("immediately focuses a map-clicked route and centers its list item", async () => {
 		const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 		const requests: string[] = [];
@@ -1199,7 +1550,7 @@ describe("MapPage", () => {
 		const hikingCheckbox = await screen.findByRole("checkbox", { name: /Show Hiking/ });
 		const map = mapInstances.at(-1)!;
 		map.fitBounds.mockClear(); scrollIntoView.mockClear();
-		map.queryRenderedFeatures.mockReturnValue([{ properties: { workout_id: selection.workouts[1].id, sort_order: 2 } }]);
+		map.queryRenderedFeatures.mockReturnValue([{ properties: { workoutId: selection.workouts[1].id, sortOrder: 2 } }]);
 		act(() => map.handlers.get("click")?.({ point: { x: 80, y: 60 } }));
 		const row = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")!;
 		await waitFor(() => expect(row).toHaveClass("is-hovered", "is-focused"));
@@ -1277,10 +1628,29 @@ describe("MapPage", () => {
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", { type: "vector", tiles: [`${window.location.origin}${selection.routeTileUrl}`] });
     mapBehavior.emitSetStyleLoad = true;
     act(() => vi.advanceTimersByTime(4999));
-    expect(map.setStyle).not.toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.anything());
+    expect(map.setStyle).not.toHaveBeenLastCalledWith("https://tiles.example.test/road-dark.json", expect.anything());
     act(() => vi.advanceTimersByTime(1));
-    expect(map.setStyle).toHaveBeenLastCalledWith("https://tiles.example.test/outdoor-dark.json", expect.objectContaining({ transformStyle: expect.any(Function) }));
+    expect(map.setStyle).toHaveBeenLastCalledWith("https://tiles.example.test/road-dark.json", expect.objectContaining({ transformStyle: expect.any(Function) }));
     expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
+  });
+
+  test("clears a pending base map retry when the provider style loads before the timer", async () => {
+    mapBehavior.emitInitialStyleLoad = false;
+    mapBehavior.emitSetStyleLoad = false;
+    mapBehavior.styleLoaded = false;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(selection));
+    render(<MapPage config={config} preferences={preferences} csrfToken="csrf-map" dateRange="last30Days" onDateRangeSelected={vi.fn()} />);
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    const map = mapInstances.at(-1)!;
+    vi.useFakeTimers();
+    act(() => map.handlers.get("error")?.());
+    expect(screen.getByText(/The public base map could not be loaded/)).toBeInTheDocument();
+    const callsBeforeRecovery = map.setStyle.mock.calls.length;
+    mapBehavior.emitSetStyleLoad = true;
+    act(() => map.setStyle("https://tiles.example.test/road-dark.json"));
+    expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(5000));
+    expect(map.setStyle).toHaveBeenCalledTimes(callsBeforeRecovery + 1);
   });
 
 	test("turns a private route tile 401 into session expiration", async () => {
