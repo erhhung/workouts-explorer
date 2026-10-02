@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 type testDatabases struct {
@@ -4275,6 +4277,10 @@ func TestParkOwnedUnnamedCoverageReads(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := tx.Exec(db.ctx, `UPDATE app.workout_coverage_states SET processing_state='stale'
+		WHERE account_id=$1 AND workout_id=$2`, account, parkOnlyWorkout); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.coverage_paths(account_id,logical_path_id,locality_relation_id,
 		locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
 		($1,$2,101,1,'Test City',NULL,NULL,'footway'),
@@ -4422,13 +4428,13 @@ func TestParkOwnedUnnamedCoverageReads(t *testing.T) {
 	}
 }
 
-func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
+func TestRegionalParkCoveragePathContext(t *testing.T) {
 	db := openTestDatabases(t)
 	account, workout := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	requester := accountRequester(t, db, account)
-	parkID := uuid.Must(uuid.NewV7())
-	outsidePath, unnamedPath, cityPath := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	outsideSegment, unnamedSegment, citySegment := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	parkID, stateParkID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	outsidePath, unnamedPath, cityPath, statePath := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	outsideSegment, unnamedSegment, citySegment, stateSegment := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	digest := bytes.Repeat([]byte{0x9e}, 32)
 
 	tx := beginAccount(t, db.ctx, db.migration, account)
@@ -4447,7 +4453,7 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
 		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
 		VALUES($1,$2,4,-122.001,37,-122,37.001,false,
-		ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0006 37.0006,-122.0008 37.0008))',4326))`, account, workout); err != nil {
+		ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0006 37.0006,-122.0008 37.0008),(-122.0001 37.0006,-122.0003 37.0008))',4326))`, account, workout); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
@@ -4463,10 +4469,12 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 		locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
 		($1,$2,NULL,NULL,NULL,'Yosemite Falls Trail','yosemite falls trail','trail'),
 		($1,$3,NULL,NULL,NULL,NULL,NULL,'trail'),
-		($1,$4,101,1,'Actual City','Valley Road','valley road','road')`, account, outsidePath, unnamedPath, cityPath); err != nil {
+		($1,$4,101,1,'Mariposa County','Valley Road','valley road','road'),
+		($1,$5,202,1,'Marin County','North San Pedro Road','north san pedro road','road')`, account, outsidePath, unnamedPath, cityPath, statePath); err != nil {
 		t.Fatal(err)
 	}
 	parkTags := fmt.Sprintf(`{"workouts:park_id":"%s","workouts:park_kind":"national_park","workouts:park_name":"Yosemite National Park","workouts:park_normalized_name":"yosemite national park","workouts:park_source_type":"relation","workouts:park_source_id":1643367,"workouts:park_source_version":42}`, parkID)
+	stateParkTags := fmt.Sprintf(`{"workouts:park_id":"%s","workouts:park_kind":"state_park","workouts:park_name":"China Camp State Park","workouts:park_normalized_name":"china camp state park","workouts:park_source_type":"relation","workouts:park_source_id":181735,"workouts:park_source_version":36}`, stateParkID)
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.path_segments(account_id,region_id,generation_id,physical_segment_id,
 		logical_path_id,derivation_version,locality_relation_id,source_way_id,source_way_version,name,normalized_name,
 		highway,broad_class,tags,segment_meters,geom) VALUES
@@ -4475,16 +4483,20 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 		($1,'geofabrik:test',1,$4,$5,4,NULL,2002,1,NULL,NULL,'path','trail',$8::jsonb,30,
 		 ST_GeomFromText('LINESTRING(-122.0003 37.0003,-122.0005 37.0005)',4326)),
 		($1,'geofabrik:test',1,$6,$7,4,101,2003,1,'Valley Road','valley road','residential','road',$8::jsonb,30,
-		 ST_GeomFromText('LINESTRING(-122.0006 37.0006,-122.0008 37.0008)',4326))`, account,
-		outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath, parkTags); err != nil {
+		 ST_GeomFromText('LINESTRING(-122.0006 37.0006,-122.0008 37.0008)',4326)),
+		($1,'geofabrik:test',1,$9,$10,4,202,2004,1,'North San Pedro Road','north san pedro road','service','road',$11::jsonb,30,
+		 ST_GeomFromText('LINESTRING(-122.0001 37.0006,-122.0003 37.0008)',4326))`, account,
+		outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath, parkTags,
+		stateSegment, statePath, stateParkTags); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
 		region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom) VALUES
 		($1,$2,$3,'geofabrik:test',1,$4,'2026-09-15T08:05:00Z',0,30,ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002))',4326)),
 		($1,$2,$5,'geofabrik:test',1,$6,'2026-09-15T08:10:00Z',1,30,ST_GeomFromText('MULTILINESTRING((-122.0003 37.0003,-122.0005 37.0005))',4326)),
-		($1,$2,$7,'geofabrik:test',1,$8,'2026-09-15T08:15:00Z',2,30,ST_GeomFromText('MULTILINESTRING((-122.0006 37.0006,-122.0008 37.0008))',4326))`,
-		account, workout, outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath); err != nil {
+		($1,$2,$7,'geofabrik:test',1,$8,'2026-09-15T08:15:00Z',2,30,ST_GeomFromText('MULTILINESTRING((-122.0006 37.0006,-122.0008 37.0008))',4326)),
+		($1,$2,$9,'geofabrik:test',1,$10,'2026-09-15T08:20:00Z',3,30,ST_GeomFromText('MULTILINESTRING((-122.0001 37.0006,-122.0003 37.0008))',4326))`,
+		account, workout, outsideSegment, outsidePath, unnamedSegment, unnamedPath, citySegment, cityPath, stateSegment, statePath); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(db.ctx); err != nil {
@@ -4502,6 +4514,14 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 	}
 	if parkKind != "national_park" || localityID != nil || localityVersion != nil || localityName != nil {
 		t.Fatalf("national park persistence kind/locality=%q/%v/%v/%v", parkKind, localityID, localityVersion, localityName)
+	}
+	if err := db.migration.QueryRow(db.ctx, `SELECT park_kind,locality_relation_id,locality_relation_version,locality_name
+		FROM app.coverage_parks WHERE account_id=$1 AND park_id=$2`, account, stateParkID).Scan(
+		&parkKind, &localityID, &localityVersion, &localityName); err != nil {
+		t.Fatal(err)
+	}
+	if parkKind != "state_park" || localityID != nil || localityVersion != nil || localityName != nil {
+		t.Fatalf("state park persistence kind/locality=%q/%v/%v/%v", parkKind, localityID, localityVersion, localityName)
 	}
 
 	var generation int64
@@ -4546,17 +4566,23 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 		places[id], kinds[id] = place, kind
 	}
 	rows.Close()
-	if _, exists := places[unnamedPath]; exists {
-		t.Fatal("national-park-owned unnamed path is present in the coverage list")
+	if places[unnamedPath] == nil || *places[unnamedPath] != "Yosemite National Park" || kinds[unnamedPath] != "path" {
+		t.Fatalf("national park unnamed path context=%v kind=%q", places[unnamedPath], kinds[unnamedPath])
 	}
 	if places[outsidePath] == nil || *places[outsidePath] != "Yosemite National Park" || kinds[outsidePath] != "path" {
 		t.Fatalf("outside named path context=%v kind=%q", places[outsidePath], kinds[outsidePath])
 	}
-	if places[cityPath] == nil || *places[cityPath] != "Actual City" {
-		t.Fatalf("municipal path context=%v, want Actual City", places[cityPath])
+	if places[cityPath] == nil || *places[cityPath] != "Yosemite National Park" {
+		t.Fatalf("national park road context=%v", places[cityPath])
+	}
+	if places[statePath] == nil || *places[statePath] != "China Camp State Park" {
+		t.Fatalf("state park road context=%v", places[statePath])
 	}
 	if place, exists := places[parkID]; !exists || place != nil || kinds[parkID] != "park" {
 		t.Fatalf("national park entity context=%v exists=%t kind=%q", place, exists, kinds[parkID])
+	}
+	if place, exists := places[stateParkID]; !exists || place != nil || kinds[stateParkID] != "park" {
+		t.Fatalf("state park entity context=%v exists=%t kind=%q", place, exists, kinds[stateParkID])
 	}
 	var detailPlace string
 	if err := tx.QueryRow(db.ctx, `SELECT locality_name FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'path',$5)`,
@@ -4577,10 +4603,717 @@ func TestNationalParkCoverageWithoutMunicipality(t *testing.T) {
 		t.Fatal(err)
 	}
 	compact := func(id uuid.UUID) []byte { return []byte(strings.ToUpper(strings.ReplaceAll(id.String(), "-", ""))) }
-	if bytes.Contains(tile, compact(unnamedPath)) || !bytes.Contains(tile, compact(outsidePath)) ||
-		!bytes.Contains(tile, compact(cityPath)) || !bytes.Contains(tile, []byte("Yosemite National Park")) {
-		t.Fatal("national park MVT identity or unnamed suppression contract failed")
+	if !bytes.Contains(tile, compact(unnamedPath)) || !bytes.Contains(tile, compact(outsidePath)) ||
+		!bytes.Contains(tile, compact(cityPath)) || !bytes.Contains(tile, compact(statePath)) ||
+		!bytes.Contains(tile, []byte("Yosemite National Park")) || !bytes.Contains(tile, []byte("China Camp State Park")) {
+		t.Fatal("regional park MVT path identity or context contract failed")
 	}
+}
+
+func TestEducationCoverageIdentityReads(t *testing.T) {
+	db := openTestDatabases(t)
+	account := uuid.Must(uuid.NewV7())
+	requester := accountRequester(t, db, account)
+	campus, pathA, pathB, excludedPath := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	digest := bytes.Repeat([]byte{0xae}, 32)
+	workouts := make([]uuid.UUID, 9)
+	for i := range workouts {
+		workouts[i] = uuid.Must(uuid.NewV7())
+	}
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	defer tx.Rollback(db.ctx)
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	for i, workout := range workouts {
+		date := "2026-09-15"
+		if i == 8 {
+			date = "2026-09-01"
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+			provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+			VALUES($1,$2,$3,$4,$5,$6,$7,'Outdoor Run',$8::date+time '08:00',$8::date+time '09:00',$8,3600)`,
+			workout, account, uuid.New(), uuid.New(), uuid.New(), fmt.Sprintf("education-coverage-%d", i), digest, date); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, workout := range workouts {
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+			minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+			VALUES($1,$2,6,-122.001,37,-122,37.001,false,
+			ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0007 37.0007,-122.0009 37.0009))',4326))`,
+			account, workout); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
+			route_input_sha256,readiness_state,map_data_ready_at,processing_state,applied_route_input_revision,
+			applied_route_input_sha256,applied_rules_version,applied_sampling_version,applied_path_policy_version,
+			applied_generations,processing_finished_at)
+			VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp(),'current',1,$3,'coverage-experimental-v1',
+			'coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82','[{"regionId":"geofabrik:test","generation":1}]',transaction_timestamp())`,
+			account, workout, digest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.coverage_paths(account_id,logical_path_id,locality_relation_id,
+		locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
+		($1,$2,101,1,'Test City','Campus Approach','campus approach','footway'),
+		($1,$3,101,1,'Test City','Campus Trail','campus trail','trail'),
+		($1,$4,101,1,'Test City',NULL,NULL,'footway')`, account, pathA, pathB, excludedPath); err != nil {
+		t.Fatal(err)
+	}
+	educationTags := fmt.Sprintf(`{"workouts:education_id":"%s","workouts:education_name":"Fixture School"}`, campus)
+	segments := []struct {
+		id      uuid.UUID
+		path    uuid.UUID
+		highway string
+		tags    string
+		line    string
+	}{
+		{uuid.New(), pathA, "footway", educationTags, "LINESTRING(-122 37,-122.0002 37.0002)"},
+		{uuid.New(), pathB, "path", educationTags, "LINESTRING(-122.0003 37.0003,-122.0005 37.0005)"},
+		{uuid.New(), pathA, "footway", "{}", "LINESTRING(-122.0007 37.0007,-122.0009 37.0009)"},
+		{uuid.New(), pathA, "service", strings.TrimSuffix(educationTags, "}") + `,"service":"driveway"}`, "LINESTRING(-122.001 37,-122.0012 37.0002)"},
+		{uuid.New(), pathA, "service", strings.TrimSuffix(educationTags, "}") + `,"service":"parking_aisle"}`, "LINESTRING(-122.0013 37,-122.0015 37.0002)"},
+		{uuid.New(), pathA, "footway", strings.TrimSuffix(educationTags, "}") + `,"amenity":"parking"}`, "LINESTRING(-122.0016 37,-122.0018 37.0002)"},
+		{uuid.New(), excludedPath, "footway", strings.TrimSuffix(educationTags, "}") + fmt.Sprintf(
+			`,"workouts:park_id":"%s","workouts:park_kind":"local_park","workouts:park_name":"Excluded Park","workouts:park_normalized_name":"excluded park"}`, uuid.New()),
+			"LINESTRING(-122.0019 37,-122.0021 37.0002)"},
+	}
+	for i, segment := range segments {
+		if _, err := tx.Exec(db.ctx, `INSERT INTO app.path_segments(account_id,region_id,generation_id,physical_segment_id,
+			logical_path_id,derivation_version,locality_relation_id,source_way_id,source_way_version,name,normalized_name,
+			highway,broad_class,tags,segment_meters,geom)
+			SELECT $1,'geofabrik:test',1,$2,path.logical_path_id,4,101,$3,1,path.name,path.normalized_name,$4,path.broad_class,$5::jsonb,30,
+			ST_GeomFromText($6,4326) FROM app.coverage_paths path WHERE path.account_id=$1 AND path.logical_path_id=$7`,
+			account, segment.id, int64(3001+i), segment.highway, segment.tags, segment.line, segment.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Workout 0 visits both campus paths plus the outside part of path A. The
+	// other visits distinguish campus union counts from raw-path/excluded counts.
+	visits := [][]int{{0, 1, 2}, {0}, {1}, {2}, {3}, {4}, {5}, {6}, {0, 1}}
+	for i, indices := range visits {
+		for order, index := range indices {
+			segment := segments[index]
+			if _, err := tx.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
+				region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom)
+				VALUES($1,$2,$3,'geofabrik:test',1,$4,'2026-09-15T08:05:00Z',$5,30,ST_Multi(ST_GeomFromText($6,4326)))`,
+				account, workouts[i], segment.id, segment.path, order, segment.line); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	var generation int64
+	if err := db.migration.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, account).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := uuid.New()
+	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,expires_at)
+		VALUES($1,$2,'bearer',$3,transaction_timestamp()+interval '1 hour')`, sessionID, requester, bytes.Repeat([]byte{0x5f}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	compact := func(id uuid.UUID) string { return strings.ToUpper(strings.ReplaceAll(id.String(), "-", "")) }
+	for _, focusedIndex := range []int{0, 1} {
+		t.Run(fmt.Sprintf("checked-workout-%d", focusedIndex), func(t *testing.T) {
+			selectionID := uuid.New()
+			setup := beginAccount(t, db.ctx, db.migration, account)
+			defer setup.Rollback(db.ctx)
+			if _, err := setup.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,
+				start_date,end_date,selection_kind,focused_workout_id)
+				VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes','2026-09-15','2026-09-15','explicit_subset',$5)`,
+				selectionID, account, sessionID, generation, workouts[focusedIndex]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := setup.Exec(db.ctx, `INSERT INTO app.map_selection_workouts(selection_id,account_id,workout_id,sort_order)
+				VALUES($1,$2,$3,1)`, selectionID, account, workouts[focusedIndex]); err != nil {
+				t.Fatal(err)
+			}
+			if err := setup.Commit(db.ctx); err != nil {
+				t.Fatal(err)
+			}
+			read := beginAccount(t, db.ctx, db.api, account)
+			defer read.Rollback(db.ctx)
+			var name, class string
+			var rangeCount, allCount int64
+			if err := read.QueryRow(db.ctx, `SELECT name,broad_class,range_workout_count,all_time_workout_count
+				FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'path',$5)`,
+				account, sessionID, selectionID, generation, campus).Scan(&name, &class, &rangeCount, &allCount); err != nil {
+				t.Fatalf("campus hover detail: %v", err)
+			}
+			if name != "Fixture School" || class != "other" || rangeCount != 3 || allCount != 4 {
+				t.Fatalf("campus detail name/class/range/all=%q/%q/%d/%d", name, class, rangeCount, allCount)
+			}
+			for _, expected := range []struct {
+				id   uuid.UUID
+				line string
+			}{
+				{campus, "MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005))"},
+				{pathA, "LINESTRING(-122.0007 37.0007,-122.0009 37.0009)"},
+			} {
+				var geometryMatches bool
+				if err := read.QueryRow(db.ctx, `SELECT ST_Equals(ST_GeomFromGeoJSON(geometry),ST_GeomFromText($6,4326))
+					FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'path',$5)`,
+					account, sessionID, selectionID, generation, expected.id, expected.line).Scan(&geometryMatches); err != nil {
+					t.Fatal(err)
+				}
+				if !geometryMatches {
+					t.Fatalf("detail %s includes geometry from another identity or excluded segment", expected.id)
+				}
+			}
+			var outsideCount, rawBCount int64
+			if err := read.QueryRow(db.ctx, `SELECT max(range_workout_count) FILTER (WHERE entity_id=$5),
+				count(*) FILTER (WHERE entity_id=$6) FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)`,
+				account, sessionID, selectionID, generation, pathA, pathB).Scan(&outsideCount, &rawBCount); err != nil {
+				t.Fatal(err)
+			}
+			if outsideCount != 2 || rawBCount != 0 {
+				t.Fatalf("outside path count/raw school path B rows=%d/%d", outsideCount, rawBCount)
+			}
+			var focus []byte
+			if err := read.QueryRow(db.ctx, `SELECT app.map_selection_coverage_focus($1,$2,$3,$4,$5)`,
+				account, sessionID, selectionID, generation, workouts[focusedIndex]).Scan(&focus); err != nil {
+				t.Fatal(err)
+			}
+			var focusUnion, outsideFocus bool
+			var featureCount int
+			campusGeometry := "MULTILINESTRING((-122 37,-122.0002 37.0002))"
+			if focusedIndex == 0 {
+				campusGeometry = "MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005))"
+			}
+			if err := read.QueryRow(db.ctx, `SELECT count(*),
+				COALESCE(bool_or(feature->'properties'->>'entityKind'='path' AND feature->'properties'->>'countBucket'='3'
+				AND ST_Equals(ST_GeomFromGeoJSON(feature->'geometry'),ST_GeomFromText($2,4326))),false),
+				COALESCE(bool_or(feature->'properties'->>'countBucket'='2' AND ST_Equals(ST_GeomFromGeoJSON(feature->'geometry'),
+				ST_GeomFromText('LINESTRING(-122.0007 37.0007,-122.0009 37.0009)',4326))),false)
+				FROM jsonb_array_elements($1::jsonb->'features') feature`, focus, campusGeometry).Scan(&featureCount, &focusUnion, &outsideFocus); err != nil {
+				t.Fatal(err)
+			}
+			wantFeatures := 1
+			if focusedIndex == 0 {
+				wantFeatures = 2
+			}
+			if featureCount != wantFeatures || !focusUnion || outsideFocus != (focusedIndex == 0) {
+				t.Fatalf("focus features/campus union bucket 3/outside bucket 2=%d/%t/%t: %s", featureCount, focusUnion, outsideFocus, focus)
+			}
+			if err := read.Commit(db.ctx); err != nil {
+				t.Fatal(err)
+			}
+			var tile, expectedCampusTile, expectedOutsideTile []byte
+			if err := db.tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt(14,2639,6377,json_build_object(
+				'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
+				account, sessionID, selectionID, generation).Scan(&tile); err != nil {
+				t.Fatal(err)
+			}
+			// Encode independent, explicit expected geometries, then compare decoded
+			// feature properties and geometry commands rather than string presence.
+			for _, expected := range []struct {
+				line string
+				tile *[]byte
+			}{{campusGeometry, &expectedCampusTile}, {"LINESTRING(-122.0007 37.0007,-122.0009 37.0009)", &expectedOutsideTile}} {
+				if err := db.migration.QueryRow(db.ctx, `SELECT ST_AsMVT(rows,'expected',4096,'geometry') FROM (
+					SELECT ST_AsMVTGeom(ST_Transform(ST_GeomFromText($1,4326),3857),ST_TileEnvelope(14,2639,6377)::box2d,4096,64,true) geometry) rows`,
+					expected.line).Scan(expected.tile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			layers := decodeCoverageMVT(t, tile)
+			expectedCampus := decodeCoverageMVT(t, expectedCampusTile)["expected"][0].geometry
+			expectedOutside := decodeCoverageMVT(t, expectedOutsideTile)["expected"][0].geometry
+			for _, layerName := range []string{"coverage", "coverage_focus"} {
+				features := layers[layerName]
+				if len(features) != wantFeatures {
+					t.Fatalf("%s feature count=%d, want %d", layerName, len(features), wantFeatures)
+				}
+				campusFound := false
+				for _, feature := range features {
+					properties := feature.properties
+					switch properties["entityId"] {
+					case compact(campus):
+						campusFound = true
+						if properties["name"] != "Fixture School" || properties["broadClass"] != "other" ||
+							properties["entityKind"] != "path" || properties["rangeWorkoutCount"] != uint64(3) ||
+							properties["countBucket"] != uint64(3) || feature.geometry != expectedCampus {
+							t.Fatalf("%s campus properties/geometry mismatch: %v", layerName, properties)
+						}
+					case compact(pathA):
+						if focusedIndex != 0 || properties["name"] != "Campus Approach" || properties["broadClass"] != "footway" ||
+							properties["rangeWorkoutCount"] != uint64(2) || feature.geometry != expectedOutside {
+							t.Fatalf("%s raw path A includes school visits/geometry: %v", layerName, properties)
+						}
+					default:
+						t.Fatalf("%s contains underlying school/excluded path: %v", layerName, properties)
+					}
+				}
+				if !campusFound {
+					t.Fatalf("%s missing campus UUID", layerName)
+				}
+			}
+		})
+	}
+}
+
+func TestCoverageFacilityKindsReads(t *testing.T) {
+	// Education kinds come from osm/validate.sql; park kinds also have a CHECK
+	// constraint in migration 018. Named roads and regional park paths stay paths.
+	for _, kind := range []string{"school", "college", "university", "education",
+		"local_park", "nature_reserve", "protected_area", "state_park", "national_park"} {
+		t.Run(kind, func(t *testing.T) {
+			db := openTestDatabases(t)
+			education := slices.Contains([]string{"school", "college", "university", "education"}, kind)
+			regional := kind == "state_park" || kind == "national_park"
+			account, facility := uuid.Must(uuid.NewV7()), uuid.New()
+			requester := accountRequester(t, db, account)
+			facilityName := "Fixture " + strings.ReplaceAll(kind, "_", " ")
+			tagPrefix := "workouts:park_"
+			if education {
+				tagPrefix = "workouts:education_"
+			}
+			tags, err := json.Marshal(map[string]any{
+				tagPrefix + "id": facility.String(), tagPrefix + "kind": kind, tagPrefix + "name": facilityName,
+				tagPrefix + "normalized_name": strings.ToLower(facilityName), tagPrefix + "source_type": "relation",
+				tagPrefix + "source_id": 4001, tagPrefix + "source_version": 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pathA, pathB, road := uuid.New(), uuid.New(), uuid.New()
+			workouts := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+			digest := bytes.Repeat([]byte{0xbe}, 32)
+			setup := beginAccount(t, db.ctx, db.migration, account)
+			defer setup.Rollback(db.ctx)
+			if _, err := setup.Exec(db.ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+				t.Fatal(err)
+			}
+			for i, workout := range workouts {
+				if _, err := setup.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+					provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+					VALUES($1,$2,$3,$4,$5,$6,$7,'Outdoor Run','2026-09-15T08:00:00Z','2026-09-15T09:00:00Z','2026-09-15',3600)`,
+					workout, account, uuid.New(), uuid.New(), uuid.New(), fmt.Sprintf("facility-%s-%d", kind, i), digest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := setup.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
+				t.Fatal(err)
+			}
+			for _, workout := range workouts {
+				if _, err := setup.Exec(db.ctx, `INSERT INTO app.workout_routes(account_id,workout_id,point_count,
+					minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude,has_complete_altitude,route)
+					VALUES($1,$2,6,-122.003,37,-122,37.001,false,
+					ST_GeomFromText('MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005),(-122.0007 37.0007,-122.0009 37.0009))',4326))`,
+					account, workout); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := setup.Exec(db.ctx, `INSERT INTO app.workout_coverage_states(account_id,workout_id,route_input_revision,
+					route_input_sha256,readiness_state,map_data_ready_at,processing_state,applied_route_input_revision,
+					applied_route_input_sha256,applied_rules_version,applied_sampling_version,applied_path_policy_version,
+					applied_generations,processing_finished_at)
+					VALUES($1,$2,1,$3,'map_data_ready',transaction_timestamp(),'current',1,$3,'coverage-experimental-v1',
+					'coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82','[{"regionId":"geofabrik:test","generation":1}]',transaction_timestamp())`,
+					account, workout, digest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var namedPath *string
+			pathBClass := "trail"
+			controlName, roadTags := "Control Road", "{}"
+			if education {
+				controlName, roadTags = "Campus Road", `{"name":"Campus Road"}`
+			}
+			if !education {
+				name := "Named Park Road"
+				namedPath, pathBClass = &name, "road"
+			}
+			if _, err := setup.Exec(db.ctx, `INSERT INTO app.coverage_paths(account_id,logical_path_id,locality_relation_id,
+				locality_relation_version,locality_name,name,normalized_name,broad_class) VALUES
+				($1,$2,101,1,'Test City',NULL,NULL,'trail'),
+				($1,$3,101,1,'Test City',$5,lower($5),$6),
+				($1,$4,101,1,'Test City',$7,lower($7),'road')`, account, pathA, pathB, road, namedPath, pathBClass, controlName); err != nil {
+				t.Fatal(err)
+			}
+			excludedPrefix := "{"
+			if education {
+				excludedPrefix = strings.TrimSuffix(string(tags), "}") + ","
+			}
+			segments := []struct {
+				id      uuid.UUID
+				path    uuid.UUID
+				highway string
+				tags    string
+				line    string
+			}{
+				{uuid.New(), pathA, "path", string(tags), "LINESTRING(-122 37,-122.0002 37.0002)"},
+				{uuid.New(), pathB, "path", string(tags), "LINESTRING(-122.0003 37.0003,-122.0005 37.0005)"},
+				{uuid.New(), road, "residential", roadTags, "LINESTRING(-122.0007 37.0007,-122.0009 37.0009)"},
+				{uuid.New(), road, "service", excludedPrefix + `"service":"driveway"}`, "LINESTRING(-122.0011 37,-122.0013 37.0002)"},
+				{uuid.New(), road, "service", excludedPrefix + `"service":"parking_aisle"}`, "LINESTRING(-122.0015 37,-122.0017 37.0002)"},
+				{uuid.New(), road, "path", excludedPrefix + `"amenity":"parking"}`, "LINESTRING(-122.0019 37,-122.0021 37.0002)"},
+			}
+			for i, segment := range segments {
+				if _, err := setup.Exec(db.ctx, `INSERT INTO app.path_segments(account_id,region_id,generation_id,physical_segment_id,
+					logical_path_id,derivation_version,locality_relation_id,source_way_id,source_way_version,name,normalized_name,
+					highway,broad_class,tags,segment_meters,geom)
+					SELECT $1,'geofabrik:test',1,$2,path.logical_path_id,16,101,$3,1,
+					CASE WHEN $5::jsonb ? 'workouts:education_id' THEN NULL ELSE path.name END,
+					CASE WHEN $5::jsonb ? 'workouts:education_id' THEN NULL ELSE path.normalized_name END,
+					$4,path.broad_class,$5::jsonb,30,ST_GeomFromText($6,4326)
+					FROM app.coverage_paths path WHERE path.account_id=$1 AND path.logical_path_id=$7`,
+					account, segment.id, int64(4001+i), segment.highway, segment.tags, segment.line, segment.path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if education {
+				// Original OSM names prevent education attribution even inside campus.
+				var originallyNamedCampusRoad bool
+				if err := setup.QueryRow(db.ctx, `SELECT NOT (tags ? 'workouts:education_id')
+					AND tags->>'name'='Campus Road' AND name='Campus Road' AND normalized_name='campus road'
+					AND ST_Covers(ST_GeomFromText(
+					'POLYGON((-122.001 36.9999,-121.9999 36.9999,-121.9999 37.001,-122.001 37.001,-122.001 36.9999))',4326),geom)
+					FROM app.path_segments WHERE account_id=$1 AND physical_segment_id=$2`,
+					account, segments[2].id).Scan(&originallyNamedCampusRoad); err != nil {
+					t.Fatal(err)
+				}
+				if !originallyNamedCampusRoad {
+					t.Fatal("named campus road must retain its original name without education attribution inside campus bounds")
+				}
+			}
+			// Three distinct facility visits, including one visiting both logical
+			// paths. The excluded-only workout must not inflate any path count.
+			for i, indices := range [][]int{{0, 1, 2, 3, 4, 5}, {0}, {1}, {3, 4, 5}} {
+				for order, index := range indices {
+					segment := segments[index]
+					if _, err := setup.Exec(db.ctx, `INSERT INTO app.workout_segment_matches(account_id,workout_id,physical_segment_id,
+						region_id,generation_id,logical_path_id,first_traversed_at,first_route_order,covered_meters,geom)
+						VALUES($1,$2,$3,'geofabrik:test',1,$4,'2026-09-15T08:05:00Z',$5,30,ST_Multi(ST_GeomFromText($6,4326)))`,
+						account, workouts[i], segment.id, segment.path, order, segment.line); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := setup.Commit(db.ctx); err != nil {
+				t.Fatal(err)
+			}
+			var generation int64
+			if err := db.migration.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, account).Scan(&generation); err != nil {
+				t.Fatal(err)
+			}
+			sessionID, selectionID := uuid.New(), uuid.New()
+			verifier := make([]byte, 32)
+			if _, err := rand.Read(verifier); err != nil {
+				t.Fatal(err)
+			}
+			selection := beginAccount(t, db.ctx, db.migration, account)
+			defer selection.Rollback(db.ctx)
+			if _, err := selection.Exec(db.ctx, `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,expires_at)
+				VALUES($1,$2,'bearer',$3,transaction_timestamp()+interval '1 hour')`, sessionID, requester, verifier); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := selection.Exec(db.ctx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,
+				start_date,end_date,selection_kind,focused_workout_id)
+				VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes','2026-09-15','2026-09-15','explicit_subset',$5)`,
+				selectionID, account, sessionID, generation, workouts[0]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := selection.Exec(db.ctx, `INSERT INTO app.map_selection_workouts(selection_id,account_id,workout_id,sort_order)
+				VALUES($1,$2,$3,1)`, selectionID, account, workouts[0]); err != nil {
+				t.Fatal(err)
+			}
+			if err := selection.Commit(db.ctx); err != nil {
+				t.Fatal(err)
+			}
+			type entity struct {
+				id       uuid.UUID
+				kind     string
+				class    string
+				name     *string
+				locality *string
+				count    uint64
+				line     string
+			}
+			city := "Test City"
+			facilityKind, facilityClass := "park", "park"
+			var facilityLocality *string
+			if education || !regional {
+				facilityLocality = &city
+			}
+			if education {
+				facilityKind, facilityClass = "path", "other"
+			}
+			expected := []entity{
+				{facility, facilityKind, facilityClass, &facilityName, facilityLocality, 3,
+					"MULTILINESTRING((-122 37,-122.0002 37.0002),(-122.0003 37.0003,-122.0005 37.0005))"},
+				// The named campus/park control road keeps its UUID and one visit,
+				// independent of the facility's three visits, in MVT/detail/focus.
+				{road, "path", "road", &controlName, &city, 1, segments[2].line},
+			}
+			if !education {
+				locality := &city
+				if regional {
+					locality = &facilityName
+					expected = append(expected, entity{pathA, "path", "trail", nil, locality, 2, segments[0].line})
+				}
+				expected = append(expected, entity{pathB, "path", "road", namedPath, locality, 2, segments[1].line})
+			}
+			read := beginAccount(t, db.ctx, db.api, account)
+			defer read.Rollback(db.ctx)
+			var focus []byte
+			if err := read.QueryRow(db.ctx, `SELECT app.map_selection_coverage_focus($1,$2,$3,$4,$5)`,
+				account, sessionID, selectionID, generation, workouts[0]).Scan(&focus); err != nil {
+				t.Fatal(err)
+			}
+			var listCount, focusCount int
+			if err := read.QueryRow(db.ctx, `SELECT count(*) FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)`,
+				account, sessionID, selectionID, generation).Scan(&listCount); err != nil {
+				t.Fatal(err)
+			}
+			if err := read.QueryRow(db.ctx, `SELECT jsonb_array_length($1::jsonb->'features')`, focus).Scan(&focusCount); err != nil {
+				t.Fatal(err)
+			}
+			if listCount != len(expected) || focusCount != len(expected) {
+				t.Fatalf("list/focus entity counts=%d/%d, want %d; exclusions or identity mismatch", listCount, focusCount, len(expected))
+			}
+			var tile []byte
+			if err := db.tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt(14,2639,6377,json_build_object(
+				'target_account_id',$1::text,'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
+				account, sessionID, selectionID, generation).Scan(&tile); err != nil {
+				t.Fatal(err)
+			}
+			layers := decodeCoverageMVT(t, tile)
+			for _, layerName := range []string{"coverage", "coverage_focus", "coverage_parks", "coverage_parks_focus"} {
+				want := 0
+				for _, expectedEntity := range expected {
+					if strings.HasPrefix(layerName, "coverage_parks") == (expectedEntity.kind == "park") {
+						want++
+					}
+				}
+				if len(layers[layerName]) != want {
+					t.Fatalf("%s entity count=%d, want %d", layerName, len(layers[layerName]), want)
+				}
+				seen := make(map[uuid.UUID]bool)
+				for _, feature := range layers[layerName] {
+					properties := feature.properties
+					idText, ok := properties["entityId"].(string)
+					if !ok {
+						t.Fatalf("%s has no entityId: %v", layerName, properties)
+					}
+					id, err := uuid.Parse(idText)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if seen[id] {
+						t.Fatalf("%s emitted duplicate entity %s", layerName, id)
+					}
+					seen[id] = true
+					index := slices.IndexFunc(expected, func(candidate entity) bool { return candidate.id == id })
+					if index < 0 {
+						t.Fatalf("%s emitted underlying facility or excluded path %s", layerName, id)
+					}
+					want := expected[index]
+					var detailName, detailLocality *string
+					var detailClass, detailKind string
+					var rangeCount, allCount uint64
+					var detailGeometry bool
+					// Resolve the actual MVT identity/kind, as the hover request does.
+					if err := read.QueryRow(db.ctx, `SELECT name,locality_name,broad_class,entity_kind,range_workout_count,all_time_workout_count,
+						ST_Equals(ST_GeomFromGeoJSON(geometry),ST_GeomFromText($7,4326))
+						FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)`,
+						account, sessionID, selectionID, generation, properties["entityKind"], id, want.line).Scan(
+						&detailName, &detailLocality, &detailClass, &detailKind, &rangeCount, &allCount, &detailGeometry); err != nil {
+						t.Fatalf("%s emitted entity %s does not resolve hover detail: %v", layerName, id, err)
+					}
+					textMatches := func(actual any, expected *string) bool {
+						return expected == nil && actual == nil || expected != nil && actual == *expected
+					}
+					if !textMatches(properties["name"], want.name) || !textMatches(properties["localityName"], want.locality) ||
+						!textMatches(properties["name"], detailName) || !textMatches(properties["localityName"], detailLocality) ||
+						properties["entityKind"] != want.kind || detailKind != want.kind || properties["broadClass"] != want.class || detailClass != want.class ||
+						properties["rangeWorkoutCount"] != want.count || rangeCount != want.count || allCount != want.count || !detailGeometry {
+						t.Fatalf("%s MVT/detail identity, name, count, context, or geometry mismatch for %s: %v", layerName, id, properties)
+					}
+					var bucket int
+					var focusMatches int
+					if err := read.QueryRow(db.ctx, `SELECT app.coverage_count_bucket($1)`, int64(want.count)).Scan(&bucket); err != nil {
+						t.Fatal(err)
+					}
+					if properties["countBucket"] != uint64(bucket) {
+						t.Fatalf("%s count bucket=%v, want %d", layerName, properties["countBucket"], bucket)
+					}
+					if err := read.QueryRow(db.ctx, `SELECT count(*) FROM jsonb_array_elements($1::jsonb->'features') feature
+						WHERE feature->'properties'->>'entityKind'=$2 AND (feature->'properties'->>'countBucket')::integer=$3
+						AND ST_Equals(ST_GeomFromGeoJSON(feature->'geometry'),ST_GeomFromText($4,4326))`,
+						focus, want.kind, bucket, want.line).Scan(&focusMatches); err != nil {
+						t.Fatal(err)
+					}
+					var expectedTile []byte
+					if err := db.migration.QueryRow(db.ctx, `SELECT ST_AsMVT(rows,'expected',4096,'geometry') FROM (
+						SELECT ST_AsMVTGeom(ST_Transform(ST_GeomFromText($1,4326),3857),ST_TileEnvelope(14,2639,6377)::box2d,4096,64,true) geometry) rows`,
+						want.line).Scan(&expectedTile); err != nil {
+						t.Fatal(err)
+					}
+					if focusMatches != 1 || feature.geometry != decodeCoverageMVT(t, expectedTile)["expected"][0].geometry {
+						t.Fatalf("%s focus/MVT geometry or exclusions mismatch for %s", layerName, id)
+					}
+				}
+			}
+		})
+	}
+}
+
+type coverageMVTFeature struct {
+	properties map[string]any
+	geometry   string
+}
+
+func TestDecodeCoverageMVT(t *testing.T) {
+	appendBytes := func(message []byte, number protowire.Number, value []byte) []byte {
+		return protowire.AppendBytes(protowire.AppendTag(message, number, protowire.BytesType), value)
+	}
+	var geometries []string
+	for _, commands := range [][]byte{
+		{9, 0, 0, 10, 2, 2, 9, 18, 18, 10, 2, 2},
+		{9, 22, 22, 10, 1, 1, 9, 17, 17, 10, 1, 1},
+	} {
+		feature := appendBytes(nil, 2, []byte{0, 0, 1, 1})
+		feature = appendBytes(feature, 4, commands)
+		layer := appendBytes(nil, 1, []byte("coverage"))
+		layer = appendBytes(layer, 2, feature)
+		layer = appendBytes(layer, 3, []byte("name"))
+		layer = appendBytes(layer, 3, []byte("rangeWorkoutCount"))
+		layer = appendBytes(layer, 4, appendBytes(nil, 1, []byte("Fixture School")))
+		layer = appendBytes(layer, 4, protowire.AppendVarint(protowire.AppendTag(nil, 5, protowire.VarintType), 3))
+		decoded := decodeCoverageMVT(t, appendBytes(nil, 3, layer))["coverage"]
+		if len(decoded) != 1 || decoded[0].properties["name"] != "Fixture School" || decoded[0].properties["rangeWorkoutCount"] != uint64(3) {
+			t.Fatalf("decoded MVT=%v", decoded)
+		}
+		geometries = append(geometries, decoded[0].geometry)
+	}
+	if geometries[0] != "[[0 0] [1 1]];[[10 10] [11 11]]" || geometries[0] != geometries[1] {
+		t.Fatalf("MVT line normalization=%v", geometries)
+	}
+}
+
+func decodeCoverageMVT(t *testing.T, tile []byte) map[string][]coverageMVTFeature {
+	t.Helper()
+	// MVT uses protobuf repeated fields for layers, keys, values, and features.
+	fields := func(message []byte) map[protowire.Number][][]byte {
+		result := make(map[protowire.Number][][]byte)
+		for len(message) > 0 {
+			number, wireType, n := protowire.ConsumeTag(message)
+			if n < 0 {
+				t.Fatal("invalid MVT protobuf tag")
+			}
+			message = message[n:]
+			n = protowire.ConsumeFieldValue(number, wireType, message)
+			if n < 0 {
+				t.Fatal("invalid MVT protobuf value")
+			}
+			value := message[:n]
+			if wireType == protowire.BytesType {
+				value, _ = protowire.ConsumeBytes(value)
+			}
+			result[number] = append(result[number], value)
+			message = message[n:]
+		}
+		return result
+	}
+	layers := make(map[string][]coverageMVTFeature)
+	for _, layerBytes := range fields(tile)[3] {
+		layer := fields(layerBytes)
+		name := string(layer[1][0])
+		values := make([]any, 0, len(layer[4]))
+		for _, valueBytes := range layer[4] {
+			value := fields(valueBytes)
+			if text := value[1]; len(text) > 0 {
+				values = append(values, string(text[0]))
+				continue
+			}
+			var integer uint64
+			found := false
+			for _, number := range []protowire.Number{4, 5, 6} {
+				if raw := value[number]; len(raw) > 0 {
+					var n int
+					integer, n = protowire.ConsumeVarint(raw[0])
+					if n < 0 {
+						t.Fatal("invalid MVT integer")
+					}
+					if number == 6 {
+						integer = uint64(protowire.DecodeZigZag(integer))
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatal("unsupported MVT fixture value")
+			}
+			values = append(values, integer)
+		}
+		for _, featureBytes := range layer[2] {
+			feature := fields(featureBytes)
+			properties := make(map[string]any)
+			for _, packed := range feature[2] {
+				for len(packed) > 0 {
+					key, n := protowire.ConsumeVarint(packed)
+					if n < 0 {
+						t.Fatal("invalid MVT key index")
+					}
+					packed = packed[n:]
+					value, n := protowire.ConsumeVarint(packed)
+					if n < 0 || key >= uint64(len(layer[3])) || value >= uint64(len(values)) {
+						t.Fatal("invalid MVT value index")
+					}
+					packed = packed[n:]
+					properties[string(layer[3][key])] = values[value]
+				}
+			}
+			// Normalize line component order and direction because ST_Collect has
+			// no ordering contract. Coordinates remain in the tile's integer grid.
+			packed := bytes.Join(feature[4], nil)
+			var cursor [2]int64
+			var line [][2]int64
+			var lines []string
+			finishLine := func() {
+				if len(line) == 0 {
+					return
+				}
+				forward := fmt.Sprint(line)
+				slices.Reverse(line)
+				lines = append(lines, min(forward, fmt.Sprint(line)))
+				line = nil
+			}
+			for len(packed) > 0 {
+				command, n := protowire.ConsumeVarint(packed)
+				if n < 0 || (command&7 != 1 && command&7 != 2) || command>>3 == 0 {
+					t.Fatal("invalid MVT fixture line command")
+				}
+				packed = packed[n:]
+				for count := command >> 3; count > 0; count-- {
+					if command&7 == 1 {
+						finishLine()
+					}
+					for axis := range cursor {
+						delta, n := protowire.ConsumeVarint(packed)
+						if n < 0 {
+							t.Fatal("invalid MVT coordinate delta")
+						}
+						packed = packed[n:]
+						cursor[axis] += protowire.DecodeZigZag(delta)
+					}
+					line = append(line, cursor)
+				}
+			}
+			finishLine()
+			slices.Sort(lines)
+			layers[name] = append(layers[name], coverageMVTFeature{properties, strings.Join(lines, ";")})
+		}
+	}
+	return layers
 }
 
 func TestCoverageReconciliationBackfillsReadyRoutes(t *testing.T) {

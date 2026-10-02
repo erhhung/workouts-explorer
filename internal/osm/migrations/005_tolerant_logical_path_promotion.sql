@@ -1,8 +1,10 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION osm_catalog.promote_region_generation(
-    promote_region_id text, promote_generation_id bigint,
-    promote_schema_name name, promote_validation jsonb
+    promote_region_id text,
+    promote_generation_id bigint,
+    promote_schema_name name,
+    promote_validation jsonb
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -75,24 +77,27 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH required_index IN ARRAY ARRAY[
-        ('ways_pkey_g'||promote_generation_id)::name,
-        ('ways_identity_g'||promote_generation_id)::name,
-        ('ways_geography_g'||promote_generation_id)::name,
-        ('localities_pkey_g'||promote_generation_id)::name,
-        ('localities_identity_g'||promote_generation_id)::name,
-        ('localities_geom_g'||promote_generation_id)::name,
-        ('path_segments_pkey_g'||promote_generation_id)::name,
-        ('path_segments_identity_g'||promote_generation_id)::name,
-        ('path_segments_source_way_g'||promote_generation_id)::name,
-        ('path_segments_geography_g'||promote_generation_id)::name,
-        ('path_segments_logical_path_g'||promote_generation_id)::name,
-        ('path_segments_start_graph_node_g'||promote_generation_id)::name,
-        ('path_segments_end_graph_node_g'||promote_generation_id)::name
+        ('ways_pkey_g' || promote_generation_id)::name,
+        ('ways_identity_g' || promote_generation_id)::name,
+        ('ways_geography_g' || promote_generation_id)::name,
+        ('localities_pkey_g' || promote_generation_id)::name,
+        ('localities_identity_g' || promote_generation_id)::name,
+        ('localities_geom_g' || promote_generation_id)::name,
+        ('path_segments_pkey_g' || promote_generation_id)::name,
+        ('path_segments_identity_g' || promote_generation_id)::name,
+        ('path_segments_source_way_g' || promote_generation_id)::name,
+        ('path_segments_geography_g' || promote_generation_id)::name,
+        ('path_segments_logical_path_g' || promote_generation_id)::name,
+        ('path_segments_start_graph_node_g' || promote_generation_id)::name,
+        ('path_segments_end_graph_node_g' || promote_generation_id)::name
     ] LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_index
-            WHERE indexrelid=to_regclass(format('%I.%I',promote_schema_name,required_index))
-              AND indisvalid AND indisready
+            WHERE indexrelid = to_regclass(
+                format('%I.%I', promote_schema_name, required_index)
+            )
+                AND indisvalid
+                AND indisready
         ) THEN
             RAISE EXCEPTION 'candidate generation % lacks required valid index %',
                 promote_generation_id, required_index;
@@ -101,14 +106,15 @@ BEGIN
 
     EXECUTE format(
         'SELECT EXISTS (
-           SELECT 1 FROM %1$I.%2$I WHERE region_id<>$1 OR generation_id<>$2
-           UNION ALL SELECT 1 FROM %1$I.%3$I WHERE region_id<>$1 OR generation_id<>$2
-           UNION ALL SELECT 1 FROM %1$I.%4$I WHERE region_id<>$1 OR generation_id<>$2
-         )',promote_schema_name,ways_name,localities_name,segments_name)
-    INTO provenance_mismatch USING promote_region_id,promote_generation_id;
+           SELECT 1 FROM %1$I.%2$I WHERE region_id <> $1 OR generation_id <> $2
+           UNION ALL SELECT 1 FROM %1$I.%3$I WHERE region_id <> $1 OR generation_id <> $2
+           UNION ALL SELECT 1 FROM %1$I.%4$I WHERE region_id <> $1 OR generation_id <> $2
+         )', promote_schema_name, ways_name, localities_name, segments_name)
+    INTO provenance_mismatch
+    USING promote_region_id, promote_generation_id;
     IF provenance_mismatch THEN
         RAISE EXCEPTION 'generation % candidate provenance is not fixed to region %',
-            promote_generation_id,promote_region_id;
+            promote_generation_id, promote_region_id;
     END IF;
 
     EXECUTE format('SELECT count(*) FROM %I.%I', promote_schema_name, ways_name) INTO way_count;
@@ -120,8 +126,8 @@ BEGIN
         'SELECT EXISTS (
            SELECT 1 FROM %1$I.%2$I segment
            LEFT JOIN %1$I.%3$I way
-             ON way.region_id=segment.region_id AND way.generation_id=segment.generation_id
-            AND way.way_id=segment.source_way_id AND way.version=segment.source_way_version
+             ON way.region_id = segment.region_id AND way.generation_id = segment.generation_id
+            AND way.way_id = segment.source_way_id AND way.version = segment.source_way_version
            WHERE way.way_id IS NULL OR segment.derivation_version <> $1
          )', promote_schema_name, segments_name, ways_name)
     INTO STRICT source_mismatch USING candidate.derivation_version;
@@ -138,11 +144,16 @@ BEGIN
     EXECUTE format(
         'SELECT EXISTS (
            SELECT 1 FROM (
-               SELECT logical_path_id,min(locality_relation_id) locality_relation_id,
-                      min(name) name,min(normalized_name) normalized_name,
-                      min(broad_class) broad_class,count(*) member_segment_count,
-                      sum(length_m) member_length_m
-               FROM %1$I.%2$I GROUP BY logical_path_id
+               SELECT
+                   logical_path_id,
+                   min(locality_relation_id) locality_relation_id,
+                   min(name) name,
+                   min(normalized_name) normalized_name,
+                   min(broad_class) broad_class,
+                   count(*) member_segment_count,
+                   sum(length_m) member_length_m
+                FROM %1$I.%2$I
+                GROUP BY logical_path_id
            ) derived
            FULL JOIN %1$I.logical_paths stored USING (logical_path_id)
            WHERE derived.logical_path_id IS NULL OR stored.logical_path_id IS NULL
@@ -152,7 +163,7 @@ BEGIN
               OR derived.broad_class IS DISTINCT FROM stored.broad_class
               OR derived.member_segment_count <> stored.member_segment_count
               OR abs(derived.member_length_m-stored.member_length_m) > 0.01
-          )',promote_schema_name,segments_name)
+          )', promote_schema_name, segments_name)
     INTO logical_path_mismatch;
     IF logical_path_mismatch THEN
         RAISE EXCEPTION 'generation % logical paths do not equal prepared segment aggregates', promote_generation_id;
@@ -173,46 +184,81 @@ BEGIN
     EXECUTE format('ALTER TABLE osm_canonical.localities ATTACH PARTITION osm_canonical.%I FOR VALUES IN (%L)', localities_name, promote_region_id);
     EXECUTE format('ALTER TABLE osm_canonical.path_segments ATTACH PARTITION osm_canonical.%I FOR VALUES IN (%L)', segments_name, promote_region_id);
 
-    UPDATE osm_catalog.generations SET state='retired', retired_at=transaction_timestamp()
-    WHERE region_id=promote_region_id AND state='active';
     UPDATE osm_catalog.generations
-    SET state='active', validation=promote_validation,
-        validated_at=transaction_timestamp(), promoted_at=transaction_timestamp(), retired_at=NULL
-    WHERE id=promote_generation_id;
+    SET
+        state = 'retired',
+        retired_at = transaction_timestamp()
+    WHERE region_id = promote_region_id
+        AND state = 'active';
+
+    UPDATE osm_catalog.generations
+    SET
+        state = 'active',
+        validation = promote_validation,
+        validated_at = transaction_timestamp(),
+        promoted_at = transaction_timestamp(),
+        retired_at = NULL
+    WHERE id = promote_generation_id;
 
     IF previous.region_id IS NOT NULL THEN
-        INSERT INTO osm_catalog.storage_gc(region_id,generation_id,object_kind,schema_name,object_name)
+        INSERT INTO osm_catalog.storage_gc (
+            region_id, generation_id, object_kind, schema_name, object_name
+        )
         VALUES
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.path_segments_relation),
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.localities_relation),
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.ways_relation),
-            (previous.region_id,previous.generation_id,'build_schema',previous.build_schema,NULL)
-        ON CONFLICT (object_kind,schema_name,object_name) DO NOTHING;
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.path_segments_relation),
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.localities_relation),
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.ways_relation),
+            (previous.region_id, previous.generation_id, 'build_schema', previous.build_schema, NULL)
+        ON CONFLICT (object_kind, schema_name, object_name) DO NOTHING;
     END IF;
-    INSERT INTO osm_catalog.storage_gc(region_id,generation_id,object_kind,schema_name,object_name)
-    VALUES(promote_region_id,promote_generation_id,'build_schema',promote_schema_name,NULL)
-    ON CONFLICT (object_kind,schema_name,object_name) DO NOTHING;
 
-    INSERT INTO osm_catalog.region_storage(
-        region_id,generation_id,ways_relation,localities_relation,path_segments_relation,build_schema,migration_bootstrap
-    ) VALUES(promote_region_id,promote_generation_id,ways_name,localities_name,segments_name,promote_schema_name,false)
+    INSERT INTO osm_catalog.storage_gc (
+        region_id, generation_id, object_kind, schema_name, object_name
+    )
+    VALUES (promote_region_id, promote_generation_id, 'build_schema', promote_schema_name, NULL)
+    ON CONFLICT (object_kind, schema_name, object_name) DO NOTHING;
+
+    INSERT INTO osm_catalog.region_storage (
+        region_id,
+        generation_id,
+        ways_relation,
+        localities_relation,
+        path_segments_relation,
+        build_schema,
+        migration_bootstrap
+    )
+    VALUES (
+        promote_region_id,
+        promote_generation_id,
+        ways_name,
+        localities_name,
+        segments_name,
+        promote_schema_name,
+        false
+    )
     ON CONFLICT (region_id) DO UPDATE SET
-        generation_id=EXCLUDED.generation_id, ways_relation=EXCLUDED.ways_relation,
-        localities_relation=EXCLUDED.localities_relation,
-        path_segments_relation=EXCLUDED.path_segments_relation,
-        build_schema=EXCLUDED.build_schema, migration_bootstrap=false,
-        recorded_at=transaction_timestamp();
+        generation_id = EXCLUDED.generation_id,
+        ways_relation = EXCLUDED.ways_relation,
+        localities_relation = EXCLUDED.localities_relation,
+        path_segments_relation = EXCLUDED.path_segments_relation,
+        build_schema = EXCLUDED.build_schema,
+        migration_bootstrap = false,
+        recorded_at = transaction_timestamp();
 END;
 $function$;
 -- +goose StatementEnd
 
-UPDATE osm_catalog.schema_metadata SET schema_version = 6 WHERE singleton;
+UPDATE osm_catalog.schema_metadata
+SET schema_version = 5
+WHERE singleton;
 
 -- +goose Down
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION osm_catalog.promote_region_generation(
-    promote_region_id text, promote_generation_id bigint,
-    promote_schema_name name, promote_validation jsonb
+    promote_region_id text,
+    promote_generation_id bigint,
+    promote_schema_name name,
+    promote_validation jsonb
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -285,24 +331,27 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH required_index IN ARRAY ARRAY[
-        ('ways_pkey_g'||promote_generation_id)::name,
-        ('ways_identity_g'||promote_generation_id)::name,
-        ('ways_geography_g'||promote_generation_id)::name,
-        ('localities_pkey_g'||promote_generation_id)::name,
-        ('localities_identity_g'||promote_generation_id)::name,
-        ('localities_geom_g'||promote_generation_id)::name,
-        ('path_segments_pkey_g'||promote_generation_id)::name,
-        ('path_segments_identity_g'||promote_generation_id)::name,
-        ('path_segments_source_way_g'||promote_generation_id)::name,
-        ('path_segments_geography_g'||promote_generation_id)::name,
-        ('path_segments_logical_path_g'||promote_generation_id)::name,
-        ('path_segments_start_graph_node_g'||promote_generation_id)::name,
-        ('path_segments_end_graph_node_g'||promote_generation_id)::name
+        ('ways_pkey_g' || promote_generation_id)::name,
+        ('ways_identity_g' || promote_generation_id)::name,
+        ('ways_geography_g' || promote_generation_id)::name,
+        ('localities_pkey_g' || promote_generation_id)::name,
+        ('localities_identity_g' || promote_generation_id)::name,
+        ('localities_geom_g' || promote_generation_id)::name,
+        ('path_segments_pkey_g' || promote_generation_id)::name,
+        ('path_segments_identity_g' || promote_generation_id)::name,
+        ('path_segments_source_way_g' || promote_generation_id)::name,
+        ('path_segments_geography_g' || promote_generation_id)::name,
+        ('path_segments_logical_path_g' || promote_generation_id)::name,
+        ('path_segments_start_graph_node_g' || promote_generation_id)::name,
+        ('path_segments_end_graph_node_g' || promote_generation_id)::name
     ] LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_index
-            WHERE indexrelid=to_regclass(format('%I.%I',promote_schema_name,required_index))
-              AND indisvalid AND indisready
+            WHERE indexrelid = to_regclass(
+                format('%I.%I', promote_schema_name, required_index)
+            )
+                AND indisvalid
+                AND indisready
         ) THEN
             RAISE EXCEPTION 'candidate generation % lacks required valid index %',
                 promote_generation_id, required_index;
@@ -311,14 +360,15 @@ BEGIN
 
     EXECUTE format(
         'SELECT EXISTS (
-           SELECT 1 FROM %1$I.%2$I WHERE region_id<>$1 OR generation_id<>$2
-           UNION ALL SELECT 1 FROM %1$I.%3$I WHERE region_id<>$1 OR generation_id<>$2
-           UNION ALL SELECT 1 FROM %1$I.%4$I WHERE region_id<>$1 OR generation_id<>$2
-         )',promote_schema_name,ways_name,localities_name,segments_name)
-    INTO provenance_mismatch USING promote_region_id,promote_generation_id;
+           SELECT 1 FROM %1$I.%2$I WHERE region_id <> $1 OR generation_id <> $2
+           UNION ALL SELECT 1 FROM %1$I.%3$I WHERE region_id <> $1 OR generation_id <> $2
+           UNION ALL SELECT 1 FROM %1$I.%4$I WHERE region_id <> $1 OR generation_id <> $2
+         )', promote_schema_name, ways_name, localities_name, segments_name)
+    INTO provenance_mismatch
+    USING promote_region_id, promote_generation_id;
     IF provenance_mismatch THEN
         RAISE EXCEPTION 'generation % candidate provenance is not fixed to region %',
-            promote_generation_id,promote_region_id;
+            promote_generation_id, promote_region_id;
     END IF;
 
     EXECUTE format('SELECT count(*) FROM %I.%I', promote_schema_name, ways_name) INTO way_count;
@@ -330,8 +380,8 @@ BEGIN
         'SELECT EXISTS (
            SELECT 1 FROM %1$I.%2$I segment
            LEFT JOIN %1$I.%3$I way
-             ON way.region_id=segment.region_id AND way.generation_id=segment.generation_id
-            AND way.way_id=segment.source_way_id AND way.version=segment.source_way_version
+             ON way.region_id = segment.region_id AND way.generation_id = segment.generation_id
+            AND way.way_id = segment.source_way_id AND way.version = segment.source_way_version
            WHERE way.way_id IS NULL OR segment.derivation_version <> $1
          )', promote_schema_name, segments_name, ways_name)
     INTO STRICT source_mismatch USING candidate.derivation_version;
@@ -347,16 +397,30 @@ BEGIN
     END IF;
     EXECUTE format(
         'SELECT EXISTS (
-           (SELECT logical_path_id,min(locality_relation_id),min(name),min(normalized_name),
-                   min(broad_class),count(*),sum(length_m)
-            FROM %1$I.%2$I GROUP BY logical_path_id
+           (SELECT
+                logical_path_id,
+                min(locality_relation_id),
+                min(name),
+                min(normalized_name),
+                min(broad_class),
+                count(*),
+                sum(length_m)
+            FROM %1$I.%2$I
+            GROUP BY logical_path_id
             EXCEPT SELECT * FROM %1$I.logical_paths)
            UNION ALL
            (SELECT * FROM %1$I.logical_paths EXCEPT
-            SELECT logical_path_id,min(locality_relation_id),min(name),min(normalized_name),
-                   min(broad_class),count(*),sum(length_m)
-            FROM %1$I.%2$I GROUP BY logical_path_id)
-          )',promote_schema_name,segments_name)
+            SELECT
+                logical_path_id,
+                min(locality_relation_id),
+                min(name),
+                min(normalized_name),
+                min(broad_class),
+                count(*),
+                sum(length_m)
+            FROM %1$I.%2$I
+            GROUP BY logical_path_id)
+          )', promote_schema_name, segments_name)
     INTO logical_path_mismatch;
     IF logical_path_mismatch THEN
         RAISE EXCEPTION 'generation % logical paths do not equal prepared segment aggregates', promote_generation_id;
@@ -377,37 +441,70 @@ BEGIN
     EXECUTE format('ALTER TABLE osm_canonical.localities ATTACH PARTITION osm_canonical.%I FOR VALUES IN (%L)', localities_name, promote_region_id);
     EXECUTE format('ALTER TABLE osm_canonical.path_segments ATTACH PARTITION osm_canonical.%I FOR VALUES IN (%L)', segments_name, promote_region_id);
 
-    UPDATE osm_catalog.generations SET state='retired', retired_at=transaction_timestamp()
-    WHERE region_id=promote_region_id AND state='active';
     UPDATE osm_catalog.generations
-    SET state='active', validation=promote_validation,
-        validated_at=transaction_timestamp(), promoted_at=transaction_timestamp(), retired_at=NULL
-    WHERE id=promote_generation_id;
+    SET
+        state = 'retired',
+        retired_at = transaction_timestamp()
+    WHERE region_id = promote_region_id
+        AND state = 'active';
+
+    UPDATE osm_catalog.generations
+    SET
+        state = 'active',
+        validation = promote_validation,
+        validated_at = transaction_timestamp(),
+        promoted_at = transaction_timestamp(),
+        retired_at = NULL
+    WHERE id = promote_generation_id;
 
     IF previous.region_id IS NOT NULL THEN
-        INSERT INTO osm_catalog.storage_gc(region_id,generation_id,object_kind,schema_name,object_name)
+        INSERT INTO osm_catalog.storage_gc (
+            region_id, generation_id, object_kind, schema_name, object_name
+        )
         VALUES
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.path_segments_relation),
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.localities_relation),
-            (previous.region_id,previous.generation_id,'relation','osm_canonical',previous.ways_relation),
-            (previous.region_id,previous.generation_id,'build_schema',previous.build_schema,NULL)
-        ON CONFLICT (object_kind,schema_name,object_name) DO NOTHING;
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.path_segments_relation),
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.localities_relation),
+            (previous.region_id, previous.generation_id, 'relation', 'osm_canonical', previous.ways_relation),
+            (previous.region_id, previous.generation_id, 'build_schema', previous.build_schema, NULL)
+        ON CONFLICT (object_kind, schema_name, object_name) DO NOTHING;
     END IF;
-    INSERT INTO osm_catalog.storage_gc(region_id,generation_id,object_kind,schema_name,object_name)
-    VALUES(promote_region_id,promote_generation_id,'build_schema',promote_schema_name,NULL)
-    ON CONFLICT (object_kind,schema_name,object_name) DO NOTHING;
 
-    INSERT INTO osm_catalog.region_storage(
-        region_id,generation_id,ways_relation,localities_relation,path_segments_relation,build_schema,migration_bootstrap
-    ) VALUES(promote_region_id,promote_generation_id,ways_name,localities_name,segments_name,promote_schema_name,false)
+    INSERT INTO osm_catalog.storage_gc (
+        region_id, generation_id, object_kind, schema_name, object_name
+    )
+    VALUES (promote_region_id, promote_generation_id, 'build_schema', promote_schema_name, NULL)
+    ON CONFLICT (object_kind, schema_name, object_name) DO NOTHING;
+
+    INSERT INTO osm_catalog.region_storage (
+        region_id,
+        generation_id,
+        ways_relation,
+        localities_relation,
+        path_segments_relation,
+        build_schema,
+        migration_bootstrap
+    )
+    VALUES (
+        promote_region_id,
+        promote_generation_id,
+        ways_name,
+        localities_name,
+        segments_name,
+        promote_schema_name,
+        false
+    )
     ON CONFLICT (region_id) DO UPDATE SET
-        generation_id=EXCLUDED.generation_id, ways_relation=EXCLUDED.ways_relation,
-        localities_relation=EXCLUDED.localities_relation,
-        path_segments_relation=EXCLUDED.path_segments_relation,
-        build_schema=EXCLUDED.build_schema, migration_bootstrap=false,
-        recorded_at=transaction_timestamp();
+        generation_id = EXCLUDED.generation_id,
+        ways_relation = EXCLUDED.ways_relation,
+        localities_relation = EXCLUDED.localities_relation,
+        path_segments_relation = EXCLUDED.path_segments_relation,
+        build_schema = EXCLUDED.build_schema,
+        migration_bootstrap = false,
+        recorded_at = transaction_timestamp();
 END;
 $function$;
 -- +goose StatementEnd
 
-UPDATE osm_catalog.schema_metadata SET schema_version = 5 WHERE singleton;
+UPDATE osm_catalog.schema_metadata
+SET schema_version = 4
+WHERE singleton;

@@ -6,7 +6,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const SupportedSchemaVersion = 8
+const (
+	MinimumSchemaVersion   = 8
+	SupportedSchemaVersion = 9
+)
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	if pool == nil {
@@ -98,7 +101,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   )
 		   AND EXISTS (
 		       SELECT 1 FROM osm_catalog.schema_metadata
-		       WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1
-		   )`, SupportedSchemaVersion).Scan(&ready)
+		       WHERE singleton AND schema_version BETWEEN $1 AND $2 AND minimum_runtime_version <= $2
+		   )`, MinimumSchemaVersion, SupportedSchemaVersion).Scan(&ready)
 	return err == nil && ready
 }

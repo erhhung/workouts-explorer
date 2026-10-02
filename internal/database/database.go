@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 19
+const SupportedSchemaVersion = 20
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)

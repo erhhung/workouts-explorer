@@ -94,6 +94,7 @@ type CoverageWorker struct {
 	ReconciliationScanInterval time.Duration
 	ReconciliationPageSize     int
 	MinimumTraversalMeters     float64
+	OSMAutoAddRegions          bool
 }
 
 type OSM struct {
@@ -456,12 +457,17 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 	if err != nil {
 		return CoverageWorker{}, err
 	}
+	osmAutoAddRegions, err := boolean("OSM_AUTO_ADD_REGIONS", false)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
 	return CoverageWorker{DatabaseURL: databaseURL, OSMDatabaseURL: osmDatabaseURL,
 		ListenAddress: env("COVERAGE_WORKER_LISTEN_ADDRESS", ":8082"), OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		PollInterval: poll, AdmissionInterval: admission, LeaseDuration: lease,
 		HeartbeatInterval: heartbeat, RouteTimeout: routeTimeout,
 		ReconciliationPollInterval: reconciliationPoll, ReconciliationScanInterval: reconciliationScan,
-		ReconciliationPageSize: reconciliationPageSize, MinimumTraversalMeters: minimumTraversal}, nil
+		ReconciliationPageSize: reconciliationPageSize, MinimumTraversalMeters: minimumTraversal,
+		OSMAutoAddRegions: osmAutoAddRegions}, nil
 }
 
 func loadOSM() (OSM, error) {

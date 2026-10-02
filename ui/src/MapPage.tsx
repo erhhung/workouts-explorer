@@ -13,6 +13,7 @@ import {
   type CoverageDiagnosticEvidenceCollection,
   type CoverageDiagnosticOverallLabel,
   type CoverageDiagnosticRun,
+  type CoverageFocusFeatureCollection,
   type CoverageDiagnosticSegmentLabelValue,
   type DateRangeEnum,
   type DateRangePreference,
@@ -30,6 +31,7 @@ import {
 } from "./api";
 import { formatDateOnly } from "./date";
 import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
+import { Tooltip } from "./Tooltip";
 
 const ROUTES_LAYER = "private-workout-routes";
 const HOVER_LAYER = "private-workout-route-hover";
@@ -37,6 +39,7 @@ const ROUTE_MARKERS_LAYER = "private-workout-route-markers";
 const HOVER_MARKERS_LAYER = "private-workout-route-marker-hover";
 const ROUTES_SOURCE = "private-workout-routes";
 const COVERAGE_SOURCE = "private-workout-coverage";
+const COVERAGE_FOCUS_SOURCE = "private-workout-coverage-focus";
 const COVERAGE_LAYER = "private-workout-coverage";
 const COVERAGE_PARK_LAYER = "private-workout-coverage-parks";
 const COVERAGE_FOCUS_LAYER = "private-workout-coverage-focus";
@@ -80,13 +83,14 @@ const DIAGNOSTIC_EVIDENCE_LAYERS = [DIAGNOSTIC_MATCHED_LAYER, DIAGNOSTIC_AMBIGUO
 const DIAGNOSTIC_LAYERS = [DIAGNOSTIC_RAW_ROUTE_LAYER, DIAGNOSTIC_DIRECTION_LAYER, ...DIAGNOSTIC_EVIDENCE_LAYERS] as const;
 const ROUTE_LAYERS = [ROUTES_LAYER, ROUTE_MARKERS_LAYER, HOVER_LAYER, HOVER_MARKERS_LAYER, ROUTE_START_LAYER, ROUTE_FINISH_LAYER] as const;
 const ROUTE_HOVER_DELAY_MS = 250;
+const COVERAGE_READINESS_POLL_MS = 10_000;
 const COVERAGE_HOVER_DELAY_MS = 750;
 export const COVERAGE_HIGHLIGHT_DURATION_MS = 3000;
 const COVERAGE_HIGHLIGHT_IDLE_FALLBACK_MS = 30000;
 const DIAGNOSTIC_HOVER_DELAY_MS = 250;
 const ROUTE_FINISH_MARKER_SIZE = 22;
 const ROUTE_START_MARKER_RADIUS = ROUTE_FINISH_MARKER_SIZE / Math.sqrt(Math.PI) * 0.9 * 0.97 * 0.95;
-const RAW_ROUTE_FADE = { duration: 150, delay: 0 } as const;
+const RAW_ROUTE_FADE = { duration: 400, delay: 0 } as const;
 const MAP_SELECTION_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 5000];
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 const COMPACT_UUID = /^[0-9A-F]{32}$/;
@@ -98,11 +102,13 @@ const ROUTE_PALETTE = ["#ef9b61", "#75bda6", "#e2c86e", "#68a9df", "#e07a9a", "#
 const SEMANTIC_ROUTE_COLORS = { walk: "#43d5e5", hiking: "#8ed081", cycling: "#69aef5" } as const;
 const COVERAGE_RANGE_COLORS = ["#d95d0b", "#ed7d0c", "#f59e0b", "#f7b928", "#f9d64a", "#fff176"] as const;
 const COVERAGE_FOCUS_COLORS = ["#ff008c", "#ff5fb4", "#ff8bc8", "#ffaad2", "#ffc9e1", "#ffd8f0"] as const;
+const EMPTY_COVERAGE_FOCUS: CoverageFocusFeatureCollection = { type: "FeatureCollection", features: [] };
 const NON_FOCUSED_COVERAGE_LAYERS = [COVERAGE_LAYER, COVERAGE_PARK_LAYER] as const;
+const FOCUSED_COVERAGE_LAYERS = [COVERAGE_FOCUS_LAYER, COVERAGE_PARK_FOCUS_LAYER] as const;
 const COVERAGE_LAYERS = [COVERAGE_LAYER, COVERAGE_PARK_LAYER, COVERAGE_FOCUS_LAYER, COVERAGE_PARK_FOCUS_LAYER] as const;
 
 function coverageColorExpression(colors: readonly string[]) {
-  return ["match", ["get", "count_bucket"], 1, colors[0], 2, colors[1], 3, colors[2], 4, colors[3], 5, colors[4], 6, colors[5], colors[0]] as never;
+  return ["match", ["get", "countBucket"], 1, colors[0], 2, colors[1], 3, colors[2], 4, colors[3], 5, colors[4], 6, colors[5], colors[0]] as never;
 }
 
 export function startCoverageHighlightBlink(setOpacity: (opacity: number) => void, onReady: (ready: () => void) => () => void) {
@@ -209,8 +215,8 @@ function formatWorkoutDate(workout: MapSelectionWorkout, preferences: Preference
 
 function topmostFeature(features: MapGeoJSONFeature[]) {
   return features.reduce<MapGeoJSONFeature | undefined>((newest, feature) => {
-    const order = Number(feature.properties?.sort_order ?? Number.NEGATIVE_INFINITY);
-    const newestOrder = Number(newest?.properties?.sort_order ?? Number.NEGATIVE_INFINITY);
+    const order = Number(feature.properties?.sortOrder ?? Number.NEGATIVE_INFINITY);
+    const newestOrder = Number(newest?.properties?.sortOrder ?? Number.NEGATIVE_INFINITY);
     return !newest || order > newestOrder ? feature : newest;
   }, undefined);
 }
@@ -377,8 +383,9 @@ export function formatRoutePopupDistance(workout: MapSelectionWorkout, units: Pr
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${unit}`;
 }
 
-function MapCanvas({ family, preferences, selection, workouts, fitPadding, hoveredWorkoutId, fitRequest, focusRequest, coverageHighlight, diagnosticEnabled, productionCoverageEnabled, diagnosticMode, routeHidingEnabled, nonFocusedRoutesHidden, rawRouteHidden, nonFocusedCoverageHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal, onDiagnosticHover, onDiagnosticLock, onHover, onRouteClick, onBaseMapError, onBaseMapReady, onRouteTilesUnavailable }: {
+function MapCanvas({ family, preferences, selection, coverageFocus, workouts, fitPadding, hoveredWorkoutId, fitRequest, focusRequest, coverageHighlight, diagnosticEnabled, productionCoverageEnabled, diagnosticMode, routeHidingEnabled, nonFocusedRoutesHidden, rawRouteHidden, nonFocusedCoverageHidden, diagnosticRawRoute, directionRoute, rawRouteEndpoints, rawRouteEndpointsVisible, diagnostic, highlightedPortionOrdinal, onDiagnosticHover, onDiagnosticLock, onHover, onRouteClick, onBaseMapError, onBaseMapReady, onRouteTilesUnavailable }: {
   family: BaseMapFamily; preferences: Preferences; selection?: MapSelection; workouts: MapSelectionWorkout[];
+  coverageFocus?: CoverageFocusFeatureCollection;
   fitPadding: number; hoveredWorkoutId?: string; fitRequest?: { key: number; bounds: RouteBounds; focusCanvas?: boolean };
   focusRequest: number;
   coverageHighlight?: CoverageHighlight;
@@ -391,8 +398,10 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   const selectionRef = useRef(selection);
   const routeUrlRef = useRef(selection?.routeTileUrl);
   const coverageUrlRef = useRef(selection?.coverageTileUrl);
+  const coverageFocusRef = useRef<CoverageFocusFeatureCollection>(coverageFocus ?? { type: "FeatureCollection", features: [] });
   const installedRouteUrlRef = useRef<string | undefined>(undefined);
   const installedCoverageUrlRef = useRef<string | undefined>(undefined);
+  const installedCoverageFocusRef = useRef<CoverageFocusFeatureCollection | undefined>(undefined);
   const onRouteTilesUnavailableRef = useRef(onRouteTilesUnavailable);
 	const onRouteClickRef = useRef(onRouteClick);
   const hoverRef = useRef(hoveredWorkoutId);
@@ -445,19 +454,19 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     }
     if (!existingSource) map.addSource(ROUTES_SOURCE, { type: "vector", tiles: [absoluteURL] });
     installedRouteUrlRef.current = absoluteURL;
-    const colorExpression: unknown[] = ["match", ["get", "workout_type_key"]];
+    const colorExpression: unknown[] = ["match", ["get", "workoutTypeKey"]];
     for (const [typeKey, color] of routeColorsRef.current) colorExpression.push(typeKey, color);
     colorExpression.push("#e9a852");
     if (!map.getLayer(ROUTES_LAYER)) map.addLayer({
         id: ROUTES_LAYER, type: "line", source: ROUTES_SOURCE, "source-layer": "routes",
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "sort_order"] },
+        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "sortOrder"] },
         paint: { "line-color": colorExpression as never, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 2, 14, 4], "line-opacity": nonFocusedRoutesHiddenRef.current ? 0 : 0.82, "line-opacity-transition": RAW_ROUTE_FADE },
       });
     else { map.setPaintProperty(ROUTES_LAYER, "line-color", colorExpression as never); map.setPaintProperty(ROUTES_LAYER, "line-opacity", nonFocusedRoutesHiddenRef.current ? 0 : 0.82); }
     if (!map.getLayer(ROUTE_MARKERS_LAYER)) map.addLayer({
         id: ROUTE_MARKERS_LAYER, type: "circle", source: ROUTES_SOURCE, "source-layer": "routes",
         filter: ["==", ["geometry-type"], "Point"],
-        layout: { "circle-sort-key": ["get", "sort_order"] },
+        layout: { "circle-sort-key": ["get", "sortOrder"] },
         paint: { "circle-color": colorExpression as never, "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3, 14, 5], "circle-opacity": nonFocusedRoutesHiddenRef.current ? 0 : 0.9, "circle-opacity-transition": RAW_ROUTE_FADE },
       });
     else { map.setPaintProperty(ROUTE_MARKERS_LAYER, "circle-color", colorExpression as never); map.setPaintProperty(ROUTE_MARKERS_LAYER, "circle-opacity", nonFocusedRoutesHiddenRef.current ? 0 : 0.9); }
@@ -465,42 +474,61 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
       const coverageURL = absoluteRouteTileTemplate(coverageUrlRef.current, window.location.origin);
       let coverageSource = map.getSource(COVERAGE_SOURCE);
       if (coverageSource && installedCoverageUrlRef.current !== coverageURL) {
-        for (const layer of [...COVERAGE_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer);
+        for (const layer of [...NON_FOCUSED_COVERAGE_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer);
         map.removeSource(COVERAGE_SOURCE);
         coverageSource = undefined;
       }
       if (!coverageSource) map.addSource(COVERAGE_SOURCE, { type: "vector", tiles: [coverageURL], minzoom: 0, maxzoom: 22 });
       installedCoverageUrlRef.current = coverageURL;
       const visibility = diagnosticModeRef.current && productionCoverageEnabledRef.current ? "visible" : "none";
-      const definitions = [
+      const aggregateDefinitions = [
         { id: COVERAGE_LAYER, sourceLayer: "coverage", colors: COVERAGE_RANGE_COLORS, width: [2, 5] },
         { id: COVERAGE_PARK_LAYER, sourceLayer: "coverage_parks", colors: COVERAGE_RANGE_COLORS, width: [3, 6] },
-        { id: COVERAGE_FOCUS_LAYER, sourceLayer: "coverage_focus", colors: COVERAGE_FOCUS_COLORS, width: [4, 8] },
-        { id: COVERAGE_PARK_FOCUS_LAYER, sourceLayer: "coverage_parks_focus", colors: COVERAGE_FOCUS_COLORS, width: [5, 9] },
       ] as const;
-      for (const definition of definitions) {
+      for (const definition of aggregateDefinitions) {
         if (!map.getLayer(definition.id)) map.addLayer({
           id: definition.id, type: "line", source: COVERAGE_SOURCE, "source-layer": definition.sourceLayer,
           layout: { visibility, "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": coverageColorExpression(definition.colors), "line-width": ["interpolate", ["linear"], ["zoom"], 5, definition.width[0], 14, definition.width[1]], "line-opacity": NON_FOCUSED_COVERAGE_LAYERS.includes(definition.id as never) && nonFocusedCoverageHiddenRef.current ? 0 : 0.94, "line-opacity-transition": RAW_ROUTE_FADE },
+          paint: { "line-color": coverageColorExpression(definition.colors), "line-width": ["interpolate", ["linear"], ["zoom"], 5, definition.width[0], 14, definition.width[1]], "line-opacity": nonFocusedCoverageHiddenRef.current ? 0 : 0.94, "line-opacity-transition": RAW_ROUTE_FADE },
         });
         else {
           map.setLayoutProperty(definition.id, "visibility", visibility);
           map.setPaintProperty(definition.id, "line-color", coverageColorExpression(definition.colors));
-          map.setPaintProperty(definition.id, "line-opacity", NON_FOCUSED_COVERAGE_LAYERS.includes(definition.id as never) && nonFocusedCoverageHiddenRef.current ? 0 : 0.94);
+          map.setPaintProperty(definition.id, "line-opacity", nonFocusedCoverageHiddenRef.current ? 0 : 0.94);
         }
       }
+      const focusSource = map.getSource(COVERAGE_FOCUS_SOURCE) as GeoJSONSource | undefined;
+      if (!focusSource) map.addSource(COVERAGE_FOCUS_SOURCE, { type: "geojson", data: coverageFocusRef.current });
+      else if (installedCoverageFocusRef.current !== coverageFocusRef.current) focusSource.setData(coverageFocusRef.current as never);
+      installedCoverageFocusRef.current = coverageFocusRef.current;
+      const focusDefinitions = [
+        { id: COVERAGE_FOCUS_LAYER, entityKind: "path", colors: COVERAGE_FOCUS_COLORS, width: [4, 8] },
+        { id: COVERAGE_PARK_FOCUS_LAYER, entityKind: "park", colors: COVERAGE_FOCUS_COLORS, width: [5, 9] },
+      ] as const;
+      for (const definition of focusDefinitions) {
+        if (!map.getLayer(definition.id)) map.addLayer({
+          id: definition.id, type: "line", source: COVERAGE_FOCUS_SOURCE, filter: ["==", ["get", "entityKind"], definition.entityKind],
+          layout: { visibility, "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": coverageColorExpression(definition.colors), "line-width": ["interpolate", ["linear"], ["zoom"], 5, definition.width[0], 14, definition.width[1]], "line-opacity": 0.94, "line-opacity-transition": RAW_ROUTE_FADE },
+        });
+        else {
+          map.setLayoutProperty(definition.id, "visibility", visibility);
+          map.setPaintProperty(definition.id, "line-color", coverageColorExpression(definition.colors));
+          map.setPaintProperty(definition.id, "line-opacity", 0.94);
+        }
+      }
+      for (const definition of focusDefinitions) if (map.getLayer(definition.id)) map.moveLayer(definition.id);
     }
     if (!map.getLayer(HOVER_LAYER)) map.addLayer({
         id: HOVER_LAYER, type: "line", source: ROUTES_SOURCE, "source-layer": "routes",
-        filter: ["==", ["get", "workout_id"], hoverRef.current ?? ""],
+        filter: ["==", ["get", "workoutId"], hoverRef.current ?? ""],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": "#c026ff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 4, 14, 7], "line-opacity": 1 },
       });
     if (!map.getLayer(HOVER_MARKERS_LAYER)) map.addLayer({
         id: HOVER_MARKERS_LAYER, type: "circle", source: ROUTES_SOURCE, "source-layer": "routes",
-        filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "workout_id"], hoverRef.current ?? ""]],
-        layout: { "circle-sort-key": ["get", "sort_order"] },
+        filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "workoutId"], hoverRef.current ?? ""]],
+        layout: { "circle-sort-key": ["get", "sortOrder"] },
         paint: { "circle-color": "#c026ff", "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 6, 14, 9], "circle-opacity": 1 },
       });
 		const endpointSource = map.getSource(ROUTE_ENDPOINTS_SOURCE) as GeoJSONSource | undefined;
@@ -559,15 +587,17 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 		if (directionRouteRef.current) {
 			const directionData = buildRawRouteDirectionMarkers(directionRouteRef.current, (coordinate) => map.project(coordinate as [number, number]));
 			const directionVisible = diagnosticModeRef.current ? useMemoryRoute && !rawRouteHiddenRef.current : true;
+			const directionFade = diagnosticModeRef.current && diagnosticEnabledRef.current ? RAW_ROUTE_FADE : { duration: 0, delay: 0 };
 			if (!map.hasImage(DIAGNOSTIC_DIRECTION_IMAGE)) map.addImage(DIAGNOSTIC_DIRECTION_IMAGE, pointyDirectionMarkerImage());
 			if (!directionSource) map.addSource(DIAGNOSTIC_DIRECTION_SOURCE, { type: "geojson", data: directionData });
 			else directionSource.setData(directionData);
 			if (!map.getLayer(DIAGNOSTIC_DIRECTION_LAYER)) map.addLayer({
 				id: DIAGNOSTIC_DIRECTION_LAYER, type: "symbol", source: DIAGNOSTIC_DIRECTION_SOURCE,
 				layout: { visibility: "visible", "icon-image": DIAGNOSTIC_DIRECTION_IMAGE, "icon-rotate": ["get", "bearing"], "icon-rotation-alignment": "viewport", "icon-allow-overlap": true, "icon-ignore-placement": true },
-				paint: { "icon-opacity": directionVisible ? 0.95 : 0 },
+				paint: { "icon-opacity": directionVisible ? 0.95 : 0, "icon-opacity-transition": directionFade },
 			});
 			else {
+				map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity-transition", directionFade);
 				map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity", directionVisible ? 0.95 : 0);
 			}
 		} else {
@@ -608,6 +638,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     if (!diagnosticEnabledRef.current || !diagnosticRef.current) {
       for (const layer of [...DIAGNOSTIC_EVIDENCE_LAYERS].reverse()) if (map.getLayer(layer)) map.removeLayer(layer);
       if (map.getSource(DIAGNOSTIC_SOURCE)) map.removeSource(DIAGNOSTIC_SOURCE);
+			if (map.getLayer(DIAGNOSTIC_DIRECTION_LAYER)) map.moveLayer(DIAGNOSTIC_DIRECTION_LAYER);
 			for (const layer of [ROUTE_FINISH_LAYER, ROUTE_START_LAYER]) if (map.getLayer(layer)) map.moveLayer(layer);
       return;
     }
@@ -669,6 +700,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     if (!previous?.sources[ROUTES_SOURCE]) return next;
     const sources: StyleSpecification["sources"] = { ...next.sources, [ROUTES_SOURCE]: previous.sources[ROUTES_SOURCE] };
     if (previous.sources[COVERAGE_SOURCE]) sources[COVERAGE_SOURCE] = previous.sources[COVERAGE_SOURCE];
+    if (previous.sources[COVERAGE_FOCUS_SOURCE]) sources[COVERAGE_FOCUS_SOURCE] = previous.sources[COVERAGE_FOCUS_SOURCE];
     if (previous.sources[COVERAGE_HIGHLIGHT_SOURCE]) sources[COVERAGE_HIGHLIGHT_SOURCE] = previous.sources[COVERAGE_HIGHLIGHT_SOURCE];
     if (previous.sources[DIAGNOSTIC_SOURCE]) sources[DIAGNOSTIC_SOURCE] = previous.sources[DIAGNOSTIC_SOURCE];
     if (previous.sources[DIAGNOSTIC_RAW_ROUTE_SOURCE]) sources[DIAGNOSTIC_RAW_ROUTE_SOURCE] = previous.sources[DIAGNOSTIC_RAW_ROUTE_SOURCE];
@@ -733,7 +765,14 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const restore = () => {
       styleLoadedRef.current = true;
       syncMapLayers(map);
-      if (!fallbackInstalledRef.current) onBaseMapReady();
+			const fallbackLoaded = map.getStyle().layers?.some((layer) => layer.id === "fallback-background") ?? false;
+			if (fallbackLoaded) return;
+			fallbackInstalledRef.current = false;
+			if (baseMapRetryTimerRef.current !== undefined) {
+				window.clearTimeout(baseMapRetryTimerRef.current);
+				baseMapRetryTimerRef.current = undefined;
+			}
+			onBaseMapReady();
     };
     const restoreMissedInitialStyle = () => {
       if (!styleLoadedRef.current) restore();
@@ -762,7 +801,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     };
     const hover = (event: MapMouseEvent) => {
       const feature = topmostFeature(map.queryRenderedFeatures(event.point, { layers: [ROUTES_LAYER, ROUTE_MARKERS_LAYER] }));
-      const workoutID = typeof feature?.properties?.workout_id === "string" ? feature.properties.workout_id.toUpperCase() : undefined;
+      const workoutID = typeof feature?.properties?.workoutId === "string" ? feature.properties.workoutId.toUpperCase() : undefined;
       onHover(workoutID);
       map.getCanvas().style.cursor = feature ? "pointer" : "";
       if (!workoutID) { removePopup(); return; }
@@ -782,11 +821,24 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     const leave = () => { onHover(undefined); map.getCanvas().style.cursor = ""; removePopup(); };
 		const hoverCoverage = (event: MapMouseEvent) => {
 			if (!diagnosticModeRef.current || !productionCoverageEnabledRef.current) return;
-			const features = map.queryRenderedFeatures(event.point, { layers: [COVERAGE_PARK_LAYER, COVERAGE_LAYER] });
-			const feature = features.find((candidate) => candidate.properties?.entity_kind === "path" && typeof candidate.properties?.name === "string" && candidate.properties.name.trim())
-				?? features.find((candidate) => candidate.properties?.entity_kind === "park") ?? features[0];
-			const entityID = typeof feature?.properties?.entity_id === "string" ? feature.properties.entity_id.toUpperCase() : undefined;
-			const entityKind = feature?.properties?.entity_kind === "park" ? "park" : feature?.properties?.entity_kind === "path" ? "path" : undefined;
+			const hitBox: [[number, number], [number, number]] = [
+				[event.point.x - 3, event.point.y - 3],
+				[event.point.x + 3, event.point.y + 3],
+			];
+			const features = map.queryRenderedFeatures(hitBox, { layers: [COVERAGE_PARK_LAYER, COVERAGE_LAYER] });
+			const parkNames = new Set(features.flatMap((candidate) => {
+				const name = candidate.properties?.entityKind === "park" ? candidate.properties?.name : undefined;
+				return typeof name === "string" && name.trim() ? [name.trim()] : [];
+			}));
+			const regionalParkPath = features.find((candidate) => {
+				const locality = candidate.properties?.entityKind === "path" ? candidate.properties?.localityName : undefined;
+				return typeof locality === "string" && parkNames.has(locality.trim());
+			});
+			const feature = regionalParkPath
+				?? features.find((candidate) => candidate.properties?.entityKind === "path" && typeof candidate.properties?.name === "string" && candidate.properties.name.trim())
+				?? features.find((candidate) => candidate.properties?.entityKind === "park") ?? features[0];
+			const entityID = typeof feature?.properties?.entityId === "string" ? feature.properties.entityId.toUpperCase() : undefined;
+			const entityKind = feature?.properties?.entityKind === "park" ? "park" : feature?.properties?.entityKind === "path" ? "path" : undefined;
 			map.getCanvas().style.cursor = feature ? "pointer" : "";
 			if (!entityID || !entityKind || !selectionRef.current) { removePopup(); return; }
 			const key = `${entityKind}:${entityID}`;
@@ -825,7 +877,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
 		const clickRoute = (event: MapMouseEvent) => {
 			if (diagnosticModeRef.current) return;
 			const feature = topmostFeature(map.queryRenderedFeatures(event.point, { layers: [ROUTES_LAYER, ROUTE_MARKERS_LAYER] }));
-			const workoutID = typeof feature?.properties?.workout_id === "string" ? feature.properties.workout_id.toUpperCase() : undefined;
+			const workoutID = typeof feature?.properties?.workoutId === "string" ? feature.properties.workoutId.toUpperCase() : undefined;
 			if (workoutID) onRouteClickRef.current(workoutID);
 		};
     const diagnosticPortionAt = (event: MapMouseEvent) => {
@@ -876,13 +928,14 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   useEffect(() => {
     routeUrlRef.current = selection?.routeTileUrl;
     coverageUrlRef.current = selection?.coverageTileUrl;
+    coverageFocusRef.current = coverageFocus ?? { type: "FeatureCollection", features: [] };
     selectionRef.current = selection;
     routeColorsRef.current = routeColors(selection?.workouts ?? []);
     workoutsRef.current = workouts;
     preferencesRef.current = preferences;
     const map = mapRef.current;
     if (map && styleLoadedRef.current) syncMapLayers(map);
-  }, [preferences, selection?.id, selection?.routeTileUrl, selection?.coverageTileUrl, workouts]);
+  }, [preferences, selection?.id, selection?.routeTileUrl, selection?.coverageTileUrl, coverageFocus, workouts]);
 
 	useEffect(() => { onRouteTilesUnavailableRef.current = onRouteTilesUnavailable; }, [onRouteTilesUnavailable]);
 	useEffect(() => { onRouteClickRef.current = onRouteClick; }, [onRouteClick]);
@@ -900,6 +953,7 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
     rawRouteEndpointsVisibleRef.current = rawRouteEndpointsVisible;
     diagnosticRef.current = diagnostic;
     highlightedPortionRef.current = highlightedPortionOrdinal;
+		if ((!diagnosticMode || !productionCoverageEnabled) && coveragePopupEntityRef.current) removePopup();
     const map = mapRef.current;
 		if (map && styleLoadedRef.current) syncMapLayers(map);
     if (map?.getLayer(DIAGNOSTIC_SELECTED_LAYER)) map.setFilter(DIAGNOSTIC_SELECTED_LAYER, ["==", ["get", "portionOrdinal"], highlightedPortionOrdinal ?? -1]);
@@ -939,8 +993,8 @@ function MapCanvas({ family, preferences, selection, workouts, fitPadding, hover
   useEffect(() => {
     hoverRef.current = hoveredWorkoutId;
     const map = mapRef.current;
-    if (map?.getLayer(HOVER_LAYER)) map.setFilter(HOVER_LAYER, ["==", ["get", "workout_id"], hoveredWorkoutId ?? ""]);
-    if (map?.getLayer(HOVER_MARKERS_LAYER)) map.setFilter(HOVER_MARKERS_LAYER, ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "workout_id"], hoveredWorkoutId ?? ""]]);
+    if (map?.getLayer(HOVER_LAYER)) map.setFilter(HOVER_LAYER, ["==", ["get", "workoutId"], hoveredWorkoutId ?? ""]);
+    if (map?.getLayer(HOVER_MARKERS_LAYER)) map.setFilter(HOVER_MARKERS_LAYER, ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "workoutId"], hoveredWorkoutId ?? ""]]);
   }, [hoveredWorkoutId]);
 
   useEffect(() => {
@@ -985,11 +1039,38 @@ export function sortMapWorkouts(workouts: MapSelectionWorkout[], sort: WorkoutSo
   });
 }
 
-function WorkoutRouteList({ workouts, preferences, sort, visibleIDs, highlightedWorkoutId, focusedWorkoutId, scrollRequest, onToggle, onFocus, onHover }: {
-  workouts: MapSelectionWorkout[]; preferences: Preferences; sort: WorkoutSort; visibleIDs?: string[]; highlightedWorkoutId?: string; focusedWorkoutId?: string; scrollRequest?: { key: number; workoutId: string };
+function mergeWorkoutReadiness(current: MapSelectionWorkout[], updates: MapSelectionWorkout[]) {
+  const replacements = new Map(updates.map((workout) => [workout.id, workout]));
+  return current.map((workout) => replacements.get(workout.id) ?? workout);
+}
+
+function coverageRouteStatus(workout: MapSelectionWorkout) {
+  const readiness = workout.coverageReadiness;
+  if (readiness.resultStatus === "current") return { kind: "current", label: "Coverage current", symbol: "✓" };
+  if (readiness.resultStatus === "stale") return { kind: "stale", label: "Coverage stale", symbol: "" };
+  if (readiness.mapDataStatus === "unavailable") return { kind: "unavailable", label: "Coverage unavailable", symbol: "×" };
+  if (readiness.mapDataStatus === "pending" || readiness.processingStatus === "queued" || readiness.processingStatus === "running") return { kind: "pending", label: "Coverage pending", symbol: "" };
+  if (readiness.processingStatus === "failed") return { kind: "failed", label: "Coverage failed", symbol: "✗" };
+  return { kind: "pending", label: "Coverage pending", symbol: "" };
+}
+
+function shouldPollCoverage(workout: MapSelectionWorkout) {
+  return workout.coverageReadiness.resultStatus === "none" && workout.coverageReadiness.mapDataStatus !== "unavailable" && workout.coverageReadiness.processingStatus !== "failed";
+}
+
+function unavailableCoverageReason(workout: MapSelectionWorkout) {
+  const readiness = workout.coverageReadiness;
+  if (readiness.mapDataStatus === "unavailable") return "Map data not available";
+  if (readiness.mapDataStatus === "pending") return "Waiting for map data";
+  if (readiness.processingStatus === "failed") return "Coverage update failed";
+  return "Waiting for coverage update";
+}
+
+function WorkoutRouteList({ workouts, preferences, sort, mode, diagnosticCoverage, visibleIDs, highlightedWorkoutId, focusedWorkoutId, scrollRequest, onToggle, onFocus, onHover }: {
+  workouts: MapSelectionWorkout[]; preferences: Preferences; sort: WorkoutSort; mode: MapMode; diagnosticCoverage: boolean; visibleIDs?: string[]; highlightedWorkoutId?: string; focusedWorkoutId?: string; scrollRequest?: { key: number; workoutId: string };
   onToggle: (id: string) => void; onFocus: (workout: MapSelectionWorkout) => void; onHover: (id?: string) => void;
 }) {
-	const listRef = useRef<HTMLOListElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
 	const scrolledRequestRef = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		if (!scrollRequest || focusedWorkoutId !== scrollRequest.workoutId || scrolledRequestRef.current === scrollRequest.key) return;
@@ -998,12 +1079,20 @@ function WorkoutRouteList({ workouts, preferences, sort, visibleIDs, highlighted
 		target.scrollIntoView({ block: "center", inline: "nearest" });
 		scrolledRequestRef.current = scrollRequest.key;
 	}, [focusedWorkoutId, scrollRequest, workouts]);
-  return <ol ref={listRef} className="map-route-list map-workout-list">{sortMapWorkouts(workouts, sort).map((workout) => <li key={workout.id} data-workout-id={workout.id} className={`${highlightedWorkoutId === workout.id ? "is-hovered" : ""}${focusedWorkoutId === workout.id ? " is-focused" : ""}`} onPointerEnter={() => onHover(workout.id)} onPointerLeave={() => onHover(undefined)}>
-    <label className="map-route-toggle" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Show ${workout.type.name} from ${formatWorkoutDate(workout, preferences)}`} checked={visibleIDs === undefined || visibleIDs.includes(workout.id)} onChange={() => onToggle(workout.id)} /></label>
-    <button type="button" className="map-route-focus" onClick={() => onFocus(workout)} onFocus={() => onHover(workout.id)} onBlur={() => onHover(undefined)}>
-      <span className={`route-swatch route-swatch--${semanticRouteKind(workout.type.name) ?? routeColorIndex(workout.type.key)}`} aria-hidden="true" /><span className="map-route-type">{workout.type.name}</span><small>{formatWorkoutDate(workout, preferences)}</small>
-    </button>
-  </li>)}</ol>;
+  return <ol ref={listRef} className="map-route-list map-workout-list" onPointerLeave={() => onHover(undefined)}>{sortMapWorkouts(workouts, sort).map((workout) => {
+    const coverageStatus = coverageRouteStatus(workout);
+    const focusDisabled = mode === "coverage" && !diagnosticCoverage && workout.coverageReadiness.resultStatus === "none";
+    const focusControl = <button type="button" className="map-route-focus" disabled={focusDisabled} onClick={() => onFocus(workout)} onPointerEnter={() => { if (focusDisabled) onHover(undefined); else onHover(workout.id); }} onFocus={() => { if (!focusDisabled) onHover(workout.id); }} onBlur={() => onHover(undefined)}>
+      {mode === "routes"
+        ? <span className={`route-swatch route-swatch--${semanticRouteKind(workout.type.name) ?? routeColorIndex(workout.type.key)}`} aria-hidden="true" />
+        : <span className={`coverage-route-status coverage-route-status--${coverageStatus.kind}`}><span aria-hidden="true">{coverageStatus.symbol}</span><span className="visually-hidden">{coverageStatus.label}</span></span>}
+      <span className="map-route-type">{workout.type.name}</span><small>{formatWorkoutDate(workout, preferences)}</small>
+    </button>;
+    return <li key={workout.id} data-workout-id={workout.id} className={`${highlightedWorkoutId === workout.id ? "is-hovered" : ""}${focusedWorkoutId === workout.id ? " is-focused" : ""}${focusDisabled ? " is-coverage-unavailable" : ""}`}>
+      <label className="map-route-toggle" onPointerEnter={() => onHover(undefined)} onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Show ${workout.type.name} from ${formatWorkoutDate(workout, preferences)}`} checked={visibleIDs === undefined || visibleIDs.includes(workout.id)} onChange={() => onToggle(workout.id)} /></label>
+      {focusDisabled ? <Tooltip content={unavailableCoverageReason(workout)} className="map-route-readiness-tooltip" label={`${workout.type.name}: ${unavailableCoverageReason(workout)}`}>{focusControl}</Tooltip> : focusControl}
+    </li>;
+  })}</ol>;
 }
 
 function safeCount(value: number) {
@@ -1069,7 +1158,13 @@ const ROAD_COVERAGE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 function coverageEntityName(entity: RoadCoverageEntity) {
   if (entity.name) return entity.name;
   if (entity.entityKind === "park") return "Unnamed park";
-  return entity.broadClass === "road" ? "Unnamed road" : "Unnamed path";
+  switch (entity.broadClass) {
+    case "road": return "Unnamed road";
+    case "cycleway": return "Bike path";
+    case "footway": return "Pedestrian path";
+    case "trail": return "Trail";
+    default: return "Unnamed path";
+  }
 }
 
 export function coverageRegionLabel(regionId: string) {
@@ -1250,7 +1345,7 @@ function RoadCoverageDialog({ open, selection, pageSize, cache, onCacheChange, o
   </Dialog.Root>;
 }
 
-export default function MapPage({ config, preferences, csrfToken, dateRange, onDateRangeSelected, sort = DEFAULT_WORKOUT_SORT, persistedWorkoutIds, onWorkoutSelectionChange, persistedAvailableWorkouts, onAvailableWorkoutsChange, persistedFocusedWorkoutId, onFocusedWorkoutChange, persistedMapMode, onMapModeChange, roadCoverageCache, onRoadCoverageCacheChange }: {
+export default function MapPage({ config, preferences, csrfToken, dateRange, onDateRangeSelected, sort = DEFAULT_WORKOUT_SORT, persistedWorkoutIds, onWorkoutSelectionChange, persistedAvailableWorkouts, onAvailableWorkoutsChange, persistedFocusedWorkoutId, onFocusedWorkoutChange, persistedMapMode, onMapModeChange, roadCoverageCache, onRoadCoverageCacheChange, explicitCanvasFocusRequest = 0 }: {
   config: PublicConfig; preferences: Preferences; csrfToken: string; dateRange: DateRangePreference;
   onDateRangeSelected: (range: DateRangePreference) => void; sort?: WorkoutSort;
   persistedWorkoutIds?: string[]; onWorkoutSelectionChange?: (workoutIds?: string[]) => void;
@@ -1258,6 +1353,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   persistedFocusedWorkoutId?: string; onFocusedWorkoutChange?: (workoutId?: string) => void;
   persistedMapMode?: MapMode; onMapModeChange?: (mode: MapMode) => void;
   roadCoverageCache?: RoadCoverageCache; onRoadCoverageCacheChange?: (cache?: RoadCoverageCache) => void;
+  explicitCanvasFocusRequest?: number;
 }) {
   const [selection, setSelection] = useState<MapSelection>();
   const [selectionPending, setSelectionPending] = useState(true);
@@ -1265,9 +1361,14 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const [baseMapError, setBaseMapError] = useState("");
   const [rangeError, setRangeError] = useState("");
   const [overrideFamilyId, setOverrideFamilyId] = useState<string>();
+  const [stickyAutomaticFamilyId, setStickyAutomaticFamilyId] = useState(config.baseMaps.fallbackFamilyId);
   const [hoveredWorkoutId, setHoveredWorkoutId] = useState<string>();
+  const [coverageFocus, setCoverageFocus] = useState<CoverageFocusFeatureCollection>(EMPTY_COVERAGE_FOCUS);
   const [fitRequest, setFitRequest] = useState<{ key: number; bounds: RouteBounds; focusCanvas?: boolean }>();
 	const [canvasFocusRequest, setCanvasFocusRequest] = useState(0);
+	useEffect(() => {
+		if (explicitCanvasFocusRequest > 0) setCanvasFocusRequest((value) => value + 1);
+	}, [explicitCanvasFocusRequest]);
   const [localFocusedWorkoutId, setLocalFocusedWorkoutId] = useState<string>();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -1290,12 +1391,15 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const [nonFocusedRoutesHidden, setNonFocusedRoutesHidden] = useState(false);
   const [nonFocusedCoverageHidden, setNonFocusedCoverageHidden] = useState(false);
 	const requestedIds = useRef(requestedWorkoutIds(window.location.search)).current;
+	const requestedFocusActiveRef = useRef(requestedIds.length === 1);
   const initialListFocusId = useRef(requestedIds.length === 1 ? requestedIds[0] : persistedFocusedWorkoutId).current;
 	const [listScrollRequest, setListScrollRequest] = useState<{ key: number; workoutId: string } | undefined>(() => initialListFocusId ? { key: 1, workoutId: initialListFocusId } : undefined);
   const [localWorkoutIds, setLocalWorkoutIds] = useState<string[] | undefined>(() => requestedIds.length ? requestedIds : undefined);
   const selectedWorkoutIds = onWorkoutSelectionChange ? persistedWorkoutIds : localWorkoutIds;
   const focusedWorkoutId = onFocusedWorkoutChange ? persistedFocusedWorkoutId : localFocusedWorkoutId;
-  const selectionFocusedWorkoutId = focusedWorkoutId ?? (requestedIds.length === 1 ? requestedIds[0] : undefined);
+  const selectionFocusedWorkoutId = focusedWorkoutId ?? (requestedFocusActiveRef.current ? requestedIds[0] : undefined);
+	const selectionFocusRef = useRef(selectionFocusedWorkoutId);
+	selectionFocusRef.current = selectionFocusedWorkoutId;
   const [localAvailableWorkouts, setLocalAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
   const availableWorkouts = onAvailableWorkoutsChange ? persistedAvailableWorkouts ?? [] : localAvailableWorkouts;
   const rangeSaveSequence = useRef(0);
@@ -1307,6 +1411,8 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const hoveredWorkoutRef = useRef<string | undefined>(undefined);
   const hoverCandidateRef = useRef<string | undefined>(undefined);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const temporaryCoverageSequenceRef = useRef(0);
+  const coverageFocusCacheRef = useRef(new Map<string, CoverageFocusFeatureCollection>());
   const hoveredPortionRef = useRef<number | undefined>(undefined);
   const portionHoverCandidateRef = useRef<number | undefined>(undefined);
   const portionHoverTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -1335,6 +1441,14 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     else setLocalFocusedWorkoutId(workoutId);
   }
 
+  function clearFocusedWorkout() {
+    requestedFocusActiveRef.current = false;
+    const location = new URL(window.location.href);
+    location.searchParams.delete("workoutId");
+    history.replaceState(history.state, "", `${location.pathname}${location.search}${location.hash}`);
+    updateFocusedWorkout(undefined);
+  }
+
   function updateAvailableWorkouts(workouts: MapSelectionWorkout[]) {
     if (onAvailableWorkoutsChange) onAvailableWorkoutsChange(workouts);
     else setLocalAvailableWorkouts(workouts);
@@ -1357,7 +1471,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   function requestRouteHover(workoutId?: string) {
     if (!workoutId || !visibleWorkoutIdsRef.current.has(workoutId)) { cancelRouteHover(); return; }
     if (hoveredWorkoutRef.current === workoutId || hoverCandidateRef.current === workoutId) return;
-    cancelRouteHover();
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverCandidateRef.current = workoutId;
     hoverTimerRef.current = setTimeout(() => {
       hoverTimerRef.current = undefined;
@@ -1405,13 +1519,14 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const controller = new AbortController();
     let active = true;
     const fitIntent = pendingSelectionFitRef.current;
-    const fitWorkoutId = requestedIds.length === 1 ? requestedIds[0] : focusedWorkoutId;
+		const requestFocusId = selectionFocusRef.current;
+    const fitWorkoutId = requestedIds.length === 1 ? requestedIds[0] : requestFocusId;
     const bootstrapAvailableWorkouts = selectedWorkoutIds !== undefined && availableWorkouts.length === 0;
     const removeSelection = (id: string) => api<void>(`/api/map-selections/${encodeURIComponent(id.toUpperCase())}`, { method: "DELETE" }, csrfToken).catch(() => undefined);
     const createSelection = async (workoutIds?: string[]) => {
       for (let attempt = 0; ; attempt++) {
         try {
-          return await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, workoutIds, selectionFocusedWorkoutId)), signal: controller.signal }, csrfToken);
+          return await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, workoutIds, requestFocusId)), signal: controller.signal }, csrfToken);
         } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 503 || attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length) throw error;
           await new Promise((resolve) => setTimeout(resolve, MAP_SELECTION_RETRY_DELAYS_MS[attempt]));
@@ -1439,7 +1554,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
         const previousID = activeSelectionRef.current;
         activeSelectionRef.current = normalized.id;
         setSelection(normalized);
-        updateAvailableWorkouts(selectedWorkoutIds === undefined || availableWorkouts.length === 0 ? normalizedAvailableWorkouts : availableWorkouts);
+        updateAvailableWorkouts(selectedWorkoutIds === undefined || availableWorkouts.length === 0 ? normalizedAvailableWorkouts : mergeWorkoutReadiness(availableWorkouts, normalizedWorkouts));
         const requestedWorkout = fitIntent === "requested" && fitWorkoutId
           ? (availableWorkouts.find((workout) => workout.id === fitWorkoutId) ?? normalizedWorkouts.find((workout) => workout.id === fitWorkoutId))
           : undefined;
@@ -1451,8 +1566,9 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
 		if (previousID && previousID !== normalized.id) window.setTimeout(() => { void removeSelection(previousID); }, 5000);
       })
       .catch((error) => { if (active && !(error instanceof DOMException && error.name === "AbortError")) { setSelectionError("Routes could not be prepared for this map."); setSelectionPending(false); } });
+    // Focus only changes local overlays and the camera, not the tile capability's workout set.
     return () => { active = false; controller.abort(); };
-  }, [csrfToken, dateRange, preferences.timezone, selectedWorkoutIds?.join(",") ?? "all", selectionFocusedWorkoutId, selectionRefresh]);
+  }, [csrfToken, dateRange, preferences.timezone, selectedWorkoutIds?.join(",") ?? "all", selectionRefresh]);
 
 	useEffect(() => {
 		if (!selection) return;
@@ -1466,9 +1582,43 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
 		return () => { window.clearTimeout(timer); window.removeEventListener("focus", refreshIfExpired); document.removeEventListener("visibilitychange", visibility); };
 	}, [selection?.id, selection?.expiresAt]);
 
+  const coverageReadinessPollKey = selection?.workouts.map((workout) => `${workout.id}:${workout.coverageReadiness.mapDataStatus}:${workout.coverageReadiness.processingStatus}:${workout.coverageReadiness.resultStatus}`).join(",") ?? "";
+  const coverageReadinessPolling = mapMode === "coverage" && !preferences.coverageDiagnosticsEnabled && Boolean(selection?.workouts.some(shouldPollCoverage));
+  useEffect(() => {
+    if (!coverageReadinessPolling || !selection) return;
+    const controller = new AbortController();
+    let active = true;
+    let timer: number | undefined;
+    const removeSelection = (id: string) => api<void>(`/api/map-selections/${encodeURIComponent(id.toUpperCase())}`, { method: "DELETE" }, csrfToken).catch(() => undefined);
+    const schedule = () => { timer = window.setTimeout(poll, COVERAGE_READINESS_POLL_MS); };
+    const poll = async () => {
+      if (selectionPendingRef.current) { schedule(); return; }
+      try {
+        const created = await api<MapSelection>("/api/map-selections", { method: "POST", body: JSON.stringify(selectionRequest(dateRange, preferences.timezone, selectedWorkoutIds, selectionFocusedWorkoutId)), signal: controller.signal }, csrfToken);
+        const normalizedWorkouts = created.workouts.map((workout) => ({ ...workout, id: workout.id.toUpperCase() }));
+        const prior = new Map(selection.workouts.map((workout) => [workout.id, workout.coverageReadiness]));
+        const changed = normalizedWorkouts.some((workout) => JSON.stringify(prior.get(workout.id)) !== JSON.stringify(workout.coverageReadiness));
+        const normalizedID = created.id.toUpperCase();
+        if (!active) { if (normalizedID !== activeSelectionRef.current) void removeSelection(normalizedID); return; }
+        if (!changed) { if (normalizedID !== activeSelectionRef.current) void removeSelection(normalizedID); schedule(); return; }
+        const previousID = activeSelectionRef.current;
+        activeSelectionRef.current = normalizedID;
+        setSelection({ ...created, id: normalizedID, workouts: normalizedWorkouts });
+        updateAvailableWorkouts(mergeWorkoutReadiness(availableWorkouts, normalizedWorkouts));
+        if (previousID && previousID !== normalizedID) window.setTimeout(() => { void removeSelection(previousID); }, 5000);
+      } catch {
+        if (active) schedule();
+      }
+    };
+    schedule();
+    return () => { active = false; controller.abort(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [coverageReadinessPolling, coverageReadinessPollKey, selection?.id, csrfToken, dateRange, preferences.timezone, selectedWorkoutIds?.join(",") ?? "all", selectionFocusedWorkoutId]);
+
   useEffect(() => () => {
+    temporaryCoverageSequenceRef.current++;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     if (portionHoverTimerRef.current) clearTimeout(portionHoverTimerRef.current);
+    coverageFocusCacheRef.current.clear();
     if (activeSelectionRef.current) void api<void>(`/api/map-selections/${encodeURIComponent(activeSelectionRef.current)}`, { method: "DELETE" }, csrfToken).catch(() => undefined);
   }, [csrfToken]);
 
@@ -1476,14 +1626,40 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   useEffect(() => { if (preferences.coverageDiagnosticsEnabled) setLocalMapMode("routes"); }, [preferences.coverageDiagnosticsEnabled]);
 
   const focusedWorkout = availableWorkouts.find((workout) => workout.id === focusedWorkoutId);
-  const automaticFamilyId = focusedWorkout ? resolveBaseFamily(config.baseMaps, [focusedWorkout]) : selection ? resolveBaseFamily(config.baseMaps, selection.workouts) : config.baseMaps.fallbackFamilyId;
+  const focusedFamilyId = focusedWorkout ? resolveBaseFamily(config.baseMaps, [focusedWorkout]) : undefined;
+  const automaticFamilyId = focusedFamilyId ?? stickyAutomaticFamilyId;
   const familyId = overrideFamilyId && config.baseMaps.families.some((family) => family.id === overrideFamilyId) ? overrideFamilyId : automaticFamilyId;
   const family = config.baseMaps.families.find((candidate) => candidate.id === familyId) ?? config.baseMaps.families[0];
-  const preferredHighlightId = hoveredWorkoutId ?? focusedWorkoutId ?? (requestedIds.length === 1 ? requestedIds[0] : undefined);
+  const preferredHighlightId = hoveredWorkoutId ?? focusedWorkoutId;
   const highlightedWorkoutId = preferredHighlightId && visibleWorkoutIds.has(preferredHighlightId) ? preferredHighlightId : undefined;
   const visibleFocusedWorkoutId = focusedWorkoutId && visibleWorkoutIds.has(focusedWorkoutId) ? focusedWorkoutId : undefined;
   const focusedCoverageBounds = visibleFocusedWorkoutId ? focusedWorkout?.bounds : undefined;
   const displayedFocusedWorkoutId = hoveredWorkoutId && hoveredWorkoutId !== visibleFocusedWorkoutId ? undefined : visibleFocusedWorkoutId;
+
+  useEffect(() => {
+    const sequence = ++temporaryCoverageSequenceRef.current;
+    const targetWorkoutID = hoveredWorkoutId ?? visibleFocusedWorkoutId;
+    const targetWorkout = targetWorkoutID ? availableWorkouts.find((workout) => workout.id === targetWorkoutID) : undefined;
+    if (mapMode !== "coverage" || preferences.coverageDiagnosticsEnabled || !selection || !targetWorkout || targetWorkout.coverageReadiness.resultStatus === "none") {
+      setCoverageFocus(EMPTY_COVERAGE_FOCUS);
+      return;
+    }
+    const targetID = targetWorkout.id;
+    const key = `${selection.id}:${targetID}`;
+    const cached = coverageFocusCacheRef.current.get(key);
+    if (cached) { setCoverageFocus(cached); return; }
+    void api<CoverageFocusFeatureCollection>(`/api/map-selections/${encodeURIComponent(selection.id)}/coverage-focus/${encodeURIComponent(targetID)}?generation=${selection.dataGeneration}`, {}, csrfToken)
+      .then((value) => {
+        if (temporaryCoverageSequenceRef.current !== sequence || activeSelectionRef.current !== selection.id) return;
+        coverageFocusCacheRef.current.set(key, value);
+        setCoverageFocus(value);
+      })
+      .catch((error) => {
+        if (error instanceof ApiError && error.status === 404) refreshSelection();
+        if (temporaryCoverageSequenceRef.current === sequence) setCoverageFocus(EMPTY_COVERAGE_FOCUS);
+      });
+  }, [hoveredWorkoutId, visibleFocusedWorkoutId, mapMode, preferences.coverageDiagnosticsEnabled, selection?.id, selection?.dataGeneration, csrfToken]);
+
 	const endpointRawWorkoutId = visibleFocusedWorkoutId ?? (visibleWorkoutIds.size === 1 ? [...visibleWorkoutIds][0] : undefined);
 	const rawRouteWorkoutId = mapMode === "routes" ? highlightedWorkoutId ?? endpointRawWorkoutId : preferences.coverageDiagnosticsEnabled ? visibleFocusedWorkoutId : undefined;
 	const loadedRawRoute = rawRouteWorkoutId && singleRawRoute?.workoutId === rawRouteWorkoutId ? singleRawRoute : rawRouteWorkoutId ? rawRouteCacheRef.current.get(rawRouteWorkoutId) : undefined;
@@ -1499,6 +1675,16 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const statusMessage = rangeError || baseMapError || selectionError || (selectionPending ? "Updating routes..." : "");
   const dismissibleStatusError = !rangeError && Boolean(baseMapError || selectionError);
   const dismissStatusError = () => { if (baseMapError) setBaseMapError(""); else setSelectionError(""); };
+
+  useEffect(() => {
+    if (focusedFamilyId) {
+      setStickyAutomaticFamilyId(focusedFamilyId);
+    }
+  }, [focusedFamilyId]);
+
+  useEffect(() => {
+    if (mapMode === "coverage" && !preferences.coverageDiagnosticsEnabled && focusedWorkout?.coverageReadiness.resultStatus === "none") clearFocusedWorkout();
+  }, [mapMode, preferences.coverageDiagnosticsEnabled, focusedWorkout?.id, focusedWorkout?.coverageReadiness.resultStatus]);
 
   useEffect(() => {
     requestDiagnosticHover(undefined);
@@ -1603,17 +1789,21 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     const current = selectedWorkoutIds ?? availableWorkouts.map((workout) => workout.id);
     if (current.includes(workoutId)) {
       cancelRouteHover(workoutId);
-      if (focusedWorkoutId === workoutId) updateFocusedWorkout(undefined);
+      if (focusedWorkoutId === workoutId) clearFocusedWorkout();
       updateWorkoutSelection(current.filter((id) => id !== workoutId));
     } else {
       cancelRouteHover();
-      updateFocusedWorkout(workoutId);
       updateWorkoutSelection([...current, workoutId].sort());
     }
   }
 
   function focusWorkout(workout: MapSelectionWorkout) {
-		history.replaceState(history.state, "", `/map?workoutId=${encodeURIComponent(workout.id)}`);
+		if (mapMode === "coverage" && !preferences.coverageDiagnosticsEnabled && workout.coverageReadiness.resultStatus === "none") return;
+		requestedFocusActiveRef.current = false;
+		const location = new URL(window.location.href);
+		location.pathname = "/map";
+		location.searchParams.set("workoutId", workout.id);
+		history.replaceState(history.state, "", `${location.pathname}${location.search}${location.hash}`);
     updateFocusedWorkout(workout.id);
     const current = selectedWorkoutIds ?? availableWorkouts.map((item) => item.id);
     if (!current.includes(workout.id)) updateWorkoutSelection([...current, workout.id].sort());
@@ -1632,7 +1822,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   function toggleAllWorkouts() {
     cancelRouteHover();
     if (allRoutesSelected) {
-      updateFocusedWorkout(undefined);
+      clearFocusedWorkout();
       updateWorkoutSelection([]);
     } else {
       updateWorkoutSelection(undefined);
@@ -1644,7 +1834,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     onDateRangeSelected(next);
     updateWorkoutSelection(undefined);
     updateAvailableWorkouts([]);
-    updateFocusedWorkout(undefined);
+    clearFocusedWorkout();
     cancelRouteHover();
     setRangeError("");
     const sequence = ++rangeSaveSequence.current;
@@ -1673,7 +1863,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
   const controls = (suffix: string) => <>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select date range"><span>Date range</span><strong>{rangeLabel(dateRange)}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}>{QUICK_RANGES.map(([value, label]) => <DropdownMenu.Item key={value} onSelect={() => void selectRange(value)}>{label}{dateRange === value && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}<DropdownMenu.Separator /><DropdownMenu.Item onSelect={() => setCustomOpen(true)}>Custom...{EXPLICIT_RANGE.test(dateRange) && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
     <DropdownMenu.Root><DropdownMenu.Trigger className="range-trigger" aria-label="Select base map"><span>Base map</span><strong>{overrideFamilyId ? family?.label : `Automatic / ${family?.label ?? "Unavailable"}`}</strong><span aria-hidden="true">v</span></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content range-menu" align={suffix === "desktop" ? "start" : "center"} sideOffset={8}><DropdownMenu.Item onSelect={() => setOverrideFamilyId(undefined)}>Automatic{!overrideFamilyId && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item><DropdownMenu.Separator />{config.baseMaps.families.map((candidate) => <DropdownMenu.Item key={candidate.id} onSelect={() => setOverrideFamilyId(candidate.id)}>{candidate.label}{overrideFamilyId === candidate.id && <span aria-label="selected">&#10003;</span>}</DropdownMenu.Item>)}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-		<fieldset className="map-workout-filter"><legend>Workout routes</legend><div className="map-route-toolbar"><label className="map-route-toggle"><input type="checkbox" aria-label="Select all workout routes" checked={allRoutesSelected} disabled={!availableWorkouts.length} onChange={toggleAllWorkouts} /></label><div className="map-mode-controls" role="group" aria-label="Map mode"><button type="button" aria-pressed={mapMode === "routes"} onClick={() => { setMapMode("routes"); setCanvasFocusRequest((value) => value + 1); }}>Routes</button><button type="button" aria-pressed={mapMode === "coverage"} disabled={!coverageCompatible} onClick={() => { setMapMode("coverage"); setCanvasFocusRequest((value) => value + 1); }}>Coverage</button></div></div><div className="map-filter-options">{availableWorkouts.length ? <WorkoutRouteList workouts={availableWorkouts} preferences={preferences} sort={sort} visibleIDs={selectedWorkoutIds} highlightedWorkoutId={highlightedWorkoutId} focusedWorkoutId={displayedFocusedWorkoutId} scrollRequest={listScrollRequest} onToggle={toggleWorkout} onFocus={focusWorkout} onHover={requestRouteHover} /> : <p className="map-routes-empty">No workout routes in this range.</p>}</div></fieldset>
+		<fieldset className="map-workout-filter"><legend>Workout routes</legend><div className="map-route-toolbar"><label className="map-route-toggle"><input type="checkbox" aria-label="Select all workout routes" checked={allRoutesSelected} disabled={!availableWorkouts.length} onChange={toggleAllWorkouts} /></label><div className="map-mode-controls" role="group" aria-label="Map mode"><button type="button" aria-pressed={mapMode === "routes"} onClick={() => { setMapMode("routes"); setCanvasFocusRequest((value) => value + 1); }}>Routes</button><button type="button" aria-pressed={mapMode === "coverage"} disabled={!coverageCompatible} onClick={() => { setMapMode("coverage"); setCanvasFocusRequest((value) => value + 1); }}>Coverage</button></div></div><div className="map-filter-options">{availableWorkouts.length ? <WorkoutRouteList workouts={availableWorkouts} preferences={preferences} sort={sort} mode={mapMode} diagnosticCoverage={preferences.coverageDiagnosticsEnabled} visibleIDs={selectedWorkoutIds} highlightedWorkoutId={highlightedWorkoutId} focusedWorkoutId={displayedFocusedWorkoutId} scrollRequest={listScrollRequest} onToggle={toggleWorkout} onFocus={focusWorkout} onHover={requestRouteHover} /> : <p className="map-routes-empty">No workout routes in this range.</p>}</div></fieldset>
     <button type="button" className="secondary map-fit-button" disabled={!selection?.bounds} onClick={() => selection?.bounds && setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds: selection.bounds! }))}>Fit routes</button>
   </>;
 
@@ -1682,7 +1872,7 @@ export default function MapPage({ config, preferences, csrfToken, dateRange, onD
     <aside className="map-sidebar" aria-label="Map controls"><div className="map-controls">{controls("desktop")}</div></aside>
     <section className="map-stage" aria-live="polite">
       {statusMessage && <div className="map-banner" role="status"><span>{statusMessage}</span>{dismissibleStatusError && <button type="button" className="map-banner-dismiss" aria-label={baseMapError ? "Dismiss base map warning" : "Dismiss route preparation error"} onClick={dismissStatusError}>&times;</button>}</div>}
-      {family && <MapCanvas family={family} preferences={preferences} selection={selection} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} focusRequest={canvasFocusRequest} coverageHighlight={coverageHighlight} diagnosticEnabled={diagnosticFeatureEnabled} productionCoverageEnabled={!preferences.coverageDiagnosticsEnabled} diagnosticMode={mapMode === "coverage"} routeHidingEnabled={mapMode === "routes" && Boolean(visibleFocusedWorkoutId)} nonFocusedRoutesHidden={nonFocusedRoutesHidden} rawRouteHidden={rawRouteHidden} nonFocusedCoverageHidden={nonFocusedCoverageHidden} diagnosticRawRoute={preferences.coverageDiagnosticsEnabled ? displayedSingleRawRoute?.route : undefined} directionRoute={directionRawRoute} rawRouteEndpoints={markerRawRoute?.endpoints} rawRouteEndpointsVisible={showRawRouteEndpoints} diagnostic={diagnostic} highlightedPortionOrdinal={hoveredPortionOrdinal ?? lockedPortionOrdinal} onDiagnosticHover={requestDiagnosticHover} onDiagnosticLock={setLockedPortionOrdinal} onHover={requestRouteHover} onRouteClick={focusWorkoutFromMap} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available. Retrying in 5 seconds...")} onBaseMapReady={() => setBaseMapError("")} onRouteTilesUnavailable={refreshSelection} />}
+      {family && <MapCanvas family={family} preferences={preferences} selection={selection} coverageFocus={coverageFocus} workouts={availableWorkouts} fitPadding={config.mapFitPaddingPixels} hoveredWorkoutId={highlightedWorkoutId} fitRequest={fitRequest} focusRequest={canvasFocusRequest} coverageHighlight={coverageHighlight} diagnosticEnabled={diagnosticFeatureEnabled} productionCoverageEnabled={!preferences.coverageDiagnosticsEnabled} diagnosticMode={mapMode === "coverage"} routeHidingEnabled={mapMode === "routes" && Boolean(visibleFocusedWorkoutId)} nonFocusedRoutesHidden={nonFocusedRoutesHidden} rawRouteHidden={rawRouteHidden} nonFocusedCoverageHidden={nonFocusedCoverageHidden} diagnosticRawRoute={preferences.coverageDiagnosticsEnabled ? displayedSingleRawRoute?.route : undefined} directionRoute={directionRawRoute} rawRouteEndpoints={markerRawRoute?.endpoints} rawRouteEndpointsVisible={showRawRouteEndpoints} diagnostic={diagnostic} highlightedPortionOrdinal={hoveredPortionOrdinal ?? lockedPortionOrdinal} onDiagnosticHover={requestDiagnosticHover} onDiagnosticLock={setLockedPortionOrdinal} onHover={requestRouteHover} onRouteClick={focusWorkoutFromMap} onBaseMapError={() => setBaseMapError("The public base map could not be loaded. Your private routes remain available. Retrying in 5 seconds...")} onBaseMapReady={() => setBaseMapError("")} onRouteTilesUnavailable={refreshSelection} />}
 		{mapMode === "coverage" && preferences.coverageDiagnosticsEnabled && <DiagnosticReviewCard run={diagnostic} pending={diagnosticPending} error={diagnosticError} selectedPortionOrdinal={lockedPortionOrdinal} savePending={labelSavePending} saveError={labelSaveError}
         onRetry={() => { setDiagnostic(undefined); setDiagnosticRetry((value) => value + 1); }}
         onFit={() => { const bounds = diagnostic && diagnosticBounds(diagnostic.overlay); if (bounds) setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds, focusCanvas: true })); }}

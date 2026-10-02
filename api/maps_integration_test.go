@@ -46,6 +46,18 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 
 	principalID, accountID := insertSourceTestUser(t, adminDB)
 	fixture := insertWorkoutReadFixtures(t, adminDB, workerDB, accountID)
+	if _, err := adminDB.Exec(ctx, `INSERT INTO app.workout_coverage_states(
+		account_id,workout_id,route_input_revision,route_input_sha256,readiness_state,map_data_ready_at,
+		processing_state,applied_route_input_revision,applied_route_input_sha256,applied_rules_version,
+		applied_sampling_version,applied_path_policy_version,applied_generations,processing_finished_at)
+		VALUES($1,$2,1,decode(repeat('11',32),'hex'),'map_data_ready',transaction_timestamp(),
+		'current',1,decode(repeat('11',32),'hex'),'coverage-experimental-v1',
+		'coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',
+		'[{"regionId":"geofabrik:test","generation":1}]',transaction_timestamp());
+		INSERT INTO app.workout_coverage_regions(account_id,workout_id,region_id,desired_osm_generation)
+		VALUES($1,$2,'geofabrik:test',1)`, accountID, fixture.workouts[0]); err != nil {
+		t.Fatal(err)
+	}
 	firstBearer := insertTestSession(t, apiDB, principalID, "bearer", "")
 	secondBearer := insertTestSession(t, apiDB, principalID, "bearer", "")
 	server := integrationServer(t, apiDB, &recordingSender{})
@@ -76,10 +88,15 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 	if firstCaloriesErr != nil || firstCalories.Value != "300.25" || secondCaloriesErr != nil || secondCalories.Value != "150.25" {
 		t.Fatalf("map calories must match Summary total calories: first=%+v/%v second=%+v/%v", firstCalories, firstCaloriesErr, secondCalories, secondCaloriesErr)
 	}
-	for _, workout := range selection.Workouts {
-		if workout.CoverageReadiness.State != generated.CoverageReadinessStatePending || workout.CoverageReadiness.Reason != nil {
-			t.Fatalf("legacy workout readiness=%+v", workout.CoverageReadiness)
-		}
+	if readiness := selection.Workouts[0].CoverageReadiness; readiness.MapDataStatus != generated.CoverageReadinessMapDataStatusReady ||
+		readiness.ProcessingStatus != generated.CoverageReadinessProcessingStatusCurrent ||
+		readiness.ResultStatus != generated.CoverageReadinessResultStatusCurrent {
+		t.Fatalf("current workout readiness=%+v", readiness)
+	}
+	if readiness := selection.Workouts[1].CoverageReadiness; readiness.MapDataStatus != generated.CoverageReadinessMapDataStatusPending ||
+		readiness.ProcessingStatus != generated.CoverageReadinessProcessingStatusUnprocessed ||
+		readiness.ResultStatus != generated.CoverageReadinessResultStatusNone {
+		t.Fatalf("legacy workout readiness=%+v", readiness)
 	}
 	if !strings.Contains(selection.RouteTileUrl, "/route-tiles/") || !strings.HasSuffix(selection.RouteTileUrl, "/{z}/{x}/{y}.pbf") {
 		t.Fatalf("unexpected tile URL %q", selection.RouteTileUrl)

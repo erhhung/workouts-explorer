@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	internalcoverage "github.com/erhhung/workouts-explorer/internal/coverage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -183,12 +184,25 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		       CASE WHEN metrics.speed_value>0 THEN 'min/km' END,
 		       metrics.energy_value::text,metrics.energy_unit,metrics.heart_rate_value::text,metrics.heart_rate_unit,
 		       metrics.elevation_value::text,metrics.elevation_unit,
-		       coverage.readiness_state,coverage.processing_state,coverage.reason
+		       coverage.readiness_state,coverage.processing_state,
+		       coverage.applied_route_input_revision IS NOT NULL,
+		       COALESCE(coverage.applied_route_input_revision=coverage.route_input_revision
+		         AND coverage.applied_route_input_sha256=coverage.route_input_sha256
+		         AND coverage.applied_rules_version=$3
+		         AND coverage.applied_sampling_version=$4
+		         AND coverage.applied_path_policy_version=$5
+		         AND app.coverage_generation_vectors_equal(coverage.applied_generations,desired.generations),false)
 		  FROM app.map_selection_workouts selected
 		  JOIN app.workouts workout ON workout.id=selected.workout_id AND workout.account_id=selected.account_id
 		  JOIN app.workout_types workout_type ON workout_type.id=workout.workout_type_id AND workout_type.account_id=workout.account_id
 		  JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
 		  LEFT JOIN app.workout_coverage_states coverage ON coverage.workout_id=workout.id AND coverage.account_id=workout.account_id
+		  LEFT JOIN LATERAL (
+		    SELECT jsonb_agg(jsonb_build_object('regionId',region.region_id,'generation',region.desired_osm_generation)
+		             ORDER BY region.region_id) generations
+		    FROM app.workout_coverage_regions region
+		    WHERE region.account_id=workout.account_id AND region.workout_id=workout.id
+		  ) desired ON true
 		  LEFT JOIN LATERAL (SELECT
 		    max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
 		    max(value) FILTER (WHERE metric='speed_average' AND unit='km/hr') AS speed_value,
@@ -198,7 +212,8 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		    max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_value,max(unit) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_unit
 		    FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=workout.id AND aggregate.account_id=workout.account_id) metrics ON true
 		 WHERE selected.account_id=$1 AND selected.selection_id=$2
-		 ORDER BY selected.sort_order`, accountID, selectionID)
+		 ORDER BY selected.sort_order`, accountID, selectionID, string(internalcoverage.ExperimentalRulesV1),
+		string(internalcoverage.ExperimentalSamplingV1), string(internalcoverage.ExperimentalPathPolicyV82))
 	if err != nil {
 		return generated.MapSelection{}, err
 	}
@@ -212,20 +227,21 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		var localStartDate *time.Time
 		var distanceValue, distanceUnit, paceValue, paceUnit, caloriesValue, caloriesUnit *string
 		var heartRateValue, heartRateUnit, elevationValue, elevationUnit *string
-		var coverageState, processingState, coverageReason *string
+		var coverageState, processingState *string
+		var appliedCoverage, appliedCoverageCurrent bool
 		var minimumLongitude, minimumLatitude, maximumLongitude, maximumLatitude float64
 		if err := rows.Scan(&workoutID, &typeID, &typeKey, &typeName, &startedAt, &endedAt, &duration, &localStartDate,
 			&minimumLongitude, &minimumLatitude, &maximumLongitude, &maximumLatitude,
 			&distanceValue, &distanceUnit, &paceValue, &paceUnit, &caloriesValue, &caloriesUnit,
 			&heartRateValue, &heartRateUnit, &elevationValue, &elevationUnit,
-			&coverageState, &processingState, &coverageReason); err != nil {
+			&coverageState, &processingState, &appliedCoverage, &appliedCoverageCurrent); err != nil {
 			return generated.MapSelection{}, err
 		}
 		item := generated.MapSelectionWorkout{
 			Id: compactUUID(workoutID), StartedAt: startedAt, EndedAt: endedAt, Duration: duration, PartialRoute: false,
 			Type:              generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: typeName},
 			Bounds:            generated.RouteBounds{MinimumLongitude: minimumLongitude, MinimumLatitude: minimumLatitude, MaximumLongitude: maximumLongitude, MaximumLatitude: maximumLatitude},
-			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, coverageReason),
+			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, appliedCoverage, appliedCoverageCurrent),
 		}
 		setMetric(&item.Distance, distanceValue, distanceUnit)
 		setMetric(&item.Pace, paceValue, paceUnit)
@@ -258,33 +274,33 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 	return result, nil
 }
 
-func mapCoverageReadiness(state, processing, reason *string) generated.CoverageReadiness {
-	result := generated.CoverageReadiness{State: generated.CoverageReadinessStatePending}
-	if state == nil || *state == "unresolved" || *state == "pending" {
-		if state != nil && *state == "pending" {
-			setCoverageReadinessReason(&result, reason)
+func mapCoverageReadiness(state, processing *string, appliedCoverage, appliedCoverageCurrent bool) generated.CoverageReadiness {
+	result := generated.CoverageReadiness{
+		MapDataStatus:    generated.CoverageReadinessMapDataStatusPending,
+		ProcessingStatus: generated.CoverageReadinessProcessingStatusUnprocessed,
+		ResultStatus:     generated.CoverageReadinessResultStatusNone,
+	}
+	if state != nil {
+		switch *state {
+		case "map_data_ready":
+			result.MapDataStatus = generated.CoverageReadinessMapDataStatusReady
+		case "unavailable":
+			result.MapDataStatus = generated.CoverageReadinessMapDataStatusUnavailable
 		}
-		return result
 	}
-	if *state == "map_data_ready" && processing != nil && *processing == "not_started" {
-		result.State = generated.CoverageReadinessStateNotProcessed
-		return result
+	if processing != nil {
+		switch *processing {
+		case "queued", "running", "current", "failed", "stale":
+			result.ProcessingStatus = generated.CoverageReadinessProcessingStatus(*processing)
+		}
 	}
-	if *state == "unavailable" {
-		result.State = generated.CoverageReadinessStateUnavailable
-		setCoverageReadinessReason(&result, reason)
+	if appliedCoverage {
+		result.ResultStatus = generated.CoverageReadinessResultStatusStale
+		if appliedCoverageCurrent {
+			result.ResultStatus = generated.CoverageReadinessResultStatusCurrent
+		}
 	}
 	return result
-}
-
-func setCoverageReadinessReason(result *generated.CoverageReadiness, reason *string) {
-	if reason == nil {
-		return
-	}
-	value := generated.CoverageReadinessReason(*reason)
-	if value.Valid() {
-		result.Reason = &value
-	}
 }
 
 func (s *Server) DeleteMapSelection(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, params generated.DeleteMapSelectionParams) {
@@ -502,6 +518,43 @@ func (s *Server) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Re
 
 func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int) {
 	s.getMapSelectionTile(w, r, mapSelectionID, generation, z, x, y, "app.raw_route_mvt")
+}
+
+func (s *Server) GetMapSelectionCoverageFocus(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, workoutID generated.WorkoutID, params generated.GetMapSelectionCoverageFocusParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	selectionID, validSelection := parseCompactUUID(string(mapSelectionID))
+	workout, validWorkout := parseCompactUUID(string(workoutID))
+	if !validSelection || !validWorkout || params.Generation < 1 {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "map selection or workout is invalid")
+		return
+	}
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var body []byte
+	if err := tx.QueryRow(r.Context(), `SELECT app.map_selection_coverage_focus($1,$2,$3,$4,$5)`, *session.accountID, session.sessionID, selectionID, params.Generation, workout).Scan(&body); err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	if body == nil {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "focused coverage is unavailable")
+		return
+	}
+	if tx.Commit(r.Context()) != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int) {

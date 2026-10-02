@@ -1,8 +1,11 @@
 package worker
 
 import (
+	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/erhhung/workouts-explorer/internal/osm"
 )
 
 func TestCanonicalRouteInputDigestPreservesOrderAndNulls(t *testing.T) {
@@ -37,6 +40,27 @@ func TestCanonicalRouteInputDigestPreservesOrderAndNulls(t *testing.T) {
 	changedTimestamp[0].Timestamp = &later
 	if digest == canonicalRouteInputSHA256(changedTimestamp) {
 		t.Fatal("timestamp did not affect digest")
+	}
+}
+
+func TestRouteReadinessForAutoAddPolicy(t *testing.T) {
+	pending := osm.RouteRegionReadiness{State: "pending", Reason: "region_not_active", Regions: []osm.RegionGeneration{}}
+	if got := routeReadinessForAutoAddPolicy(pending, false); got.State != "unavailable" || got.Reason != "no_provider_region" || len(got.Regions) != 0 {
+		t.Fatalf("disabled auto-add readiness=%+v", got)
+	}
+	if got := routeReadinessForAutoAddPolicy(pending, true); got.State != pending.State || got.Reason != pending.Reason {
+		t.Fatalf("enabled auto-add readiness=%+v", got)
+	}
+	ready := osm.RouteRegionReadiness{State: "map_data_ready", Regions: []osm.RegionGeneration{{RegionID: "geofabrik:norcal", Generation: 51}}}
+	if got := routeReadinessForAutoAddPolicy(ready, false); got.State != ready.State || len(got.Regions) != 1 {
+		t.Fatalf("ready route changed=%+v", got)
+	}
+}
+
+func TestCoverageReconcilerCarriesAutoAddPolicy(t *testing.T) {
+	reconciler := NewCoverageReconciler(nil, nil, slog.Default(), CoverageReconcilerOptions{OSMAutoAddRegions: true})
+	if !reconciler.osmAutoAddRegions {
+		t.Fatal("coverage reconciler discarded the configured auto-add policy")
 	}
 }
 

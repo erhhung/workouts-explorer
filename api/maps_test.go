@@ -116,27 +116,31 @@ func TestValidMVTResponseAcceptsMartinEmptyTile(t *testing.T) {
 	}
 }
 
-func TestMapCoverageReadinessUsesConservativePublicEnums(t *testing.T) {
+func TestMapCoverageReadinessExposesIndependentStatuses(t *testing.T) {
 	pointer := func(value string) *string { return &value }
 	tests := []struct {
-		state, processing, reason *string
-		want                      generated.CoverageReadinessState
-		wantReason                *generated.CoverageReadinessReason
+		state, processing       *string
+		applied, appliedCurrent bool
+		mapData                 generated.CoverageReadinessMapDataStatus
+		processingStatus        generated.CoverageReadinessProcessingStatus
+		resultStatus            generated.CoverageReadinessResultStatus
 	}{
-		{nil, nil, nil, generated.CoverageReadinessStatePending, nil},
-		{pointer("unresolved"), pointer("not_started"), nil, generated.CoverageReadinessStatePending, nil},
-		{pointer("pending"), pointer("not_started"), pointer("region_not_active"), generated.CoverageReadinessStatePending, reasonPointer(generated.RegionNotActive)},
-		{pointer("map_data_ready"), pointer("not_started"), nil, generated.CoverageReadinessStateNotProcessed, nil},
-		{pointer("unavailable"), pointer("not_started"), pointer("no_provider_region"), generated.CoverageReadinessStateUnavailable, reasonPointer(generated.NoProviderRegion)},
+		{nil, nil, false, false, generated.CoverageReadinessMapDataStatusPending, generated.CoverageReadinessProcessingStatusUnprocessed, generated.CoverageReadinessResultStatusNone},
+		{pointer("unresolved"), pointer("not_started"), false, false, generated.CoverageReadinessMapDataStatusPending, generated.CoverageReadinessProcessingStatusUnprocessed, generated.CoverageReadinessResultStatusNone},
+		{pointer("pending"), pointer("not_started"), false, false, generated.CoverageReadinessMapDataStatusPending, generated.CoverageReadinessProcessingStatusUnprocessed, generated.CoverageReadinessResultStatusNone},
+		{pointer("unavailable"), pointer("not_started"), false, false, generated.CoverageReadinessMapDataStatusUnavailable, generated.CoverageReadinessProcessingStatusUnprocessed, generated.CoverageReadinessResultStatusNone},
+		{pointer("map_data_ready"), pointer("queued"), false, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusQueued, generated.CoverageReadinessResultStatusNone},
+		{pointer("map_data_ready"), pointer("running"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusRunning, generated.CoverageReadinessResultStatusStale},
+		{pointer("map_data_ready"), pointer("current"), true, true, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusCurrent, generated.CoverageReadinessResultStatusCurrent},
+		{pointer("map_data_ready"), pointer("failed"), false, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusFailed, generated.CoverageReadinessResultStatusNone},
+		{pointer("map_data_ready"), pointer("failed"), true, true, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusFailed, generated.CoverageReadinessResultStatusCurrent},
+		{pointer("map_data_ready"), pointer("failed"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusFailed, generated.CoverageReadinessResultStatusStale},
+		{pointer("map_data_ready"), pointer("stale"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusStale, generated.CoverageReadinessResultStatusStale},
 	}
 	for _, test := range tests {
-		got := mapCoverageReadiness(test.state, test.processing, test.reason)
-		if got.State != test.want || (got.Reason == nil) != (test.wantReason == nil) || (got.Reason != nil && *got.Reason != *test.wantReason) {
-			t.Fatalf("readiness=%+v want=%s reason=%v", got, test.want, test.wantReason)
+		got := mapCoverageReadiness(test.state, test.processing, test.applied, test.appliedCurrent)
+		if got.MapDataStatus != test.mapData || got.ProcessingStatus != test.processingStatus || got.ResultStatus != test.resultStatus {
+			t.Fatalf("readiness=%+v want map=%s processing=%s result=%s", got, test.mapData, test.processingStatus, test.resultStatus)
 		}
 	}
-}
-
-func reasonPointer(value generated.CoverageReadinessReason) *generated.CoverageReadinessReason {
-	return &value
 }

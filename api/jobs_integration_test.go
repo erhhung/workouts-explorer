@@ -530,7 +530,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.workout_coverage_regions(account_id,workout_id,region_id,desired_osm_generation)
-		VALUES($1,$2,'geofabrik:test',2)`, accountID, workoutID); err != nil {
+		VALUES($1,$2,'geofabrik:test',2),($1,$2,'geofabrik:north',7),($1,$2,'geofabrik:south',10)`, accountID, workoutID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.jobs(id,account_id,kind,priority,progress_total)
@@ -549,7 +549,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	}
 	if _, err := coverageFixture.Exec(ctx, `INSERT INTO app.coverage_route_job_contexts(job_id,account_id,workout_id,
 		route_input_revision,route_input_sha256,target_generations)
-		VALUES($1,$2,$3,1,$4,'[{"regionId":"geofabrik:test","generation":2}]')`,
+		VALUES($1,$2,$3,1,$4,'[{"regionId":"geofabrik:south","generation":9},{"regionId":"geofabrik:north","generation":2},{"regionId":"geofabrik:north","generation":7}]')`,
 		coverageChild, accountID, workoutID, make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
@@ -579,6 +579,16 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 		coverageDetail.Coverage == nil || coverageDetail.Coverage.RegionId != "geofabrik:test" || coverageDetail.RouteStats == nil || coverageDetail.RouteStats.Running != 1 ||
 		len(coverageDetail.Children) != 1 || coverageDetail.Children[0].CoverageRoute == nil ||
 		coverageDetail.Children[0].CoverageRoute.WorkoutId != compactUUID(workoutID) ||
+		len(coverageDetail.Children[0].CoverageRoute.TargetGenerations) != 3 ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[0].RegionId != "geofabrik:north" ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[0].Generation != 7 ||
+		!coverageDetail.Children[0].CoverageRoute.TargetGenerations[0].Latest ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[1].RegionId != "geofabrik:north" ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[1].Generation != 2 ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[1].Latest ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[2].RegionId != "geofabrik:south" ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[2].Generation != 9 ||
+		coverageDetail.Children[0].CoverageRoute.TargetGenerations[2].Latest ||
 		coverageDetail.RetryOrdinal == nil || *coverageDetail.RetryOrdinal != 1 || coverageDetail.RetryRootJobId == nil {
 		t.Fatalf("coverage detail status=%d body=%s", coverageDetailCall.recorder.Code, coverageDetailCall.recorder.Body.String())
 	}

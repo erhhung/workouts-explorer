@@ -185,7 +185,7 @@ The following are architectural non-goals at the expected scale:
 - Summary counts and totals match normalized provider aggregates for representative fixtures.
 - Raw routes and path coverage are visible for selected date ranges and workout subsets.
 - Each locality-scoped logical path counts a workout at most once, even when several member segments are traversed repeatedly in that workout.
-- Fully contained national-park paths are attributed even outside municipal boundaries; named paths use the national park as City/Region context only when no municipality exists.
+- Fully contained state- and national-park roads and paths retain their individual identities and use the park as City/Region context, including outside municipal boundaries.
 - Account isolation tests prevent cross-account access to records, tiles, jobs, logs, exports, and notifications.
 - Source secrets, GPS coordinates, and health values do not appear in logs or telemetry.
 - Ordinary API queries complete within 500 ms at p95 under a documented representative homelab benchmark.

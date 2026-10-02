@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/osm"
@@ -35,8 +37,11 @@ func run(ctx context.Context, arguments []string, getenv func(string) string, st
 		return err
 	}
 	osmURL, root := getenv("OSM_MIGRATION_DATABASE_URL"), getenv("OSM_PIPELINE_ROOT")
-	if osmURL == "" || root == "" || *region == "" || *maximumSegments < 1 {
-		return fmt.Errorf("OSM_MIGRATION_DATABASE_URL, OSM_PIPELINE_ROOT, region, and a positive segment limit are required")
+	prometheusURL := envDefault(getenv("OSM_PROMETHEUS_URL"), osm.DefaultPrometheusURL)
+	pvcTemplate := envDefault(getenv("OSM_PROMETHEUS_PVC_TEMPLATE"), osm.DefaultPVCTemplate)
+	maximumSampleAge, ageErr := envDuration(getenv("OSM_PROMETHEUS_MAX_SAMPLE_AGE"), osm.DefaultMaximumAge)
+	if osmURL == "" || root == "" || *region == "" || *maximumSegments < 1 || ageErr != nil || maximumSampleAge <= 0 {
+		return fmt.Errorf("OSM database, pipeline, region, segment limit, and Prometheus storage-preflight configuration are required")
 	}
 
 	osmPool, err := database.OpenWithMaxConns(ctx, osmURL, "osm-identity-eval", 2)
@@ -49,6 +54,10 @@ func run(ctx context.Context, arguments []string, getenv func(string) string, st
 		OSM: osmPool, OSMDatabaseURL: osmURL, PipelineRoot: root, RegionID: *region,
 		Localities: splitLocalities(*localities), FullRegion: *fullRegion, MaximumSegments: *maximumSegments,
 		KeepScratchSchema: *keepSchema, Log: stderr,
+		StoragePreflight: osm.PrometheusStoragePreflight{
+			DB: osmPool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: prometheusURL,
+			PVCTemplate: pvcTemplate, MaximumAge: maximumSampleAge,
+		},
 	}
 	if !*withoutProjection {
 		applicationURL := getenv("MIGRATION_DATABASE_URL")
@@ -86,6 +95,20 @@ func run(ctx context.Context, arguments []string, getenv func(string) string, st
 		return errors.New("identity evaluation retained required edge splits")
 	}
 	return nil
+}
+
+func envDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func envDuration(value string, fallback time.Duration) (time.Duration, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func splitLocalities(value string) []string {

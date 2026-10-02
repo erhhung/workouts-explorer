@@ -1,7 +1,10 @@
 -- +goose Up
 CREATE SCHEMA osm_catalog;
+
 REVOKE ALL ON SCHEMA osm_catalog FROM PUBLIC;
+
 CREATE SCHEMA osm_active;
+
 REVOKE ALL ON SCHEMA osm_active FROM PUBLIC;
 
 CREATE TABLE osm_catalog.schema_metadata (
@@ -11,6 +14,7 @@ CREATE TABLE osm_catalog.schema_metadata (
         minimum_runtime_version >= 1 AND minimum_runtime_version <= schema_version
     )
 );
+
 INSERT INTO osm_catalog.schema_metadata (schema_version, minimum_runtime_version)
 VALUES (1, 1);
 
@@ -30,6 +34,7 @@ CREATE TABLE osm_catalog.regions (
     CHECK (id = provider || ':' || provider_region_id),
     CHECK (ST_IsValid(boundary) AND NOT ST_IsEmpty(boundary))
 );
+
 CREATE INDEX regions_boundary_gist ON osm_catalog.regions USING gist (boundary);
 
 CREATE TABLE osm_catalog.generations (
@@ -55,14 +60,20 @@ CREATE TABLE osm_catalog.generations (
     CHECK (state <> 'retired' OR retired_at IS NOT NULL),
     CHECK (state <> 'failed' OR failure_summary IS NOT NULL)
 );
+
 CREATE UNIQUE INDEX generations_one_active_region_idx
-ON osm_catalog.generations (region_id) WHERE state = 'active';
+    ON osm_catalog.generations (region_id)
+    WHERE state = 'active';
+
 CREATE UNIQUE INDEX generations_one_incomplete_region_idx
-ON osm_catalog.generations (region_id) WHERE state IN ('building', 'validating');
+    ON osm_catalog.generations (region_id)
+    WHERE state IN ('building', 'validating');
 
 REVOKE ALL ON ALL TABLES IN SCHEMA osm_catalog FROM PUBLIC;
+
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA osm_catalog FROM PUBLIC;
 
 -- +goose Down
 DROP SCHEMA osm_active;
+
 DROP SCHEMA osm_catalog CASCADE;

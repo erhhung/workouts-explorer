@@ -20,14 +20,15 @@ import (
 const coverageProductionContractV1 = "coverage-production-v1"
 
 type CoverageReconciler struct {
-	db, osmDB        *pgxpool.Pool
-	logger           *slog.Logger
-	workerID         string
-	pollInterval     time.Duration
-	scanInterval     time.Duration
-	leaseDuration    time.Duration
-	pageSize         int
-	minimumTraversal float64
+	db, osmDB         *pgxpool.Pool
+	logger            *slog.Logger
+	workerID          string
+	pollInterval      time.Duration
+	scanInterval      time.Duration
+	leaseDuration     time.Duration
+	pageSize          int
+	minimumTraversal  float64
+	osmAutoAddRegions bool
 }
 
 type reconciliationClaim struct {
@@ -47,6 +48,7 @@ type CoverageReconcilerOptions struct {
 	PollInterval, ScanInterval, LeaseDuration time.Duration
 	PageSize                                  int
 	MinimumTraversalMeters                    float64
+	OSMAutoAddRegions                         bool
 }
 
 func NewCoverageReconciler(db, osmDB *pgxpool.Pool, logger *slog.Logger, options CoverageReconcilerOptions) *CoverageReconciler {
@@ -68,6 +70,7 @@ func NewCoverageReconciler(db, osmDB *pgxpool.Pool, logger *slog.Logger, options
 	if options.MinimumTraversalMeters > 0 {
 		result.minimumTraversal = options.MinimumTraversalMeters
 	}
+	result.osmAutoAddRegions = options.OSMAutoAddRegions
 	return result
 }
 
@@ -240,6 +243,7 @@ func (r *CoverageReconciler) reconcileRoute(ctx context.Context, claim reconcili
 	if err != nil {
 		return err
 	}
+	readiness = routeReadinessForAutoAddPolicy(readiness, r.osmAutoAddRegions)
 	regions, err := json.Marshal(readiness.Regions)
 	if err != nil {
 		return err

@@ -423,7 +423,7 @@ func diagnosticResponse(result diagnosticResult) generated.CoverageDiagnosticRun
 		RulesVersion: generated.CoverageExperimentalV1, SamplingVersion: generated.CoverageSamplingExperimentalV1,
 		PathPolicyVersion: generated.CoveragePathPolicyExperimentalV82, MovementMode: generated.CoverageDiagnosticRunMovementMode(result.workout.mode),
 		MinimumTraversalMeters: result.minimumTraversalMeters, Counts: result.counts, CreatedAt: result.createdAt,
-		Overlay: generated.CoverageDiagnosticEvidenceCollection{Type: generated.FeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},
+		Overlay: generated.CoverageDiagnosticEvidenceCollection{Type: generated.CoverageDiagnosticEvidenceCollectionTypeFeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},
 		Labels:  generated.CoverageDiagnosticLabels{Segments: []generated.CoverageDiagnosticSegmentLabel{}}, UnavailableRegions: []generated.CoverageDiagnosticUnavailableRegion{},
 	}
 	response.Outcome = generated.CoverageDiagnosticRunOutcomeEvaluated

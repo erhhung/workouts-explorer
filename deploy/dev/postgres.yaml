@@ -6,7 +6,7 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: workouts-postgres-init
+  name: workouts-postgresql-init
   namespace: postgresql
 data:
   001-roles.sql: |
@@ -98,7 +98,7 @@ spec:
       volumes:
         - name: init
           configMap:
-            name: workouts-postgres-init
+            name: workouts-postgresql-init
   volumeClaimTemplates:
     - metadata:
         name: data

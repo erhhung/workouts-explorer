@@ -2,11 +2,35 @@ package migrations
 
 import (
 	"fmt"
-	"strings"
+	"iter"
+	stdstrings "strings"
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 )
+
+var strings = struct {
+	Contains  func(string, string) bool
+	Count     func(string, string) int
+	HasPrefix func(string, string) bool
+	HasSuffix func(string, string) bool
+	Index     func(string, string) int
+	Join      func([]string, string) string
+	Split     func(string, string) []string
+	SplitSeq  func(string, string) iter.Seq[string]
+	TrimSpace func(string) string
+}{
+	Contains: func(sql, fragment string) bool {
+		return stdstrings.Contains(compactSQL(sql), compactSQL(fragment))
+	},
+	Count: stdstrings.Count, HasPrefix: stdstrings.HasPrefix, HasSuffix: stdstrings.HasSuffix,
+	Index: stdstrings.Index, Join: stdstrings.Join, Split: stdstrings.Split, SplitSeq: stdstrings.SplitSeq,
+	TrimSpace: stdstrings.TrimSpace,
+}
+
+func compactSQL(value string) string {
+	return stdstrings.ToLower(stdstrings.Join(stdstrings.Fields(value), ""))
+}
 
 var migrationFiles = []string{
 	"001_job_foundations.sql", "002_account_lifecycle.sql", "003_sources_and_job_snapshots.sql",
@@ -16,6 +40,7 @@ var migrationFiles = []string{
 	"013_coverage_matcher_diagnostics.sql", "014_martin_tile_contract.sql",
 	"015_coverage_route_jobs.sql", "016_durable_route_coverage.sql", "017_coverage_reconciliation.sql",
 	"018_park_attribution.sql", "019_coverage_explorer_reads.sql",
+	"020_facility_coverage_identity.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {
@@ -61,7 +86,8 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(source)
-		proceduralStatements := strings.Count(text, "DO $$") + strings.Count(text, "AS $$")
+		proceduralStatements := strings.Count(text, "CREATE FUNCTION ") + strings.Count(text, "CREATE OR REPLACE FUNCTION ") +
+			strings.Count(text, "CREATE PROCEDURE ") + strings.Count(text, "CREATE OR REPLACE PROCEDURE ") + strings.Count(text, "\nDO $")
 		starts := strings.Count(text, "-- +goose StatementBegin")
 		ends := strings.Count(text, "-- +goose StatementEnd")
 		if starts != proceduralStatements || ends != proceduralStatements {
@@ -229,11 +255,11 @@ func TestParkAttributionMigrationContract(t *testing.T) {
 	for _, required := range []string{
 		"CREATE TABLE app.coverage_parks", "CREATE TABLE app.workout_park_attributions",
 		"CREATE TABLE app.account_park_daily_rollups", "CREATE FUNCTION app.attribute_workout_segment_to_park",
-		"workouts:park_id", "workouts:park_kind", "park_kind IN ('local_park','nature_reserve','protected_area','national_park')",
+		"workouts:park_id", "workouts:park_kind", "park_kind IN ('local_park','nature_reserve','protected_area','state_park','national_park')",
 		"locality_relation_id IS NULL AND locality_relation_version IS NULL AND locality_name IS NULL",
-		"park_kind='national_park' OR locality_relation_id IS NOT NULL", "segment.tags->>'service' IN ('driveway','parking_aisle')",
+		"park_kind IN ('state_park','national_park') OR locality_relation_id IS NOT NULL", "COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle')",
 		"segment.tags->>'amenity' IS DISTINCT FROM 'parking'", "SELECT park.park_id,park.name,park.locality_name,'park'",
-		"park-attributed unnamed segments exclusively to", "migration 019 applies this contract",
+		"local-park-attributed unnamed segments exclusively", "regional park as display context in migration 019",
 		"schema_version=18,minimum_runtime_version=17",
 	} {
 		if !strings.Contains(text, required) {
@@ -260,18 +286,22 @@ func TestCoverageExplorerReadsMigrationContract(t *testing.T) {
 		"ADD COLUMN focused_workout_id uuid", "DEFERRABLE INITIALLY DEFERRED",
 		"CREATE FUNCTION app.validate_map_selection_focus", "workout.deletion_requested_at IS NULL", "route.route IS NOT NULL",
 		"CREATE FUNCTION app.map_selection_coverage_entities", "CREATE FUNCTION app.map_selection_coverage_entity_detail",
+		"CREATE FUNCTION app.map_selection_coverage_focus", "'FeatureCollection'", "ST_AsGeoJSON",
 		"region_id text,region_name text", "LEFT JOIN app.coverage_region_catalog", "entity.region_name",
 		"workout.local_start_date BETWEEN selected.start_date AND selected.end_date",
 		"visit.started_at,visit.workout_id", "strpos(lower(concat_ws",
 		"CREATE OR REPLACE FUNCTION app.coverage_mvt", "ST_AsMVT(rows,'coverage'",
 		"ST_AsMVT(rows,'coverage_parks'", "ST_AsMVT(rows,'coverage_focus'",
 		"ST_AsMVT(rows,'coverage_parks_focus'", "range_workout_count", "count_bucket",
-		"segment.tags->>'service' IN ('driveway','parking_aisle')",
+		"\"countBucket\"",
+		"COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle')",
 		"segment.tags->>'amenity' IS DISTINCT FROM 'parking'",
-		"path.name IS NOT NULL OR NOT (segment.tags ? 'workouts:park_id')",
-		"metadata.name IS NOT NULL OR NOT (segment.tags ? 'workouts:park_id')",
-		"path.name IS NOT NULL OR NOT (checked.tags ? 'workouts:park_id')",
-		"segment.tags->>'workouts:park_kind'='national_park'", "COALESCE(path.locality_name,national.locality_name)",
+		"path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park')",
+		"metadata.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park')",
+		"path.name IS NOT NULL OR checked.tags->>'workouts:park_kind' IN ('state_park','national_park')",
+		"regional_park_path_context", "COALESCE(regional_park.locality_name,identity.locality_name)",
+		"workouts:education_id", "workouts:education_name", "THEN 'other'",
+		"coverage.applied_route_input_revision IS NOT NULL",
 		"schema_version=19,minimum_runtime_version=18", "schema_version=18,minimum_runtime_version=17",
 	} {
 		if !strings.Contains(text, required) {
@@ -290,6 +320,69 @@ func TestCoverageExplorerReadsMigrationContract(t *testing.T) {
 	}
 	if strings.Contains(down, "DROP FUNCTION app.coverage_mvt") {
 		t.Fatal("coverage explorer Down removes migration-017 coverage_mvt")
+	}
+}
+
+func TestFacilityCoverageIdentityMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("020_facility_coverage_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := strings.Split(string(source), "-- +goose Down")[0]
+	for _, declaration := range []string{"CREATE OR REPLACE FUNCTION app.coverage_mvt", "CREATE OR REPLACE FUNCTION app.map_selection_coverage_focus"} {
+		body := functionBody(t, up, declaration)
+		for _, required := range []string{
+			"SECURITY DEFINER", "SET search_path = pg_catalog, app, public",
+			"selection.session_id = target_session_id", "generation.generation = target_generation",
+			"session_row.revoked_at IS NULL", "principal.disabled_at IS NULL", "account.state = 'active'",
+			"count(DISTINCT eligible.id)",
+			"GROUP BY COALESCE(NULLIF(segment.tags->>'workouts:education_id', '')::uuid, match.logical_path_id)",
+			"GROUP BY COALESCE(NULLIF(checked.tags->>'workouts:education_id', '')::uuid, checked.logical_path_id)",
+			"NOT (segment.highway = 'service' AND COALESCE(segment.tags->>'service', '') IN ('driveway', 'parking_aisle'))",
+			"segment.tags->>'amenity' IS DISTINCT FROM 'parking'",
+			"path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park') OR NOT (segment.tags ? 'workouts:park_id')",
+		} {
+			if !strings.Contains(body, required) {
+				t.Errorf("%s is missing %q", declaration, required)
+			}
+		}
+		if strings.Contains(body, "GROUP BY match.logical_path_id") || strings.Contains(body, "GROUP BY checked.logical_path_id") {
+			t.Errorf("%s still groups by raw path identity", declaration)
+		}
+	}
+	for _, required := range []string{
+		"COALESCE(min(checked.tags->>'workouts:education_name'), min(path.name))",
+		"CASE WHEN bool_or(checked.tags ? 'workouts:education_id') THEN 'other' ELSE min(path.broad_class) END",
+		"pg_get_functiondef('app.coverage_mvt(integer,integer,integer,json)'::regprocedure)",
+		"pg_get_functiondef('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)'::regprocedure)",
+		"pg_get_functiondef('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)'::regprocedure)",
+		"ALTER FUNCTION app.coverage_mvt(integer, integer, integer, json) OWNER TO workouts_security_owner",
+		"ALTER FUNCTION app.map_selection_coverage_focus(uuid, uuid, uuid, bigint, uuid) OWNER TO workouts_security_owner",
+		"GRANT EXECUTE ON FUNCTION app.coverage_mvt(integer, integer, integer, json) TO workouts_tiles",
+		"GRANT EXECUTE ON FUNCTION app.map_selection_coverage_focus(uuid, uuid, uuid, bigint, uuid) TO workouts_api",
+		"ALTER FUNCTION app.map_selection_coverage_entity_detail(uuid, uuid, uuid, bigint, text, uuid) OWNER TO workouts_security_owner",
+		"GRANT EXECUTE ON FUNCTION app.map_selection_coverage_entity_detail(uuid, uuid, uuid, bigint, text, uuid) TO workouts_api",
+		"schema_version = 20, minimum_runtime_version = 18",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("education identity migration is missing %q", required)
+		}
+	}
+	detail := functionBody(t, up, "CREATE OR REPLACE FUNCTION app.map_selection_coverage_entity_detail")
+	for _, required := range []string{
+		"COALESCE(NULLIF(segment.tags->>'workouts:education_id', '')::uuid, match.logical_path_id) = metadata.entity_id",
+		"path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park') OR NOT (segment.tags ? 'workouts:park_id')",
+	} {
+		if !strings.Contains(detail, required) {
+			t.Errorf("education detail is missing %q", required)
+		}
+	}
+	if strings.Contains(detail, "match.logical_path_id = metadata.entity_id OR") || strings.Contains(detail, "metadata.name IS NOT NULL OR") {
+		t.Fatal("detail geometry uses raw identity or aggregated name for segment eligibility")
+	}
+	down := strings.Split(string(source), "-- +goose Down")[1]
+	if !strings.Contains(down, "EXECUTE saved_definition") || !strings.Contains(down, "schema_version = 19, minimum_runtime_version = 18") {
+		t.Fatal("education identity Down does not restore 019 functions and metadata")
 	}
 }
 
@@ -420,7 +513,7 @@ func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
 	if strings.Contains(text, "GRANT EXECUTE ON FUNCTION app.build_segmented_workout_route") {
 		t.Fatal("segmented route helper must not be directly executable by application roles")
 	}
-	if strings.Count(strings.Split(text, "-- +goose Down")[0], "ST_AsMVT(tile_rows,'routes',4096,'geometry')") != 1 {
+	if stdstrings.Count(compactSQL(strings.Split(text, "-- +goose Down")[0]), compactSQL("ST_AsMVT(tile_rows,'routes',4096,'geometry')")) != 1 {
 		t.Fatal("route lines and zero-length markers must share one authorized MVT layer")
 	}
 }
@@ -629,27 +722,27 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 	}
 	up := strings.Split(text, "-- +goose Down")[0]
 	for _, declaration := range []string{"CREATE FUNCTION app.record_ingest_progress", "CREATE FUNCTION app.record_job_event", "CREATE FUNCTION app.record_job_log"} {
-		body := functionBody(t, up, declaration)
-		sourceLock := strings.Index(body, "FROM app.sources source")
-		parentLock := strings.Index(body, "FROM app.jobs parent")
-		childLock := strings.Index(body, "FROM app.jobs job WHERE job.id=target_job_id")
+		body := compactSQL(functionBody(t, up, declaration))
+		sourceLock := stdstrings.Index(body, compactSQL("FROM app.sources source"))
+		parentLock := stdstrings.Index(body, compactSQL("FROM app.jobs parent"))
+		childLock := stdstrings.Index(body, compactSQL("FROM app.jobs job WHERE job.id=target_job_id"))
 		if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
 			t.Fatalf("%s does not lock source, parent, then child", declaration)
 		}
 	}
 	for _, declaration := range []string{"CREATE FUNCTION app.acquire_ingest_file_slot", "CREATE FUNCTION app.record_ingest_file_manifest"} {
-		body := functionBody(t, up, declaration)
-		sourceLock := strings.Index(body, "FROM app.sources source")
-		parentLock := strings.Index(body, "FROM app.jobs parent")
-		childLock := strings.Index(body, "FROM app.jobs job WHERE job.id=target_job_id")
+		body := compactSQL(functionBody(t, up, declaration))
+		sourceLock := stdstrings.Index(body, compactSQL("FROM app.sources source"))
+		parentLock := stdstrings.Index(body, compactSQL("FROM app.jobs parent"))
+		childLock := stdstrings.Index(body, compactSQL("FROM app.jobs job WHERE job.id=target_job_id"))
 		if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
 			t.Fatalf("%s does not lock source, parent, then child", declaration)
 		}
 	}
-	compatibility := functionBody(t, up, "CREATE FUNCTION app.create_legacy_ingest_read_models")
-	sourceLock := strings.Index(compatibility, "FROM app.sources source")
-	parentLock := strings.Index(compatibility, "FROM app.jobs parent")
-	childLock := strings.Index(compatibility, "PERFORM 1 FROM app.jobs job WHERE job.id=NEW.job_id")
+	compatibility := compactSQL(functionBody(t, up, "CREATE FUNCTION app.create_legacy_ingest_read_models"))
+	sourceLock := stdstrings.Index(compatibility, compactSQL("FROM app.sources source"))
+	parentLock := stdstrings.Index(compatibility, compactSQL("FROM app.jobs parent"))
+	childLock := stdstrings.Index(compatibility, compactSQL("PERFORM 1 FROM app.jobs job WHERE job.id=NEW.job_id"))
 	if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
 		t.Fatal("legacy snapshot compatibility trigger does not lock source, parent, then child")
 	}
@@ -660,7 +753,7 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		t.Fatal("slot stale cleanup treats expiry or cancellation as abandoned ownership")
 	}
 	claimSchedule := functionBody(t, up, "CREATE FUNCTION app.claim_due_sync_account")
-	if strings.Count(claimSchedule, "account.state='active'") < 2 {
+	if stdstrings.Count(compactSQL(claimSchedule), compactSQL("account.state='active'")) < 2 {
 		t.Fatal("scheduler seeding and claiming do not both require an active account")
 	}
 	for _, required := range []string{
@@ -1070,14 +1163,15 @@ func TestSourceSnapshotMigrationContainsSecurityBoundaries(t *testing.T) {
 			t.Fatalf("source grant is missing canonical display-name privilege %q", privilege)
 		}
 	}
-	apiUpdateStart := strings.Index(text, "GRANT UPDATE (display_name,canonical_display_name")
+	compactText := compactSQL(text)
+	apiUpdateStart := stdstrings.Index(compactText, compactSQL("GRANT UPDATE (display_name,canonical_display_name"))
 	apiUpdateEnd := -1
 	if apiUpdateStart >= 0 {
-		if relative := strings.Index(text[apiUpdateStart:], "TO workouts_api;"); relative >= 0 {
+		if relative := stdstrings.Index(compactText[apiUpdateStart:], compactSQL("TO workouts_api;")); relative >= 0 {
 			apiUpdateEnd = apiUpdateStart + relative
 		}
 	}
-	if apiUpdateStart < 0 || apiUpdateEnd < 0 || strings.Contains(text[apiUpdateStart:apiUpdateEnd], "deleted_at") {
+	if apiUpdateStart < 0 || apiUpdateEnd < 0 || stdstrings.Contains(compactText[apiUpdateStart:apiUpdateEnd], "deleted_at") {
 		t.Fatal("API source update grant includes direct tombstone access")
 	}
 	readStart := strings.Index(text, "CREATE FUNCTION app.read_job_config_snapshot")
@@ -1168,9 +1262,10 @@ func TestAccountLifecycleMigrationContainsSecurityBoundaries(t *testing.T) {
 			t.Fatalf("account lifecycle migration is missing %q", required)
 		}
 	}
-	grant := strings.Index(text, "GRANT CREATE ON SCHEMA app TO workouts_security_owner")
-	owner := strings.Index(text, "ALTER FUNCTION app.consume_rate_limit(text,text,bytea) OWNER TO workouts_security_owner")
-	revoke := strings.Index(text, "REVOKE CREATE ON SCHEMA app FROM workouts_security_owner")
+	compactText := compactSQL(text)
+	grant := stdstrings.Index(compactText, compactSQL("GRANT CREATE ON SCHEMA app TO workouts_security_owner"))
+	owner := stdstrings.Index(compactText, compactSQL("ALTER FUNCTION app.consume_rate_limit(text,text,bytea) OWNER TO workouts_security_owner"))
+	revoke := stdstrings.Index(compactText, compactSQL("REVOKE CREATE ON SCHEMA app FROM workouts_security_owner"))
 	if grant < 0 || owner <= grant || revoke <= owner {
 		t.Fatal("security-owner CREATE authority is not temporary around ownership transfer")
 	}

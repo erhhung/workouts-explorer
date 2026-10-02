@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
@@ -25,7 +26,14 @@ const jobDetailSelect = `SELECT j.id,j.parent_job_id,j.kind,j.status,j.attempt,j
 	COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
 	COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0),
 	cc.region_id,cc.target_osm_generation,cc.target_work_revision,cc.rules_version,cc.sampling_version,cc.path_policy_version,
-	rc.workout_id,rc.result_outcome,rc.duration_milliseconds,w.started_at,w.local_start_date,wt.provider_label
+	rc.workout_id,rc.result_outcome,rc.duration_milliseconds,w.started_at,w.local_start_date,wt.provider_label,
+	CASE WHEN rc.job_id IS NULL THEN NULL ELSE (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+		'regionId',target.item->>'regionId','generation',(target.item->>'generation')::bigint,
+		'latest',COALESCE(region.desired_osm_generation=(target.item->>'generation')::bigint,false))
+		ORDER BY target.item->>'regionId',(target.item->>'generation')::bigint DESC),'[]'::jsonb)
+		FROM jsonb_array_elements(rc.target_generations) target(item)
+		LEFT JOIN app.workout_coverage_regions region ON region.account_id=rc.account_id AND region.workout_id=rc.workout_id
+			AND region.region_id=target.item->>'regionId') END
 	FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
 	LEFT JOIN app.job_source_contexts c ON c.job_id=j.id AND c.account_id=j.account_id
 	LEFT JOIN app.coverage_job_progress cp ON cp.job_id=j.id AND cp.account_id=j.account_id
@@ -922,6 +930,7 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	var routeOutcome, routeType *string
 	var routeDuration *int
 	var routeStarted, routeLocalDate *time.Time
+	var routeGenerations []byte
 	var rawFailureCode, rawFailureSummary *string
 	var current, total int64
 	progress := generated.JobProgress{}
@@ -934,7 +943,7 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 		&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
 		&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running,
 		&coverageRegion, &coverageGeneration, &coverageRevision, &coverageRules, &coverageSampling, &coveragePolicy,
-		&routeWorkoutID, &routeOutcome, &routeDuration, &routeStarted, &routeLocalDate, &routeType)
+		&routeWorkoutID, &routeOutcome, &routeDuration, &routeStarted, &routeLocalDate, &routeType, &routeGenerations)
 	if err != nil {
 		return generated.JobDetail{}, "", err
 	}
@@ -992,6 +1001,15 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	if routeWorkoutID != nil && routeStarted != nil && routeType != nil {
 		context := generated.CoverageRouteContext{WorkoutId: compactUUID(*routeWorkoutID), StartedAt: *routeStarted,
 			WorkoutType: *routeType, DurationMilliseconds: routeDuration}
+		if len(routeGenerations) == 0 || json.Unmarshal(routeGenerations, &context.TargetGenerations) != nil || len(context.TargetGenerations) == 0 {
+			return generated.JobDetail{}, "", errors.New("invalid stored coverage generation vector")
+		}
+		sort.Slice(context.TargetGenerations, func(left, right int) bool {
+			if context.TargetGenerations[left].RegionId == context.TargetGenerations[right].RegionId {
+				return context.TargetGenerations[left].Generation > context.TargetGenerations[right].Generation
+			}
+			return context.TargetGenerations[left].RegionId < context.TargetGenerations[right].RegionId
+		})
 		if routeLocalDate == nil {
 			context.LocalStartDate.SetNull()
 		} else {

@@ -14,6 +14,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./worker/cm
 
 FROM docker.io/library/alpine:3.23
 RUN for attempt in 1 2 3; do apk add --no-cache ca-certificates && break; sleep 5; done && \
+    apk info --exists ca-certificates && \
     test -f /etc/ssl/certs/ca-certificates.crt && \
     addgroup -g 65532 app && \
     adduser -D -H -u 65532 -G app app

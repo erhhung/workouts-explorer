@@ -5,8 +5,22 @@ registry="${CI_REGISTRY:?CI_REGISTRY is required}"
 registry_path="${CI_REGISTRY_PATH:?CI_REGISTRY_PATH is required}"
 registry_user="${CI_REGISTRY_USER:?CI_REGISTRY_USER is required}"
 registry_password="${CI_REGISTRY_PASSWORD:?CI_REGISTRY_PASSWORD is required}"
-tag="${WORKOUTS_TEST_IMAGE_TAG:-dev-$(date +%Y%m%d)}"
-components=(api worker osm ui)
+tag="${WORKOUTS_IMAGE_TAG:-dev-$(date +%Y%m%d)}"
+if (( $# > 0 )); then
+  components=("$@")
+else
+  components=(api worker osm ui)
+fi
+
+for component in "${components[@]}"; do
+  case "$component" in
+    api | worker | osm | ui) ;;
+    *)
+      printf 'Unsupported image component: %s\n' "$component" >&2
+      exit 1
+      ;;
+  esac
+done
 
 registry_path="${registry_path%/}"
 project="${registry_path#*/}"
@@ -56,9 +70,13 @@ cleanup_stale_dev_tags
 for component in "${components[@]}"; do
   image="${registry_path}/workouts-${component}:${tag}"
   dockerfile="${component}/Dockerfile"
-  if [[ "$component" == "osm" ]]; then dockerfile="worker/osm-update.Dockerfile"; fi
-  buildah build --file "$dockerfile" --tag "$image" .
+  if [[ "$component" == "osm" ]]; then
+    dockerfile="worker/osm-update.Dockerfile"
+  fi
+  buildah build --dns 192.168.0.1 --dns-option ndots:1 \
+    --file "$dockerfile" --tag "$image" .
   buildah push "$image"
 done
 
-printf 'Published workouts API, worker, OSM, and UI images with tag %s\n' "$tag"
+component_list="$(IFS=,; printf '%s' "${components[*]}")"
+printf 'Published workouts images (%s) with tag %s\n' "$component_list" "$tag"

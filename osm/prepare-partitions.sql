@@ -19,7 +19,7 @@ BEGIN
         RAISE EXCEPTION 'build schema % does not match generation %', build_schema, generation_id;
     END IF;
 
-    FOREACH table_name IN ARRAY ARRAY['ways'::name,'localities'::name,'path_segments'::name] LOOP
+    FOREACH table_name IN ARRAY ARRAY['ways'::name, 'localities'::name, 'path_segments'::name] LOOP
         EXECUTE format('ALTER TABLE %I.%I ADD COLUMN region_id text NOT NULL DEFAULT %L', build_schema, table_name, region_id);
         EXECUTE format('ALTER TABLE %I.%I ADD COLUMN generation_id bigint NOT NULL DEFAULT %s', build_schema, table_name, generation_id);
         EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN region_id DROP DEFAULT', build_schema, table_name);
@@ -27,31 +27,32 @@ BEGIN
 
         FOR constraint_name IN
             SELECT conname FROM pg_constraint
-            WHERE conrelid=format('%I.%I',build_schema,table_name)::regclass AND contype IN ('p','u')
+            WHERE conrelid = format('%I.%I', build_schema, table_name)::regclass
+              AND contype IN ('p', 'u')
         LOOP
             EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', build_schema, table_name, constraint_name);
         END LOOP;
         FOR constraint_name IN
             SELECT indexrelid::regclass::text::name
             FROM pg_index
-            WHERE indrelid=format('%I.%I',build_schema,table_name)::regclass
+            WHERE indrelid = format('%I.%I', build_schema, table_name)::regclass
               AND NOT indisprimary
-              AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conindid=indexrelid)
+              AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conindid = indexrelid)
         LOOP
             EXECUTE format('DROP INDEX %s', constraint_name);
         END LOOP;
         EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK(region_id=%L) NOT VALID',
-            build_schema,table_name,table_name||'_region_g'||generation_id,region_id);
+            build_schema, table_name, table_name || '_region_g' || generation_id, region_id);
         EXECUTE format('ALTER TABLE %I.%I VALIDATE CONSTRAINT %I',
-            build_schema,table_name,table_name||'_region_g'||generation_id);
+            build_schema, table_name, table_name || '_region_g' || generation_id);
         EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK(generation_id=%s) NOT VALID',
-            build_schema,table_name,table_name||'_generation_g'||generation_id,generation_id);
+            build_schema, table_name, table_name || '_generation_g' || generation_id, generation_id);
         EXECUTE format('ALTER TABLE %I.%I VALIDATE CONSTRAINT %I',
-            build_schema,table_name,table_name||'_generation_g'||generation_id);
+            build_schema, table_name, table_name || '_generation_g' || generation_id);
     END LOOP;
 
-    EXECUTE format('ALTER TABLE %I.ways ALTER COLUMN version SET NOT NULL, ALTER COLUMN tags SET NOT NULL, ALTER COLUMN node_ids SET NOT NULL, ALTER COLUMN geom SET NOT NULL',build_schema);
-    EXECUTE format('ALTER TABLE %I.localities ALTER COLUMN relation_version SET NOT NULL, ALTER COLUMN tags SET NOT NULL, ALTER COLUMN geom SET NOT NULL',build_schema);
+    EXECUTE format('ALTER TABLE %I.ways ALTER COLUMN version SET NOT NULL, ALTER COLUMN tags SET NOT NULL, ALTER COLUMN node_ids SET NOT NULL, ALTER COLUMN geom SET NOT NULL', build_schema);
+    EXECUTE format('ALTER TABLE %I.localities ALTER COLUMN relation_version SET NOT NULL, ALTER COLUMN tags SET NOT NULL, ALTER COLUMN geom SET NOT NULL', build_schema);
 
     EXECUTE format('ALTER TABLE %I.ways ADD CONSTRAINT %I PRIMARY KEY(region_id,generation_id,way_id)',build_schema,'ways_pkey_g'||generation_id);
     EXECUTE format('ALTER TABLE %I.localities ADD CONSTRAINT %I PRIMARY KEY(region_id,generation_id,relation_id)',build_schema,'localities_pkey_g'||generation_id);

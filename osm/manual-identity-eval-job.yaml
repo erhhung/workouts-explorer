@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/component: osm-identity-eval
     spec:
       restartPolicy: Never
+      hostAliases:
+        - ip: "${OSM_PROMETHEUS_SERVICE_IP}"
+          hostnames:
+            - prometheus-stack-prometheus.monitoring.svc.cluster.local
       imagePullSecrets:
         - name: ${OSM_IMAGE_PULL_SECRET}
       securityContext:
@@ -35,6 +39,7 @@ spec:
             - --region=$(OSM_REGION_ID)
             - --localities=$(OSM_EVAL_LOCALITIES)
             - --max-segments=$(OSM_EVAL_MAX_SEGMENTS)
+            - --keep-schema=$(OSM_EVAL_KEEP_SCHEMA)
           env:
             - name: OSM_REGION_ID
               value: "${OSM_REGION_ID}"
@@ -42,8 +47,18 @@ spec:
               value: "${OSM_EVAL_LOCALITIES}"
             - name: OSM_EVAL_MAX_SEGMENTS
               value: "${OSM_EVAL_MAX_SEGMENTS}"
+            - name: OSM_EVAL_KEEP_SCHEMA
+              value: "${OSM_EVAL_KEEP_SCHEMA}"
             - name: OSM_PIPELINE_ROOT
               value: /app/osm
+            - name: OSM_PROMETHEUS_URL
+              value: "https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+            - name: SSL_CERT_FILE
+              value: /tls/prod-db/ca.crt
+            - name: OSM_PROMETHEUS_PVC_TEMPLATE
+              value: "data-{{POD}}"
+            - name: OSM_PROMETHEUS_MAX_SAMPLE_AGE
+              value: "2m"
             - name: OSM_MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:

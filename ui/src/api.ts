@@ -192,7 +192,11 @@ export interface MapSelectionWorkout {
   calories: ExactMetric | null;
   heartRate: ExactMetric | null;
   elevationGain: ExactMetric | null;
-  coverageReadiness: { state: "pending" | "unavailable" | "notProcessed"; reason?: "region_not_active" | "no_provider_region" };
+  coverageReadiness: {
+    mapDataStatus: "pending" | "unavailable" | "ready";
+    processingStatus: "unprocessed" | "queued" | "running" | "current" | "failed" | "stale";
+    resultStatus: "none" | "current" | "stale";
+  };
 }
 
 export interface MapSelection {
@@ -206,6 +210,11 @@ export interface MapSelection {
   routeTileUrl: string;
   coverageTileUrl: string;
 }
+
+export type CoverageFocusFeatureCollection = {
+  type: "FeatureCollection";
+  features: Array<{ type: "Feature"; properties: { entityKind: "path" | "park"; countBucket: number }; geometry: { type: "LineString"; coordinates: number[][] } | { type: "MultiLineString"; coordinates: number[][][] } }>;
+};
 
 export type RoadCoverageSortField = "rangeCount" | "name" | "cityOrRegion" | "rangeFirst" | "allTimeFirst" | "rangeLatest" | "allTimeLatest";
 export interface RoadCoverageSort { field: RoadCoverageSortField; direction: WorkoutSortDirection }
@@ -401,6 +410,7 @@ export interface CoverageRouteContext {
   startedAt: string;
   localStartDate?: string | null;
   workoutType: string;
+  targetGenerations: Array<{ regionId: string; generation: number; latest: boolean }>;
   resultOutcome?: "applied" | "no_evidence" | "superseded";
   durationMilliseconds?: number;
 }

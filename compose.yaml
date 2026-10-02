@@ -8,7 +8,7 @@ services:
     ports:
       - "127.0.0.1:54329:5432"
     volumes:
-      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/roles.sql:ro
+      - ./scripts/postgresql-init.sql:/docker-entrypoint-initdb.d/roles.sql:ro
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U workouts_migration -d workouts"]
       interval: 2s

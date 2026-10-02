@@ -67,5 +67,5 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: psql "$MIGRATION_DATABASE_URL" -f scripts/postgres-init.sql
+      - run: psql "$MIGRATION_DATABASE_URL" -f scripts/postgresql-init.sql
       - run: make migration-test
