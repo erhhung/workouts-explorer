@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "year": 2026,
+  "seed": 7104,
+  "gps_sample_seconds": 5,
+  "distance_meters_per_mile": 1609.344,
+  "other_duration_seconds": 1800,
+  "other_types": [
+    {"key": "climbing", "label": "Climbing"},
+    {"key": "paddle_sports", "label": "Paddle Sports"},
+    {"key": "skating_sports", "label": "Skating Sports"}
+  ],
+  "profiles": {
+    "typical": {
+      "workouts_per_day": 1,
+      "total_workouts": 365,
+      "activities": [
+        {"key": "running", "label": "Outdoor Run", "percentage": 60, "count": 219, "routed": true, "distance_miles": 8, "duration_seconds": 7200},
+        {"key": "walking", "label": "Outdoor Walk", "percentage": 20, "count": 73, "routed": true, "distance_miles": 8, "duration_seconds": 7200},
+        {"key": "cycling", "label": "Outdoor Cycle", "percentage": 10, "count": 37, "routed": true, "distance_miles": 20, "duration_seconds": 7200},
+        {"key": "other", "label": "Other", "percentage": 10, "count": 36, "routed": false, "distance_miles": 0, "duration_seconds": 1800}
+      ]
+    },
+    "stress": {
+      "workouts_per_day": 2,
+      "total_workouts": 730,
+      "activities": [
+        {"key": "running", "label": "Outdoor Run", "percentage": 40, "count": 292, "routed": true, "distance_miles": 13.1, "duration_seconds": 9000},
+        {"key": "walking", "label": "Outdoor Walk", "percentage": 20, "count": 146, "routed": true, "distance_miles": 10, "duration_seconds": 10800},
+        {"key": "cycling", "label": "Outdoor Cycle", "percentage": 10, "count": 73, "routed": true, "distance_miles": 40, "duration_seconds": 14400},
+        {"key": "other", "label": "Other", "percentage": 30, "count": 219, "routed": false, "distance_miles": 0, "duration_seconds": 1800}
+      ]
+    }
+  }
+}

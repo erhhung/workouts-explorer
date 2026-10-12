@@ -1,13 +1,42 @@
-import { type FocusEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type FocusEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
-export function Tooltip({ content, children, className = "", focusable = true, label }: {
-  content: string; children: ReactNode; className?: string; focusable?: boolean; label?: string;
+export function Tooltip({
+  content,
+  children,
+  className = "",
+  focusable = true,
+  label,
+}: {
+  content: string;
+  children: ReactNode;
+  className?: string;
+  focusable?: boolean;
+  label?: string;
 }) {
   const tooltipId = useId();
-  return <span className={`tooltip ${className}`.trim()}>
-    <span className="tooltip-trigger" tabIndex={focusable ? 0 : undefined} aria-describedby={tooltipId} aria-label={label}>{children}</span>
-    <span className="tooltip-content" id={tooltipId} role="tooltip">{content}</span>
-  </span>;
+  return (
+    <span className={`tooltip ${className}`.trim()}>
+      <span
+        className="tooltip-trigger"
+        tabIndex={focusable ? 0 : undefined}
+        aria-describedby={tooltipId}
+        aria-label={label}
+      >
+        {children}
+      </span>
+      <span className="tooltip-content" id={tooltipId} role="tooltip">
+        {content}
+      </span>
+    </span>
+  );
 }
 
 export function InfoTip({ content, label }: { content: string; label: string }) {
@@ -20,7 +49,10 @@ export function InfoTip({ content, label }: { content: string; label: string }) 
   useEffect(() => {
     if (!open) return;
     function outside(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) { setOpen(false); setDismissed(true); }
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setDismissed(true);
+      }
     }
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
@@ -35,15 +67,38 @@ export function InfoTip({ content, label }: { content: string; label: string }) 
   }
 
   function blur(event: FocusEvent<HTMLSpanElement>) {
-    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))
+      return;
     setOpen(false);
     setDismissed(false);
   }
 
-  return <span ref={containerRef} className={`tooltip info-tip${open ? " is-open" : ""}${dismissed ? " is-dismissed" : ""}`} onBlur={blur}>
-    <button ref={triggerRef} type="button" className="tooltip-trigger" aria-label={label} aria-describedby={tooltipId} aria-expanded={open} onClick={() => { setOpen((value) => !value); setDismissed(open); }} onKeyDown={escape}><span aria-hidden="true">?</span></button>
-    <span className="tooltip-content" id={tooltipId} role="tooltip">{content}</span>
-  </span>;
+  return (
+    <span
+      ref={containerRef}
+      className={`tooltip info-tip${open ? " is-open" : ""}${dismissed ? " is-dismissed" : ""}`}
+      onBlur={blur}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="tooltip-trigger"
+        aria-label={label}
+        aria-describedby={tooltipId}
+        aria-expanded={open}
+        onClick={() => {
+          setOpen((value) => !value);
+          setDismissed(open);
+        }}
+        onKeyDown={escape}
+      >
+        <span aria-hidden="true">?</span>
+      </button>
+      <span className="tooltip-content" id={tooltipId} role="tooltip">
+        {content}
+      </span>
+    </span>
+  );
 }
 
 export function offsetLabel(offset: number, compact = false) {
@@ -57,7 +112,8 @@ export function offsetLabel(offset: number, compact = false) {
 export function zoneOffsetAt(timeZone: string, instant: Date) {
   try {
     const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
-      .formatToParts(instant).find((part) => part.type === "timeZoneName")?.value;
+      .formatToParts(instant)
+      .find((part) => part.type === "timeZoneName")?.value;
     const match = /^(?:GMT|UTC)(?:([+-])(\d{1,2})(?::?(\d{2}))?)?$/.exec(name ?? "");
     if (!match) return null;
     if (!match[1]) return 0;
@@ -71,14 +127,32 @@ export function zoneOffsetAt(timeZone: string, instant: Date) {
 export function instantZone(timeZone: string, instant: Date) {
   const offset = zoneOffsetAt(timeZone, instant);
   if (offset == null) return { label: "TZ unavailable", title: `${timeZone} (offset unavailable)` };
-  return { label: zoneAbbreviation(timeZone, instant), title: `${timeZone} (${offsetLabel(offset)})` };
+  return {
+    label: zoneAbbreviation(timeZone, instant),
+    title: `${timeZone} (${offsetLabel(offset)})`,
+  };
 }
 
 export function zoneAbbreviation(timeZone: string, instant: Date) {
-  return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
-    .formatToParts(instant).find((part) => part.type === "timeZoneName")?.value ?? timeZone;
+  return (
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+      .formatToParts(instant)
+      .find((part) => part.type === "timeZoneName")?.value ?? timeZone
+  );
 }
 
-export function ZoneBadge({ label, title, focusable = true }: { label: string; title: string; focusable?: boolean }) {
-  return <Tooltip content={title} className="timezone-badge" focusable={focusable} label={title}>{label}</Tooltip>;
+export function ZoneBadge({
+  label,
+  title,
+  focusable = true,
+}: {
+  label: string;
+  title: string;
+  focusable?: boolean;
+}) {
+  return (
+    <Tooltip content={title} className="timezone-badge" focusable={focusable} label={title}>
+      {label}
+    </Tooltip>
+  );
 }

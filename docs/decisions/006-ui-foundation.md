@@ -198,7 +198,7 @@ would overlap more native form and TanStack responsibilities than the narrowly
 approved Radix parts. Reconsider it if complex accessible date, locale, select, or
 collection widgets become a dominant requirement.
 
-Radix package metadata checked on 2026-08-03 reports React 19-compatible peer
+Radix package metadata checked on 8/3/2026 reports React 19-compatible peer
 ranges for Dialog 1.1.23, Alert Dialog 1.1.23, Dropdown Menu 2.1.24, Popover 1.1.23,
 and Tooltip 1.2.16. Radix documentation states that Dialog traps focus, announces
 title/description, closes on Escape, and returns focus, while Dropdown Menu follows

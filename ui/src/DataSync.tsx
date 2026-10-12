@@ -1,6 +1,14 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import {
   ApiError,
   api,
@@ -34,15 +42,28 @@ const STATUS_LABELS: Record<JobStatus, string> = {
 };
 const PAGE_SIZE = 25;
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as Array<[JobStatus, string]>;
-const OPERATION_OPTIONS = [["manual_sync", "Manual sync"], ["automated_sync", "Automated sync"], ["workout_deletion", "Workout deletion"], ["coverage_update", "Coverage update"]] as const;
+const OPERATION_OPTIONS = [
+  ["manual_sync", "Manual sync"],
+  ["automated_sync", "Automated sync"],
+  ["workout_deletion", "Workout deletion"],
+  ["coverage_update", "Coverage update"],
+] as const;
 
 function validDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return false;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toISOString().slice(0, 10) === value;
+  return (
+    new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+      .toISOString()
+      .slice(0, 10) === value
+  );
 }
 
-function dateTime(value: string | undefined, preferences: Preferences, timeZone = preferences.timezone) {
+function dateTime(
+  value: string | undefined,
+  preferences: Preferences,
+  timeZone = preferences.timezone,
+) {
   if (!value) return "Never";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unavailable";
@@ -54,14 +75,18 @@ function dateTime(value: string | undefined, preferences: Preferences, timeZone 
       hour12: preferences.clockFormat === "12h",
     }).format(date);
   } catch {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+      date,
+    );
   }
 }
 
 function calendarDate(value: string | undefined) {
   if (!value) return "Never";
   const date = new Date(`${value}T00:00:00Z`);
-  return Number.isNaN(date.getTime()) ? "Unavailable" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
+  return Number.isNaN(date.getTime())
+    ? "Unavailable"
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
 }
 
 function interval(seconds: number) {
@@ -72,32 +97,63 @@ function interval(seconds: number) {
 }
 
 function historyOperation(job: JobSummary) {
-	if (job.operation === "coverage_update") return "Coverage update";
-  return job.operation === "workout_deletion" ? "Workout deletion" : job.trigger === "manual" ? "Manual sync" : "Automated sync";
+  if (job.operation === "coverage_update") return "Coverage update";
+  return job.operation === "workout_deletion"
+    ? "Workout deletion"
+    : job.trigger === "manual"
+      ? "Manual sync"
+      : "Automated sync";
 }
 
 function historyResults(job: JobSummary) {
-	if (job.operation === "coverage_update") return `${job.routeStats?.processed ?? job.progress.current} of ${job.routeStats?.total ?? job.progress.total} routes`;
-  if (job.operation === "workout_deletion") return `${job.progress.current} of ${job.progress.total} deleted`;
+  if (job.operation === "coverage_update")
+    return `${job.routeStats?.processed ?? job.progress.current} of ${job.routeStats?.total ?? job.progress.total} routes`;
+  if (job.operation === "workout_deletion")
+    return `${job.progress.current} of ${job.progress.total} deleted`;
   return `${job.progress.filesSucceeded} files / ${job.progress.workoutsCreated} new`;
 }
 
 function CoverageProgress({ job }: { job: JobDetail }) {
-	const stats = job.routeStats;
-	if (!stats || stats.total === 0) return <p className="sync-progress sync-progress--unknown">Preparing routes</p>;
-	return <div className="sync-progress"><span>{stats.processed} of {stats.total} routes</span><progress value={Math.min(stats.processed, stats.total)} max={stats.total} /></div>;
+  const stats = job.routeStats;
+  if (!stats || stats.total === 0)
+    return <p className="sync-progress sync-progress--unknown">Preparing routes</p>;
+  return (
+    <div className="sync-progress">
+      <span>
+        {stats.processed} of {stats.total} routes
+      </span>
+      <progress value={Math.min(stats.processed, stats.total)} max={stats.total} />
+    </div>
+  );
 }
 
 function CoverageResults({ job }: { job: JobDetail }) {
-	const stats = job.routeStats;
-	if (!stats) return null;
-	return <dl className="result-counts">
-		<div><dt>Routes Processed</dt><dd>{stats.processed}</dd></div>
-		<div><dt>Routes Succeeded</dt><dd>{stats.succeeded}</dd></div>
-		<div><dt>Routes Failed</dt><dd>{stats.failed}</dd></div>
-		<div><dt>Routes Canceled</dt><dd>{stats.cancelled}</dd></div>
-		<div><dt>Routes Superseded</dt><dd>{stats.superseded}</dd></div>
-	</dl>;
+  const stats = job.routeStats;
+  if (!stats) return null;
+  return (
+    <dl className="result-counts">
+      <div>
+        <dt>Routes Processed</dt>
+        <dd>{stats.processed}</dd>
+      </div>
+      <div>
+        <dt>Routes Succeeded</dt>
+        <dd>{stats.succeeded}</dd>
+      </div>
+      <div>
+        <dt>Routes Failed</dt>
+        <dd>{stats.failed}</dd>
+      </div>
+      <div>
+        <dt>Routes Canceled</dt>
+        <dd>{stats.cancelled}</dd>
+      </div>
+      <div>
+        <dt>Routes Superseded</dt>
+        <dd>{stats.superseded}</dd>
+      </div>
+    </dl>
+  );
 }
 
 function NextRun({ value, preferences }: { value?: string; preferences: Preferences }) {
@@ -107,55 +163,170 @@ function NextRun({ value, preferences }: { value?: string; preferences: Preferen
   const zone = instantZone(preferences.timezone, instant);
   if (zone.label === "TZ unavailable") {
     const title = `${preferences.timezone} unavailable; displayed in UTC (UTC+0:00)`;
-    return <span className="next-run-value"><span>{dateTime(value, preferences, "UTC")}</span><ZoneBadge label="UTC" title={title} /></span>;
+    return (
+      <span className="next-run-value">
+        <span>{dateTime(value, preferences, "UTC")}</span>
+        <ZoneBadge label="UTC" title={title} />
+      </span>
+    );
   }
-  return <span className="next-run-value"><span>{dateTime(value, preferences)}</span><ZoneBadge label={zone.label} title={zone.title} /></span>;
+  return (
+    <span className="next-run-value">
+      <span>{dateTime(value, preferences)}</span>
+      <ZoneBadge label={zone.label} title={zone.title} />
+    </span>
+  );
 }
 
 function sourceType(value: string) {
   return value === "health-auto-export-local" ? "Health Auto Export" : value;
 }
 
-function StatusBadge({ status, cancelRequested = false, style }: { status: JobStatus; cancelRequested?: boolean; style?: CSSProperties }) {
+function StatusBadge({
+  status,
+  cancelRequested = false,
+  style,
+}: {
+  status: JobStatus;
+  cancelRequested?: boolean;
+  style?: CSSProperties;
+}) {
   const cancellationRequested = cancelRequested && ACTIVE_STATUSES.has(status);
-  return <span className={`sync-status sync-status--${cancellationRequested ? "cancellation" : status}`} style={style}>{cancellationRequested ? "Cancellation requested" : STATUS_LABELS[status]}</span>;
+  return (
+    <span
+      className={`sync-status sync-status--${cancellationRequested ? "cancellation" : status}`}
+      style={style}
+    >
+      {cancellationRequested ? "Cancellation requested" : STATUS_LABELS[status]}
+    </span>
+  );
 }
 
 function StatusText({ status }: { status: JobStatus }) {
-	return <span className={`sync-status-text sync-status-text--${status}`}>{STATUS_LABELS[status]}</span>;
+  return (
+    <span className={`sync-status-text sync-status-text--${status}`}>{STATUS_LABELS[status]}</span>
+  );
 }
 
-function Progress({ progress, status, style }: { progress: JobProgress; status: JobStatus; style?: CSSProperties }) {
-  if (progress.total === 0 && ACTIVE_STATUSES.has(status)) return <p className="sync-progress sync-progress--unknown" style={style}>Discovering files; total not yet known</p>;
+function Progress({
+  progress,
+  status,
+  style,
+}: {
+  progress: JobProgress;
+  status: JobStatus;
+  style?: CSSProperties;
+}) {
+  if (progress.total === 0 && ACTIVE_STATUSES.has(status))
+    return (
+      <p className="sync-progress sync-progress--unknown" style={style}>
+        Discovering files; total not yet known
+      </p>
+    );
   if (progress.total === 0) return null;
-  return <div className="sync-progress" style={style}><span>{progress.current} of {progress.total} files</span><progress value={Math.min(progress.current, progress.total)} max={progress.total} /></div>;
+  return (
+    <div className="sync-progress" style={style}>
+      <span>
+        {progress.current} of {progress.total} files
+      </span>
+      <progress value={Math.min(progress.current, progress.total)} max={progress.total} />
+    </div>
+  );
 }
 
-function Results({ progress, results, status }: { progress: JobProgress; results?: JobDetail["results"]; status: JobStatus }) {
+function Results({
+  progress,
+  results,
+  status,
+}: {
+  progress: JobProgress;
+  results?: JobDetail["results"];
+  status: JobStatus;
+}) {
   const rejectedHelpId = useId();
   const values = results ?? progress;
-  const noData = (values.filesSucceeded ?? 0) === 0 && (values.filesFailed ?? 0) === 0 &&
-    (values.workoutsCreated ?? 0) === 0 && (values.workoutsUpdated ?? 0) === 0 && (values.workoutsUnchanged ?? 0) === 0 && (values.workoutsRejected ?? 0) === 0;
-  if (noData) return <p className="sync-no-data">{status === "succeeded" ? "No new data." : "No files were processed."}</p>;
-  return <dl className="result-counts">
-    <div><dt>Files Processed</dt><dd>{(values.filesSucceeded ?? 0) + (values.filesFailed ?? 0)}</dd></div>
-    <div><dt>Workouts Imported</dt><dd>{values.workoutsCreated ?? 0}</dd></div>
-    <div><dt>Workouts Unchanged</dt><dd>{values.workoutsUnchanged ?? 0}</dd></div>
-    <div><dt>Files Failed</dt><dd>{values.filesFailed ?? 0}</dd></div>
-    <div><dt>Workouts Updated</dt><dd>{values.workoutsUpdated ?? 0}</dd></div>
-    <div><dt>Workouts Rejected</dt><dd aria-describedby={rejectedHelpId}>{values.workoutsRejected ?? 0}</dd><span id={rejectedHelpId} className="visually-hidden">Workout records skipped while their source file continued processing.</span></div>
-  </dl>;
+  const noData =
+    (values.filesSucceeded ?? 0) === 0 &&
+    (values.filesFailed ?? 0) === 0 &&
+    (values.workoutsCreated ?? 0) === 0 &&
+    (values.workoutsUpdated ?? 0) === 0 &&
+    (values.workoutsUnchanged ?? 0) === 0 &&
+    (values.workoutsRejected ?? 0) === 0;
+  if (noData)
+    return (
+      <p className="sync-no-data">
+        {status === "succeeded" ? "No new data." : "No files were processed."}
+      </p>
+    );
+  return (
+    <dl className="result-counts">
+      <div>
+        <dt>Files Processed</dt>
+        <dd>{(values.filesSucceeded ?? 0) + (values.filesFailed ?? 0)}</dd>
+      </div>
+      <div>
+        <dt>Workouts Imported</dt>
+        <dd>{values.workoutsCreated ?? 0}</dd>
+      </div>
+      <div>
+        <dt>Workouts Unchanged</dt>
+        <dd>{values.workoutsUnchanged ?? 0}</dd>
+      </div>
+      <div>
+        <dt>Files Failed</dt>
+        <dd>{values.filesFailed ?? 0}</dd>
+      </div>
+      <div>
+        <dt>Workouts Updated</dt>
+        <dd>{values.workoutsUpdated ?? 0}</dd>
+      </div>
+      <div>
+        <dt>Workouts Rejected</dt>
+        <dd aria-describedby={rejectedHelpId}>{values.workoutsRejected ?? 0}</dd>
+        <span id={rejectedHelpId} className="visually-hidden">
+          Workout records skipped while their source file continued processing.
+        </span>
+      </div>
+    </dl>
+  );
 }
 
 function ordinal(value: number) {
-  const words = ["", "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
+  const words = [
+    "",
+    "First",
+    "Second",
+    "Third",
+    "Fourth",
+    "Fifth",
+    "Sixth",
+    "Seventh",
+    "Eighth",
+    "Ninth",
+    "Tenth",
+  ];
   if (words[value]) return words[value];
   const remainder = value % 100;
-  const suffix = remainder >= 11 && remainder <= 13 ? "th" : value % 10 === 1 ? "st" : value % 10 === 2 ? "nd" : value % 10 === 3 ? "rd" : "th";
+  const suffix =
+    remainder >= 11 && remainder <= 13
+      ? "th"
+      : value % 10 === 1
+        ? "st"
+        : value % 10 === 2
+          ? "nd"
+          : value % 10 === 3
+            ? "rd"
+            : "th";
   return `${value}${suffix}`;
 }
 
-function HistoryFilter({ label, value, allLabel, options, onChange }: {
+function HistoryFilter({
+  label,
+  value,
+  allLabel,
+  options,
+  onChange,
+}: {
   label: string;
   value: string;
   allLabel: string;
@@ -163,61 +334,172 @@ function HistoryFilter({ label, value, allLabel, options, onChange }: {
   onChange: (value: string) => void;
 }) {
   const selectedLabel = options.find(([option]) => option === value)?.[1] ?? allLabel;
-  return <DropdownMenu.Root>
-    <DropdownMenu.Trigger className="range-trigger history-filter-trigger" aria-label={`Filter by ${label.toLowerCase()}`}>
-      <span>{label}</span><strong>{selectedLabel}</strong><span aria-hidden="true">v</span>
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Portal><DropdownMenu.Content className="menu-content history-filter-menu" align="end" sideOffset={8}>
-      <DropdownMenu.RadioGroup value={value} onValueChange={onChange}>
-        <DropdownMenu.RadioItem value="">{allLabel}<DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>
-        {options.map(([option, optionLabel]) => <DropdownMenu.RadioItem key={option} value={option}>{optionLabel}<DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}
-      </DropdownMenu.RadioGroup>
-    </DropdownMenu.Content></DropdownMenu.Portal>
-  </DropdownMenu.Root>;
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        className="range-trigger history-filter-trigger"
+        aria-label={`Filter by ${label.toLowerCase()}`}
+      >
+        <span>{label}</span>
+        <strong>{selectedLabel}</strong>
+        <span aria-hidden="true">v</span>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="menu-content history-filter-menu"
+          align="end"
+          sideOffset={8}
+        >
+          <DropdownMenu.RadioGroup value={value} onValueChange={onChange}>
+            <DropdownMenu.RadioItem value="">
+              {allLabel}
+              <DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator>
+            </DropdownMenu.RadioItem>
+            {options.map(([option, optionLabel]) => (
+              <DropdownMenu.RadioItem key={option} value={option}>
+                {optionLabel}
+                <DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator>
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
 }
 
 function QueryError({ copy, retry }: { copy: string; retry: () => void }) {
-  return <div className="sync-query-error" role="alert"><span>{copy}</span><button type="button" className="secondary" onClick={retry}>Try again</button></div>;
+  return (
+    <div className="sync-query-error" role="alert">
+      <span>{copy}</span>
+      <button type="button" className="secondary" onClick={retry}>
+        Try again
+      </button>
+    </div>
+  );
 }
 
 type ArtifactKind = "files" | "events" | "logs";
 
-function ArtifactDisclosure({ jobId, kind, preferences }: { jobId: string; kind: ArtifactKind; preferences: Preferences }) {
+function ArtifactDisclosure({
+  jobId,
+  kind,
+  preferences,
+}: {
+  jobId: string;
+  kind: ArtifactKind;
+  preferences: Preferences;
+}) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
   const label = kind[0].toUpperCase() + kind.slice(1);
   const query = useQuery({
     queryKey: ["job-artifacts", jobId, kind, page],
-    queryFn: ({ signal }) => api<JobFileList | JobEventList | JobLogList>(`/api/jobs/${encodeURIComponent(jobId)}/${kind}?page=${page}&pageSize=${PAGE_SIZE}`, { signal }),
+    queryFn: ({ signal }) =>
+      api<JobFileList | JobEventList | JobLogList>(
+        `/api/jobs/${encodeURIComponent(jobId)}/${kind}?page=${page}&pageSize=${PAGE_SIZE}`,
+        { signal },
+      ),
     enabled: open,
   });
   function escape(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") setOpen(false);
   }
-  return <div className="artifact-disclosure" onKeyDown={escape}>
-    <button type="button" className="artifact-trigger" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{label}<span aria-hidden="true">{open ? "-" : "+"}</span></button>
-    {open && <div className="artifact-panel" aria-busy={query.isFetching}>
-      {query.isPending && <p role="status">Loading {kind}...</p>}
-      {query.isError && <QueryError copy={`${label} are unavailable.`} retry={() => void query.refetch()} />}
-      {query.data && query.data.items.length === 0 && <p>No {kind} recorded.</p>}
-      {query.data && kind === "files" && <ul className="artifact-list">{(query.data as JobFileList).items.map((file) => <li key={file.id}>
-        <strong>{file.basename}</strong><span>{file.source.displayName} / {file.state}</span><span>{file.sizeBytes.toLocaleString()} bytes</span>
-        {file.failureSummary && <span className="failure-copy">{file.failureSummary}</span>}
-      </li>)}</ul>}
-      {query.data && kind !== "files" && <ul className="artifact-list">{(query.data.items as Array<JobEvent | JobLog>).map((item) => <li key={item.id}>
-        <strong>{item.severity}: {item.message}</strong><span>{dateTime(item.createdAt, preferences)} / {item.code}</span>
-        {Object.keys(item.fields).length > 0 && <dl className="safe-fields">{Object.entries(item.fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>}
-      </li>)}</ul>}
-      {query.data && query.data.pagination.totalPages > 1 && <nav className="pagination" aria-label={`${label} pages`}>
-        <button type="button" className="secondary" disabled={page <= 1 || query.isFetching} onClick={() => setPage((value) => value - 1)}>Previous</button>
-        <span>Page {query.data.pagination.page} of {query.data.pagination.totalPages}</span>
-        <button type="button" className="secondary" disabled={page >= query.data.pagination.totalPages || query.isFetching} onClick={() => setPage((value) => value + 1)}>Next</button>
-      </nav>}
-    </div>}
-  </div>;
+  return (
+    <div className="artifact-disclosure" onKeyDown={escape}>
+      <button
+        type="button"
+        className="artifact-trigger"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {label}
+        <span aria-hidden="true">{open ? "-" : "+"}</span>
+      </button>
+      {open && (
+        <div className="artifact-panel" aria-busy={query.isFetching}>
+          {query.isPending && <p role="status">Loading {kind}...</p>}
+          {query.isError && (
+            <QueryError copy={`${label} are unavailable.`} retry={() => void query.refetch()} />
+          )}
+          {query.data && query.data.items.length === 0 && <p>No {kind} recorded.</p>}
+          {query.data && kind === "files" && (
+            <ul className="artifact-list">
+              {(query.data as JobFileList).items.map((file) => (
+                <li key={file.id}>
+                  <strong>{file.basename}</strong>
+                  <span>
+                    {file.source.displayName} / {file.state}
+                  </span>
+                  <span>{file.sizeBytes.toLocaleString()} bytes</span>
+                  {file.failureSummary && (
+                    <span className="failure-copy">{file.failureSummary}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {query.data && kind !== "files" && (
+            <ul className="artifact-list">
+              {(query.data.items as Array<JobEvent | JobLog>).map((item) => (
+                <li key={item.id}>
+                  <strong>
+                    {item.severity}: {item.message}
+                  </strong>
+                  <span>
+                    {dateTime(item.createdAt, preferences)} / {item.code}
+                  </span>
+                  {Object.keys(item.fields).length > 0 && (
+                    <dl className="safe-fields">
+                      {Object.entries(item.fields).map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{key}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {query.data && query.data.pagination.totalPages > 1 && (
+            <nav className="pagination" aria-label={`${label} pages`}>
+              <button
+                type="button"
+                className="secondary"
+                disabled={page <= 1 || query.isFetching}
+                onClick={() => setPage((value) => value - 1)}
+              >
+                Previous
+              </button>
+              <span>
+                Page {query.data.pagination.page} of {query.data.pagination.totalPages}
+              </span>
+              <button
+                type="button"
+                className="secondary"
+                disabled={page >= query.data.pagination.totalPages || query.isFetching}
+                onClick={() => setPage((value) => value + 1)}
+              >
+                Next
+              </button>
+            </nav>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob }: {
+function JobDetailCard({
+  job,
+  preferences,
+  busy,
+  onCancel,
+  onRetry,
+  onSelectJob,
+}: {
   job: JobDetail;
   preferences: Preferences;
   busy: "cancel" | "retry" | null;
@@ -225,56 +507,305 @@ function JobDetailCard({ job, preferences, busy, onCancel, onRetry, onSelectJob 
   onRetry: () => void;
   onSelectJob: (jobId: string) => void;
 }) {
-	const deletion = job.operation === "workout_deletion";
-	const coverage = job.operation === "coverage_update";
-	const waitingAfterStart = coverage && job.status === "queued" && Boolean(job.startedAt);
-	return <article className="sync-card job-detail-card">
-		<div className="sync-card-heading"><div><p className="card-kicker">Job {job.id.slice(0, 8)}</p><h2>{deletion ? "Workout deletion" : coverage ? "Coverage update" : "Run detail"}</h2></div><StatusBadge status={job.status} cancelRequested={job.cancelRequested} /></div>
-		<dl className="job-metadata">
-			<div><dt>{deletion || coverage ? "Operation" : "Trigger"}</dt><dd>{deletion ? "Workout deletion" : coverage ? "Coverage update" : job.trigger === "manual" ? "Manual" : "Scheduled"}</dd></div>
-			<div><dt>{deletion ? "Targets" : coverage ? "Routes" : "Sources"}</dt><dd>{deletion ? job.progress.total : coverage ? job.routeStats?.total ?? job.children.length : job.children.length || (job.source ? 1 : 0)}</dd></div>
-      <div><dt>Queued</dt><dd>{dateTime(job.createdAt, preferences)}</dd></div>
-      <div><dt>{coverage ? "First started" : "Started"}</dt><dd>{dateTime(job.startedAt, preferences)}</dd></div>
-      {waitingAfterStart && <div><dt>Waiting since</dt><dd>{dateTime(job.updatedAt, preferences)}</dd></div>}
-      <div><dt>Finished</dt><dd>{dateTime(job.terminalAt, preferences)}</dd></div>
-			{job.retryRootJobId && job.retryOrdinal != null && job.retryOrdinal > 1
-				? <div><dt>Retry of job <a href={`/data-sync/jobs/${job.retryRootJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryRootJobId!); }}>{job.retryRootJobId.slice(0, 8)}</a></dt><dd className="retry-ordinal"><span>{ordinal(job.retryOrdinal)}</span>{job.retryOrdinal > 1 && job.retryOfJobId && <small className="retry-previous">|&nbsp; view <a href={`/data-sync/jobs/${job.retryOfJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.retryOfJobId!); }}>{ordinal(job.retryOrdinal - 1).toLowerCase()}</a></small>}</dd></div>
-				: job.latestRetryJobId && <div><dt>Retry by job <a href={`/data-sync/jobs/${job.latestRetryJobId}`} onClick={(event) => { event.preventDefault(); onSelectJob(job.latestRetryJobId!); }}>{job.latestRetryJobId.slice(0, 8)}</a></dt><dd className="visually-hidden">Latest retry in chain</dd></div>}
-		</dl>
-		{coverage ? <CoverageProgress job={job} /> : !deletion && <Progress progress={job.progress} status={job.status} />}
-		{coverage ? <CoverageResults job={job} /> : !deletion && (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && <Results progress={job.progress} results={job.results} status={job.status} />}
-    {job.failureSummary && <p className="failure-copy"><strong>Run issue:</strong> {job.failureSummary}</p>}
-		{job.children.length > 0 && <section className="source-runs" aria-labelledby="source-runs-heading"><h3 id="source-runs-heading">{coverage ? "Route runs" : "Source runs"}</h3>{job.children.map((child) => <article key={child.id} className={`source-run${coverage ? " coverage-route-run" : ""}`}>
-			{coverage ? <div className="coverage-route-run-heading">
-				<div className="coverage-route-title"><strong>{child.coverageRoute?.workoutType ?? "Workout unavailable"}</strong> <span>({child.coverageRoute?.localStartDate ? calendarDate(child.coverageRoute.localStartDate) : dateTime(child.coverageRoute?.startedAt, preferences)})</span></div>
-				{child.coverageRoute && <table className="coverage-generation-list"><caption className="visually-hidden">OSM generations</caption><tbody>{child.coverageRoute.targetGenerations.map((generation) => <tr key={`${generation.regionId}-${generation.generation}`}><td>{generation.regionId}</td><td className={generation.latest ? "is-latest" : undefined}>{generation.generation}</td></tr>)}</tbody></table>}
-				<StatusBadge status={child.status} cancelRequested={child.cancelRequested} />
-			</div> : <div className="source-run-heading"><div><strong>{child.source?.displayName ?? "Source unavailable"}</strong> <span>({child.source ? sourceType(child.source.sourceType) : "Type unavailable"})</span></div><StatusBadge status={child.status} cancelRequested={child.cancelRequested} style={{ position: "relative", top: ".2rem" }} /></div>}
-			{coverage ? <p className="sync-no-data">{child.coverageRoute?.resultOutcome?.replace("_", " ") ?? (ACTIVE_STATUSES.has(child.status) ? "Processing" : "No result")}{child.coverageRoute?.durationMilliseconds != null ? ` / ${child.coverageRoute.durationMilliseconds.toLocaleString()} ms` : ""}</p> : <Progress progress={child.progress} status={child.status} style={{ margin: ".7rem 0 -.3rem 0" }} />}
-			{!coverage && (!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && <Results progress={child.progress} results={child.results} status={child.status} />}
-      {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
-    </article>)}</section>}
-    {!deletion && (ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && <div className="job-actions">
-      {ACTIVE_STATUSES.has(job.status) && <button type="button" className="secondary danger-button" disabled={busy !== null || job.cancelRequested} onClick={onCancel}>{busy === "cancel" || job.cancelRequested ? "Cancelling..." : "Cancel run"}</button>}
-      {RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry run"}</button>}
-    </div>}
-    {deletion && RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && <div className="job-actions"><button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>{busy === "retry" ? "Retrying..." : "Retry deletion"}</button></div>}
-		{!deletion && <div className="artifact-group" aria-label="Run records">
-			{!coverage && <ArtifactDisclosure key={`${job.id}-files`} jobId={job.id} kind="files" preferences={preferences} />}
-      <ArtifactDisclosure key={`${job.id}-events`} jobId={job.id} kind="events" preferences={preferences} />
-      <ArtifactDisclosure key={`${job.id}-logs`} jobId={job.id} kind="logs" preferences={preferences} />
-    </div>}
-  </article>;
+  const deletion = job.operation === "workout_deletion";
+  const coverage = job.operation === "coverage_update";
+  const waitingAfterStart = coverage && job.status === "queued" && Boolean(job.startedAt);
+  return (
+    <article className="sync-card job-detail-card">
+      <div className="sync-card-heading">
+        <div>
+          <p className="card-kicker">Job {job.id.slice(0, 8)}</p>
+          <h2>{deletion ? "Workout deletion" : coverage ? "Coverage update" : "Run detail"}</h2>
+        </div>
+        <StatusBadge status={job.status} cancelRequested={job.cancelRequested} />
+      </div>
+      <dl className="job-metadata">
+        <div>
+          <dt>{deletion || coverage ? "Operation" : "Trigger"}</dt>
+          <dd>
+            {deletion
+              ? "Workout deletion"
+              : coverage
+                ? "Coverage update"
+                : job.trigger === "manual"
+                  ? "Manual"
+                  : "Scheduled"}
+          </dd>
+        </div>
+        <div>
+          <dt>{deletion ? "Targets" : coverage ? "Routes" : "Sources"}</dt>
+          <dd>
+            {deletion
+              ? job.progress.total
+              : coverage
+                ? (job.routeStats?.total ?? job.children.length)
+                : job.children.length || (job.source ? 1 : 0)}
+          </dd>
+        </div>
+        <div>
+          <dt>Queued</dt>
+          <dd>{dateTime(job.createdAt, preferences)}</dd>
+        </div>
+        <div>
+          <dt>{coverage ? "First started" : "Started"}</dt>
+          <dd>{dateTime(job.startedAt, preferences)}</dd>
+        </div>
+        {waitingAfterStart && (
+          <div>
+            <dt>Waiting since</dt>
+            <dd>{dateTime(job.updatedAt, preferences)}</dd>
+          </div>
+        )}
+        <div>
+          <dt>Finished</dt>
+          <dd>{dateTime(job.terminalAt, preferences)}</dd>
+        </div>
+        {job.retryRootJobId && job.retryOrdinal != null && job.retryOrdinal > 1 ? (
+          <div>
+            <dt>
+              Retry of job{" "}
+              <a
+                href={`/data-sync/jobs/${job.retryRootJobId}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onSelectJob(job.retryRootJobId!);
+                }}
+              >
+                {job.retryRootJobId.slice(0, 8)}
+              </a>
+            </dt>
+            <dd className="retry-ordinal">
+              <span>{ordinal(job.retryOrdinal)}</span>
+              {job.retryOrdinal > 1 && job.retryOfJobId && (
+                <small className="retry-previous">
+                  |&nbsp; view{" "}
+                  <a
+                    href={`/data-sync/jobs/${job.retryOfJobId}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onSelectJob(job.retryOfJobId!);
+                    }}
+                  >
+                    {ordinal(job.retryOrdinal - 1).toLowerCase()}
+                  </a>
+                </small>
+              )}
+            </dd>
+          </div>
+        ) : (
+          job.latestRetryJobId && (
+            <div>
+              <dt>
+                Retry by job{" "}
+                <a
+                  href={`/data-sync/jobs/${job.latestRetryJobId}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onSelectJob(job.latestRetryJobId!);
+                  }}
+                >
+                  {job.latestRetryJobId.slice(0, 8)}
+                </a>
+              </dt>
+              <dd className="visually-hidden">Latest retry in chain</dd>
+            </div>
+          )
+        )}
+      </dl>
+      {coverage ? (
+        <CoverageProgress job={job} />
+      ) : (
+        !deletion && <Progress progress={job.progress} status={job.status} />
+      )}
+      {coverage ? (
+        <CoverageResults job={job} />
+      ) : (
+        !deletion &&
+        (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && (
+          <Results progress={job.progress} results={job.results} status={job.status} />
+        )
+      )}
+      {job.failureSummary && (
+        <p className="failure-copy">
+          <strong>Run issue:</strong> {job.failureSummary}
+        </p>
+      )}
+      {job.children.length > 0 && (
+        <section className="source-runs" aria-labelledby="source-runs-heading">
+          <h3 id="source-runs-heading">{coverage ? "Route runs" : "Source runs"}</h3>
+          {job.children.map((child) => (
+            <article
+              key={child.id}
+              className={`source-run${coverage ? " coverage-route-run" : ""}`}
+            >
+              {coverage ? (
+                <div className="coverage-route-run-heading">
+                  <div className="coverage-route-title">
+                    <strong>{child.coverageRoute?.workoutType ?? "Workout unavailable"}</strong>{" "}
+                    <span>
+                      (
+                      {child.coverageRoute?.localStartDate
+                        ? calendarDate(child.coverageRoute.localStartDate)
+                        : dateTime(child.coverageRoute?.startedAt, preferences)}
+                      )
+                    </span>
+                  </div>
+                  {child.coverageRoute && (
+                    <table className="coverage-generation-list">
+                      <caption className="visually-hidden">OSM generations</caption>
+                      <tbody>
+                        {child.coverageRoute.targetGenerations.map((generation) => (
+                          <tr key={`${generation.regionId}-${generation.generation}`}>
+                            <td>{generation.regionId}</td>
+                            <td className={generation.latest ? "is-latest" : undefined}>
+                              {generation.generation}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  <StatusBadge status={child.status} cancelRequested={child.cancelRequested} />
+                </div>
+              ) : (
+                <div className="source-run-heading">
+                  <div>
+                    <strong>{child.source?.displayName ?? "Source unavailable"}</strong>{" "}
+                    <span>
+                      ({child.source ? sourceType(child.source.sourceType) : "Type unavailable"})
+                    </span>
+                  </div>
+                  <StatusBadge
+                    status={child.status}
+                    cancelRequested={child.cancelRequested}
+                    style={{ position: "relative", top: ".2rem" }}
+                  />
+                </div>
+              )}
+              {coverage ? (
+                <p className="sync-no-data">
+                  {child.coverageRoute?.resultOutcome?.replace("_", " ") ??
+                    (ACTIVE_STATUSES.has(child.status) ? "Processing" : "No result")}
+                  {child.coverageRoute?.durationMilliseconds != null
+                    ? ` / ${child.coverageRoute.durationMilliseconds.toLocaleString()} ms`
+                    : ""}
+                </p>
+              ) : (
+                <Progress
+                  progress={child.progress}
+                  status={child.status}
+                  style={{ margin: ".7rem 0 -.3rem 0" }}
+                />
+              )}
+              {!coverage && (!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && (
+                <Results progress={child.progress} results={child.results} status={child.status} />
+              )}
+              {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
+            </article>
+          ))}
+        </section>
+      )}
+      {!deletion && (ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && (
+        <div className="job-actions">
+          {ACTIVE_STATUSES.has(job.status) && (
+            <button
+              type="button"
+              className="secondary danger-button"
+              disabled={busy !== null || job.cancelRequested}
+              onClick={onCancel}
+            >
+              {busy === "cancel" || job.cancelRequested ? "Cancelling..." : "Cancel run"}
+            </button>
+          )}
+          {RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && (
+            <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>
+              {busy === "retry" ? "Retrying..." : "Retry run"}
+            </button>
+          )}
+        </div>
+      )}
+      {deletion && RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && (
+        <div className="job-actions">
+          <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>
+            {busy === "retry" ? "Retrying..." : "Retry deletion"}
+          </button>
+        </div>
+      )}
+      {!deletion && (
+        <div className="artifact-group" aria-label="Run records">
+          {!coverage && (
+            <ArtifactDisclosure
+              key={`${job.id}-files`}
+              jobId={job.id}
+              kind="files"
+              preferences={preferences}
+            />
+          )}
+          <ArtifactDisclosure
+            key={`${job.id}-events`}
+            jobId={job.id}
+            kind="events"
+            preferences={preferences}
+          />
+          <ArtifactDisclosure
+            key={`${job.id}-logs`}
+            jobId={job.id}
+            kind="logs"
+            preferences={preferences}
+          />
+        </div>
+      )}
+    </article>
+  );
 }
 
-function NotificationBanner({ notification, pending, onDismiss, onSelectJob }: { notification: Notification; pending: boolean; onDismiss: () => void; onSelectJob: (jobId: string) => void }) {
-  return <article className={`sync-notification sync-notification--${notification.severity}`}>
-    <div><strong>{notification.title}</strong><p>{notification.message}</p>{notification.state === "remind" && notification.remindAt && <small>Reminded until a later review.</small>}</div>
-    <div className="notification-actions">{notification.jobId && <button type="button" className="detail-link" onClick={() => onSelectJob(notification.jobId!)}>View detail</button>}{(notification.state === "unresolved" || notification.state === "remind") && <button type="button" className="secondary" disabled={pending} onClick={onDismiss}>{pending ? "Dismissing..." : "Dismiss"}</button>}</div>
-  </article>;
+function NotificationBanner({
+  notification,
+  pending,
+  onDismiss,
+  onSelectJob,
+}: {
+  notification: Notification;
+  pending: boolean;
+  onDismiss: () => void;
+  onSelectJob: (jobId: string) => void;
+}) {
+  return (
+    <article className={`sync-notification sync-notification--${notification.severity}`}>
+      <div>
+        <strong>{notification.title}</strong>
+        <p>{notification.message}</p>
+        {notification.state === "remind" && notification.remindAt && (
+          <small>Reminded until a later review.</small>
+        )}
+      </div>
+      <div className="notification-actions">
+        {notification.jobId && (
+          <button
+            type="button"
+            className="detail-link"
+            onClick={() => onSelectJob(notification.jobId!)}
+          >
+            View detail
+          </button>
+        )}
+        {(notification.state === "unresolved" || notification.state === "remind") && (
+          <button type="button" className="secondary" disabled={pending} onClick={onDismiss}>
+            {pending ? "Dismissing..." : "Dismiss"}
+          </button>
+        )}
+      </div>
+    </article>
+  );
 }
 
-export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selectedJobId, navigate }: {
+export function DataSync({
+  csrfToken,
+  preferences,
+  pollingIntervalSeconds,
+  selectedJobId,
+  navigate,
+}: {
   csrfToken: string;
   preferences: Preferences;
   pollingIntervalSeconds: number;
@@ -307,15 +838,26 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   useEffect(() => {
     if (!snapshot.data || selectionInitialized.current) return;
     selectionInitialized.current = true;
-    setSelectedSources(new Set(snapshot.data.sources.filter((source) => source.status === "connected" && source.autoSyncEnabled).map((source) => source.id)));
+    setSelectedSources(
+      new Set(
+        snapshot.data.sources
+          .filter((source) => source.status === "connected" && source.autoSyncEnabled)
+          .map((source) => source.id),
+      ),
+    );
   }, [snapshot.data]);
 
-  const effectiveJobId = selectedJobId ?? snapshot.data?.activeJob?.id ?? snapshot.data?.latestJob?.id;
+  const effectiveJobId =
+    selectedJobId ?? snapshot.data?.activeJob?.id ?? snapshot.data?.latestJob?.id;
   const detail = useQuery({
     queryKey: ["job", effectiveJobId],
-    queryFn: ({ signal }) => api<JobDetail>(`/api/jobs/${encodeURIComponent(effectiveJobId!)}`, { signal }),
+    queryFn: ({ signal }) =>
+      api<JobDetail>(`/api/jobs/${encodeURIComponent(effectiveJobId!)}`, { signal }),
     enabled: Boolean(effectiveJobId),
-    refetchInterval: (query) => query.state.data && ACTIVE_STATUSES.has(query.state.data.status) ? pollingIntervalSeconds * 1000 : false,
+    refetchInterval: (query) =>
+      query.state.data && ACTIVE_STATUSES.has(query.state.data.status)
+        ? pollingIntervalSeconds * 1000
+        : false,
   });
   const snapshotJobSignature = `${snapshot.data?.activeJob?.id ?? ""}:${snapshot.data?.activeJob?.status ?? ""}:${snapshot.data?.activeJob?.updatedAt ?? ""}:${snapshot.data?.latestJob?.id ?? ""}:${snapshot.data?.latestJob?.status ?? ""}:${snapshot.data?.latestJob?.updatedAt ?? ""}`;
   const previousSnapshotJobs = useRef<string | null>(null);
@@ -327,24 +869,38 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   }, [queryClient, snapshot.data, snapshotJobSignature]);
   useEffect(() => {
     const status = detail.data?.status;
-    if (status && previousStatus.current && ACTIVE_STATUSES.has(previousStatus.current) && !ACTIVE_STATUSES.has(status)) {
+    if (
+      status &&
+      previousStatus.current &&
+      ACTIVE_STATUSES.has(previousStatus.current) &&
+      !ACTIVE_STATUSES.has(status)
+    ) {
       setAnnouncement(`Run ${STATUS_LABELS[status].toLowerCase()}.`);
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     }
     previousStatus.current = status;
   }, [detail.data?.status, queryClient]);
-  const historyParams = new URLSearchParams({ page: String(historyPage), pageSize: String(PAGE_SIZE) });
+  const historyParams = new URLSearchParams({
+    page: String(historyPage),
+    pageSize: String(PAGE_SIZE),
+  });
   if (operationFilter) historyParams.set("operation", operationFilter);
   if (statusFilter) historyParams.set("status", statusFilter);
   const historyQueryKey = ["jobs", historyPage, operationFilter, statusFilter] as const;
   const jobs = useQuery({
     queryKey: historyQueryKey,
     queryFn: ({ signal }) => api<JobList>(`/api/jobs?${historyParams}`, { signal }),
-    refetchInterval: (query) => query.state.data?.items.some((job) => ACTIVE_STATUSES.has(job.status)) ? pollingIntervalSeconds * 1000 : false,
+    refetchInterval: (query) =>
+      query.state.data?.items.some((job) => ACTIVE_STATUSES.has(job.status))
+        ? pollingIntervalSeconds * 1000
+        : false,
     placeholderData: (previousData, previousQuery) => {
       const previousKey = previousQuery?.queryKey;
-      const sameFilters = previousKey?.length === historyQueryKey.length &&
-        previousKey[0] === "jobs" && previousKey[2] === operationFilter && previousKey[3] === statusFilter;
+      const sameFilters =
+        previousKey?.length === historyQueryKey.length &&
+        previousKey[0] === "jobs" &&
+        previousKey[2] === operationFilter &&
+        previousKey[3] === statusFilter;
       return sameFilters && previousKey?.[1] !== historyPage ? previousData : undefined;
     },
   });
@@ -363,7 +919,13 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   }
 
   useEffect(() => {
-    if (!pendingHistoryPageScroll.current || jobs.isFetching || jobs.isPlaceholderData || !jobs.isSuccess) return;
+    if (
+      !pendingHistoryPageScroll.current ||
+      jobs.isFetching ||
+      jobs.isPlaceholderData ||
+      !jobs.isSuccess
+    )
+      return;
     const position = pendingHistoryPageScroll.current;
     pendingHistoryPageScroll.current = undefined;
     const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
@@ -388,40 +950,74 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
   }
 
   const ingest = useMutation({
-    mutationFn: (body: IngestCreate) => api<IngestAccepted>("/api/ingest", { method: "POST", body: JSON.stringify(body) }, csrfToken),
-    onSuccess: (accepted) => selectJob(accepted.jobId, accepted.reused ? "Existing run selected." : "Run accepted."),
-    onError: () => { setFormError("The sync could not be started. Please try again."); setFormErrorArea("request"); setTimeout(() => formErrorRef.current?.focus()); },
+    mutationFn: (body: IngestCreate) =>
+      api<IngestAccepted>("/api/ingest", { method: "POST", body: JSON.stringify(body) }, csrfToken),
+    onSuccess: (accepted) =>
+      selectJob(accepted.jobId, accepted.reused ? "Existing run selected." : "Run accepted."),
+    onError: () => {
+      setFormError("The sync could not be started. Please try again.");
+      setFormErrorArea("request");
+      setTimeout(() => formErrorRef.current?.focus());
+    },
   });
   const [commandBusy, setCommandBusy] = useState<"cancel" | "retry" | null>(null);
   async function cancel() {
     if (!detail.data) return;
     setCommandBusy("cancel");
     try {
-      const updated = await api<JobDetail>(`/api/jobs/${encodeURIComponent(detail.data.id)}/cancellation`, { method: "POST", body: "{}" }, csrfToken);
+      const updated = await api<JobDetail>(
+        `/api/jobs/${encodeURIComponent(detail.data.id)}/cancellation`,
+        { method: "POST", body: "{}" },
+        csrfToken,
+      );
       queryClient.setQueryData(["job", detail.data.id], updated);
-      setAnnouncement(ACTIVE_STATUSES.has(updated.status) ? "Cancellation requested." : `Run ${STATUS_LABELS[updated.status].toLowerCase()}.`);
+      setAnnouncement(
+        ACTIVE_STATUSES.has(updated.status)
+          ? "Cancellation requested."
+          : `Run ${STATUS_LABELS[updated.status].toLowerCase()}.`,
+      );
       await refreshOperations(detail.data.id);
     } catch (error) {
       await refreshOperations(detail.data.id);
-      setAnnouncement(error instanceof ApiError && error.status === 409 ? "The run changed before cancellation could be requested." : "Cancellation could not be requested.");
-    } finally { setCommandBusy(null); }
+      setAnnouncement(
+        error instanceof ApiError && error.status === 409
+          ? "The run changed before cancellation could be requested."
+          : "Cancellation could not be requested.",
+      );
+    } finally {
+      setCommandBusy(null);
+    }
   }
   async function retry() {
     if (!detail.data) return;
     setCommandBusy("retry");
     try {
-      const accepted = await api<IngestAccepted>(`/api/jobs/${encodeURIComponent(detail.data.id)}/retry`, { method: "POST", body: "{}" }, csrfToken);
+      const accepted = await api<IngestAccepted>(
+        `/api/jobs/${encodeURIComponent(detail.data.id)}/retry`,
+        { method: "POST", body: "{}" },
+        csrfToken,
+      );
       selectJob(accepted.jobId, accepted.reused ? "Existing retry selected." : "Retry accepted.");
       await refreshOperations(detail.data.id);
     } catch (error) {
       await refreshOperations(detail.data.id);
-      setAnnouncement(error instanceof ApiError && error.status === 409 ? "The run changed before retry could be started." : "The retry could not be started.");
+      setAnnouncement(
+        error instanceof ApiError && error.status === 409
+          ? "The run changed before retry could be started."
+          : "The retry could not be started.",
+      );
+    } finally {
+      setCommandBusy(null);
     }
-    finally { setCommandBusy(null); }
   }
 
   const dismiss = useMutation({
-    mutationFn: (id: string) => api<Notification>(`/api/notifications/${encodeURIComponent(id)}/dismissal`, { method: "POST", body: "{}" }, csrfToken),
+    mutationFn: (id: string) =>
+      api<Notification>(
+        `/api/notifications/${encodeURIComponent(id)}/dismissal`,
+        { method: "POST", body: "{}" },
+        csrfToken,
+      ),
     onSuccess: () => {
       void snapshot.refetch();
     },
@@ -432,92 +1028,499 @@ export function DataSync({ csrfToken, preferences, pollingIntervalSeconds, selec
     const values = new FormData(event.currentTarget);
     const startDate = String(values.get("startDate") ?? "");
     const endDate = String(values.get("endDate") ?? "");
-    const connectedIds = new Set(snapshot.data?.sources.filter((source) => source.status === "connected").map((source) => source.id));
+    const connectedIds = new Set(
+      snapshot.data?.sources
+        .filter((source) => source.status === "connected")
+        .map((source) => source.id),
+    );
     const requestedSources = [...selectedSources].filter((id) => connectedIds.has(id));
-    if (requestedSources.length === 0) { setFormError("Select at least one connected source."); setFormErrorArea("sources"); setTimeout(() => formErrorRef.current?.focus()); return; }
-    if (rangeMode === "bounded" && (!validDate(startDate) || !validDate(endDate))) { setFormError("Enter both inclusive dates."); setFormErrorArea("dates"); setTimeout(() => formErrorRef.current?.focus()); return; }
-    if (rangeMode === "bounded" && startDate > endDate) { setFormError("Start date must be on or before end date."); setFormErrorArea("dates"); setTimeout(() => formErrorRef.current?.focus()); return; }
-    setFormError(""); setFormErrorArea(null);
+    if (requestedSources.length === 0) {
+      setFormError("Select at least one connected source.");
+      setFormErrorArea("sources");
+      setTimeout(() => formErrorRef.current?.focus());
+      return;
+    }
+    if (rangeMode === "bounded" && (!validDate(startDate) || !validDate(endDate))) {
+      setFormError("Enter both inclusive dates.");
+      setFormErrorArea("dates");
+      setTimeout(() => formErrorRef.current?.focus());
+      return;
+    }
+    if (rangeMode === "bounded" && startDate > endDate) {
+      setFormError("Start date must be on or before end date.");
+      setFormErrorArea("dates");
+      setTimeout(() => formErrorRef.current?.focus());
+      return;
+    }
+    setFormError("");
+    setFormErrorArea(null);
     const body: IngestCreate = { sourceIds: requestedSources };
-    if (rangeMode === "bounded") { body.startDate = startDate; body.endDate = endDate; }
+    if (rangeMode === "bounded") {
+      body.startDate = startDate;
+      body.endDate = endDate;
+    }
     ingest.mutate(body);
   }
 
   const connected = snapshot.data?.sources.filter((source) => source.status === "connected") ?? [];
   const notifications = snapshot.data?.notifications ?? [];
-  return <main className="data-sync-page">
-    <div className="summary-contours" aria-hidden="true" />
-    <a className="mobile-back" href="/" onClick={(event) => { event.preventDefault(); navigate("/"); }}>Back to Summary</a>
-    <span className="visually-hidden" aria-live="polite">{announcement}</span>
+  return (
+    <main className="data-sync-page">
+      <div className="summary-contours" aria-hidden="true" />
+      <a
+        className="mobile-back"
+        href="/"
+        onClick={(event) => {
+          event.preventDefault();
+          navigate("/");
+        }}
+      >
+        Back to Summary
+      </a>
+      <span className="visually-hidden" aria-live="polite">
+        {announcement}
+      </span>
 
-    {notifications.map((notification) => <NotificationBanner key={notification.id} notification={notification} pending={dismiss.isPending && dismiss.variables === notification.id} onDismiss={() => dismiss.mutate(notification.id)} onSelectJob={(jobId) => selectJob(jobId)} />)}
-    {snapshot.data?.notificationsTruncated && <p className="notification-truncation">More notifications are available.</p>}
-    {dismiss.isError && <p className="sync-inline-error" role="alert">The notification could not be dismissed.</p>}
+      {notifications.map((notification) => (
+        <NotificationBanner
+          key={notification.id}
+          notification={notification}
+          pending={dismiss.isPending && dismiss.variables === notification.id}
+          onDismiss={() => dismiss.mutate(notification.id)}
+          onSelectJob={(jobId) => selectJob(jobId)}
+        />
+      ))}
+      {snapshot.data?.notificationsTruncated && (
+        <p className="notification-truncation">More notifications are available.</p>
+      )}
+      {dismiss.isError && (
+        <p className="sync-inline-error" role="alert">
+          The notification could not be dismissed.
+        </p>
+      )}
 
-    <div className="sync-operational-grid">
-      <section className="sync-card manual-card" aria-labelledby="manual-sync-heading">
-        <div className="sync-card-heading"><div><p className="card-kicker">Manual</p><h2 id="manual-sync-heading">Start a sync</h2></div></div>
-        {snapshot.isPending && <p className="sync-retrieval-state" role="status" aria-busy="true">Retrieving sources...</p>}
-        {snapshot.isError && <QueryError copy="Data Sync status is unavailable." retry={() => void snapshot.refetch()} />}
-        {snapshot.data && <form onSubmit={submit} noValidate aria-busy={ingest.isPending}>
-          {formError && <div className="error-summary" id={formErrorId} role="alert" tabIndex={-1} ref={formErrorRef}>{formError}</div>}
-          <fieldset aria-describedby={formErrorArea === "sources" ? formErrorId : undefined}><legend>Sources</legend>
-            {connected.length >= 2 && <button type="button" className="select-all" onClick={() => setSelectedSources(new Set(connected.map((source) => source.id)))}>Select all connected</button>}
-            <div className="sync-source-options">{snapshot.data.sources.map((source) => <label key={source.id} className="sync-source-option">
-              <input type="checkbox" checked={source.status === "connected" && selectedSources.has(source.id)} disabled={source.status !== "connected"} onChange={(event) => setSelectedSources((current) => { const next = new Set(current); if (event.target.checked) next.add(source.id); else next.delete(source.id); return next; })} />
-              <span><strong>{source.displayName}</strong><small>{sourceType(source.type)} / {source.status === "checking-connection" ? "Checking connection" : source.status === "connection-failed" ? "Connection failed" : source.autoSyncEnabled ? "Connected, automatic sync" : "Connected"}</small></span>
-            </label>)}</div>
-          </fieldset>
-          <fieldset aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}><legend>Data range</legend><div className="sync-radio-options">
-            <label><input type="radio" name="mode" checked={rangeMode === "incremental"} onChange={() => setRangeMode("incremental")} /> <span><strong>New data only</strong><small>Import data not previously processed.</small></span></label>
-            <label><input type="radio" name="mode" checked={rangeMode === "bounded"} onChange={() => setRangeMode("bounded")} /> <span><strong>Specific date range</strong><small>Use inclusive calendar dates.</small></span></label>
-          </div></fieldset>
-          {rangeMode === "bounded" && <div className="field-pair sync-date-fields"><div className="field"><label htmlFor="sync-start-date">Start date</label><input id="sync-start-date" name="startDate" type="date" aria-invalid={formErrorArea === "dates" || undefined} aria-describedby={formErrorArea === "dates" ? formErrorId : undefined} /></div><div className="field"><label htmlFor="sync-end-date">End date</label><input id="sync-end-date" name="endDate" type="date" aria-invalid={formErrorArea === "dates" || undefined} aria-describedby={formErrorArea === "dates" ? formErrorId : undefined} /></div></div>}
-          <button type="submit" className="primary" disabled={ingest.isPending}>{ingest.isPending ? "Starting sync..." : "Start sync"}</button>
-        </form>}
+      <div className="sync-operational-grid">
+        <section className="sync-card manual-card" aria-labelledby="manual-sync-heading">
+          <div className="sync-card-heading">
+            <div>
+              <p className="card-kicker">Manual</p>
+              <h2 id="manual-sync-heading">Start a sync</h2>
+            </div>
+          </div>
+          {snapshot.isPending && (
+            <p className="sync-retrieval-state" role="status" aria-busy="true">
+              Retrieving sources...
+            </p>
+          )}
+          {snapshot.isError && (
+            <QueryError
+              copy="Data Sync status is unavailable."
+              retry={() => void snapshot.refetch()}
+            />
+          )}
+          {snapshot.data && (
+            <form onSubmit={submit} noValidate aria-busy={ingest.isPending}>
+              {formError && (
+                <div
+                  className="error-summary"
+                  id={formErrorId}
+                  role="alert"
+                  tabIndex={-1}
+                  ref={formErrorRef}
+                >
+                  {formError}
+                </div>
+              )}
+              <fieldset aria-describedby={formErrorArea === "sources" ? formErrorId : undefined}>
+                <legend>Sources</legend>
+                {connected.length >= 2 && (
+                  <button
+                    type="button"
+                    className="select-all"
+                    onClick={() =>
+                      setSelectedSources(new Set(connected.map((source) => source.id)))
+                    }
+                  >
+                    Select all connected
+                  </button>
+                )}
+                <div className="sync-source-options">
+                  {snapshot.data.sources.map((source) => (
+                    <label key={source.id} className="sync-source-option">
+                      <input
+                        type="checkbox"
+                        checked={source.status === "connected" && selectedSources.has(source.id)}
+                        disabled={source.status !== "connected"}
+                        onChange={(event) =>
+                          setSelectedSources((current) => {
+                            const next = new Set(current);
+                            if (event.target.checked) next.add(source.id);
+                            else next.delete(source.id);
+                            return next;
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>{source.displayName}</strong>
+                        <small>
+                          {sourceType(source.type)} /{" "}
+                          {source.status === "checking-connection"
+                            ? "Checking connection"
+                            : source.status === "connection-failed"
+                              ? "Connection failed"
+                              : source.autoSyncEnabled
+                                ? "Connected, automatic sync"
+                                : "Connected"}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}>
+                <legend>Data range</legend>
+                <div className="sync-radio-options">
+                  <label>
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={rangeMode === "incremental"}
+                      onChange={() => setRangeMode("incremental")}
+                    />{" "}
+                    <span>
+                      <strong>New data only</strong>
+                      <small>Import data not previously processed.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={rangeMode === "bounded"}
+                      onChange={() => setRangeMode("bounded")}
+                    />{" "}
+                    <span>
+                      <strong>Specific date range</strong>
+                      <small>Use inclusive calendar dates.</small>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
+              {rangeMode === "bounded" && (
+                <div className="field-pair sync-date-fields">
+                  <div className="field">
+                    <label htmlFor="sync-start-date">Start date</label>
+                    <input
+                      id="sync-start-date"
+                      name="startDate"
+                      type="date"
+                      aria-invalid={formErrorArea === "dates" || undefined}
+                      aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="sync-end-date">End date</label>
+                    <input
+                      id="sync-end-date"
+                      name="endDate"
+                      type="date"
+                      aria-invalid={formErrorArea === "dates" || undefined}
+                      aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}
+                    />
+                  </div>
+                </div>
+              )}
+              <button type="submit" className="primary" disabled={ingest.isPending}>
+                {ingest.isPending ? "Starting sync..." : "Start sync"}
+              </button>
+            </form>
+          )}
+        </section>
+
+        <section className="sync-card schedule-card" aria-labelledby="schedule-heading">
+          <div className="sync-card-heading">
+            <div>
+              <p className="card-kicker">Automated</p>
+              <h2 id="schedule-heading">Schedule & freshness</h2>
+            </div>
+            {snapshot.data && (
+              <span
+                className={`schedule-state schedule-state--${snapshot.data.schedule.enabled ? "enabled" : "disabled"}`}
+              >
+                {snapshot.data.schedule.enabled ? "Enabled" : "Disabled"}
+              </span>
+            )}
+          </div>
+          {snapshot.isPending && (
+            <p className="sync-retrieval-state" role="status">
+              Retrieving schedule...
+            </p>
+          )}
+          {snapshot.isError && (
+            <QueryError
+              copy="Schedule details are unavailable."
+              retry={() => void snapshot.refetch()}
+            />
+          )}
+          {snapshot.data && (
+            <>
+              <dl className="schedule-details">
+                <div>
+                  <dt>
+                    <span>Interval</span>
+                    <InfoTip
+                      label="About Interval"
+                      content="Automatically run a sync job on this interval"
+                    />
+                  </dt>
+                  <dd>{interval(snapshot.data.schedule.cadenceSeconds)}</dd>
+                </div>
+                <div>
+                  <dt>
+                    <span>Sources enabled</span>
+                    <InfoTip
+                      label="About Sources enabled"
+                      content="Number of sources with automated sync enabled"
+                    />
+                  </dt>
+                  <dd>{snapshot.data.schedule.sourceCount}</dd>
+                </div>
+                <div>
+                  <dt>
+                    <span>Stale after</span>
+                    <InfoTip
+                      label="About Stale after"
+                      content="Show a warning after this period if no new workouts have been imported by auto-sync"
+                    />
+                  </dt>
+                  <dd>
+                    {snapshot.data.schedule.staleDays}{" "}
+                    {snapshot.data.schedule.staleDays === 1 ? "day" : "days"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    <span>Next run</span>
+                    <InfoTip
+                      label="About Next run"
+                      content="Local date/time when the next sync job will run"
+                    />
+                  </dt>
+                  <dd>
+                    <NextRun value={snapshot.data.schedule.nextRunAt} preferences={preferences} />
+                  </dd>
+                </div>
+              </dl>
+              <div className="freshness-list">
+                {snapshot.data.sources.map((source) => (
+                  <article
+                    key={source.id}
+                    className={source.freshness.staleSince ? "is-stale" : ""}
+                  >
+                    <div>
+                      <strong>{source.displayName}</strong>
+                      {source.freshness.staleSince && <span className="stale-flag">Stale</span>}
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Last successful sync</dt>
+                        <dd>{dateTime(source.freshness.lastSyncSucceededAt, preferences)}</dd>
+                      </div>
+                      <div>
+                        <dt>Latest export date</dt>
+                        <dd>{calendarDate(source.freshness.lastNewExportDate)}</dd>
+                      </div>
+                      {source.freshness.lastSyncStartedAt && (
+                        <div>
+                          <dt>Last sync started</dt>
+                          <dd>{dateTime(source.freshness.lastSyncStartedAt, preferences)}</dd>
+                        </div>
+                      )}
+                    </dl>
+                    {source.freshness.staleSince && (
+                      <p>
+                        No new export has been discovered since{" "}
+                        {calendarDate(source.freshness.staleSince)}.
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+
+      {effectiveJobId && (
+        <section
+          className="detail-region"
+          ref={detailRef}
+          tabIndex={-1}
+          aria-label="Selected run"
+          aria-busy={detail.isFetching}
+        >
+          {detail.isPending && (
+            <div className="sync-card">
+              <p role="status">Loading run detail...</p>
+            </div>
+          )}
+          {detail.isError && (
+            <div className="sync-card">
+              <QueryError copy="Run detail is unavailable." retry={() => void detail.refetch()} />
+            </div>
+          )}
+          {detail.data && (
+            <JobDetailCard
+              job={detail.data}
+              preferences={preferences}
+              busy={commandBusy}
+              onCancel={() => void cancel()}
+              onRetry={() => void retry()}
+              onSelectJob={selectJob}
+            />
+          )}
+        </section>
+      )}
+
+      <section className="history-section" aria-labelledby="history-heading">
+        <div className="history-heading">
+          <div>
+            <p className="card-kicker">Task history</p>
+            <h2 id="history-heading">Recent activity</h2>
+          </div>
+          <div className="history-filters">
+            <HistoryFilter
+              label="Operation"
+              value={operationFilter}
+              allLabel="All operations"
+              options={OPERATION_OPTIONS}
+              onChange={(value) => {
+                setOperationFilter(value);
+                resetHistoryPage();
+              }}
+            />
+            <HistoryFilter
+              label="Status"
+              value={statusFilter}
+              allLabel="All statuses"
+              options={STATUS_OPTIONS}
+              onChange={(value) => {
+                setStatusFilter(value);
+                resetHistoryPage();
+              }}
+            />
+          </div>
+        </div>
+        {jobs.isPending && (
+          <p className="sync-history-state" role="status">
+            Loading task history...
+          </p>
+        )}
+        {jobs.isError && (
+          <QueryError copy="Task history is unavailable." retry={() => void jobs.refetch()} />
+        )}
+        {jobs.data?.items.length === 0 && (
+          <p className="sync-history-state">No tasks match these filters.</p>
+        )}
+        {jobs.data && jobs.data.items.length > 0 && (
+          <div
+            ref={historyResultsRef}
+            className="sync-history-results"
+            style={historyResultsMinHeight ? { minHeight: historyResultsMinHeight } : undefined}
+            aria-busy={jobs.isFetching}
+          >
+            <div className="sync-history-table">
+              <table>
+                <colgroup>
+                  <col className="history-started-column" />
+                  <col className="history-operation-column" />
+                  <col className="history-results-column" />
+                  <col className="history-status-column" />
+                  <col className="history-action-column" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Started</th>
+                    <th scope="col">Operation</th>
+                    <th scope="col">Results</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">
+                      <span className="visually-hidden">Action</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.data.items.map((job) => (
+                    <tr key={job.id}>
+                      <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td>
+                      <td>{historyOperation(job)}</td>
+                      <td>{historyResults(job)}</td>
+                      <td>
+                        <StatusText status={job.status} />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="detail-link"
+                          onClick={() => selectJob(job.id)}
+                        >
+                          View detail
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="sync-history-cards">
+              {jobs.data.items.map((job) => (
+                <article key={job.id}>
+                  <div>
+                    <time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time>
+                    <StatusText status={job.status} />
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Operation</dt>
+                      <dd>{historyOperation(job)}</dd>
+                    </div>
+                    <div>
+                      <dt>Results</dt>
+                      <dd>{historyResults(job)}</dd>
+                    </div>
+                  </dl>
+                  <button type="button" className="detail-link" onClick={() => selectJob(job.id)}>
+                    View detail
+                  </button>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
+        {jobs.data && jobs.data.pagination.totalPages > 1 && (
+          <nav className="pagination" aria-label="Task history pages">
+            <button
+              type="button"
+              className="secondary"
+              disabled={historyPage <= 1 || jobs.isFetching}
+              onClick={() => changeHistoryPage(historyPage - 1)}
+            >
+              Previous
+            </button>
+            <span>
+              Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}
+            </span>
+            <button
+              type="button"
+              className="secondary"
+              disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching}
+              onClick={() => changeHistoryPage(historyPage + 1)}
+            >
+              Next
+            </button>
+          </nav>
+        )}
       </section>
-
-      <section className="sync-card schedule-card" aria-labelledby="schedule-heading">
-        <div className="sync-card-heading"><div><p className="card-kicker">Automated</p><h2 id="schedule-heading">Schedule & freshness</h2></div>{snapshot.data && <span className={`schedule-state schedule-state--${snapshot.data.schedule.enabled ? "enabled" : "disabled"}`}>{snapshot.data.schedule.enabled ? "Enabled" : "Disabled"}</span>}</div>
-        {snapshot.isPending && <p className="sync-retrieval-state" role="status">Retrieving schedule...</p>}
-        {snapshot.isError && <QueryError copy="Schedule details are unavailable." retry={() => void snapshot.refetch()} />}
-        {snapshot.data && <>
-          <dl className="schedule-details">
-            <div><dt><span>Interval</span><InfoTip label="About Interval" content="Automatically run a sync job on this interval" /></dt><dd>{interval(snapshot.data.schedule.cadenceSeconds)}</dd></div>
-            <div><dt><span>Sources enabled</span><InfoTip label="About Sources enabled" content="Number of sources with automated sync enabled" /></dt><dd>{snapshot.data.schedule.sourceCount}</dd></div>
-            <div><dt><span>Stale after</span><InfoTip label="About Stale after" content="Show a warning after this period if no new workouts have been imported by auto-sync" /></dt><dd>{snapshot.data.schedule.staleDays} {snapshot.data.schedule.staleDays === 1 ? "day" : "days"}</dd></div>
-            <div><dt><span>Next run</span><InfoTip label="About Next run" content="Local date/time when the next sync job will run" /></dt><dd><NextRun value={snapshot.data.schedule.nextRunAt} preferences={preferences} /></dd></div>
-          </dl>
-          <div className="freshness-list">{snapshot.data.sources.map((source) => <article key={source.id} className={source.freshness.staleSince ? "is-stale" : ""}>
-            <div><strong>{source.displayName}</strong>{source.freshness.staleSince && <span className="stale-flag">Stale</span>}</div>
-            <dl><div><dt>Last successful sync</dt><dd>{dateTime(source.freshness.lastSyncSucceededAt, preferences)}</dd></div><div><dt>Latest export date</dt><dd>{calendarDate(source.freshness.lastNewExportDate)}</dd></div>{source.freshness.lastSyncStartedAt && <div><dt>Last sync started</dt><dd>{dateTime(source.freshness.lastSyncStartedAt, preferences)}</dd></div>}</dl>
-            {source.freshness.staleSince && <p>No new export has been discovered since {calendarDate(source.freshness.staleSince)}.</p>}
-          </article>)}</div>
-        </>}
-      </section>
-    </div>
-
-    {effectiveJobId && <section className="detail-region" ref={detailRef} tabIndex={-1} aria-label="Selected run" aria-busy={detail.isFetching}>
-      {detail.isPending && <div className="sync-card"><p role="status">Loading run detail...</p></div>}
-      {detail.isError && <div className="sync-card"><QueryError copy="Run detail is unavailable." retry={() => void detail.refetch()} /></div>}
-      {detail.data && <JobDetailCard job={detail.data} preferences={preferences} busy={commandBusy} onCancel={() => void cancel()} onRetry={() => void retry()} onSelectJob={selectJob} />}
-    </section>}
-
-    <section className="history-section" aria-labelledby="history-heading">
-      <div className="history-heading"><div><p className="card-kicker">Task history</p><h2 id="history-heading">Recent activity</h2></div><div className="history-filters">
-        <HistoryFilter label="Operation" value={operationFilter} allLabel="All operations" options={OPERATION_OPTIONS} onChange={(value) => { setOperationFilter(value); resetHistoryPage(); }} />
-        <HistoryFilter label="Status" value={statusFilter} allLabel="All statuses" options={STATUS_OPTIONS} onChange={(value) => { setStatusFilter(value); resetHistoryPage(); }} />
-      </div></div>
-      {jobs.isPending && <p className="sync-history-state" role="status">Loading task history...</p>}
-      {jobs.isError && <QueryError copy="Task history is unavailable." retry={() => void jobs.refetch()} />}
-      {jobs.data?.items.length === 0 && <p className="sync-history-state">No tasks match these filters.</p>}
-      {jobs.data && jobs.data.items.length > 0 && <div ref={historyResultsRef} className="sync-history-results" style={historyResultsMinHeight ? { minHeight: historyResultsMinHeight } : undefined} aria-busy={jobs.isFetching}>
-        <div className="sync-history-table"><table><colgroup><col className="history-started-column" /><col className="history-operation-column" /><col className="history-results-column" /><col className="history-status-column" /><col className="history-action-column" /></colgroup><thead><tr><th scope="col">Started</th><th scope="col">Operation</th><th scope="col">Results</th><th scope="col">Status</th><th scope="col"><span className="visually-hidden">Action</span></th></tr></thead><tbody>{jobs.data.items.map((job) => <tr key={job.id}>
-          <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td><td>{historyOperation(job)}</td><td>{historyResults(job)}</td><td><StatusText status={job.status} /></td><td><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></td>
-        </tr>)}</tbody></table></div>
-        <div className="sync-history-cards">{jobs.data.items.map((job) => <article key={job.id}><div><time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time><StatusText status={job.status} /></div><dl><div><dt>Operation</dt><dd>{historyOperation(job)}</dd></div><div><dt>Results</dt><dd>{historyResults(job)}</dd></div></dl><button type="button" className="detail-link" onClick={() => selectJob(job.id)}>View detail</button></article>)}</div>
-      </div>}
-      {jobs.data && jobs.data.pagination.totalPages > 1 && <nav className="pagination" aria-label="Task history pages"><button type="button" className="secondary" disabled={historyPage <= 1 || jobs.isFetching} onClick={() => changeHistoryPage(historyPage - 1)}>Previous</button><span>Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}</span><button type="button" className="secondary" disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching} onClick={() => changeHistoryPage(historyPage + 1)}>Next</button></nav>}
-    </section>
-  </main>;
+    </main>
+  );
 }

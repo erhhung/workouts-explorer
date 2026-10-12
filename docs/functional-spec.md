@@ -369,7 +369,7 @@ As a data owner, I want repeatable imports that preserve provider meaning withou
 
 1. Source plus provider workout ID identifies an existing workout when available.
 2. A fallback fingerprint is used only when the provider ID is absent.
-3. Provider workout names map to normalized workout-type records while retaining labels such as Outdoor Run and Indoor Run.
+3. Provider workout names map to normalized workout-type records. App-facing names use Outdoor Run, Outdoor Walk, Outdoor Cycle, Indoor Run, Indoor Walk and Indoor Cycle for the corresponding qualified aliases. Unknown and unqualified names remain unchanged. Display normalization does not change provider-derived type keys, content hashes, fallback identities or deletion suppression.
 4. Provider aggregate values take precedence over incomplete sample sums.
 5. Provider duration and original timestamp offsets are preserved.
 6. Changed content updates the existing workout transactionally.
@@ -537,7 +537,7 @@ As a user, I want common workout actions available from each Summary row.
 ### Behavior
 
 1. A right-aligned three-dot menu shows the actions listed below in fixed order.
-2. Show on map switches to Map, selects Routes, filters to that workout, and fits its extent.
+2. Show on map switches to Map, checks and focuses that workout, and fits its extent while retaining other checked routes. It preserves the active mode when the target is usable there; if production Coverage is active and the target has no coverage result, it switches to raw Routes before fitting so the target is visible. A current or stale usable coverage result preserves Coverage mode.
 3. View provenance shows the full chronological import-event history.
 4. Delete workout asks for confirmation naming the workout date and type.
 
@@ -594,6 +594,7 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
 19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map, and camera when the mode changes.
 20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
+21. When Summary accepts a workout deletion, Map removes that entry from its cached list and checked IDs, clears matching focus/hover/overlays, and renews the tile capability. Other checked routes, the date range and sort remain unchanged; a full workout-collection refresh is not required for a known deleted ID. Failed deletions retain Map state. Stale asynchronous results cannot restore removed entries, and new workouts imported on a deleted date remain eligible.
 
 ### Space-Key Layer Visibility
 
@@ -621,12 +622,20 @@ after switching back from diagnostics, so its markers do not fade. In Routes
 mode, delayed hover can temporarily take precedence over persistent focus for
 the magenta route and its markers; Space does not hide that highlighted overlay.
 
+Camera transitions have a separate readiness handoff: direction arrows hide
+immediately, without a fade, during pan/zoom animations. They are spaced for the
+final viewport and revealed only after the current marker data and source tiles
+are ready. This prevents dense old-zoom arrows flashing during route focus changes.
+Route lines and start/finish markers retain their normal rendering sequence;
+they are not held back by direction-marker readiness.
+
 ### Validation
 
 - A map selection belongs to one session and account.
 - Foreign, expired, or invalid selections are rejected.
 - Tile requests cannot provide arbitrary account IDs.
 - Base-map configuration rejects duplicate family IDs, missing theme variants, an unknown fallback or mapped family, unsafe URLs, and invalid attribution.
+- Optional focus must belong to the created selection. Deleted, foreign, nonrouted or out-of-range focus returns not found, not temporary unavailability. Reauthentication into an unavailable focused route clears that focus and loads the current range with bounded recovery, preserving explicit checked-route scope and user preferences.
 - Public provider credentials and resources are separate from private tile authorization.
 
 ### Failure cases
@@ -683,7 +692,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 23. With coverage diagnostics disabled, Coverage hides raw GPS route layers, displays durable checked-route coverage, and overlays only the focused workout's attributed coverage.
 24. With coverage diagnostics enabled, the Coverage button retains the route-review workflow: it computes and displays diagnostic evidence for only the selected route and exposes the diagnostic labeling controls.
 25. Ingested workouts and raw routes become available without waiting for asynchronous coverage matching. Production Coverage uses current durable results, identifies checked routes omitted as pending, failed, or unavailable, and refreshes after a committed coverage generation rather than running the matcher from a tile or statistics request.
-25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable workouts are not polled indefinitely. Polling stops when every checked workout has a current or stale applied result.
+25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. These row indicators identify omitted checked workouts; a separate omission summary is not required. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable no-result workouts alone do not keep polling active. Once every checked workout has a current or stale applied result, ten-second processing polling stops. While applied results are displayed, background generation checks continue at the public polling interval clamped to 10-60 seconds (normally 30 seconds), so committed replacements renew private capabilities even when readiness labels are unchanged. Both checks pause in hidden tabs and stop outside production Coverage mode. Unchanged capabilities are discarded without replacing map sources or resetting focus/camera state.
 26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
 27. Coverage processing creates one account/region parent run with one child per eligible workout route. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful.
 
@@ -699,7 +708,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 
 - Unmatched points remain part of the raw route and do not create false path coverage.
 - Ambiguous stretches may remain unmatched, and temporal or network gaps never create inferred connector coverage.
-- Missing public-map data reports coverage pending when automatic region addition has queued an eligible provider region, or unavailable when automatic addition is disabled, no configured provider contains the route, or the smallest region exceeds the download limit.
+- Automatic region download is indefinitely deferred and disabled. Missing promoted map data leaves the raw route available in Routes and disables result-less Coverage focus with the tooltip **Map data not available**. Adding a provider-qualified region is an operator decision after storage preparation; successful promotion triggers reconciliation. Catalog diagnostics can identify unloaded regions, but production readiness is not a persisted inventory of every missing region. Any future auto-addition implementation must enforce download/storage bounds and single-flight updates before reporting a queued addition as pending.
 - Matcher saturation delays asynchronous production processing. A synchronous diagnostic request fails quickly with retry guidance when cluster-wide matcher capacity is occupied.
 
 ### Acceptance criteria
@@ -713,7 +722,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Given a route proceeds straight through an intersection, when one GPS point is nearer the cross street, then the cross street receives no attribution without positive decoded traversal.
 - Given a route genuinely turns at an intersection, when subsequent points support the connected turn, then both positively traversed roads receive attribution.
 - Given a heavily visited logical path, when coverage renders, then fixed buckets do not force all low-count paths into one near-zero shade.
-- Given an unnamed trail, when inspected, then it appears with N/A rather than being omitted.
+- Given an unnamed trail, when inspected with unnamed paths enabled, then it appears as **Trail** with its locality and stable identity rather than being omitted.
 - Given named and unnamed paths wholly inside Yosemite National Park, when Coverage renders, then each path remains separately visible with `Yosemite National Park` as City/Region, unnamed paths use a type-specific fallback such as `Bike path`, and the park entity has no fabricated municipality.
 - Given the date range or workout subset changes, when path details render, then first and latest visit remain the all-time date-only extrema.
 - Given Coverage stats is open, when it is closed or Show on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
@@ -901,7 +910,12 @@ As an administrator, I want to inspect and refresh public path data without affe
 
 ### User story
 
-As a user, I want the product to remain usable on desktop and mobile.
+As a user, I want the product to remain usable on desktop and iPad-sized tablets
+or larger.
+
+The 10/11/2026 scope decision assigns tablet-focused UI/UX to Milestone 10.
+References to mobile layouts in this specification target iPad-class tablets,
+not iPhone-sized screens; phone-focused development is explicitly out of scope.
 
 ### Behavior
 

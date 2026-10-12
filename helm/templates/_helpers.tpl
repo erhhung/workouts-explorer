@@ -8,5 +8,5 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- define "workouts.image" -}}
 {{- $root := index . 0 -}}{{- $name := index . 1 -}}
-{{- if $root.Values.image.registry }}{{ $root.Values.image.registry }}/{{ end }}{{ $name }}:{{ required "image.tag is required" $root.Values.image.tag }}
+{{- if $root.Values.image.registry }}{{ $root.Values.image.registry }}/{{ end }}{{ $name }}:{{ required "image.tag is required" $root.Values.image.tag }}{{- with index ($root.Values.image.digests | default dict) $name }}@{{ . }}{{ end }}
 {{- end }}

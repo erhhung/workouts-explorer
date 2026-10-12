@@ -27,6 +27,7 @@ spec:
           image: {{ include "workouts.image" (list . .Values.api.image) }}
           command: [/bin/sh, -ec, "cp /secret/password /private/password && chmod 0400 /private/password && chown 65532:65532 /private/password"]
           securityContext: {runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [CHOWN]}, readOnlyRootFilesystem: true}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - {name: source, mountPath: /secret, readOnly: true}
             - {name: private, mountPath: /private}
@@ -43,6 +44,7 @@ spec:
             - --rotate-existing-password
             {{- end }}
           securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: BOOTSTRAP_DATABASE_URL

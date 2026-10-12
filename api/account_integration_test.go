@@ -449,6 +449,97 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestRequireSessionCredentialStatesIntegration(t *testing.T) {
+	databaseURL, migrationURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL")
+	if databaseURL == "" || migrationURL == "" {
+		t.Skip("API_DATABASE_URL and MIGRATION_DATABASE_URL are required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	adminDB, err := pgxpool.New(ctx, migrationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	server := &Server{db: db}
+	principalID, accountID := insertSourceTestUser(t, adminDB)
+	for _, kind := range []string{"bearer", "cookie"} {
+		for _, state := range []string{"valid", "wrong role", "unknown", "expired", "revoked", "disabled principal", "deleting account", "deleted account", "wrong kind"} {
+			t.Run(kind+"/"+state, func(t *testing.T) {
+				token := insertTestSession(t, db, principalID, kind, strings.Repeat("A", 43))
+				verifier, _ := tokenVerifier(token)
+				var query string
+				var argument any = verifier
+				switch state {
+				case "unknown":
+					token, _, err = randomToken()
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "expired":
+					query = `UPDATE app.sessions SET created_at=transaction_timestamp()-interval '2 hours',expires_at=transaction_timestamp()-interval '1 hour' WHERE credential_verifier=$1`
+				case "revoked":
+					query = `UPDATE app.sessions SET revoked_at=transaction_timestamp() WHERE credential_verifier=$1`
+				case "disabled principal":
+					query, argument = `UPDATE app.authentication_principals SET disabled_at=transaction_timestamp() WHERE id=$1`, principalID
+				case "deleting account":
+					query, argument = `UPDATE app.accounts SET state='deleting' WHERE id=$1`, accountID
+				case "deleted account":
+					query, argument = `UPDATE app.accounts SET state='deleted' WHERE id=$1`, accountID
+				case "wrong kind":
+					if kind == "bearer" {
+						query = `UPDATE app.sessions SET credential_kind='cookie',csrf_token='test-csrf' WHERE credential_verifier=$1`
+					} else {
+						query = `UPDATE app.sessions SET credential_kind='bearer',csrf_token=NULL WHERE credential_verifier=$1`
+					}
+				}
+				if query != "" {
+					if _, err := adminDB.Exec(ctx, query, argument); err != nil {
+						t.Fatal(err)
+					}
+				}
+				t.Cleanup(func() {
+					if _, err := adminDB.Exec(ctx, `UPDATE app.authentication_principals SET disabled_at=NULL WHERE id=$1`, principalID); err != nil {
+						t.Error(err)
+					}
+					if _, err := adminDB.Exec(ctx, `UPDATE app.accounts SET state='active' WHERE id=$1`, accountID); err != nil {
+						t.Error(err)
+					}
+				})
+				call := callEndpoint(http.MethodGet, "/api/session", "", token, "")
+				if kind == "cookie" {
+					call = callCookieEndpoint(http.MethodGet, "/api/session", "", token)
+				}
+				call.request = call.request.WithContext(ctx)
+				role, want := "user", http.StatusUnauthorized
+				if state == "valid" {
+					want = http.StatusOK
+				} else if state == "wrong role" {
+					role, want = "administrator", http.StatusForbidden
+				}
+				if want == http.StatusUnauthorized {
+					if _, err := server.authenticate(ctx, call.request); !errors.Is(err, errUnauthenticated) {
+						t.Fatal("filtered credential did not return unauthenticated sentinel")
+					}
+				}
+				session, ok := server.requireSession(call.recorder, call.request, role)
+				if want == http.StatusOK {
+					if !ok || session.principalID != principalID || session.accountID == nil || *session.accountID != accountID || session.kind != kind {
+						t.Fatal("valid credential was not authenticated")
+					}
+				} else if ok || session != (authenticatedSession{}) || call.recorder.Code != want {
+					t.Fatalf("credential state denial: granted=%t status=%d want=%d", ok, call.recorder.Code, want)
+				}
+			})
+		}
+	}
+}
+
 func TestInvitationSMTPFailureIsRetryable(t *testing.T) {
 	databaseURL := os.Getenv("API_DATABASE_URL")
 	migrationURL := os.Getenv("MIGRATION_DATABASE_URL")

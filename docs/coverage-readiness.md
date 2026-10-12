@@ -57,8 +57,8 @@ available. It does not describe whether a Coverage job has been queued or run.
 
 | Status | Meaning | Expected behavior |
 | --- | --- | --- |
-| `pending` | Required map data has not been resolved yet, or a known provider region does not yet have an active OSM generation. | Retain the raw route, report that Coverage is pending, and poll on the bounded processing interval when progress is expected. |
-| `unavailable` | Required map data cannot currently be supplied. Examples include no provider region, automatic region addition being disabled, or an eligible region exceeding its download limit. | Retain the raw route, omit it from current Coverage, explain why map data is unavailable, and do not poll indefinitely. |
+| `pending` | Required map data has not been resolved yet. A future automatic-addition implementation may use it after an eligible update is actually queued. | Retain the raw route, report that Coverage is pending, and poll on the bounded processing interval when progress is expected. |
+| `unavailable` | Required map data cannot currently be supplied. Automatic region addition is indefinitely deferred/disabled, so a known but inactive provider region is unavailable too. | Retain the raw route, omit result-less workouts from Coverage, explain why map data is unavailable, and do not poll indefinitely. |
 | `ready` | Every required provider region has an active generation that can be used by the matcher. | Interpret `processingStatus` and `resultStatus` to decide whether to render Coverage or wait for processing. |
 
 The internal database readiness state `unresolved` maps to public
@@ -146,7 +146,7 @@ behavior.
 | `processingStatus: queued` | Yes. | Yes, on the bounded interval. | Wait for worker and matcher capacity. |
 | `processingStatus: running` | Yes. | Yes, on the bounded interval. | Wait for the active route job. |
 | `processingStatus: failed` | No for that attempt. | No indefinite pending poll. | Retry the eligible failed route or wait for desired work to advance. |
-| `mapDataStatus: unavailable` | No until configuration or provider data changes. | No indefinite pending poll. | Enable or add the region, select a supported provider, or change the configured size limit. |
+| `mapDataStatus: unavailable` | No until configuration or provider data changes. | No indefinite pending poll. | An operator selects and adds the region after storage preparation; do not enable implicit downloads. |
 
 Pending must not be used as a synonym for failed or unavailable:
 
@@ -160,7 +160,9 @@ Both pending and failed processing may have `resultStatus: current` or
 separate processing attempt. A stale applied result remains available as outdated
 Coverage while the desired result is pending or failed. If `resultStatus` is
 `none`, the workout is omitted from rendered Coverage and included in the
-corresponding pending, failed, or unavailable omission summary.
+corresponding pending, failed, unavailable, or unprocessed row indicator. Those
+accessible route-list indicators identify omitted checked workouts; a separate
+omission summary is not required.
 
 ## Representative Combinations
 
@@ -201,11 +203,16 @@ available**, **Waiting for map data**, **Waiting for coverage update**, or
 **Coverage update failed**. Current and stale results remain focusable.
 
 The application polls every ten seconds while a checked workout has no applied
-result and is in a transient state. Polling stops for failed or unavailable
-workouts and stops entirely when every checked workout has a current or stale
-result. Readiness polling replaces the private map capability only when returned
-statuses change, so an unchanged poll does not flash loading state or reinstall
-map layers.
+result and is in a transient state. Failed/unavailable no-result workouts alone
+do not keep polling active. Once applied results are present and no transient
+no-result work remains, slower generation checks use the public polling interval
+clamped to 10-60 seconds (normally 30 seconds). They detect committed replacement
+results and stale/current readiness transitions even when the original map is
+stationary. Polling pauses in hidden tabs and stops outside production Coverage.
+The private map capability is replaced when returned statuses, membership, or
+`dataGeneration` changes. Unchanged responses are discarded without foreground
+loading, map-layer replacement, or camera/focus reset. See
+[Coverage metrics](coverage-metrics.md) for the resource and observability scope.
 
 ### Facility And Park Tooltips
 

@@ -1436,7 +1436,7 @@ SELECT
 
 GRANT
 SELECT
-    (id, account_id, kind, status, cancel_requested_at, worker_id, lease_token, lease_expires_at) ON app.jobs TO workouts_coverage_worker;
+    (id, account_id, kind, status, cancel_requested_at, worker_id, lease_token, lease_expires_at, created_at, attempt, retry_of_job_id) ON app.jobs TO workouts_coverage_worker;
 
 GRANT
 EXECUTE ON FUNCTION app.current_account_id (),
@@ -1476,6 +1476,12 @@ WHERE
     singleton;
 
 REVOKE ALL ON app.jobs
+FROM
+    workouts_coverage_worker;
+
+REVOKE
+SELECT
+    (id, account_id, kind, status, cancel_requested_at, worker_id, lease_token, lease_expires_at, created_at, attempt, retry_of_job_id) ON app.jobs
 FROM
     workouts_coverage_worker;
 

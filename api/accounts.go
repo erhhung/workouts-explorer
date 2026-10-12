@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,6 +23,8 @@ import (
 )
 
 const sessionCookieName = "workouts_session"
+
+var errUnauthenticated = errors.New("authentication is required")
 
 type authenticatedSession struct {
 	sessionID      uuid.UUID
@@ -545,29 +548,42 @@ func (s *Server) authenticate(ctx context.Context, r *http.Request) (authenticat
 	kind := ""
 	if values, present := r.Header["Authorization"]; present {
 		if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") || strings.Contains(strings.TrimPrefix(values[0], "Bearer "), " ") {
-			return authenticatedSession{}, errors.New("invalid bearer credential")
+			return authenticatedSession{}, errUnauthenticated
 		}
 		kind, credential = "bearer", strings.TrimPrefix(values[0], "Bearer ")
 	} else if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		kind, credential = "cookie", cookie.Value
 	} else {
-		return authenticatedSession{}, errors.New("missing credential")
+		return authenticatedSession{}, errUnauthenticated
 	}
 	verifier, valid := tokenVerifier(credential)
 	if !valid {
-		return authenticatedSession{}, errors.New("invalid credential")
+		return authenticatedSession{}, errUnauthenticated
+	}
+	if err := ctx.Err(); err != nil {
+		return authenticatedSession{}, err
 	}
 	var result authenticatedSession
 	var accountID *uuid.UUID
 	err := s.db.QueryRow(ctx, `SELECT s.id,p.id,u.account_id,p.role,p.username,p.email,p.canonical_email,p.full_name,s.expires_at,s.csrf_token,s.credential_kind FROM app.sessions s JOIN app.authentication_principals p ON p.id=s.principal_id LEFT JOIN app.users u ON u.principal_id=p.id LEFT JOIN app.accounts a ON a.id=u.account_id WHERE s.credential_verifier=$1 AND s.credential_kind=$2 AND s.revoked_at IS NULL AND transaction_timestamp()<s.expires_at AND p.disabled_at IS NULL AND (p.role='administrator' OR a.state='active')`, verifier, kind).Scan(&result.sessionID, &result.principalID, &accountID, &result.role, &result.username, &result.email, &result.canonicalEmail, &result.fullName, &result.expiresAt, &result.csrfToken, &result.kind)
+	// Cancellation is infrastructure failure, even if the query returned no rows.
+	if contextErr := ctx.Err(); contextErr != nil {
+		return authenticatedSession{}, contextErr
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return authenticatedSession{}, errUnauthenticated
+	}
+	if err != nil {
+		return authenticatedSession{}, err
+	}
 	result.accountID = accountID
-	return result, err
+	return result, nil
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request, role string) (authenticatedSession, bool) {
 	session, err := s.authenticate(r.Context(), r)
 	if err != nil {
-		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "authentication is required")
+		writeSessionError(w, r, err)
 		return authenticatedSession{}, false
 	}
 	if role != "" && session.role != role {
@@ -575,6 +591,27 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request, role str
 		return authenticatedSession{}, false
 	}
 	return session, true
+}
+
+func writeSessionError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errUnauthenticated) {
+		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "authentication is required")
+		return
+	}
+	class := "database"
+	if errors.Is(r.Context().Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		class = "canceled"
+	} else if errors.Is(r.Context().Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		class = "deadline"
+	}
+	attributes := []any{"error_class", class}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && len(pgErr.Code) == 5 && strings.Trim(pgErr.Code, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "" {
+		attributes = append(attributes, "sqlstate", pgErr.Code)
+	}
+	slog.WarnContext(r.Context(), "session authentication unavailable", attributes...)
+	// Write the denial even when the client is gone, so access logs do not record 200.
+	writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "authentication service is temporarily unavailable")
 }
 
 func requireCSRF(w http.ResponseWriter, r *http.Request, session authenticatedSession, provided *string) bool {

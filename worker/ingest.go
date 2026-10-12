@@ -148,9 +148,6 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 
 	results := newIngestResults()
 	err := r.ingest(opCtx, job, &results)
-	if err == nil {
-		err = r.reconcileAccountTimezones(opCtx, job)
-	}
 	execution := executionResult{ingest: &results}
 	cancelOperation()
 	heartbeatErr := <-heartbeatDone
@@ -314,6 +311,9 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 	}
 	if err := r.repairCoverageReadiness(ctx, job); err != nil {
 		return fmt.Errorf("repair workout coverage readiness: %w", err)
+	}
+	if err := r.reconcileAccountTimezones(ctx, job); err != nil {
+		return err
 	}
 	status := "succeeded"
 	var finalFailure *ingestFailure
@@ -923,9 +923,10 @@ func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, 
 		return "", fmt.Errorf("resolve workout timezone: %w", err)
 	}
 	typeID := uuid.Must(uuid.NewV7())
+	displayLabel := healthautoexport.CanonicalActivityLabel(workout.ProviderLabel)
 	if err := tx.QueryRow(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
 		VALUES($1,$2,$3,$4) ON CONFLICT(account_id,type_key) DO UPDATE SET provider_label=EXCLUDED.provider_label
-		RETURNING id`, typeID, job.accountID, workout.TypeKey, workout.ProviderLabel).Scan(&typeID); err != nil {
+		RETURNING id`, typeID, job.accountID, workout.TypeKey, displayLabel).Scan(&typeID); err != nil {
 		return "", err
 	}
 	var workoutID uuid.UUID
@@ -949,19 +950,23 @@ func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, 
 			provider_duration,is_indoor,location)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::numeric,$20,$21)`, workoutID,
 			job.accountID, sourceID, fileID, typeID, providerID, fallbackVersion, fallbackHash, workout.ContentSHA256[:],
-			workout.ProviderLabel, workout.Start, workout.End, workout.StartOffsetMins, workout.EndOffsetMins,
+			displayLabel, workout.Start, workout.End, workout.StartOffsetMins, workout.EndOffsetMins,
 			workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(), workout.IsIndoor, workout.Location)
 	} else if err == nil {
 		changed = !bytes.Equal(priorHash, workout.ContentSHA256[:])
 		if !changed {
 			kind = "matched_unchanged"
+			// The write capability follows source_file_id to this fenced job.
+			// Repair display without replacing provider content or derived state.
+			_, err = tx.Exec(ctx, `UPDATE app.workouts SET provider_label=$2,source_file_id=$3
+				WHERE id=$1 AND provider_label IS DISTINCT FROM $2`, workoutID, displayLabel, fileID)
 		} else {
 			kind = "updated"
 			_, err = tx.Exec(ctx, `UPDATE app.workouts SET source_file_id=$2,workout_type_id=$3,content_sha256=$4,
 				provider_label=$5,started_at=$6,ended_at=$7,start_offset_minutes=$8,end_offset_minutes=$9,
 				local_start_date=$10,timezone_name=$11,timezone_source=$12,timezone_reference_workout_id=NULL,
 				timezone_dataset_release=$13,provider_duration=$14::numeric,is_indoor=$15,location=$16 WHERE id=$1`, workoutID,
-				fileID, typeID, workout.ContentSHA256[:], workout.ProviderLabel, workout.Start, workout.End,
+				fileID, typeID, workout.ContentSHA256[:], displayLabel, workout.Start, workout.End,
 				workout.StartOffsetMins, workout.EndOffsetMins, workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(),
 				workout.IsIndoor, workout.Location)
 		}

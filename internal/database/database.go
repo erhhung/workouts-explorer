@@ -57,11 +57,9 @@ func newTracer(options ...otelpgx.Option) *otelpgx.Tracer {
 	return otelpgx.NewTracer(append(privacyOptions, options...)...)
 }
 
-func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
-	// Metadata permits compatible older runtimes during a rolling upgrade; the explicit object and privilege
-	// checks below are the authoritative readiness contract for this runtime version.
-	var ready bool
-	err := pool.QueryRow(ctx, `
+// Metadata permits compatible older runtimes during a rolling upgrade; the explicit object and privilege
+// checks are the authoritative readiness contract for this runtime version.
+const runtimeReadinessSQL = `
 		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1
 		   AND to_regclass('app.schema_metadata') IS NOT NULL
 		   AND to_regclass('app.jobs') IS NOT NULL
@@ -295,6 +293,9 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND has_column_privilege('workouts_coverage_worker','app.jobs','worker_id','SELECT')
 		   AND has_column_privilege('workouts_coverage_worker','app.jobs','lease_token','SELECT')
 		   AND has_column_privilege('workouts_coverage_worker','app.jobs','lease_expires_at','SELECT')
+		   AND has_column_privilege('workouts_coverage_worker','app.jobs','created_at','SELECT')
+		   AND has_column_privilege('workouts_coverage_worker','app.jobs','attempt','SELECT')
+		   AND has_column_privilege('workouts_coverage_worker','app.jobs','retry_of_job_id','SELECT')
 		   AND NOT has_table_privilege('workouts_coverage_worker','app.jobs','SELECT')
 		   AND NOT has_table_privilege('workouts_coverage_worker','app.jobs','INSERT')
 		   AND NOT has_table_privilege('workouts_coverage_worker','app.workouts','SELECT')
@@ -540,7 +541,11 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		       SELECT 1 FROM app.schema_metadata
 		       WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1
 		   )
-		FROM public.goose_db_version`, SupportedSchemaVersion).Scan(&ready)
+		FROM public.goose_db_version`
+
+func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
+	var ready bool
+	err := pool.QueryRow(ctx, runtimeReadinessSQL, SupportedSchemaVersion).Scan(&ready)
 	return err == nil && ready
 }
 

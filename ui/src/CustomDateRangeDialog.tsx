@@ -7,10 +7,19 @@ const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 function validDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return false;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toISOString().slice(0, 10) === value;
+  return (
+    new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+      .toISOString()
+      .slice(0, 10) === value
+  );
 }
 
-export function CustomDateRangeDialog({ open, onOpenChange, range, onApply }: {
+export function CustomDateRangeDialog({
+  open,
+  onOpenChange,
+  range,
+  onApply,
+}: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   range: DateRangePreference;
@@ -52,14 +61,68 @@ export function CustomDateRangeDialog({ open, onOpenChange, range, onApply }: {
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="dialog-content custom-range-dialog">
-          <div className="dialog-heading"><div><Dialog.Title>Custom date range</Dialog.Title><Dialog.Description>Choose inclusive calendar dates.</Dialog.Description></div><Dialog.Close className="icon-button" aria-label="Close Custom date range">&times;</Dialog.Close></div>
-          <form className="custom-range-form" onSubmit={submit} noValidate>
-            {error && <p className="error-summary" id={`${id}-error`} role="alert" tabIndex={-1} ref={errorRef}>{error.message}</p>}
-            <div className="field-pair">
-              <div className="field"><label htmlFor={`${id}-start`}>Start date</label><input id={`${id}-start`} name="startDate" type="date" defaultValue={explicit?.[1]} required aria-invalid={error?.fields.includes("start") || undefined} aria-describedby={error?.fields.includes("start") ? `${id}-error` : undefined} onBlur={(event) => { const endDate = event.currentTarget.form?.elements.namedItem("endDate"); if (event.currentTarget.value && endDate instanceof HTMLInputElement && !endDate.value) endDate.value = event.currentTarget.value; }} /></div>
-              <div className="field"><label htmlFor={`${id}-end`}>End date</label><input id={`${id}-end`} name="endDate" type="date" defaultValue={explicit?.[2]} required aria-invalid={error?.fields.includes("end") || undefined} aria-describedby={error?.fields.includes("end") ? `${id}-error` : undefined} /></div>
+          <div className="dialog-heading">
+            <div>
+              <Dialog.Title>Custom date range</Dialog.Title>
+              <Dialog.Description>Choose inclusive calendar dates.</Dialog.Description>
             </div>
-            <div className="dialog-actions"><Dialog.Close type="button" className="secondary range-dialog-action">Cancel</Dialog.Close><button className="primary range-dialog-action">Apply</button></div>
+            <Dialog.Close className="icon-button" aria-label="Close Custom date range">
+              &times;
+            </Dialog.Close>
+          </div>
+          <form className="custom-range-form" onSubmit={submit} noValidate>
+            {error && (
+              <p
+                className="error-summary"
+                id={`${id}-error`}
+                role="alert"
+                tabIndex={-1}
+                ref={errorRef}
+              >
+                {error.message}
+              </p>
+            )}
+            <div className="field-pair">
+              <div className="field">
+                <label htmlFor={`${id}-start`}>Start date</label>
+                <input
+                  id={`${id}-start`}
+                  name="startDate"
+                  type="date"
+                  defaultValue={explicit?.[1]}
+                  required
+                  aria-invalid={error?.fields.includes("start") || undefined}
+                  aria-describedby={error?.fields.includes("start") ? `${id}-error` : undefined}
+                  onBlur={(event) => {
+                    const endDate = event.currentTarget.form?.elements.namedItem("endDate");
+                    if (
+                      event.currentTarget.value &&
+                      endDate instanceof HTMLInputElement &&
+                      !endDate.value
+                    )
+                      endDate.value = event.currentTarget.value;
+                  }}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor={`${id}-end`}>End date</label>
+                <input
+                  id={`${id}-end`}
+                  name="endDate"
+                  type="date"
+                  defaultValue={explicit?.[2]}
+                  required
+                  aria-invalid={error?.fields.includes("end") || undefined}
+                  aria-describedby={error?.fields.includes("end") ? `${id}-error` : undefined}
+                />
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <Dialog.Close type="button" className="secondary range-dialog-action">
+                Cancel
+              </Dialog.Close>
+              <button className="primary range-dialog-action">Apply</button>
+            </div>
           </form>
         </Dialog.Content>
       </Dialog.Portal>

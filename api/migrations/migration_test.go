@@ -127,6 +127,51 @@ func TestMartinTileContractMigration(t *testing.T) {
 	}
 }
 
+func TestMartinTilePrefilterAndPrivateScopeContract(t *testing.T) {
+	source, err := Files.ReadFile("014_martin_tile_contract.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := stdstrings.Split(string(source), "-- +goose Down")
+	body := functionBody(t, parts[0], "CREATE FUNCTION app.raw_route_mvt")
+	branches := stdstrings.Split(body, "UNION ALL")
+	if len(branches) != 2 {
+		t.Fatal("route lines and point markers must share two UNION ALL branches")
+	}
+	for _, branch := range branches {
+		for _, required := range []string{
+			"selected.selection_id = target_selection_id AND selected.account_id = target_account_id",
+			"workout.deletion_requested_at IS NULL AND route.route IS NOT NULL",
+			"route.route && ST_Transform(bounds, 4326)",
+		} {
+			if !strings.Contains(branch, required) {
+				t.Errorf("tile branch is missing %q", required)
+			}
+		}
+	}
+	for _, required := range []string{
+		"SECURITY DEFINER", "STABLE", "SET search_path = pg_catalog, app, public",
+		"json_typeof(query_params) IS DISTINCT FROM 'object'", "(SELECT count( * ) FROM json_object_keys(query_params)) <> 4",
+		"selection.id = target_selection_id AND selection.account_id = target_account_id",
+		"selection.session_id = target_session_id AND selection.generation = target_generation",
+		"data_generation.generation = target_generation", "selection.expires_at > transaction_timestamp()",
+		"session_row.revoked_at IS NULL AND session_row.expires_at > transaction_timestamp()",
+		"principal.disabled_at IS NULL AND account.state = 'active'",
+		"ST_StartPoint(component.geom)", "ST_Length(component.geom) = 0",
+		"component.geom && ST_Transform(bounds, 4326)", "RETURN COALESCE(tile, ''::bytea)",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("Martin tile function is missing %q", required)
+		}
+	}
+	if stdstrings.Count(parts[1], "AND route.route && ST_Transform(bounds, 4326)") != 1 {
+		t.Fatal("014 Down must retain the original schema-13 marker branch")
+	}
+	if strings.Contains(body, "MATERIALIZED") {
+		t.Fatal("raw tile prefilter must not introduce a materialized CTE")
+	}
+}
+
 func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
 	source, err := Files.ReadFile("013_coverage_matcher_diagnostics.sql")
 	if err != nil {
@@ -186,12 +231,21 @@ func TestCoverageRouteJobsMigrationContract(t *testing.T) {
 		"CREATE FUNCTION app.initialize_workout_coverage", "CREATE FUNCTION app.set_workout_coverage_readiness",
 		"required role workouts_coverage_worker is missing", "TO workouts_coverage_worker",
 		"GRANT SELECT ON public.goose_db_version,app.schema_metadata TO workouts_coverage_worker",
+		"GRANT SELECT (id,account_id,kind,status,cancel_requested_at,worker_id,lease_token,lease_expires_at,created_at,attempt,retry_of_job_id) ON app.jobs TO workouts_coverage_worker",
 		"GRANT EXECUTE ON FUNCTION app.current_account_id(),app.heartbeat_job",
 		"schema_version=15,minimum_runtime_version=14", "cannot downgrade while coverage jobs exist",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("coverage route jobs migration is missing %q", required)
 		}
+	}
+	up := strings.Split(text, "-- +goose Down")[0]
+	if strings.Contains(up, "GRANT SELECT ON app.jobs TO workouts_coverage_worker") {
+		t.Fatal("coverage worker must not receive broad job reads")
+	}
+	down := strings.Split(text, "-- +goose Down")[1]
+	if !strings.Contains(down, "REVOKE SELECT (id,account_id,kind,status,cancel_requested_at,worker_id,lease_token,lease_expires_at,created_at,attempt,retry_of_job_id) ON app.jobs FROM workouts_coverage_worker") {
+		t.Fatal("coverage route jobs Down must revoke every column-level job read grant")
 	}
 }
 

@@ -18,7 +18,14 @@ const preferences: Preferences = {
   dateRange: "last30Days",
 };
 const range = { startDate: "2026-07-07", endDate: "2026-08-05", timezone: "America/Denver" };
-const totals = { count: 2, duration: "3900.5", distance: { value: "10.5", unit: "km" }, energy: { value: "450.25", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10.5", unit: "km" } };
+const totals = {
+  count: 2,
+  duration: "3900.5",
+  distance: { value: "10.5", unit: "km" },
+  energy: { value: "450.25", unit: "kcal" },
+  routeCount: 2,
+  routedDistance: { value: "10.5", unit: "km" },
+};
 const running = { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", key: "running", displayName: "Running" };
 const summary = { range, totals, byType: [{ type: running, totals }] };
 const workout: Workout = {
@@ -37,7 +44,10 @@ const workout: Workout = {
   location: "Boulder",
   distance: { value: "10.5", unit: "km" },
   pace: { value: "5.25", unit: "min/km" },
-  splitPaces: { kilometer: { fastestSeconds: "280", slowestSeconds: "390" }, mile: { fastestSeconds: "480", slowestSeconds: "660" } },
+  splitPaces: {
+    kilometer: { fastestSeconds: "280", slowestSeconds: "390" },
+    mile: { fastestSeconds: "480", slowestSeconds: "660" },
+  },
   calories: { value: "450.25", unit: "kcal" },
   activeCalories: { value: "400.1", unit: "kcal" },
   heartRate: null,
@@ -50,7 +60,10 @@ const workout: Workout = {
 };
 
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" },
+  });
 }
 
 function workoutPage(page = 1, items = [workout], pageSize = 25) {
@@ -69,45 +82,86 @@ function workoutPage(page = 1, items = [workout], pageSize = 25) {
   };
 }
 
-function renderSummary(overrides: Partial<Preferences> = {}, onDateRangeSaved = vi.fn(), onShowOnMap?: (workoutId: string) => void) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+function renderSummary(
+  overrides: Partial<Preferences> = {},
+  onDateRangeSaved = vi.fn(),
+  onShowOnMap?: (workoutId: string) => void,
+  onWorkoutsDeleted?: React.ComponentProps<typeof Summary>["onWorkoutsDeleted"],
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   let current = { ...preferences, ...overrides };
-  const view = (next: Preferences) => <QueryClientProvider client={client}><Summary preferences={next} csrfToken="csrf-summary" onShowOnMap={onShowOnMap} onDateRangeSaved={onDateRangeSaved} /></QueryClientProvider>;
+  const view = (next: Preferences) => (
+    <QueryClientProvider client={client}>
+      <Summary
+        preferences={next}
+        csrfToken="csrf-summary"
+        onShowOnMap={onShowOnMap}
+        onWorkoutsDeleted={onWorkoutsDeleted}
+        onDateRangeSaved={onDateRangeSaved}
+      />
+    </QueryClientProvider>
+  );
   const result = render(view(current));
   return {
     ...result,
     onDateRangeSaved,
-    rerenderPreferences(next: Partial<Preferences>) { current = { ...current, ...next }; result.rerender(view(current)); },
+    rerenderPreferences(next: Partial<Preferences>) {
+      current = { ...current, ...next };
+      result.rerender(view(current));
+    },
   };
 }
 
 describe("Summary", () => {
   test("starts with the date picker, omits the former hero, and uses one summary inset token", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     const { container } = renderSummary();
     const main = container.querySelector("main.summary-page")!;
     expect(main.querySelector("h1, .eyebrow")).toBeNull();
     expect(screen.queryByText("Movement, in measure.")).not.toBeInTheDocument();
-    expect(main.querySelector("header.summary-heading")?.querySelector(":scope > *")).toBe(screen.getByRole("button", { name: "Select date range" }));
+    expect(main.querySelector("header.summary-heading")?.querySelector(":scope > *")).toBe(
+      screen.getByRole("button", { name: "Select date range" }),
+    );
     await screen.findByText("Range totals");
-    expect(screen.queryByRole("button", { name: "Delete workouts in this range" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete workouts in this range" }),
+    ).not.toBeInTheDocument();
     expect(main).toHaveStyle("--summary-inset: var(--space-5)");
-    expect(main.querySelector("header.summary-heading")?.nextElementSibling).toHaveClass("aggregate-section");
-    expect(main.querySelector(".aggregate-section")?.nextElementSibling).toHaveClass("workouts-section");
+    expect(main.querySelector("header.summary-heading")?.nextElementSibling).toHaveClass(
+      "aggregate-section",
+    );
+    expect(main.querySelector(".aggregate-section")?.nextElementSibling).toHaveClass(
+      "workouts-section",
+    );
   });
 
   test("formats resolved dates without commas and shows the current PDT range-zone badge", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-15T12:00:00Z"));
-    const pacificSummary = { ...summary, range: { startDate: "2026-01-01", endDate: "2026-12-31", timezone: "America/Los_Angeles" } };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(pacificSummary)) : Promise.resolve(json(workoutPage())));
+    const pacificSummary = {
+      ...summary,
+      range: { startDate: "2026-01-01", endDate: "2026-12-31", timezone: "America/Los_Angeles" },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(pacificSummary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     await vi.runAllTimersAsync();
     expect(screen.getByText("Jan 1, 2026 to Dec 31, 2026")).toBeInTheDocument();
     const metadata = screen.getByText("Jan 1, 2026 to Dec 31, 2026").closest(".range-metadata")!;
     const badge = within(metadata as HTMLElement).getByLabelText("America/Los_Angeles (UTC-7:00)");
     expect(badge).toHaveTextContent("PDT");
-    expect(document.getElementById(badge.getAttribute("aria-describedby")!)).toHaveTextContent("America/Los_Angeles (UTC-7:00)");
+    expect(document.getElementById(badge.getAttribute("aria-describedby")!)).toHaveTextContent(
+      "America/Los_Angeles (UTC-7:00)",
+    );
     vi.useRealTimers();
   });
 
@@ -115,9 +169,16 @@ describe("Summary", () => {
     let singular = false;
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       if (String(input).startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      return Promise.resolve(json(singular
-        ? { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 } }
-        : workoutPage()));
+      return Promise.resolve(
+        json(
+          singular
+            ? {
+                ...workoutPage(),
+                pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+              }
+            : workoutPage(),
+        ),
+      );
     });
     const view = renderSummary();
     expect(await screen.findByText("26 sessions | page 1 of 2")).toBeInTheDocument();
@@ -137,18 +198,28 @@ describe("Summary", () => {
   test("rolls aggregate duration into unbounded days", () => {
     expect(formatAggregateDuration("86399")).toBe("1d 0h 00m");
     expect(formatAggregateDuration("405780")).toBe("4d 16h 43m");
-    expect(formatAggregateDuration(String((123 * 86400) + (7 * 3600) + (5 * 60)))).toBe("123d 7h 05m");
+    expect(formatAggregateDuration(String(123 * 86400 + 7 * 3600 + 5 * 60))).toBe("123d 7h 05m");
   });
 
   test("rounds aggregate distance at 100 displayed units without changing workout rows", async () => {
     const longTotals = { ...totals, distance: { value: "442.232", unit: "km" } };
-    const longSummary = { ...summary, totals: longTotals, byType: [{ type: running, totals: longTotals }] };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(longSummary)) : Promise.resolve(json(workoutPage())));
+    const longSummary = {
+      ...summary,
+      totals: longTotals,
+      byType: [{ type: running, totals: longTotals }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(longSummary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const distanceCard = await screen.findByRole("button", { name: /Distance.*By workout type/ });
     expect(distanceCard).toHaveTextContent("275 mi");
     await userEvent.hover(distanceCard);
-    expect(document.getElementById(distanceCard.getAttribute("aria-controls")!)).toHaveTextContent("275 mi");
+    expect(document.getElementById(distanceCard.getAttribute("aria-controls")!)).toHaveTextContent(
+      "275 mi",
+    );
     expect(await within(screen.getByRole("table")).findByText("6.52 mi")).toBeInTheDocument();
   });
 
@@ -168,52 +239,90 @@ describe("Summary", () => {
     const workoutRequest = requests.find(({ path }) => path.startsWith("/api/workouts?"))!;
     const summaryParams = new URL(summaryRequest.path, "https://test").searchParams;
     const workoutParams = new URL(workoutRequest.path, "https://test").searchParams;
-    expect(Object.fromEntries(summaryParams)).toEqual({ dateRangeEnum: "thisMonth", tz: "America/Denver" });
-    expect(Object.fromEntries(workoutParams)).toEqual({ dateRangeEnum: "thisMonth", tz: "America/Denver", page: "1", pageSize: "25", sort: "date:desc" });
+    expect(Object.fromEntries(summaryParams)).toEqual({
+      dateRangeEnum: "thisMonth",
+      tz: "America/Denver",
+    });
+    expect(Object.fromEntries(workoutParams)).toEqual({
+      dateRangeEnum: "thisMonth",
+      tz: "America/Denver",
+      page: "1",
+      pageSize: "25",
+      sort: "date:desc",
+    });
     expect(summaryRequest.signal).toBeInstanceOf(AbortSignal);
     expect(workoutRequest.signal).toBeInstanceOf(AbortSignal);
   });
 
   test("renders weekday, exact local date, IANA abbreviation, tooltip, and 12/24-hour time", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     const view = renderSummary();
     let table = await screen.findByRole("table");
-    let date = within(within(table).getAllByRole("row")[1]).getByText("Wed", { selector: ".weekday-badge" }).closest<HTMLElement>(".workout-date")!;
+    let date = within(within(table).getAllByRole("row")[1])
+      .getByText("Wed", { selector: ".weekday-badge" })
+      .closest<HTMLElement>(".workout-date")!;
     expect(date).toHaveTextContent("WedAug 5, 2026, 7:30 AMMDT");
     const badge = within(date).getByLabelText("UTC-6:00 recorded");
     expect(badge).toHaveTextContent("MDT");
     expect(badge).not.toHaveAttribute("title");
     expect(badge).toHaveAttribute("tabindex", "0");
-    expect(document.getElementById(badge.getAttribute("aria-describedby")!)).toHaveAttribute("role", "tooltip");
+    expect(document.getElementById(badge.getAttribute("aria-describedby")!)).toHaveAttribute(
+      "role",
+      "tooltip",
+    );
     expect(date.querySelector(".tooltip-trigger")?.textContent).toBe("MDT");
 
     view.rerenderPreferences({ clockFormat: "24h" });
     table = await screen.findByRole("table");
-    date = within(within(table).getAllByRole("row")[1]).getByText("Wed", { selector: ".weekday-badge" }).closest<HTMLElement>(".workout-date")!;
+    date = within(within(table).getAllByRole("row")[1])
+      .getByText("Wed", { selector: ".weekday-badge" })
+      .closest<HTMLElement>(".workout-date")!;
     expect(date).toHaveTextContent("Aug 5, 2026, 07:30");
     expect(date).not.toHaveTextContent("AM");
   });
 
   test("never infers a preference zone and rejects a workout IANA zone whose offset mismatches", async () => {
     const offsetOnly = { ...workout, id: "11111111111111111111111111111111", timezone: null };
-    const invalidZone = { ...workout, id: "22222222222222222222222222222222", timezone: "Also/Invalid", originalStartOffsetMinutes: -420 };
-    const mismatchedZone = { ...workout, id: "66666666666666666666666666666666", timezone: "America/Los_Angeles", originalStartOffsetMinutes: -360 };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(summary))
-      : Promise.resolve(json(workoutPage(1, [offsetOnly, invalidZone, mismatchedZone]))));
+    const invalidZone = {
+      ...workout,
+      id: "22222222222222222222222222222222",
+      timezone: "Also/Invalid",
+      originalStartOffsetMinutes: -420,
+    };
+    const mismatchedZone = {
+      ...workout,
+      id: "66666666666666666666666666666666",
+      timezone: "America/Los_Angeles",
+      originalStartOffsetMinutes: -360,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage(1, [offsetOnly, invalidZone, mismatchedZone]))),
+    );
     renderSummary();
-    const rows = within(await screen.findByRole("table")).getAllByRole("row").slice(1);
+    const rows = within(await screen.findByRole("table"))
+      .getAllByRole("row")
+      .slice(1);
 
     const offsetOnlyBadge = rows[0].querySelector<HTMLElement>(".timezone-badge .tooltip-trigger")!;
     expect(offsetOnlyBadge).toHaveTextContent("UTC-6");
     expect(offsetOnlyBadge).not.toHaveAttribute("title");
-    expect(document.getElementById(offsetOnlyBadge.getAttribute("aria-describedby")!)).toHaveTextContent("UTC-6:00 recorded | timezone unavailable");
+    expect(
+      document.getElementById(offsetOnlyBadge.getAttribute("aria-describedby")!),
+    ).toHaveTextContent("UTC-6:00 recorded | timezone unavailable");
     expect(rows[0]).not.toHaveTextContent("MDT");
 
     const offsetBadge = rows[1].querySelector<HTMLElement>(".timezone-badge .tooltip-trigger")!;
     expect(offsetBadge).toHaveTextContent("UTC-7");
     expect(offsetBadge).not.toHaveAttribute("title");
-    expect(document.getElementById(offsetBadge.getAttribute("aria-describedby")!)).toHaveTextContent("UTC-7:00 recorded | timezone unavailable");
+    expect(
+      document.getElementById(offsetBadge.getAttribute("aria-describedby")!),
+    ).toHaveTextContent("UTC-7:00 recorded | timezone unavailable");
     expect(rows[1]).not.toHaveTextContent("America/Denver");
     expect(rows[1].querySelector(".tooltip-trigger")?.textContent).toBe("UTC-7");
 
@@ -225,24 +334,50 @@ describe("Summary", () => {
   });
 
   test("derives DST and half-hour zone badges at each workout instant", async () => {
-    const winter = { ...workout, id: "33333333333333333333333333333333", startedAt: "2026-01-15T20:00:00Z", timezone: "America/Los_Angeles", originalStartOffsetMinutes: -480 };
-    const summer = { ...workout, id: "44444444444444444444444444444444", timezone: "America/Los_Angeles", originalStartOffsetMinutes: -420 };
-    const halfHour = { ...workout, id: "55555555555555555555555555555555", timezone: "Asia/Kolkata", originalStartOffsetMinutes: 330 };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(summary))
-      : Promise.resolve(json(workoutPage(1, [winter, summer, halfHour]))));
+    const winter = {
+      ...workout,
+      id: "33333333333333333333333333333333",
+      startedAt: "2026-01-15T20:00:00Z",
+      timezone: "America/Los_Angeles",
+      originalStartOffsetMinutes: -480,
+    };
+    const summer = {
+      ...workout,
+      id: "44444444444444444444444444444444",
+      timezone: "America/Los_Angeles",
+      originalStartOffsetMinutes: -420,
+    };
+    const halfHour = {
+      ...workout,
+      id: "55555555555555555555555555555555",
+      timezone: "Asia/Kolkata",
+      originalStartOffsetMinutes: 330,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage(1, [winter, summer, halfHour]))),
+    );
     renderSummary();
-    const badges = Array.from((await screen.findByRole("table")).querySelectorAll<HTMLElement>("tbody .timezone-badge .tooltip-trigger"));
+    const badges = Array.from(
+      (await screen.findByRole("table")).querySelectorAll<HTMLElement>(
+        "tbody .timezone-badge .tooltip-trigger",
+      ),
+    );
     expect(badges.map((badge) => badge.textContent)).toEqual(["PST", "PDT", "GMT+5:30"]);
-    expect(badges.map((badge) => document.getElementById(badge.getAttribute("aria-describedby")!)?.textContent)).toEqual([
-      "UTC-8:00 recorded",
-      "UTC-7:00 recorded",
-      "UTC+5:30 recorded",
-    ]);
+    expect(
+      badges.map(
+        (badge) => document.getElementById(badge.getAttribute("aria-describedby")!)?.textContent,
+      ),
+    ).toEqual(["UTC-8:00 recorded", "UTC-7:00 recorded", "UTC+5:30 recorded"]);
   });
 
   test("keeps the main duration plain while retaining exact tooltips in breakdowns and workout rows", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const total = await screen.findByRole("button", { name: /Duration.*By workout type/ });
     expect(total).toHaveTextContent("1h 05m");
@@ -255,15 +390,25 @@ describe("Summary", () => {
     const byTypeTrigger = byTypeDuration.querySelector<HTMLElement>(".tooltip-trigger")!;
     expect(byTypeTrigger).not.toHaveAttribute("title");
     expect(byTypeTrigger).toHaveAttribute("tabindex", "0");
-    expect(byTypeTrigger).toHaveAccessibleName("Duration 1h 05m; rounded to nearest second 1h 05m 01s");
-    expect(document.getElementById(byTypeTrigger.getAttribute("aria-describedby")!)).toHaveAttribute("role", "tooltip");
+    expect(byTypeTrigger).toHaveAccessibleName(
+      "Duration 1h 05m; rounded to nearest second 1h 05m 01s",
+    );
+    expect(
+      document.getElementById(byTypeTrigger.getAttribute("aria-describedby")!),
+    ).toHaveAttribute("role", "tooltip");
 
-    const rowDuration = (await screen.findByRole("table")).querySelector<HTMLElement>("tbody .duration-value")!;
+    const rowDuration = (await screen.findByRole("table")).querySelector<HTMLElement>(
+      "tbody .duration-value",
+    )!;
     expect(rowDuration).toHaveTextContent("1h 05m");
     const rowDurationTrigger = rowDuration.querySelector<HTMLElement>(".tooltip-trigger")!;
     expect(rowDurationTrigger).not.toHaveAttribute("title");
-    expect(document.getElementById(rowDurationTrigger.getAttribute("aria-describedby")!)).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
-    const mobileRow = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
+    expect(
+      document.getElementById(rowDurationTrigger.getAttribute("aria-describedby")!),
+    ).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
+    const mobileRow = document.querySelector<HTMLButtonElement>(
+      ".mobile-workout-summary > button:first-child",
+    )!;
     expect(mobileRow).toHaveAttribute("title", "1:05:01 | 7:30a - 8:35a (1:05:00)");
     expect(mobileRow.querySelector(".duration-value")).toHaveTextContent("1h 05m");
     expect(mobileRow.querySelector("[tabindex]")).toBeNull();
@@ -271,9 +416,13 @@ describe("Summary", () => {
     const details = document.getElementById(mobileRow.getAttribute("aria-controls")!)!;
     const detailDuration = within(details).getByText("Duration").closest("div")!;
     expect(detailDuration).toHaveTextContent("Duration1h 05m");
-    const detailTrigger = detailDuration.querySelector<HTMLElement>(".duration-value .tooltip-trigger")!;
+    const detailTrigger = detailDuration.querySelector<HTMLElement>(
+      ".duration-value .tooltip-trigger",
+    )!;
     expect(detailTrigger).toHaveAttribute("tabindex", "0");
-    expect(document.getElementById(detailTrigger.getAttribute("aria-describedby")!)).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
+    expect(
+      document.getElementById(detailTrigger.getAttribute("aria-describedby")!),
+    ).toHaveTextContent("1:05:01 | 7:30a - 8:35a (1:05:00)");
   });
 
   test("persists shortcut and validated custom selections with CSRF while retaining a failed selection", async () => {
@@ -285,7 +434,11 @@ describe("Summary", () => {
       if (path === "/api/me/preferences" && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body));
         patches.push({ body, csrf: new Headers(init.headers).get("X-CSRF-Token") });
-        return Promise.resolve(body.dateRange === "last7Days" ? json({ title: "Unavailable" }, 503) : json({ ...preferences, dateRange: body.dateRange }));
+        return Promise.resolve(
+          body.dateRange === "last7Days"
+            ? json({ title: "Unavailable" }, 503)
+            : json({ ...preferences, dateRange: body.dateRange }),
+        );
       }
       throw new Error(`Unhandled ${path}`);
     });
@@ -293,10 +446,14 @@ describe("Summary", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Select date range" }));
     expect(screen.queryByText("Quick ranges")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("menuitem", { name: /Last 30 days/ })).getByLabelText("selected")).toHaveTextContent("✓");
+    expect(
+      within(screen.getByRole("menuitem", { name: /Last 30 days/ })).getByLabelText("selected"),
+    ).toHaveTextContent("✓");
     await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
     expect(await screen.findByRole("status")).toHaveTextContent("continue using your selection");
-    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent("Last 7 days");
+    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+      "Last 7 days",
+    );
 
     await user.click(screen.getByRole("button", { name: "Select date range" }));
     await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
@@ -314,27 +471,36 @@ describe("Summary", () => {
     expect(alert).toHaveTextContent("on or before");
     await waitFor(() => expect(alert).toHaveFocus());
     expect(screen.getByLabelText("Start date")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("End date")).toHaveAccessibleDescription("Start date must be on or before end date.");
+    expect(screen.getByLabelText("End date")).toHaveAccessibleDescription(
+      "Start date must be on or before end date.",
+    );
     await user.clear(screen.getByLabelText("End date"));
     await user.type(screen.getByLabelText("End date"), "2026-08-06");
     await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(patches).toHaveLength(2));
-    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent("Aug 5, 2026 to Aug 6, 2026");
+    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+      "Aug 5, 2026 to Aug 6, 2026",
+    );
     expect(patches).toEqual([
       { body: { dateRange: "last7Days" }, csrf: "csrf-summary" },
       { body: { dateRange: "2026-08-05/2026-08-06" }, csrf: "csrf-summary" },
     ]);
     await waitFor(() => {
-      const customRead = vi.mocked(fetch).mock.calls.map(([input]) => String(input)).find((path) => path.includes("startDate=2026-08-05"));
+      const customRead = vi
+        .mocked(fetch)
+        .mock.calls.map(([input]) => String(input))
+        .find((path) => path.includes("startDate=2026-08-05"));
       expect(customRead).toContain("endDate=2026-08-06");
       expect(customRead).not.toContain("tz=");
     });
   });
 
   test("does not replace an existing custom-range end date when the start date loses focus", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(summary))
-      : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary({ dateRange: "2026-08-01/2026-08-31" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Select date range" }));
@@ -348,7 +514,11 @@ describe("Summary", () => {
   });
 
   test("renders precise converted aggregate cards and exposes type breakdowns by pointer and keyboard state", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const cards = await screen.findAllByText("By workout type");
     expect(cards).toHaveLength(4);
@@ -383,115 +553,260 @@ describe("Summary", () => {
   });
 
   test("shows a delayed cursor-positioned mode hint on every aggregate card and auto-hides it", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const cards = await screen.findAllByRole("button", { name: /By workout type/ });
     const user = userEvent.setup();
     for (const [index, card] of cards.entries()) {
       await user.hover(card);
       expect(document.querySelector(".aggregate-mode-hint")).toBeNull();
-      await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toBeInTheDocument(), { timeout: 1200 });
+      await waitFor(
+        () => expect(document.querySelector(".aggregate-mode-hint")).toBeInTheDocument(),
+        { timeout: 1200 },
+      );
       fireEvent.pointerMove(card, { clientX: 300 + index, clientY: 400 + index });
       const hint = document.querySelector<HTMLElement>(".aggregate-mode-hint")!;
       expect(hint).toHaveTextContent("Click to see averages");
       expect(hint.style.left).not.toBe("");
       expect(hint.style.top).not.toBe("");
-      if (index === 0) await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toBeNull(), { timeout: 2500 });
+      if (index === 0)
+        await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toBeNull(), {
+          timeout: 2500,
+        });
       await user.unhover(card);
     }
 
     fireEvent.click(cards[0]);
     await user.hover(cards[3]);
-    await waitFor(() => expect(document.querySelector(".aggregate-mode-hint")).toHaveTextContent("Click to see totals"), { timeout: 1200 });
+    await waitFor(
+      () =>
+        expect(document.querySelector(".aggregate-mode-hint")).toHaveTextContent(
+          "Click to see totals",
+        ),
+      { timeout: 1200 },
+    );
   }, 10_000);
 
   test("toggles all cards between totals and correctly ordered per-workout averages", async () => {
-    const climbing = { id: "11111111111111111111111111111111", key: "climbing", displayName: "Climbing" };
-    const outdoorRun = { id: "22222222222222222222222222222222", key: "outdoor-run", displayName: "Outdoor Run" };
-    const outdoorWalk = { id: "33333333333333333333333333333333", key: "outdoor-walk", displayName: "Outdoor Walk" };
+    const climbing = {
+      id: "11111111111111111111111111111111",
+      key: "climbing",
+      displayName: "Climbing",
+    };
+    const outdoorRun = {
+      id: "22222222222222222222222222222222",
+      key: "outdoor-run",
+      displayName: "Outdoor Run",
+    };
+    const outdoorWalk = {
+      id: "33333333333333333333333333333333",
+      key: "outdoor-walk",
+      displayName: "Outdoor Walk",
+    };
     const variedSummary = {
       range,
-      totals: { count: 14, duration: "40200", distance: { value: "62", unit: "km" }, energy: { value: "6700", unit: "kcal" }, routeCount: 9, routedDistance: { value: "62", unit: "km" } },
+      totals: {
+        count: 14,
+        duration: "40200",
+        distance: { value: "62", unit: "km" },
+        energy: { value: "6700", unit: "kcal" },
+        routeCount: 9,
+        routedDistance: { value: "62", unit: "km" },
+      },
       byType: [
-        { type: outdoorWalk, totals: { count: 4, duration: "7200", distance: { value: "12", unit: "km" }, energy: { value: "1200", unit: "kcal" }, routeCount: 4, routedDistance: { value: "12", unit: "km" } } },
-        { type: outdoorRun, totals: { count: 5, duration: "15000", distance: { value: "50", unit: "km" }, energy: { value: "3000", unit: "kcal" }, routeCount: 5, routedDistance: { value: "50", unit: "km" } } },
-        { type: climbing, totals: { count: 5, duration: "18000", distance: null, energy: { value: "2500", unit: "kcal" }, routeCount: 0, routedDistance: null } },
+        {
+          type: outdoorWalk,
+          totals: {
+            count: 4,
+            duration: "7200",
+            distance: { value: "12", unit: "km" },
+            energy: { value: "1200", unit: "kcal" },
+            routeCount: 4,
+            routedDistance: { value: "12", unit: "km" },
+          },
+        },
+        {
+          type: outdoorRun,
+          totals: {
+            count: 5,
+            duration: "15000",
+            distance: { value: "50", unit: "km" },
+            energy: { value: "3000", unit: "kcal" },
+            routeCount: 5,
+            routedDistance: { value: "50", unit: "km" },
+          },
+        },
+        {
+          type: climbing,
+          totals: {
+            count: 5,
+            duration: "18000",
+            distance: null,
+            energy: { value: "2500", unit: "kcal" },
+            routeCount: 0,
+            routedDistance: null,
+          },
+        },
       ],
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(variedSummary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(variedSummary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
 
     const workoutsCard = await screen.findByRole("button", { name: /Workouts.*By workout type/ });
     const durationCard = screen.getByRole("button", { name: /Duration.*By workout type/ });
     const distanceCard = screen.getByRole("button", { name: /Distance.*By workout type/ });
     const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
-    const breakdownText = (card: HTMLElement) => Array.from(document.getElementById(card.getAttribute("aria-controls")!)!.children, (row) => row.textContent);
+    const breakdownText = (card: HTMLElement) =>
+      Array.from(
+        document.getElementById(card.getAttribute("aria-controls")!)!.children,
+        (row) => row.textContent,
+      );
 
     expect(workoutsCard).toHaveTextContent("14");
     expect(durationCard).toHaveTextContent("11h 10m");
     expect(distanceCard).toHaveTextContent("38.53 mi");
     expect(energyCard).toHaveTextContent("6,700 kcal");
-    expect(breakdownText(workoutsCard)).toEqual(["Climbing5 (36%)", "Outdoor Run5 (36%)", "Outdoor Walk4 (28%)"]);
+    expect(breakdownText(workoutsCard)).toEqual([
+      "Climbing5 (36%)",
+      "Outdoor Run5 (36%)",
+      "Outdoor Walk4 (28%)",
+    ]);
     expect(breakdownText(distanceCard)).toEqual(["Outdoor Run31.07 mi", "Outdoor Walk7.46 mi"]);
     expect(breakdownText(distanceCard).join("")).not.toContain("Climbing");
 
     await userEvent.click(distanceCard);
     expect(screen.getByText("Range averages")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { pressed: true })).toEqual([workoutsCard, durationCard, distanceCard, energyCard]);
+    expect(screen.getAllByRole("button", { pressed: true })).toEqual([
+      workoutsCard,
+      durationCard,
+      distanceCard,
+      energyCard,
+    ]);
     expect(workoutsCard).toHaveTextContent("14");
     expect(durationCard).toHaveTextContent("48m");
     expect(distanceCard).toHaveTextContent("4.28 mi");
     expect(energyCard).toHaveTextContent("479 kcal");
-    const durationRows = Array.from(document.getElementById(durationCard.getAttribute("aria-controls")!)!.children, (row) => [row.querySelector("b")?.textContent, row.querySelector(".tooltip-trigger")?.textContent]);
-    expect(durationRows).toEqual([["Climbing", "1h 00m"], ["Outdoor Run", "50m"], ["Outdoor Walk", "30m"]]);
+    const durationRows = Array.from(
+      document.getElementById(durationCard.getAttribute("aria-controls")!)!.children,
+      (row) => [
+        row.querySelector("b")?.textContent,
+        row.querySelector(".tooltip-trigger")?.textContent,
+      ],
+    );
+    expect(durationRows).toEqual([
+      ["Climbing", "1h 00m"],
+      ["Outdoor Run", "50m"],
+      ["Outdoor Walk", "30m"],
+    ]);
     expect(breakdownText(distanceCard)).toEqual(["Outdoor Run6.21 mi", "Outdoor Walk1.86 mi"]);
     expect(breakdownText(distanceCard).join("")).not.toContain("Climbing");
-    expect(breakdownText(energyCard)).toEqual(["Outdoor Run600 kcal", "Climbing500 kcal", "Outdoor Walk300 kcal"]);
+    expect(breakdownText(energyCard)).toEqual([
+      "Outdoor Run600 kcal",
+      "Climbing500 kcal",
+      "Outdoor Walk300 kcal",
+    ]);
 
     await userEvent.click(workoutsCard);
     expect(screen.getByText("Range totals")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { pressed: false })).toEqual(expect.arrayContaining([workoutsCard, durationCard, distanceCard, energyCard]));
+    expect(screen.getAllByRole("button", { pressed: false })).toEqual(
+      expect.arrayContaining([workoutsCard, durationCard, distanceCard, energyCard]),
+    );
   });
 
   test("shows total-calorie averages for the range and each workout type", async () => {
-    const outdoorWalk = { id: "33333333333333333333333333333333", key: "outdoor-walk", displayName: "Outdoor Walk" };
+    const outdoorWalk = {
+      id: "33333333333333333333333333333333",
+      key: "outdoor-walk",
+      displayName: "Outdoor Walk",
+    };
     const totalCalorieSummary = {
       range,
-      totals: { count: 2, duration: "7200", distance: { value: "10", unit: "km" }, energy: { value: "385", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10", unit: "km" } },
-      byType: [{ type: outdoorWalk, totals: { count: 2, duration: "7200", distance: { value: "10", unit: "km" }, energy: { value: "385", unit: "kcal" }, routeCount: 2, routedDistance: { value: "10", unit: "km" } } }],
+      totals: {
+        count: 2,
+        duration: "7200",
+        distance: { value: "10", unit: "km" },
+        energy: { value: "385", unit: "kcal" },
+        routeCount: 2,
+        routedDistance: { value: "10", unit: "km" },
+      },
+      byType: [
+        {
+          type: outdoorWalk,
+          totals: {
+            count: 2,
+            duration: "7200",
+            distance: { value: "10", unit: "km" },
+            energy: { value: "385", unit: "kcal" },
+            routeCount: 2,
+            routedDistance: { value: "10", unit: "km" },
+          },
+        },
+      ],
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(totalCalorieSummary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(totalCalorieSummary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const energyCard = await screen.findByRole("button", { name: /Energy.*By workout type/ });
     await userEvent.click(energyCard);
     expect(energyCard).toHaveTextContent("193 kcal");
-    expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent("Outdoor Walk193 kcal");
+    expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent(
+      "Outdoor Walk193 kcal",
+    );
   });
 
   test("rounds calories everywhere while omitting kcal only from individual workout values", async () => {
     const calorieTotals = { ...totals, energy: { value: "450.75", unit: "kcal" } };
-    const calorieSummary = { ...summary, totals: calorieTotals, byType: [{ type: running, totals: calorieTotals }] };
+    const calorieSummary = {
+      ...summary,
+      totals: calorieTotals,
+      byType: [{ type: running, totals: calorieTotals }],
+    };
     const calorieWorkout = { ...workout, calories: { value: "450.75", unit: "kcal" } };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(calorieSummary))
-      : Promise.resolve(json(workoutPage(1, [calorieWorkout]))));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(calorieSummary))
+        : Promise.resolve(json(workoutPage(1, [calorieWorkout]))),
+    );
     renderSummary({ workoutColumns: ["date", "calories"] });
 
     const table = await screen.findByRole("table");
-    const calorieCell = within(table).getAllByRole("row")[1].querySelector<HTMLElement>(".workout-cell--calories")!;
+    const calorieCell = within(table)
+      .getAllByRole("row")[1]
+      .querySelector<HTMLElement>(".workout-cell--calories")!;
     expect(calorieCell.querySelector(".tooltip-trigger")).toHaveTextContent("451");
-    expect(calorieCell.querySelector(".tooltip-content")).toHaveTextContent("451 kcal total | 400 kcal active");
+    expect(calorieCell.querySelector(".tooltip-content")).toHaveTextContent(
+      "451 kcal total | 400 kcal active",
+    );
 
     const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
     expect(energyCard).toHaveTextContent("451 kcal");
     fireEvent.pointerEnter(energyCard, { pointerType: "mouse" });
-    expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent("Running451 kcal");
+    expect(document.getElementById(energyCard.getAttribute("aria-controls")!)).toHaveTextContent(
+      "Running451 kcal",
+    );
 
-    const mobileRow = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
+    const mobileRow = document.querySelector<HTMLButtonElement>(
+      ".mobile-workout-summary > button:first-child",
+    )!;
     fireEvent.click(mobileRow);
-    const calorieDetail = within(document.getElementById(mobileRow.getAttribute("aria-controls")!)!).getByText("Calories").closest("div")!;
+    const calorieDetail = within(document.getElementById(mobileRow.getAttribute("aria-controls")!)!)
+      .getByText("Calories")
+      .closest("div")!;
     expect(calorieDetail.querySelector(".tooltip-trigger")).toHaveTextContent("451");
-    expect(calorieDetail.querySelector(".tooltip-content")).toHaveTextContent("451 kcal total | 400 kcal active");
+    expect(calorieDetail.querySelector(".tooltip-content")).toHaveTextContent(
+      "451 kcal total | 400 kcal active",
+    );
   });
 
   test("shows total calories, rounded heart rate, split pace, and elevation details", async () => {
@@ -513,17 +828,36 @@ describe("Summary", () => {
       minimumElevation: { value: "2171.0904", unit: "m" },
       maximumElevation: { value: "3304.8264", unit: "m" },
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage(1, [detailed]))));
-    renderSummary({ workoutColumns: ["duration", "distance", "pace", "calories", "heartRate", "elevationGain"] });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage(1, [detailed]))),
+    );
+    renderSummary({
+      workoutColumns: ["duration", "distance", "pace", "calories", "heartRate", "elevationGain"],
+    });
     const table = await screen.findByRole("table");
     expect(within(table).getByRole("columnheader", { name: /Elev gain/ })).toBeInTheDocument();
     expect(table.querySelector(".workout-cell--duration")).toHaveTextContent("9h 01m");
-    expect(table.querySelector(".workout-cell--distance .tooltip-trigger")).toHaveTextContent("10.62 mi");
-    expect(table.querySelector(".workout-cell--pace .tooltip-trigger")).toHaveTextContent("29m 50s");
-    expect(table.querySelector(".workout-cell--calories .tooltip-trigger")).toHaveTextContent("2,317");
-    expect(table.querySelector(".workout-cell--heartRate .tooltip-trigger")).toHaveTextContent("116 bpm");
-    expect(table.querySelector(".workout-cell--elevationGain .tooltip-trigger")).toHaveTextContent("2,999 ft");
-    const tooltips = Array.from(table.querySelectorAll<HTMLElement>("tbody .tooltip-trigger"), (trigger) => document.getElementById(trigger.getAttribute("aria-describedby")!)?.textContent);
+    expect(table.querySelector(".workout-cell--distance .tooltip-trigger")).toHaveTextContent(
+      "10.62 mi",
+    );
+    expect(table.querySelector(".workout-cell--pace .tooltip-trigger")).toHaveTextContent(
+      "29m 50s",
+    );
+    expect(table.querySelector(".workout-cell--calories .tooltip-trigger")).toHaveTextContent(
+      "2,317",
+    );
+    expect(table.querySelector(".workout-cell--heartRate .tooltip-trigger")).toHaveTextContent(
+      "116 bpm",
+    );
+    expect(table.querySelector(".workout-cell--elevationGain .tooltip-trigger")).toHaveTextContent(
+      "2,999 ft",
+    );
+    const tooltips = Array.from(
+      table.querySelectorAll<HTMLElement>("tbody .tooltip-trigger"),
+      (trigger) => document.getElementById(trigger.getAttribute("aria-describedby")!)?.textContent,
+    );
     expect(tooltips).toEqual([
       "9:01:23 | 7:36a - 7:47p (12:11:29)",
       "17.09 km",
@@ -542,14 +876,22 @@ describe("Summary", () => {
       elevationGain: { value: "52.4256", unit: "m" },
       heartRate: null,
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(summary))
-      : Promise.resolve(json(workoutPage(1, [shortWorkout]))));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage(1, [shortWorkout]))),
+    );
     renderSummary({ workoutColumns: ["duration", "calories", "heartRate", "elevationGain"] });
     const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
-    const durationLane = row.querySelector<HTMLElement>(".workout-cell--duration .workout-value-lane")!;
-    const calorieLane = row.querySelector<HTMLElement>(".workout-cell--calories .workout-value-lane")!;
-    const elevationLane = row.querySelector<HTMLElement>(".workout-cell--elevationGain .workout-value-lane")!;
+    const durationLane = row.querySelector<HTMLElement>(
+      ".workout-cell--duration .workout-value-lane",
+    )!;
+    const calorieLane = row.querySelector<HTMLElement>(
+      ".workout-cell--calories .workout-value-lane",
+    )!;
+    const elevationLane = row.querySelector<HTMLElement>(
+      ".workout-cell--elevationGain .workout-value-lane",
+    )!;
     expect(durationLane).toHaveAttribute("data-width-sample", "9h 01m");
     expect(durationLane).toHaveTextContent("39m");
     expect(calorieLane).toHaveAttribute("data-width-sample", "2,502");
@@ -559,7 +901,10 @@ describe("Summary", () => {
     const unavailable = row.querySelector<HTMLElement>(".workout-cell--heartRate")!;
     expect(unavailable).toHaveTextContent("n/a");
     expect(unavailable).not.toHaveTextContent("Unavailable");
-    expect(unavailable.querySelector(".workout-value-lane")).toHaveAttribute("data-width-sample", "121 bpm");
+    expect(unavailable.querySelector(".workout-value-lane")).toHaveAttribute(
+      "data-width-sample",
+      "121 bpm",
+    );
     expect(unavailable.querySelector(".workout-table-na")).toHaveTextContent("n/a");
   });
 
@@ -568,16 +913,32 @@ describe("Summary", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) { workoutRequests.push(path); return Promise.resolve(json(workoutPage())); }
+      if (path.startsWith("/api/workouts?")) {
+        workoutRequests.push(path);
+        return Promise.resolve(json(workoutPage()));
+      }
       throw new Error(`Unhandled ${path}`);
     });
     renderSummary({ workoutColumns: ["duration", "date", "calories"] });
     let table = await screen.findByRole("table");
-    expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Date▼", "Duration▲ ▼", "Calories▲ ▼", "Actions"]);
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Date▼", "Duration▲ ▼", "Calories▲ ▼", "Actions"]);
     await userEvent.click(within(table).getByRole("button", { name: /Duration/ }));
-    await waitFor(() => expect(workoutRequests.some((path) => new URL(path, "https://test").searchParams.get("sort") === "duration:desc")).toBe(true));
+    await waitFor(() =>
+      expect(
+        workoutRequests.some(
+          (path) => new URL(path, "https://test").searchParams.get("sort") === "duration:desc",
+        ),
+      ).toBe(true),
+    );
     table = await screen.findByRole("table");
-    expect(within(table).getByText("Duration").closest("th")).toHaveAttribute("aria-sort", "descending");
+    expect(within(table).getByText("Duration").closest("th")).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
   });
 
   test("uses each column's preferred initial direction and toggles the active column", async () => {
@@ -585,15 +946,35 @@ describe("Summary", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) { workoutRequests.push(path); return Promise.resolve(json(workoutPage())); }
+      if (path.startsWith("/api/workouts?")) {
+        workoutRequests.push(path);
+        return Promise.resolve(json(workoutPage()));
+      }
       throw new Error(`Unhandled ${path}`);
     });
-    renderSummary({ workoutColumns: ["date", "type", "duration", "distance", "pace", "calories", "heartRate", "elevationGain"] });
+    renderSummary({
+      workoutColumns: [
+        "date",
+        "type",
+        "duration",
+        "distance",
+        "pace",
+        "calories",
+        "heartRate",
+        "elevationGain",
+      ],
+    });
     const expected = [
-      ["Type", "type:asc"], ["Duration", "duration:desc"], ["Distance", "distance:desc"], ["Pace", "pace:asc"],
-      ["Calories", "calories:desc"], ["Heart rate", "heartRate:desc"], ["Elev gain", "elevationGain:desc"],
+      ["Type", "type:asc"],
+      ["Duration", "duration:desc"],
+      ["Distance", "distance:desc"],
+      ["Pace", "pace:asc"],
+      ["Calories", "calories:desc"],
+      ["Heart rate", "heartRate:desc"],
+      ["Elev gain", "elevationGain:desc"],
     ] as const;
-    const latestSort = () => new URL(workoutRequests.at(-1)!, "https://test").searchParams.get("sort");
+    const latestSort = () =>
+      new URL(workoutRequests.at(-1)!, "https://test").searchParams.get("sort");
     for (const [label, requestedSort] of expected) {
       await userEvent.click(await screen.findByRole("button", { name: label }));
       await waitFor(() => expect(latestSort()).toBe(requestedSort));
@@ -605,35 +986,78 @@ describe("Summary", () => {
   });
 
   test("uses exact sort glyphs and keeps fixed weighted columns stable across sorting", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary({ workoutColumns: ["calories", "duration", "date", "type"] });
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader");
-    const indicators = headers.map((header) => header.querySelector<HTMLElement>(".sort-indicator")?.textContent);
-    const widths = Array.from(table.querySelectorAll<HTMLTableColElement>("col"), (column) => column.style.width);
+    const indicators = headers.map(
+      (header) => header.querySelector<HTMLElement>(".sort-indicator")?.textContent,
+    );
+    const widths = Array.from(
+      table.querySelectorAll<HTMLTableColElement>("col"),
+      (column) => column.style.width,
+    );
 
-    expect(headers.map((header) => header.textContent)).toEqual(["Date▼", "Type▲ ▼", "Duration▲ ▼", "Calories▲ ▼", "Actions"]);
+    expect(headers.map((header) => header.textContent)).toEqual([
+      "Date▼",
+      "Type▲ ▼",
+      "Duration▲ ▼",
+      "Calories▲ ▼",
+      "Actions",
+    ]);
     expect(indicators).toEqual(["▼", "▲ ▼", "▲ ▼", "▲ ▼", undefined]);
-    expect(headers.map((header) => header.getAttribute("aria-sort"))).toEqual(["descending", "none", "none", "none", null]);
+    expect(headers.map((header) => header.getAttribute("aria-sort"))).toEqual([
+      "descending",
+      "none",
+      "none",
+      "none",
+      null,
+    ]);
     expect(widths).toEqual(["37.037%", "25.9259%", "18.5185%", "18.5186%", ""]);
-    expect(widths.slice(0, -1).reduce((total, width) => total + Number.parseFloat(width), 0)).toBe(100);
+    expect(widths.slice(0, -1).reduce((total, width) => total + Number.parseFloat(width), 0)).toBe(
+      100,
+    );
 
     await userEvent.click(within(table).getByRole("button", { name: "Type" }));
     await waitFor(() => expect(headers[1]).toHaveAttribute("aria-sort", "ascending"));
-    expect(headers.map((header) => header.querySelector<HTMLElement>(".sort-indicator")?.textContent)).toEqual(["▲ ▼", "▲", "▲ ▼", "▲ ▼", undefined]);
-    expect(Array.from(table.querySelectorAll<HTMLTableColElement>("col"), (column) => column.style.width)).toEqual(widths);
+    expect(
+      headers.map((header) => header.querySelector<HTMLElement>(".sort-indicator")?.textContent),
+    ).toEqual(["▲ ▼", "▲", "▲ ▼", "▲ ▼", undefined]);
+    expect(
+      Array.from(
+        table.querySelectorAll<HTMLTableColElement>("col"),
+        (column) => column.style.width,
+      ),
+    ).toEqual(widths);
   });
 
   test("retains the same full-opacity table during a deferred sort and swaps rows on response", async () => {
-    const walking = { id: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", key: "walking", displayName: "Walking" };
-    const secondWorkout = { ...workout, id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", sourceId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", type: walking };
+    const walking = {
+      id: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      key: "walking",
+      displayName: "Walking",
+    };
+    const secondWorkout = {
+      ...workout,
+      id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+      sourceId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      type: walking,
+    };
     let resolveSort!: (response: Response) => void;
-    const deferredSort = new Promise<Response>((resolve) => { resolveSort = resolve; });
+    const deferredSort = new Promise<Response>((resolve) => {
+      resolveSort = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const sort = new URL(path, "https://test").searchParams.get("sort");
-      return sort === "type:asc" ? deferredSort : Promise.resolve(json(workoutPage(1, [workout, secondWorkout])));
+      return sort === "type:asc"
+        ? deferredSort
+        : Promise.resolve(json(workoutPage(1, [workout, secondWorkout])));
     });
     renderSummary({ workoutColumns: ["date", "type"] });
     const table = await screen.findByRole("table");
@@ -649,14 +1073,20 @@ describe("Summary", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Sorting by Type ascending...");
 
     resolveSort(json(workoutPage(1, [secondWorkout, workout])));
-    await waitFor(() => expect(Array.from(table.querySelectorAll("tbody .workout-cell--type"), (cell) => cell.textContent)).toEqual(["Walking", "Running"]));
+    await waitFor(() =>
+      expect(
+        Array.from(table.querySelectorAll("tbody .workout-cell--type"), (cell) => cell.textContent),
+      ).toEqual(["Walking", "Running"]),
+    );
     expect(table.closest(".workout-results")).toHaveAttribute("aria-busy", "false");
     expect(await screen.findByRole("status")).toHaveTextContent("Sorted by Type ascending.");
   });
 
   test("retains page 2 only while a new sort resets to a deferred page 1", async () => {
     let resolveSort!: (response: Response) => void;
-    const deferredSort = new Promise<Response>((resolve) => { resolveSort = resolve; });
+    const deferredSort = new Promise<Response>((resolve) => {
+      resolveSort = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
@@ -680,20 +1110,29 @@ describe("Summary", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 
     resolveSort(json(workoutPage(1)));
-    expect(await screen.findByText("Page 1 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Page 1 of 2", { selector: ".pagination span" }),
+    ).toBeInTheDocument();
   });
 
   test("updates live sort progress for rapid selections and announces only the active completion", async () => {
     let resolveAscending!: (response: Response) => void;
     let resolveDescending!: (response: Response) => void;
     let ascendingSignal: AbortSignal | null | undefined;
-    const ascending = new Promise<Response>((resolve) => { resolveAscending = resolve; });
-    const descending = new Promise<Response>((resolve) => { resolveDescending = resolve; });
+    const ascending = new Promise<Response>((resolve) => {
+      resolveAscending = resolve;
+    });
+    const descending = new Promise<Response>((resolve) => {
+      resolveDescending = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const requestedSort = new URL(path, "https://test").searchParams.get("sort");
-      if (requestedSort === "type:asc") { ascendingSignal = init?.signal; return ascending; }
+      if (requestedSort === "type:asc") {
+        ascendingSignal = init?.signal;
+        return ascending;
+      }
       if (requestedSort === "type:desc") return descending;
       return Promise.resolve(json(workoutPage()));
     });
@@ -711,16 +1150,21 @@ describe("Summary", () => {
     resolveAscending(json(workoutPage()));
     expect(screen.getByRole("status")).toHaveTextContent("Sorting by Type descending...");
     resolveDescending(json(workoutPage()));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Sorted by Type descending."));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Sorted by Type descending."),
+    );
     expect(screen.queryByText("Sorted by Type ascending.")).not.toBeInTheDocument();
   });
 
   test("does not retain workout rows when the date range changes", async () => {
     let resolveRange!: (response: Response) => void;
-    const deferredRange = new Promise<Response>((resolve) => { resolveRange = resolve; });
+    const deferredRange = new Promise<Response>((resolve) => {
+      resolveRange = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
-      if (path === "/api/me/preferences" && init?.method === "PATCH") return Promise.resolve(json({ ...preferences, dateRange: "last7Days" }));
+      if (path === "/api/me/preferences" && init?.method === "PATCH")
+        return Promise.resolve(json({ ...preferences, dateRange: "last7Days" }));
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       if (path.includes("dateRangeEnum=last7Days")) return deferredRange;
       return Promise.resolve(json(workoutPage()));
@@ -732,7 +1176,10 @@ describe("Summary", () => {
     await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
 
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(await screen.findByText("Loading workouts...", {}, { timeout: 1500 })).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Loading workouts...", {}, { timeout: 1500 })).toHaveAttribute(
+      "role",
+      "status",
+    );
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.queryByText("No workouts in this range.")).not.toBeInTheDocument();
     resolveRange(json(workoutPage()));
@@ -740,20 +1187,40 @@ describe("Summary", () => {
   });
 
   test("uses server pagination and mobile rows expose expansion semantics and details", async () => {
-    const pageTwoWorkout = { ...workout, id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", sourceId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", type: { ...workout.type, key: "walking", displayName: "Walking" } };
+    const pageTwoWorkout = {
+      ...workout,
+      id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+      sourceId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      type: { ...workout.type, key: "walking", displayName: "Walking" },
+    };
     let resolvePageTwo!: (response: Response) => void;
-    const deferredPageTwo = new Promise<Response>((resolve) => { resolvePageTwo = resolve; });
+    const deferredPageTwo = new Promise<Response>((resolve) => {
+      resolvePageTwo = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const requestedPage = new URL(path, "https://test").searchParams.get("page");
-      return requestedPage === "2" ? deferredPageTwo : Promise.resolve(json(workoutPage(1, [workout])));
+      return requestedPage === "2"
+        ? deferredPageTwo
+        : Promise.resolve(json(workoutPage(1, [workout])));
     });
     renderSummary();
     const next = await screen.findByRole("button", { name: "Next" });
-    const table = screen.getByRole("table"), rows = within(table).getAllByRole("row").slice(1);
+    const table = screen.getByRole("table"),
+      rows = within(table).getAllByRole("row").slice(1);
     const results = table.closest<HTMLElement>(".workout-results")!;
-    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 900, height: 500, top: 0, right: 900, bottom: 500, left: 0, toJSON: () => ({}) });
+    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 900,
+      height: 500,
+      top: 0,
+      right: 900,
+      bottom: 500,
+      left: 0,
+      toJSON: () => ({}),
+    });
     const scrollTo = vi.spyOn(window, "scrollTo");
     await userEvent.click(next);
     expect(screen.getByRole("table")).toBe(table);
@@ -762,10 +1229,14 @@ describe("Summary", () => {
     expect(results).toHaveStyle({ minHeight: "500px" });
     expect(screen.queryByText("Loading workouts...")).not.toBeInTheDocument();
     resolvePageTwo(json(workoutPage(2, [pageTwoWorkout])));
-    expect(await screen.findByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Page 2 of 2", { selector: ".pagination span" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(within(table).getByText("Walking")).toBeVisible());
     await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(0, 0));
-    const mobileButton = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
+    const mobileButton = document.querySelector<HTMLButtonElement>(
+      ".mobile-workout-summary > button:first-child",
+    )!;
     const mobileCard = mobileButton.closest(".mobile-workout")!;
     expect(mobileButton).toHaveAttribute("aria-expanded", "false");
     expect(mobileCard).not.toHaveClass("is-expanded");
@@ -787,34 +1258,90 @@ describe("Summary", () => {
     const provenance = {
       workoutId: workout.id,
       items: [
-        { id: "11111111111111111111111111111111", kind: "created", jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1", sourceId: workout.sourceId, sourceName: "Archived NFS", sourceType: "health-auto-export-local", sourceFile: "2026-08-05.json", warnings: [], importedAt: "2026-08-05T15:00:00Z" },
-        { id: "22222222222222222222222222222222", kind: "updated", jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2", sourceId: workout.sourceId, sourceName: "Archived NFS", sourceType: "health-auto-export-local", sourceFile: "2026-08-05.json", warnings: [{ code: "invalid_optional_route_value", field: "route_speed", routePoint: 4 }], importedAt: "2026-08-06T15:00:00Z" },
-        { id: "33333333333333333333333333333333", kind: "matched_unchanged", jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3", sourceId: workout.sourceId, sourceName: "Archived NFS", sourceType: "health-auto-export-local", sourceFile: "2026-08-05.json", warnings: [], importedAt: "2026-08-07T15:00:00Z" },
+        {
+          id: "11111111111111111111111111111111",
+          kind: "created",
+          jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1",
+          sourceId: workout.sourceId,
+          sourceName: "Archived NFS",
+          sourceType: "health-auto-export-local",
+          sourceFile: "2026-08-05.json",
+          warnings: [],
+          importedAt: "2026-08-05T15:00:00Z",
+        },
+        {
+          id: "22222222222222222222222222222222",
+          kind: "updated",
+          jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2",
+          sourceId: workout.sourceId,
+          sourceName: "Archived NFS",
+          sourceType: "health-auto-export-local",
+          sourceFile: "2026-08-05.json",
+          warnings: [{ code: "invalid_optional_route_value", field: "route_speed", routePoint: 4 }],
+          importedAt: "2026-08-06T15:00:00Z",
+        },
+        {
+          id: "33333333333333333333333333333333",
+          kind: "matched_unchanged",
+          jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3",
+          sourceId: workout.sourceId,
+          sourceName: "Archived NFS",
+          sourceType: "health-auto-export-local",
+          sourceFile: "2026-08-05.json",
+          warnings: [],
+          importedAt: "2026-08-07T15:00:00Z",
+        },
       ],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
-      if (path.includes("/provenance")) { provenanceRequests.push({ path, signal: init?.signal }); return Promise.resolve(json(provenance)); }
+      if (path.includes("/provenance")) {
+        provenanceRequests.push({ path, signal: init?.signal });
+        return Promise.resolve(json(provenance));
+      }
       throw new Error(`Unhandled ${path}`);
     });
     renderSummary();
     const user = userEvent.setup();
-    const triggers = await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" });
+    const triggers = await screen.findAllByRole("button", {
+      name: "Actions for Running on 2026-08-05",
+    });
     expect(triggers).toHaveLength(2);
     expect(triggers[0].closest("td")).toHaveClass("workout-actions-cell");
     expect(triggers[1].parentElement).toHaveClass("mobile-workout-summary");
-    expect(triggers[1].closest(".mobile-workout")?.querySelector(".mobile-workout-details")?.contains(triggers[1])).toBe(false);
+    expect(
+      triggers[1]
+        .closest(".mobile-workout")
+        ?.querySelector(".mobile-workout-details")
+        ?.contains(triggers[1]),
+    ).toBe(false);
 
     await user.click(triggers[0]);
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["View provenance", "Export GeoJSON", "Export points", "Delete workout"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "View provenance",
+      "Export GeoJSON",
+      "Export points",
+      "Delete workout",
+    ]);
     await user.click(screen.getByRole("menuitem", { name: "View provenance" }));
     const dialog = await screen.findByRole("dialog", { name: "Workout provenance" });
-    expect(within(dialog).getByText("Running on 2026-08-05. Full import history, oldest first.")).toBeInTheDocument();
-    expect(within(dialog).getByText("Workout provenance").closest(".provenance-dialog-header")).toBeInTheDocument();
-    expect(dialog.querySelector(".provenance-timeline")?.closest(".provenance-dialog-body")).toBeInTheDocument();
-    expect(within(dialog).getAllByRole("listitem", { hidden: false }).filter((item) => item.parentElement?.classList.contains("provenance-timeline")).map((item) => item.querySelector(".provenance-event-heading strong")?.textContent)).toEqual(["Imported", "Updated", "Matched unchanged"]);
+    expect(
+      within(dialog).getByText("Running on 2026-08-05. Full import history, oldest first."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Workout provenance").closest(".provenance-dialog-header"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.querySelector(".provenance-timeline")?.closest(".provenance-dialog-body"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog)
+        .getAllByRole("listitem", { hidden: false })
+        .filter((item) => item.parentElement?.classList.contains("provenance-timeline"))
+        .map((item) => item.querySelector(".provenance-event-heading strong")?.textContent),
+    ).toEqual(["Imported", "Updated", "Matched unchanged"]);
     expect(dialog).toHaveTextContent("Archived NFS");
     expect(dialog).toHaveTextContent("2026-08-05.json");
     expect(dialog).toHaveTextContent("Source typehealth-auto-export-local");
@@ -834,35 +1361,59 @@ describe("Summary", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) { workoutReads += 1; return Promise.resolve(json(workoutPage())); }
+      if (path.startsWith("/api/workouts?")) {
+        workoutReads += 1;
+        return Promise.resolve(json(workoutPage()));
+      }
       if (path.includes("/provenance")) {
         provenanceAttempts += 1;
-        return Promise.resolve(json({ title: provenanceAttempts === 1 ? "private database detail" : "Not Found" }, provenanceAttempts === 1 ? 503 : 404));
+        return Promise.resolve(
+          json(
+            { title: provenanceAttempts === 1 ? "private database detail" : "Not Found" },
+            provenanceAttempts === 1 ? 503 : 404,
+          ),
+        );
       }
       throw new Error(`Unhandled ${path}`);
     });
     renderSummary();
     const user = userEvent.setup();
-    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "View provenance" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Provenance is unavailable");
     expect(alert).not.toHaveTextContent("private database detail");
     await user.click(within(alert).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Workout provenance" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Workout provenance" })).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(workoutReads).toBeGreaterThan(1));
     expect(trigger).toHaveFocus();
   });
 
   test("puts Show on map first for routed workouts and passes the compact workout ID", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
     const showOnMap = vi.fn();
     renderSummary({}, vi.fn(), showOnMap);
     const user = userEvent.setup();
-    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
     await user.click(trigger);
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Show on map", "View provenance", "Export GeoJSON", "Export points", "Delete workout"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Show on map",
+      "View provenance",
+      "Export GeoJSON",
+      "Export points",
+      "Delete workout",
+    ]);
     await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
     expect(showOnMap).toHaveBeenCalledWith(workout.id);
   });
@@ -873,32 +1424,66 @@ describe("Summary", () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
     let clicked: { download: string; href: string } | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
       clicked = { download: this.download, href: this.href };
     });
-    const exportRequests: Array<{ path: string; accept: string | null; credentials?: RequestCredentials }> = [];
+    const exportRequests: Array<{
+      path: string;
+      accept: string | null;
+      credentials?: RequestCredentials;
+    }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
       if (path.endsWith("/route") || path.endsWith("/route/points")) {
-        exportRequests.push({ path, accept: new Headers(init?.headers).get("Accept"), credentials: init?.credentials });
+        exportRequests.push({
+          path,
+          accept: new Headers(init?.headers).get("Accept"),
+          credentials: init?.credentials,
+        });
         const geoJSON = path.endsWith("/route");
-        return Promise.resolve(new Response(JSON.stringify({ schemaVersion: 1, workoutId: workout.id, workoutType: "Running", startedAt: workout.startedAt, endedAt: workout.endedAt, points: [] }), {
-          status: 200,
-          headers: { "Content-Type": geoJSON ? "application/geo+json" : "application/json", "Content-Disposition": `attachment; filename="2026-08-05-running.${geoJSON ? "geojson" : "json"}"` },
-        }));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              workoutId: workout.id,
+              workoutType: "Running",
+              startedAt: workout.startedAt,
+              endedAt: workout.endedAt,
+              points: [],
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": geoJSON ? "application/geo+json" : "application/json",
+                "Content-Disposition": `attachment; filename="2026-08-05-running.${geoJSON ? "geojson" : "json"}"`,
+              },
+            },
+          ),
+        );
       }
       throw new Error(`Unhandled ${path}`);
     });
     renderSummary();
     const user = userEvent.setup();
-    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Export GeoJSON" }));
     await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
-    expect(clicked).toEqual({ download: "2026-08-05-running.geojson", href: "blob:workout-points" });
-    expect(exportRequests[0]).toEqual({ path: `/api/workouts/${workout.id}/route`, accept: "application/geo+json, application/problem+json", credentials: "same-origin" });
+    expect(clicked).toEqual({
+      download: "2026-08-05-running.geojson",
+      href: "blob:workout-points",
+    });
+    expect(exportRequests[0]).toEqual({
+      path: `/api/workouts/${workout.id}/route`,
+      accept: "application/geo+json, application/problem+json",
+      credentials: "same-origin",
+    });
 
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Export points" }));
@@ -907,24 +1492,39 @@ describe("Summary", () => {
     expect(clicked).toEqual({ download: "2026-08-05-running.json", href: "blob:workout-points" });
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
     expect(document.querySelector('a[download="2026-08-05-running.json"]')).toBeNull();
-    expect(exportRequests[1]).toEqual({ path: `/api/workouts/${workout.id}/route/points`, accept: "application/json, application/problem+json", credentials: "same-origin" });
-    expect(screen.queryByText("Workout points could not be exported. Try again.")).not.toBeInTheDocument();
+    expect(exportRequests[1]).toEqual({
+      path: `/api/workouts/${workout.id}/route/points`,
+      accept: "application/json, application/problem+json",
+      credentials: "same-origin",
+    });
+    expect(
+      screen.queryByText("Workout points could not be exported. Try again."),
+    ).not.toBeInTheDocument();
   });
 
   test("hides route exports without points and never creates a partial failed download", async () => {
     const createObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
-    const unrouted = { ...workout, id: "99999999999999999999999999999999", routeAvailable: false, routePointCount: 0 };
+    const unrouted = {
+      ...workout,
+      id: "99999999999999999999999999999999",
+      routeAvailable: false,
+      routePointCount: 0,
+    };
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage(1, [workout, unrouted])));
-      if (path.endsWith("/route/points")) return Promise.resolve(json({ title: "private export failure" }, 503));
+      if (path.startsWith("/api/workouts?"))
+        return Promise.resolve(json(workoutPage(1, [workout, unrouted])));
+      if (path.endsWith("/route/points"))
+        return Promise.resolve(json({ title: "private export failure" }, 503));
       throw new Error(`Unhandled ${path}`);
     });
     renderSummary();
     const user = userEvent.setup();
-    const triggers = await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" });
+    const triggers = await screen.findAllByRole("button", {
+      name: "Actions for Running on 2026-08-05",
+    });
     await user.click(triggers[1]);
     expect(screen.getByRole("menuitem", { name: "View provenance" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Export GeoJSON" })).not.toBeInTheDocument();
@@ -940,87 +1540,215 @@ describe("Summary", () => {
   });
 
   test("confirms and optimistically hides an individual workout before durable deletion is accepted", async () => {
+    const onWorkoutsDeleted = vi.fn();
     let resolveDelete!: (response: Response) => void;
-    const deferredDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
+    const deferredDelete = new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    });
     let deleted = false;
-    let deletionRequest: { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined } | undefined;
+    let deletionRequest:
+      | { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined }
+      | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 1, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] } : summary));
-      if (path.startsWith("/api/workouts?")) return Promise.resolve(json(deleted
-        ? { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }
-        : { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 } }));
+      if (path.startsWith("/api/summary?"))
+        return Promise.resolve(
+          json(
+            deleted
+              ? {
+                  ...summary,
+                  totals: {
+                    count: 1,
+                    duration: "0",
+                    distance: { value: "0", unit: "km" },
+                    energy: { value: "0", unit: "kcal" },
+                    routeCount: 0,
+                    routedDistance: { value: "0", unit: "km" },
+                  },
+                  byType: [],
+                }
+              : summary,
+          ),
+        );
+      if (path.startsWith("/api/workouts?"))
+        return Promise.resolve(
+          json(
+            deleted
+              ? {
+                  ...workoutPage(),
+                  pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+                  items: [],
+                }
+              : {
+                  ...workoutPage(),
+                  pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+                },
+          ),
+        );
       if (path === `/api/workouts/${workout.id}`) {
-        deletionRequest = { path, method: init?.method, csrf: new Headers(init?.headers).get("X-CSRF-Token"), body: init?.body };
+        deletionRequest = {
+          path,
+          method: init?.method,
+          csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+          body: init?.body,
+        };
         return deferredDelete;
       }
       throw new Error(`Unhandled ${path}`);
     });
-    renderSummary();
+    renderSummary({}, undefined, undefined, onWorkoutsDeleted);
     const user = userEvent.setup();
-    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
     const dialog = screen.getByRole("dialog", { name: "Delete workout?" });
     expect(dialog).toHaveTextContent("Delete Running on Aug 5, 2026?");
-    expect(dialog).toHaveTextContent("This workout will be hidden from view immediately. All associated data, including route, import history, and derived data, will be purged by a background task. This cannot be undone. Are you sure?");
+    expect(dialog).toHaveTextContent(
+      "This workout will be hidden from view immediately. All associated data, including route, import history, and derived data, will be purged by a background task. This cannot be undone. Are you sure?",
+    );
     expect(dialog).toHaveClass("single-deletion-dialog");
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
-    expect(within(dialog).getAllByRole("button").map((button) => button.textContent)).toEqual(["Cancel", "Yes"]);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
+    expect(
+      within(dialog)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Cancel", "Yes"]);
     await user.click(within(dialog).getByRole("button", { name: "Yes" }));
-    expect(deletionRequest).toEqual({ path: `/api/workouts/${workout.id}`, method: "DELETE", csrf: "csrf-summary", body: undefined });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Actions for Running on 2026-08-05" })).not.toBeInTheDocument());
+    expect(deletionRequest).toEqual({
+      path: `/api/workouts/${workout.id}`,
+      method: "DELETE",
+      csrf: "csrf-summary",
+      body: undefined,
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Actions for Running on 2026-08-05" }),
+      ).not.toBeInTheDocument(),
+    );
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("1");
     expect(document.querySelectorAll(".aggregate-card strong")[1]).toHaveTextContent("0m");
+    expect(onWorkoutsDeleted).not.toHaveBeenCalled();
 
     deleted = true;
-    resolveDelete(json({ jobId: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", status: "queued", reused: false, targetCount: 1 }, 202));
+    resolveDelete(
+      json(
+        {
+          jobId: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+          status: "queued",
+          reused: false,
+          targetCount: 1,
+        },
+        202,
+      ),
+    );
     await waitFor(() => expect(document.getElementById("workouts-heading")).toHaveFocus());
-    expect(screen.queryByText("Deletion queued. The workout is hidden now.")).not.toBeInTheDocument();
+    expect(onWorkoutsDeleted).toHaveBeenCalledWith({ workoutIds: [workout.id] });
+    expect(
+      screen.queryByText("Deletion queued. The workout is hidden now."),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "View deletion job" })).not.toBeInTheDocument();
   });
 
   test("rolls back an individual deletion when durable enqueue fails", async () => {
+    const onWorkoutsDeleted = vi.fn();
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) return Promise.resolve(json({ ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 } }));
-      if (path === `/api/workouts/${workout.id}`) return Promise.resolve(json({ title: "private deletion detail" }, 503));
+      if (path.startsWith("/api/workouts?"))
+        return Promise.resolve(
+          json({
+            ...workoutPage(),
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+          }),
+        );
+      if (path === `/api/workouts/${workout.id}`)
+        return Promise.resolve(json({ title: "private deletion detail" }, 503));
       throw new Error(`Unhandled ${path}`);
     });
-    renderSummary();
+    renderSummary({}, undefined, undefined, onWorkoutsDeleted);
     const user = userEvent.setup();
-    const trigger = (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0];
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
     await user.click(screen.getByRole("button", { name: "Yes" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Nothing was changed");
     expect(alert).not.toHaveTextContent("private deletion detail");
+    expect(onWorkoutsDeleted).not.toHaveBeenCalled();
     expect(alert).toHaveFocus();
     expect(screen.getByRole("dialog", { name: "Delete workout?" })).toBeInTheDocument();
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("2");
-    expect(document.querySelectorAll('.workout-action-trigger[aria-label="Actions for Running on 2026-08-05"]')).toHaveLength(2);
+    expect(
+      document.querySelectorAll(
+        '.workout-action-trigger[aria-label="Actions for Running on 2026-08-05"]',
+      ),
+    ).toHaveLength(2);
   });
 
   test("requires exact DELETE before optimistically hiding an explicit range", async () => {
+    const onWorkoutsDeleted = vi.fn();
     let resolveDelete!: (response: Response) => void;
-    const deferredDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
+    const deferredDelete = new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    });
     let deleted = false;
-    let request: { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined } | undefined;
+    let request:
+      | { path: string; method?: string; csrf: string | null; body: BodyInit | null | undefined }
+      | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) return Promise.resolve(json(deleted ? { ...summary, totals: { count: 0, duration: "0", distance: { value: "0", unit: "km" }, energy: { value: "0", unit: "kcal" }, routeCount: 0, routedDistance: { value: "0", unit: "km" } }, byType: [] } : summary));
+      if (path.startsWith("/api/summary?"))
+        return Promise.resolve(
+          json(
+            deleted
+              ? {
+                  ...summary,
+                  totals: {
+                    count: 0,
+                    duration: "0",
+                    distance: { value: "0", unit: "km" },
+                    energy: { value: "0", unit: "kcal" },
+                    routeCount: 0,
+                    routedDistance: { value: "0", unit: "km" },
+                  },
+                  byType: [],
+                }
+              : summary,
+          ),
+        );
       if (path === "/api/workouts?startDate=2026-08-01&endDate=2026-08-31") {
-        request = { path, method: init?.method, csrf: new Headers(init?.headers).get("X-CSRF-Token"), body: init?.body };
+        request = {
+          path,
+          method: init?.method,
+          csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+          body: init?.body,
+        };
         return deferredDelete;
       }
-      if (path.startsWith("/api/workouts?")) return Promise.resolve(json(deleted
-        ? { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }
-        : { ...workoutPage(), pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 } }));
+      if (path.startsWith("/api/workouts?"))
+        return Promise.resolve(
+          json(
+            deleted
+              ? {
+                  ...workoutPage(),
+                  pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+                  items: [],
+                }
+              : {
+                  ...workoutPage(),
+                  pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 },
+                },
+          ),
+        );
       throw new Error(`Unhandled ${path}`);
     });
-    renderSummary({ dateRange: "2026-08-01/2026-08-31" });
+    renderSummary({ dateRange: "2026-08-01/2026-08-31" }, undefined, undefined, onWorkoutsDeleted);
     const user = userEvent.setup();
     const open = await screen.findByRole("button", { name: "Delete workouts in this range" });
     expect(open.querySelector("svg")).toBeInTheDocument();
@@ -1028,10 +1756,16 @@ describe("Summary", () => {
     await user.click(open);
     const dialog = screen.getByRole("dialog", { name: "Delete workouts in this range?" });
     expect(dialog).toHaveClass("range-deletion-dialog", "single-deletion-dialog");
-    expect(dialog).toHaveTextContent("Delete all workouts from Aug 1, 2026 to Aug 31, 2026, inclusive?");
-    expect(dialog).toHaveTextContent("These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.");
+    expect(dialog).toHaveTextContent(
+      "Delete all workouts from Aug 1, 2026 to Aug 31, 2026, inclusive?",
+    );
+    expect(dialog).toHaveTextContent(
+      "These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.",
+    );
     expect(within(dialog).queryByText("Confirmation")).not.toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
     const confirmation = within(dialog).getByRole("textbox", { name: "Type DELETE to confirm." });
     const submit = within(dialog).getByRole("button", { name: "Yes" });
     await user.type(confirmation, "delete");
@@ -1040,21 +1774,54 @@ describe("Summary", () => {
     await user.type(confirmation, "DELETE");
     expect(submit).toBeEnabled();
     await user.click(submit);
-    await waitFor(() => expect(request).toEqual({ path: "/api/workouts?startDate=2026-08-01&endDate=2026-08-31", method: "DELETE", csrf: "csrf-summary", body: undefined }));
-    await waitFor(() => expect(document.querySelectorAll(".workout-action-trigger")).toHaveLength(0));
+    await waitFor(() =>
+      expect(request).toEqual({
+        path: "/api/workouts?startDate=2026-08-01&endDate=2026-08-31",
+        method: "DELETE",
+        csrf: "csrf-summary",
+        body: undefined,
+      }),
+    );
+    await waitFor(() =>
+      expect(document.querySelectorAll(".workout-action-trigger")).toHaveLength(0),
+    );
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("0");
+    expect(onWorkoutsDeleted).not.toHaveBeenCalled();
 
     deleted = true;
-    resolveDelete(json({ jobId: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", status: "queued", reused: false, targetCount: 2 }, 202));
+    resolveDelete(
+      json(
+        {
+          jobId: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+          status: "queued",
+          reused: false,
+          targetCount: 2,
+        },
+        202,
+      ),
+    );
     await waitFor(() => expect(document.getElementById("workouts-heading")).toHaveFocus());
-    expect(screen.queryByText("Deletion queued for 2 workouts. They are hidden now.")).not.toBeInTheDocument();
+    expect(onWorkoutsDeleted).toHaveBeenCalledWith({
+      workoutIds: [workout.id],
+      range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    });
+    expect(
+      screen.queryByText("Deletion queued for 2 workouts. They are hidden now."),
+    ).not.toBeInTheDocument();
   });
 
   test("keeps summary and workout error/empty states independent", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) return Promise.resolve(json({ title: "private detail" }, 503));
-      return Promise.resolve(json({ range, pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }));
+      if (path.startsWith("/api/summary?"))
+        return Promise.resolve(json({ title: "private detail" }, 503));
+      return Promise.resolve(
+        json({
+          range,
+          pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+          items: [],
+        }),
+      );
     });
     renderSummary();
     expect(await screen.findByRole("alert")).toHaveTextContent("Range totals are unavailable");
@@ -1064,7 +1831,9 @@ describe("Summary", () => {
 
   test("serializes rapid range writes and applies only the latest response with CSRF", async () => {
     let resolveFirst!: (response: Response) => void;
-    const firstResponse = new Promise<Response>((resolve) => { resolveFirst = resolve; });
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
     const patches: Array<{ dateRange: string; csrf: string | null }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
@@ -1072,9 +1841,14 @@ describe("Summary", () => {
       if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
       if (path === "/api/me/preferences" && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body)) as { dateRange: string };
-        patches.push({ dateRange: body.dateRange, csrf: new Headers(init.headers).get("X-CSRF-Token") });
+        patches.push({
+          dateRange: body.dateRange,
+          csrf: new Headers(init.headers).get("X-CSRF-Token"),
+        });
         if (patches.length === 1) return firstResponse;
-        return Promise.resolve(json({ ...preferences, units: "metric", dateRange: body.dateRange }));
+        return Promise.resolve(
+          json({ ...preferences, units: "metric", dateRange: body.dateRange }),
+        );
       }
       throw new Error(`Unhandled ${path}`);
     });
@@ -1099,8 +1873,14 @@ describe("Summary", () => {
     const workoutRequests: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
-      if (path.startsWith("/api/summary?")) { summaryRequests.push(path); return Promise.resolve(json(summary)); }
-      if (path.startsWith("/api/workouts?")) { workoutRequests.push(path); return Promise.resolve(json(workoutPage())); }
+      if (path.startsWith("/api/summary?")) {
+        summaryRequests.push(path);
+        return Promise.resolve(json(summary));
+      }
+      if (path.startsWith("/api/workouts?")) {
+        workoutRequests.push(path);
+        return Promise.resolve(json(workoutPage()));
+      }
       throw new Error(`Unhandled ${path}`);
     });
     const view = renderSummary();
@@ -1108,7 +1888,9 @@ describe("Summary", () => {
     await waitFor(() => expect(summaryRequests).toHaveLength(1));
     view.rerenderPreferences({ dateRange: "thisYear" });
     await waitFor(() => expect(trigger).toHaveTextContent("This year"));
-    await waitFor(() => expect(summaryRequests.some((path) => path.includes("dateRangeEnum=thisYear"))).toBe(true));
+    await waitFor(() =>
+      expect(summaryRequests.some((path) => path.includes("dateRangeEnum=thisYear"))).toBe(true),
+    );
     const summaryCount = summaryRequests.length;
     const workoutCount = workoutRequests.length;
     view.rerenderPreferences({ firstWeekday: "sunday" });
@@ -1123,28 +1905,61 @@ describe("Summary", () => {
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const params = new URL(path, "https://test").searchParams;
       workoutRequests.push(path);
-      return Promise.resolve(json(workoutPage(Number(params.get("page")), [workout], Number(params.get("pageSize")))));
+      return Promise.resolve(
+        json(workoutPage(Number(params.get("page")), [workout], Number(params.get("pageSize")))),
+      );
     });
     const view = renderSummary();
     await userEvent.click(await screen.findByRole("button", { name: "Next" }));
     await screen.findByText("Page 2 of 2", { selector: ".pagination span" });
     view.rerenderPreferences({ pageSize: 50 });
-    await waitFor(() => expect(workoutRequests.some((path) => {
-      const params = new URL(path, "https://test").searchParams;
-      return params.get("page") === "1" && params.get("pageSize") === "50";
-    })).toBe(true));
-    const sizeChangeRequests = workoutRequests.filter((path) => new URL(path, "https://test").searchParams.get("pageSize") === "50");
-    expect(sizeChangeRequests.every((path) => new URL(path, "https://test").searchParams.get("page") === "1")).toBe(true);
+    await waitFor(() =>
+      expect(
+        workoutRequests.some((path) => {
+          const params = new URL(path, "https://test").searchParams;
+          return params.get("page") === "1" && params.get("pageSize") === "50";
+        }),
+      ).toBe(true),
+    );
+    const sizeChangeRequests = workoutRequests.filter(
+      (path) => new URL(path, "https://test").searchParams.get("pageSize") === "50",
+    );
+    expect(
+      sizeChangeRequests.every(
+        (path) => new URL(path, "https://test").searchParams.get("page") === "1",
+      ),
+    ).toBe(true);
   });
 
   test("filters stale and duplicate columns and falls back to safe mobile-equivalent columns", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?") ? Promise.resolve(json(summary)) : Promise.resolve(json(workoutPage())));
-    const view = renderSummary({ workoutColumns: ["calories", "stale", "date", "date"] as unknown as Preferences["workoutColumns"] });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage())),
+    );
+    const view = renderSummary({
+      workoutColumns: [
+        "calories",
+        "stale",
+        "date",
+        "date",
+      ] as unknown as Preferences["workoutColumns"],
+    });
     let table = await screen.findByRole("table");
-    expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Date▼", "Calories▲ ▼", "Actions"]);
-    view.rerenderPreferences({ workoutColumns: ["stale"] as unknown as Preferences["workoutColumns"] });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Date▼", "Calories▲ ▼", "Actions"]);
+    view.rerenderPreferences({
+      workoutColumns: ["stale"] as unknown as Preferences["workoutColumns"],
+    });
     table = await screen.findByRole("table");
-    expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Date▼", "Type▲ ▼", "Duration▲ ▼", "Actions"]);
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Date▼", "Type▲ ▼", "Duration▲ ▼", "Actions"]);
   });
 
   test("keeps a failed viewed range when page size changes", async () => {
@@ -1152,8 +1967,12 @@ describe("Summary", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
-      if (path.startsWith("/api/workouts?")) { workoutRequests.push(path); return Promise.resolve(json(workoutPage())); }
-      if (path === "/api/me/preferences" && init?.method === "PATCH") return Promise.resolve(json({ title: "Unavailable" }, 503));
+      if (path.startsWith("/api/workouts?")) {
+        workoutRequests.push(path);
+        return Promise.resolve(json(workoutPage()));
+      }
+      if (path === "/api/me/preferences" && init?.method === "PATCH")
+        return Promise.resolve(json({ title: "Unavailable" }, 503));
       throw new Error(`Unhandled ${path}`);
     });
     const view = renderSummary();
@@ -1164,10 +1983,14 @@ describe("Summary", () => {
     await screen.findByRole("status");
     view.rerenderPreferences({ pageSize: 50 });
     expect(trigger).toHaveTextContent("Last 7 days");
-    await waitFor(() => expect(workoutRequests.some((path) => {
-      const params = new URL(path, "https://test").searchParams;
-      return params.get("dateRangeEnum") === "last7Days" && params.get("pageSize") === "50";
-    })).toBe(true));
+    await waitFor(() =>
+      expect(
+        workoutRequests.some((path) => {
+          const params = new URL(path, "https://test").searchParams;
+          return params.get("dateRangeEnum") === "last7Days" && params.get("pageSize") === "50";
+        }),
+      ).toBe(true),
+    );
   });
 
   test("clamps an out-of-range response and resets a nonempty empty page without empty-range copy", async () => {
@@ -1178,13 +2001,39 @@ describe("Summary", () => {
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const page = Number(new URL(path, "https://test").searchParams.get("page"));
       requestedPages.push(page);
-      if (page === 3) return Promise.resolve(json({ range, pagination: { page: 3, pageSize: 25, totalItems: 26, totalPages: 2 }, items: [] }));
+      if (page === 3)
+        return Promise.resolve(
+          json({
+            range,
+            pagination: { page: 3, pageSize: 25, totalItems: 26, totalPages: 2 },
+            items: [],
+          }),
+        );
       if (page === 2) {
         secondPageVisits += 1;
-        if (secondPageVisits === 1) return Promise.resolve(json({ range, pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 3 }, items: [workout] }));
-        return Promise.resolve(json({ range, pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 }, items: [workout] }));
+        if (secondPageVisits === 1)
+          return Promise.resolve(
+            json({
+              range,
+              pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 3 },
+              items: [workout],
+            }),
+          );
+        return Promise.resolve(
+          json({
+            range,
+            pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 },
+            items: [workout],
+          }),
+        );
       }
-      return Promise.resolve(json({ range, pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 3 }, items: [workout] }));
+      return Promise.resolve(
+        json({
+          range,
+          pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 3 },
+          items: [workout],
+        }),
+      );
     });
     renderSummary();
     const user = userEvent.setup();
@@ -1192,7 +2041,9 @@ describe("Summary", () => {
     await screen.findByText("Page 2 of 3", { selector: ".pagination span" });
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.queryByText("No workouts in this range.")).not.toBeInTheDocument();
-    expect(await screen.findByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Page 2 of 2", { selector: ".pagination span" }),
+    ).toBeInTheDocument();
     expect(requestedPages).toEqual([1, 2, 3, 2]);
   });
 
@@ -1203,24 +2054,45 @@ describe("Summary", () => {
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       const page = Number(new URL(path, "https://test").searchParams.get("page"));
       requestedPages.push(page);
-      if (page === 2) return Promise.resolve(json({ range, pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 3 }, items: [] }));
-      return Promise.resolve(json({ range, pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 3 }, items: [workout] }));
+      if (page === 2)
+        return Promise.resolve(
+          json({
+            range,
+            pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 3 },
+            items: [],
+          }),
+        );
+      return Promise.resolve(
+        json({
+          range,
+          pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 3 },
+          items: [workout],
+        }),
+      );
     });
     renderSummary();
     await userEvent.click(await screen.findByRole("button", { name: "Next" }));
     await waitFor(() => expect(requestedPages).toEqual([1, 2, 1]));
     expect(screen.queryByText("No workouts in this range.")).not.toBeInTheDocument();
-    expect(await screen.findByText("Page 1 of 3", { selector: ".pagination span" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Page 1 of 3", { selector: ".pagination span" }),
+    ).toBeInTheDocument();
   });
 
   test("renders a large scrollable type breakdown", async () => {
     const byType = Array.from({ length: 40 }, (_, index) => ({
-      type: { id: String(index).padStart(32, "A"), key: `type-${index}`, displayName: `Workout type ${index + 1}` },
+      type: {
+        id: String(index).padStart(32, "A"),
+        key: `type-${index}`,
+        displayName: `Workout type ${index + 1}`,
+      },
       totals: { ...totals, count: index + 1 },
     }));
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json({ ...summary, byType }))
-      : Promise.resolve(json(workoutPage())));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json({ ...summary, byType }))
+        : Promise.resolve(json(workoutPage())),
+    );
     renderSummary();
     const card = await screen.findByRole("button", { name: /Workouts.*By workout type/ });
     await userEvent.hover(card);
@@ -1242,21 +2114,29 @@ describe("Summary", () => {
       originalEndOffsetMinutes: null,
       location: longLocation,
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).startsWith("/api/summary?")
-      ? Promise.resolve(json(summary))
-      : Promise.resolve(json(workoutPage(1, [partialWorkout]))));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? Promise.resolve(json(summary))
+        : Promise.resolve(json(workoutPage(1, [partialWorkout]))),
+    );
     renderSummary();
     await screen.findAllByText(longType);
-    const mobileButton = document.querySelector<HTMLButtonElement>(".mobile-workout-summary > button:first-child")!;
+    const mobileButton = document.querySelector<HTMLButtonElement>(
+      ".mobile-workout-summary > button:first-child",
+    )!;
     expect(mobileButton).toHaveTextContent("2026");
     expect(mobileButton).toHaveTextContent("time unavailable");
-    expect(within(mobileButton).getByLabelText("Recorded offset/timezone unavailable")).toHaveTextContent("TZ unavailable");
+    expect(
+      within(mobileButton).getByLabelText("Recorded offset/timezone unavailable"),
+    ).toHaveTextContent("TZ unavailable");
     expect(mobileButton.querySelector(".workout-date")).toHaveClass("unavailable");
     expect(within(mobileButton).getByText(longType)).toBeInTheDocument();
     fireEvent.click(mobileButton);
     const details = document.getElementById(mobileButton.getAttribute("aria-controls")!);
     expect(details).toHaveTextContent(longLocation);
     expect(details).toHaveTextContent("Local end---UnavailableTZ unavailable");
-    expect(within(details!).getAllByText("Unavailable", { selector: ".unavailable" }).length).toBeGreaterThan(0);
+    expect(
+      within(details!).getAllByText("Unavailable", { selector: ".unavailable" }).length,
+    ).toBeGreaterThan(0);
   });
 });

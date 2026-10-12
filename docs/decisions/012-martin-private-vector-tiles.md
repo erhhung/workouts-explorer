@@ -1,7 +1,7 @@
 # ADR 0012: Martin for private vector tiles
 
 - Status: Accepted
-- Date: 2026-09-03
+- Date: 9/3/2026
 - Owners: Product and engineering
 
 ## Context
@@ -35,6 +35,24 @@ cluster-internal Deployment and Service named `workouts-explorer-tiles`.
   names so future implementation changes do not affect the public contract.
 
 This decision supersedes the `pg_tileserv` portions of ADR 0001 and ADR 0003.
+
+### Spatial Filtering And Transient Recovery
+
+Migration 014 filters parent routes against the tile bounding box before the
+zero-length component branch expands geometry with `ST_Dump`. Both branches must
+reject spatially irrelevant routes; otherwise a viewport burst can repeatedly
+expand an entire selection, queue behind Martin's connection pool and exceed the
+API's five-second forwarding deadline. Session/account/generation validation,
+function ownership, ACLs and MVT contents remain unchanged. The fix was folded
+into the JSON tile-contract migration by explicit development-only approval;
+there is no separate migration 021. Latest schema remains 20, minimum runtime 18.
+
+The browser coalesces current private-tile 502/503/504 failures into at most two
+source reloads, delayed one and two seconds. Recovery uses `setTiles` in place,
+preserving layer state without recreating the capability or public base style.
+Superseded URLs, canceled requests and disposed maps do not trigger recovery;
+401 and current-capability 404 retain their authentication/expiry behavior.
+Successful tiles do not reset the retry budget and create an endless retry loop.
 
 ## Consequences
 

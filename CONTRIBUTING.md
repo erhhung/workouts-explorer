@@ -11,6 +11,15 @@ API in `api/`, a separate Go worker in `worker/`, shared Go infrastructure in
 contract is `api/openapi.yaml`; `api/generated/` is generated and checked for
 drift.
 
+Keep `helm/` limited to the chart, values, templates and packaged assets. Go
+chart-rendering and deployment-manifest tests live in `tests/helm/`; run them with
+`go test ./tests/helm`. They are also included by `go test ./...` and `make verify`.
+
+Committed code and documentation should describe Workouts Explorer and the
+infrastructure interfaces it needs, not unrelated applications or their resource
+inventories. Shared infrastructure provisioning belongs to its owning automation;
+keep only app-specific configuration, integration requirements and examples here.
+
 Install UI dependencies and run the normal local verification:
 
 ```sh
@@ -83,12 +92,23 @@ first successful run.
 Milestone 2 exposes invitation creation and one-time registration only.
 Invitation listing, resend, and revocation remain sequenced for Milestone 9.
 
+## Code Formatting
+
+Run `make format` to apply `gofmt` to Go and the pinned Prettier to JS/TS/React
+and CSS source. Run `make format-check` (or the check-only alias `make fmt`)
+before submitting changes; `make verify` includes this check.
+
+See [`docs/source-code-formatting.md`](docs/source-code-formatting.md) for the
+configuration, source scope, UI-only commands, and generated/data exclusions.
+The unified guide also covers [SQL formatting](docs/source-code-formatting.md#sql)
+and [documentation dates](docs/source-code-formatting.md#documentation-dates).
+
 ## Database Verification
 
 SQL formatting conventions, Goose directive requirements, dollar-quote tags,
 and the repository policy for using `pg_format` are documented in
-[`docs/sql-style.md`](docs/sql-style.md). Apply that guide to application
-migrations, OSM migrations, and psql pipeline scripts.
+[the SQL section of the formatting guide](docs/source-code-formatting.md#sql).
+Apply it to application migrations, OSM migrations, and psql pipeline scripts.
 
 Infrastructure installs PostGIS and creates the migration, API, worker, and tile
 login roles. For local verification, `compose.yaml` starts PostgreSQL 18 with

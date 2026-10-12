@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
+	"github.com/erhhung/workouts-explorer/internal/telemetry"
 )
 
 const (
@@ -462,7 +463,7 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 		return CoverageWorker{}, err
 	}
 	return CoverageWorker{DatabaseURL: databaseURL, OSMDatabaseURL: osmDatabaseURL,
-		ListenAddress: env("COVERAGE_WORKER_LISTEN_ADDRESS", ":8082"), OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		ListenAddress: env("COVERAGE_WORKER_LISTEN_ADDRESS", ":8082"), OTLPEndpoint: otlpEndpoint(),
 		PollInterval: poll, AdmissionInterval: admission, LeaseDuration: lease,
 		HeartbeatInterval: heartbeat, RouteTimeout: routeTimeout,
 		ReconciliationPollInterval: reconciliationPoll, ReconciliationScanInterval: reconciliationScan,
@@ -550,7 +551,7 @@ func loadCommon(databaseVariable, listenVariable, defaultListen string) (Common,
 	return Common{
 		DatabaseURL:       databaseURL,
 		ListenAddress:     env(listenVariable, defaultListen),
-		OTLPEndpoint:      os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTLPEndpoint:      otlpEndpoint(),
 		SourceKeyringFile: keyringFile,
 		LocalSourceRoots:  roots,
 	}, nil
@@ -562,6 +563,13 @@ func ReadHeaderTimeout() time.Duration { return 5 * time.Second }
 func ReadTimeout() time.Duration       { return 15 * time.Second }
 func WriteTimeout() time.Duration      { return 30 * time.Second }
 func IdleTimeout() time.Duration       { return 60 * time.Second }
+
+func otlpEndpoint() string {
+	if value, present := os.LookupEnv("OTEL_EXPORTER_OTLP_ENDPOINT"); present {
+		return value
+	}
+	return telemetry.DefaultEndpoint
+}
 
 func env(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {

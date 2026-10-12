@@ -120,7 +120,7 @@ Each user owns one personal workout account. Users cannot access another account
 
 ### Map and coverage
 
-- Responsive desktop and mobile map
+- Responsive desktop and iPad-sized tablet map; tablet-focused UI/UX is Milestone 10, with iPhone-sized development explicitly out of scope
 - Raw route and path-coverage modes named Routes and Coverage
 - Workout subset filtering
 - Automatic extent fitting with configurable padding

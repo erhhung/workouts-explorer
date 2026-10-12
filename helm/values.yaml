@@ -3,6 +3,7 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
   tag: "0.1.0"
+  digests: {}
 
 logging:
   format: json
@@ -10,7 +11,13 @@ logging:
 ui:
   image: workouts-ui
   replicas: 1
-  resources: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 api:
   image: workouts-api
@@ -79,7 +86,13 @@ api:
             - https://maps.example.invalid
       fallbackFamilyId: local-placeholder
       workoutTypeMappings: []
-  resources: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 # MapTiler style URLs may contain a browser-restricted public key. Stadia can
 # use domain authentication. Put either provider's HTTPS origins in each
@@ -90,7 +103,13 @@ tileServer:
   databaseSecret:
     name: workouts-explorer-database
     key: tilesDatabaseUrl
-  resources: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 worker:
   image: workouts-worker
@@ -111,7 +130,13 @@ worker:
   staging:
     root: /var/lib/workouts/staging
     sizeLimit: 2Gi
-  resources: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 coverageWorker:
   image: workouts-worker
@@ -129,9 +154,22 @@ coverageWorker:
   reconciliationPollInterval: 30s
   reconciliationScanInterval: 24h
   reconciliationPageSize: 10
-  resources: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 osm:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
   autoAddRegions: false
   maxAutoDownloadBytes: 1073741824
   dataProviders:
@@ -158,7 +196,40 @@ sources:
     supplementalGroup: 1000
 
 otel:
-  endpoint: ""
+  endpoint: grpcs://otel-gateway-collector.observability.svc.cluster.local:4317
+  environment: development
+  serviceNamespace: workouts-explorer
+  # Empty name reuses api.trustedCASecret. Only the public CA is mounted.
+  trustedCASecret:
+    name: ""
+    key: ca.crt
+  collector:
+    enabled: true
+    image: docker.io/otel/opentelemetry-collector-contrib:0.156.0@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# The host Grafana sidecar imports these ConfigMaps after vCluster syncs them.
+# Disable in test releases to avoid replacing dashboards with the same UIDs.
+grafanaDashboards:
+  enabled: true
+
+# Requires the Pyrra CRD and a controller whose rules are evaluated by Thanos Ruler.
+pyrraSLOs:
+  enabled: false
+  # Pyrra copies this guard to host-generated rule ConfigMaps in namespace-sync vClusters.
+  skipBacksync: false
+  window: 2w
+  targets:
+    apiAvailability: "99.9"
+    apiLatency: "95"
+    tileSuccess: "99.9"
+    tileLatency: "99"
 
 ingress:
   enabled: false

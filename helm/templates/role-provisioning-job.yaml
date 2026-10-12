@@ -27,6 +27,7 @@ spec:
           image: {{ include "workouts.image" (list . .Values.api.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/app/provision-roles]
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
           securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }

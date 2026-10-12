@@ -1,0 +1,117 @@
+{{- if include "workouts.collector.enabled" . }}
+{{- $root := . }}
+{{- $url := urlParse .Values.otel.endpoint }}
+{{- $grpc := hasPrefix "grpc" $url.scheme }}
+{{- $secure := or (eq $url.scheme "https") (eq $url.scheme "grpcs") }}
+{{- if or (not $url.host) $url.userinfo $url.query $url.fragment (and $grpc (ne $url.path "") (ne $url.path "/")) }}
+{{- fail "otel.endpoint must have a host and must not contain credentials, query, fragment, or a gRPC path" }}
+{{- end }}
+{{- $port := regexFind ":[0-9]+$" $url.host | trimPrefix ":" }}
+{{- if and $port (or (lt (int $port) 1) (gt (int $port) 65535)) }}
+{{- fail "otel.endpoint port must be between 1 and 65535" }}
+{{- end }}
+{{- $exporter := ternary "otlp_grpc" "otlp_http" $grpc }}
+{{- range $component := list "ui" "tiles" }}
+{{- $service := printf "workouts-%s" $component }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "workouts.fullname" $root }}-{{ $component }}-collector
+  labels: {{- include "workouts.labels" $root | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    receivers:
+      {{- if eq $component "ui" }}
+      nginx:
+        endpoint: http://127.0.0.1:8083/nginx_status
+        collection_interval: 30s
+        timeout: 5s
+      {{- else }}
+      prometheus/martin:
+        config:
+          scrape_configs:
+            - job_name: martin
+              scrape_interval: 30s
+              scrape_timeout: 5s
+              metrics_path: /_/metrics
+              static_configs:
+                - targets: [127.0.0.1:3000]
+              metric_relabel_configs:
+                - source_labels: [endpoint]
+                  target_label: martin_route
+                - action: labeldrop
+                  regex: endpoint
+      {{- end }}
+      prometheus/self:
+        config:
+          scrape_configs:
+            - job_name: collector
+              scrape_interval: 30s
+              scrape_timeout: 5s
+              static_configs:
+                - targets: [127.0.0.1:8888]
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 192
+        spike_limit_mib: 48
+      {{- range $pipeline, $name := dict "native" $service "self" (printf "%s-collector" $service) }}
+      resource/{{ $pipeline }}:
+        attributes:
+          - {key: service.name, value: {{ $name | quote }}, action: upsert}
+          - {key: service.namespace, value: {{ $root.Values.otel.serviceNamespace | quote }}, action: upsert}
+          - {key: service.instance.id, value: "${env:POD_UID}", action: upsert}
+          - {key: deployment.environment.name, value: {{ $root.Values.otel.environment | quote }}, action: upsert}
+      {{- end }}
+      # Preserve only stable identity labels through the gateway's label drops.
+      transform/identity:
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(datapoint.attributes["service_name"], resource.attributes["service.name"])
+              - set(datapoint.attributes["service_namespace"], resource.attributes["service.namespace"])
+              - set(datapoint.attributes["service_instance_id"], resource.attributes["service.instance.id"])
+              - set(datapoint.attributes["deployment_environment"], resource.attributes["deployment.environment.name"])
+      batch:
+        timeout: 5s
+        send_batch_size: 512
+        send_batch_max_size: 512
+    exporters:
+      {{ $exporter }}:
+        endpoint: {{ ternary $url.host $root.Values.otel.endpoint $grpc | quote }}
+        tls:
+          insecure: {{ not $secure }}
+          {{- if $secure }}
+          ca_file: /var/run/secrets/workouts-otel/ca.crt
+          {{- end }}
+        sending_queue:
+          num_consumers: 2
+          queue_size: 10
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          encoding: json
+        metrics:
+          level: detailed
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 127.0.0.1
+                    port: 8888
+      pipelines:
+        metrics/native:
+          receivers: [{{ ternary "nginx" "prometheus/martin" (eq $component "ui") }}]
+          processors: [memory_limiter, resource/native, transform/identity, batch]
+          exporters: [{{ $exporter }}]
+        metrics/self:
+          receivers: [prometheus/self]
+          processors: [memory_limiter, resource/self, transform/identity, batch]
+          exporters: [{{ $exporter }}]
+{{- end }}
+{{- end }}

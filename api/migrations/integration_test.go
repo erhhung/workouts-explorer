@@ -108,6 +108,29 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 		if _, err := db.migration.Exec(db.ctx, `GRANT EXECUTE ON FUNCTION app.sync_coverage_region_catalog(jsonb) TO workouts_coverage_worker`); err != nil {
 			t.Fatal(err)
 		}
+		for _, column := range []string{"created_at", "attempt", "retry_of_job_id"} {
+			revoke := fmt.Sprintf("REVOKE SELECT (%s) ON app.jobs FROM workouts_coverage_worker", column)
+			grant := fmt.Sprintf("GRANT SELECT (%s) ON app.jobs TO workouts_coverage_worker", column)
+			if _, err := db.migration.Exec(db.ctx, revoke); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = db.migration.Exec(context.Background(), grant)
+			})
+			for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
+				if database.Ready(db.ctx, pool) {
+					t.Fatalf("readiness ignored missing coverage metadata column %s", column)
+				}
+			}
+			if _, err := db.migration.Exec(db.ctx, grant); err != nil {
+				t.Fatal(err)
+			}
+			for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
+				if !database.Ready(db.ctx, pool) {
+					t.Fatalf("runtime readiness did not recover after restoring %s", column)
+				}
+			}
+		}
 	}
 	if database.Ready(db.ctx, db.migration) {
 		t.Fatal("migration role unexpectedly passed runtime readiness")
@@ -406,14 +429,98 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `REVOKE SELECT ON app.ingest_write_capabilities FROM workouts_worker`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = 11, minimum_runtime_version = 11`); err != nil {
+	var schemaVersion, minimumRuntime int
+	if err := db.migration.QueryRow(db.ctx, `SELECT schema_version, minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&schemaVersion, &minimumRuntime); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = 10, minimum_runtime_version = 8`)
+		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = $2 WHERE singleton`, schemaVersion, minimumRuntime)
 	})
-	if database.Ready(db.ctx, db.api) {
-		t.Fatal("readiness ignored an incompatible minimum runtime version")
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = 18 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
+		if !database.Ready(db.ctx, pool) {
+			t.Fatal("runtime 20 rejected compatible schema 21 with minimum runtime 18")
+		}
+	}
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = $1 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
+		if database.Ready(db.ctx, pool) {
+			t.Fatal("readiness ignored an incompatible minimum runtime version")
+		}
+	}
+}
+
+func TestCoverageJobMetadataPermissions(t *testing.T) {
+	if os.Getenv("COVERAGE_WORKER_DATABASE_URL") == "" {
+		t.Skip("COVERAGE_WORKER_DATABASE_URL is required for coverage metadata isolation")
+	}
+	db := openTestDatabases(t)
+	assertRuntimeRole(t, db.ctx, db.coverage, "workouts_coverage_worker")
+	account, foreignAccount := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	job := insertQueued(t, db.ctx, db.api, account, uuid.Nil, "source_connection_check")
+	foreignJob := insertQueued(t, db.ctx, db.api, foreignAccount, uuid.Nil, "source_connection_check")
+	lease := uuid.New()
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.claim_job($1,'coverage-metadata-test',$2,interval '1 minute')`, job, lease) {
+		t.Fatal("metadata fixture claim was rejected")
+	}
+	tx := beginAccount(t, db.ctx, db.coverage, account)
+	var createdAt time.Time
+	var attempt int
+	var retry bool
+	query := `SELECT created_at, attempt, retry_of_job_id IS NOT NULL FROM app.jobs
+		WHERE id=$1 AND account_id=$2 AND status='running' AND worker_id=$3 AND lease_token=$4`
+	if err := tx.QueryRow(db.ctx, query, job, account, "coverage-metadata-test", lease).Scan(&createdAt, &attempt, &retry); err != nil {
+		t.Fatal(err)
+	}
+	if createdAt.IsZero() || attempt != 1 || retry {
+		t.Fatalf("unexpected metadata: created_at=%v attempt=%d retry=%t", createdAt, attempt, retry)
+	}
+	if err := tx.QueryRow(db.ctx, query, job, account, "coverage-metadata-test", uuid.New()).Scan(&createdAt, &attempt, &retry); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("metadata query ignored lease fence: %v", err)
+	}
+	if err := tx.QueryRow(db.ctx, query, job, account, "foreign-worker", lease).Scan(&createdAt, &attempt, &retry); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("metadata query ignored worker fence: %v", err)
+	}
+	// Deliberately omit an account predicate to verify the existing RLS policy.
+	if err := tx.QueryRow(db.ctx, `SELECT created_at, attempt, retry_of_job_id IS NOT NULL FROM app.jobs WHERE id=$1`,
+		foreignJob).Scan(&createdAt, &attempt, &retry); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("coverage metadata crossed account RLS: %v", err)
+	}
+	var broadRead, privateRead bool
+	if err := tx.QueryRow(db.ctx, `SELECT has_table_privilege(current_user,'app.jobs','SELECT'),
+		has_column_privilege(current_user,'app.jobs','parameters','SELECT')
+		OR has_column_privilege(current_user,'app.jobs','failure_summary','SELECT')`).Scan(&broadRead, &privateRead); err != nil {
+		t.Fatal(err)
+	}
+	if broadRead || privateRead {
+		t.Fatalf("coverage job grants are too broad: table=%t private=%t", broadRead, privateRead)
+	}
+	if err := tx.Rollback(db.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, accountSetting := range []string{"", "not-a-uuid"} {
+		tx := beginAccount(t, db.ctx, db.coverage, account)
+		if _, err := tx.Exec(db.ctx, `SELECT set_config('app.account_id',$1,true)`, accountSetting); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(db.ctx, `SELECT created_at, attempt, retry_of_job_id IS NOT NULL FROM app.jobs WHERE id=$1`,
+			job).Scan(&createdAt, &attempt, &retry); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("coverage metadata accepted invalid account context %q: %v", accountSetting, err)
+		}
+		_ = tx.Rollback(db.ctx)
+	}
+	for _, columns := range []string{"*", "parameters", "failure_summary"} {
+		tx := beginAccount(t, db.ctx, db.coverage, account)
+		err := tx.QueryRow(db.ctx, "SELECT "+columns+" FROM app.jobs WHERE id=$1", job).Scan(new(any))
+		var denied *pgconn.PgError
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("coverage could read private job columns %s: %v", columns, err)
+		}
+		_ = tx.Rollback(db.ctx)
 	}
 }
 

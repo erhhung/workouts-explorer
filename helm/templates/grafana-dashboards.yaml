@@ -1,0 +1,22 @@
+{{- if .Values.grafanaDashboards.enabled }}
+{{- $root := . }}
+{{- range $dashboard := list "operational" "historical" }}
+{{- $path := printf "dashboards/%s.json" $dashboard }}
+{{- $content := required (printf "%s is required when grafanaDashboards.enabled is true" $path) ($root.Files.Get $path | trim) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "workouts.fullname" $root }}-{{ $dashboard }}-dashboard
+  namespace: {{ $root.Release.Namespace | quote }}
+  labels:
+    {{- include "workouts.labels" $root | nindent 4 }}
+    app.kubernetes.io/part-of: {{ include "workouts.name" $root }}
+    grafana_dashboard: '1'
+  annotations:
+    vcluster.loft.sh/force-sync: 'true'
+data:
+  {{ include "workouts.fullname" $root }}-{{ $dashboard }}.json: |
+    {{- $content | nindent 4 }}
+{{- end }}
+{{- end }}

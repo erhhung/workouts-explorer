@@ -1,0 +1,3437 @@
+{
+  "profile": "typical",
+  "profile_version": 1,
+  "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+  "schema_version": 3,
+  "namespace": "workouts-acceptance",
+  "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+  "started_at": "2026-10-05T20:55:05.779Z",
+  "status": "RECORDED_NO_ACCEPTANCE_THRESHOLD",
+  "account_count": 1,
+  "scope": "Single disposable public synthetic account; real MapLibre source-loader observation, not product render acceptance.",
+  "frame": {
+    "width": 3095,
+    "height": 1973,
+    "tile_size": 512,
+    "center": [
+      0.0195,
+      0.0195
+    ],
+    "zoom": 14,
+    "bearing": 0,
+    "pitch": 0
+  },
+  "generation_parameters": {
+    "schema_version": 1,
+    "year": 2026,
+    "seed": 7104,
+    "gps_sample_seconds": 5,
+    "distance_meters_per_mile": 1609.344,
+    "other_duration_seconds": 1800,
+    "other_types": [
+      {
+        "key": "climbing",
+        "label": "Climbing"
+      },
+      {
+        "key": "paddle_sports",
+        "label": "Paddle Sports"
+      },
+      {
+        "key": "skating_sports",
+        "label": "Skating Sports"
+      }
+    ],
+    "profiles": {
+      "typical": {
+        "workouts_per_day": 1,
+        "total_workouts": 365,
+        "activities": [
+          {
+            "key": "running",
+            "label": "Outdoor Run",
+            "percentage": 60,
+            "count": 219,
+            "routed": true,
+            "distance_miles": 8,
+            "duration_seconds": 7200
+          },
+          {
+            "key": "walking",
+            "label": "Outdoor Walk",
+            "percentage": 20,
+            "count": 73,
+            "routed": true,
+            "distance_miles": 8,
+            "duration_seconds": 7200
+          },
+          {
+            "key": "cycling",
+            "label": "Outdoor Cycle",
+            "percentage": 10,
+            "count": 37,
+            "routed": true,
+            "distance_miles": 20,
+            "duration_seconds": 7200
+          },
+          {
+            "key": "other",
+            "label": "Other",
+            "percentage": 10,
+            "count": 36,
+            "routed": false,
+            "distance_miles": 0,
+            "duration_seconds": 1800
+          }
+        ]
+      },
+      "stress": {
+        "workouts_per_day": 2,
+        "total_workouts": 730,
+        "activities": [
+          {
+            "key": "running",
+            "label": "Outdoor Run",
+            "percentage": 40,
+            "count": 292,
+            "routed": true,
+            "distance_miles": 13.1,
+            "duration_seconds": 9000
+          },
+          {
+            "key": "walking",
+            "label": "Outdoor Walk",
+            "percentage": 20,
+            "count": 146,
+            "routed": true,
+            "distance_miles": 10,
+            "duration_seconds": 10800
+          },
+          {
+            "key": "cycling",
+            "label": "Outdoor Cycle",
+            "percentage": 10,
+            "count": 73,
+            "routed": true,
+            "distance_miles": 40,
+            "duration_seconds": 14400
+          },
+          {
+            "key": "other",
+            "label": "Other",
+            "percentage": 30,
+            "count": 219,
+            "routed": false,
+            "distance_miles": 0,
+            "duration_seconds": 1800
+          }
+        ]
+      }
+    }
+  },
+  "provenance": {
+    "profile": "typical",
+    "profile_version": 1,
+    "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+    "kind": "captured_browser_source_loader",
+    "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48"
+  },
+  "initial_map_target": "NOT_MEASURED",
+  "cases": [
+    {
+      "profile": "typical",
+      "profile_version": 1,
+      "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+      "schema_version": 3,
+      "namespace": "workouts-acceptance",
+      "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+      "source": "route",
+      "period": "year",
+      "started_at": "2026-10-05T20:55:14.319Z",
+      "status": "RECORDED_NO_ACCEPTANCE_THRESHOLD",
+      "requests": [
+        {
+          "tile_id": "14/8192/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8191.pbf",
+          "started_ms": 217.30530999999974,
+          "status": 200,
+          "response_ms": 565.6720370000003,
+          "finished_ms": 566.6612349999996,
+          "duration_ms": 349.35592499999984,
+          "failure": null,
+          "bytes": 28624,
+          "sha256": "6b85219c14e5400f33bc439c681d7569b507b605d2e086390ae72f06e9052b65",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8192/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8190.pbf",
+          "started_ms": 218.3677839999982,
+          "status": 200,
+          "response_ms": 706.7764399999978,
+          "finished_ms": 710.1796079999986,
+          "duration_ms": 491.81182400000034,
+          "failure": null,
+          "bytes": 19178,
+          "sha256": "593896a1a535067f9e0134ee189ca0b5622a27196785283fe999ef5726105ff9",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8193/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8191.pbf",
+          "started_ms": 218.9109900000003,
+          "status": 200,
+          "response_ms": 684.6794620000001,
+          "finished_ms": 710.1080829999992,
+          "duration_ms": 491.19709299999886,
+          "failure": null,
+          "bytes": 18861,
+          "sha256": "c03c31c5a22227ebcc38975b0d9cb4c8a78e4129572eb625a0a10306e610db10",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8193/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8190.pbf",
+          "started_ms": 221.32673499999873,
+          "status": 200,
+          "response_ms": 673.8682569999983,
+          "finished_ms": 685.8034289999996,
+          "duration_ms": 464.47669400000086,
+          "failure": null,
+          "bytes": 12135,
+          "sha256": "46b25fb7c59730e8defd7cd449d28b10f744fca0d943fab611f0c3f7e65e6cfd",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8191/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8191.pbf",
+          "started_ms": 222.21838099999877,
+          "status": 200,
+          "response_ms": 965.9441000000006,
+          "finished_ms": 973.6510300000009,
+          "duration_ms": 751.4326490000021,
+          "failure": null,
+          "bytes": 2498,
+          "sha256": "92417b4bdab4ec7fc5bdbe293bb7f5f0a0407e7bfbeba8397d7d6162627582c9",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8192/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8192.pbf",
+          "started_ms": 223.3659179999995,
+          "status": 200,
+          "response_ms": 875.5413369999987,
+          "finished_ms": 876.189656999999,
+          "duration_ms": 652.8237389999995,
+          "failure": null,
+          "bytes": 2167,
+          "sha256": "db54407cf2d386fb91c024d92a344b01e0e80a7d0753a82c6cbfb9bb21698930",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8191/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8190.pbf",
+          "started_ms": 223.9395970000005,
+          "status": 200,
+          "response_ms": 964.4519230000005,
+          "finished_ms": 971.3176060000005,
+          "duration_ms": 747.378009,
+          "failure": null,
+          "bytes": 1864,
+          "sha256": "6156d8b599d65aa05d5ed2712db38220e105d282291fbc7d4c3684c0dafbd2e5",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8193/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8192.pbf",
+          "started_ms": 227.87621500000023,
+          "status": 200,
+          "response_ms": 2370.046426000001,
+          "finished_ms": 2379.602749999998,
+          "duration_ms": 2151.726534999998,
+          "failure": null,
+          "bytes": 1319,
+          "sha256": "352975ff6416b5917f8485fdf6457fec08043c772a4d81dd63bdf22f9a92538b",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8192/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8189.pbf",
+          "started_ms": 228.34805100000085,
+          "status": 200,
+          "response_ms": 970.7738839999984,
+          "finished_ms": 971.2617179999979,
+          "duration_ms": 742.9136669999971,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8194/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8191.pbf",
+          "started_ms": 229.03602200000023,
+          "status": 200,
+          "response_ms": 1146.573031,
+          "finished_ms": 1148.620719999999,
+          "duration_ms": 919.5846979999988,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8193/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8189.pbf",
+          "started_ms": 230.35276499999964,
+          "status": 200,
+          "response_ms": 1276.6673549999978,
+          "finished_ms": 1277.2839270000004,
+          "duration_ms": 1046.9311620000008,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8194/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8190.pbf",
+          "started_ms": 232.1669120000006,
+          "status": 200,
+          "response_ms": 1076.623531000001,
+          "finished_ms": 1082.4455759999983,
+          "duration_ms": 850.2786639999977,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8191/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8192.pbf",
+          "started_ms": 271.79289399999834,
+          "status": 200,
+          "response_ms": 1477.1199610000003,
+          "finished_ms": 1482.6879200000003,
+          "duration_ms": 1210.895026000002,
+          "failure": null,
+          "bytes": 224,
+          "sha256": "f1c836ea3846da9f47f1ca8959779e7e711ffe96dfc385632a0066b3c9880859",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8191/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8189.pbf",
+          "started_ms": 272.1921939999993,
+          "status": 200,
+          "response_ms": 1473.4672279999977,
+          "finished_ms": 1478.0682259999994,
+          "duration_ms": 1205.8760320000001,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8194/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8192.pbf",
+          "started_ms": 288.83705199999895,
+          "status": 200,
+          "response_ms": 1261.9410449999996,
+          "finished_ms": 1262.5752939999984,
+          "duration_ms": 973.7382419999994,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8194/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8189.pbf",
+          "started_ms": 289.67479399999866,
+          "status": 200,
+          "response_ms": 1786.7548519999982,
+          "finished_ms": 1787.2124079999994,
+          "duration_ms": 1497.5376140000008,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8190/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8191.pbf",
+          "started_ms": 290.83507499999905,
+          "status": 200,
+          "response_ms": 1171.6626369999976,
+          "finished_ms": 1172.386040999998,
+          "duration_ms": 881.5509659999989,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8192/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8193.pbf",
+          "started_ms": 291.53264800000034,
+          "status": 200,
+          "response_ms": 2191.5688410000002,
+          "finished_ms": 2194.297531,
+          "duration_ms": 1902.7648829999998,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8190/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8190.pbf",
+          "started_ms": 292.05368799999997,
+          "status": 200,
+          "response_ms": 2077.2622869999977,
+          "finished_ms": 2077.7437839999984,
+          "duration_ms": 1785.6900959999984,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8193/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8193.pbf",
+          "started_ms": 302.79946800000107,
+          "status": 200,
+          "response_ms": 1666.1316159999988,
+          "finished_ms": 1666.7111440000008,
+          "duration_ms": 1363.9116759999997,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8195/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8191.pbf",
+          "started_ms": 303.70693799999935,
+          "status": 200,
+          "response_ms": 1971.5561239999988,
+          "finished_ms": 1974.6055909999995,
+          "duration_ms": 1670.8986530000002,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8195/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8190.pbf",
+          "started_ms": 303.9975379999996,
+          "status": 200,
+          "response_ms": 1779.1992299999984,
+          "finished_ms": 1781.1513950000008,
+          "duration_ms": 1477.1538570000012,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8190/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8192.pbf",
+          "started_ms": 304.22796299999754,
+          "status": 200,
+          "response_ms": 2074.9210939999975,
+          "finished_ms": 2075.614709999998,
+          "duration_ms": 1771.3867470000005,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8191/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8193.pbf",
+          "started_ms": 304.7646309999982,
+          "status": 200,
+          "response_ms": 1977.0511220000008,
+          "finished_ms": 1977.3918539999977,
+          "duration_ms": 1672.6272229999995,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8190/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8189.pbf",
+          "started_ms": 314.05962100000033,
+          "status": 200,
+          "response_ms": 1564.748509000001,
+          "finished_ms": 1565.605994999998,
+          "duration_ms": 1251.5463739999977,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8194/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8193.pbf",
+          "started_ms": 315.3995709999981,
+          "status": 200,
+          "response_ms": 2380.3751989999982,
+          "finished_ms": 2381.9275080000007,
+          "duration_ms": 2066.5279370000026,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8195/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8192.pbf",
+          "started_ms": 315.8930589999982,
+          "status": 200,
+          "response_ms": 2866.951616999999,
+          "finished_ms": 2867.7090419999986,
+          "duration_ms": 2551.8159830000004,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8195/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8189.pbf",
+          "started_ms": 316.18232499999795,
+          "status": 200,
+          "response_ms": 2560.324506000001,
+          "finished_ms": 2563.8098409999984,
+          "duration_ms": 2247.6275160000005,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8190/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8193.pbf",
+          "started_ms": 316.4815219999982,
+          "status": 200,
+          "response_ms": 2661.537332,
+          "finished_ms": 2661.9631740000004,
+          "duration_ms": 2345.481652000002,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8189/8191",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8191.pbf",
+          "started_ms": 316.6940429999995,
+          "status": 200,
+          "response_ms": 2663.454962,
+          "finished_ms": 2666.231265999999,
+          "duration_ms": 2349.5372229999994,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8189/8190",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8190.pbf",
+          "started_ms": 316.88756999999896,
+          "status": 200,
+          "response_ms": 2958.706943000001,
+          "finished_ms": 2958.9355069999983,
+          "duration_ms": 2642.0479369999994,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8195/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8193.pbf",
+          "started_ms": 317.29009099999894,
+          "status": 200,
+          "response_ms": 2954.255717,
+          "finished_ms": 2958.9125170000007,
+          "duration_ms": 2641.6224260000017,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8189/8192",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8192.pbf",
+          "started_ms": 317.7503399999987,
+          "status": 200,
+          "response_ms": 2367.535377,
+          "finished_ms": 2367.896993999999,
+          "duration_ms": 2050.146654,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8189/8189",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8189.pbf",
+          "started_ms": 318.09401199999775,
+          "status": 200,
+          "response_ms": 2958.247328999998,
+          "finished_ms": 2958.926424999998,
+          "duration_ms": 2640.832413,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        },
+        {
+          "tile_id": "14/8189/8193",
+          "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8193.pbf",
+          "started_ms": 318.321057000001,
+          "status": 200,
+          "response_ms": 2665.8128780000006,
+          "finished_ms": 2666.2548319999987,
+          "duration_ms": 2347.9337749999977,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 18735
+        }
+      ],
+      "source_events": [
+        {
+          "type": "sourcedataloading",
+          "time_ms": 0.40000003576278687,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "visibility",
+          "time_ms": 2.5,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "metadata",
+          "time_ms": 4.5,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "content",
+          "time_ms": 4.600000023841858,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 196.60000002384186,
+          "tile_id": "14/8192/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 196.69999998807907,
+          "tile_id": "14/8192/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 196.69999998807907,
+          "tile_id": "14/8193/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 196.69999998807907,
+          "tile_id": "14/8193/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.19999998807907,
+          "tile_id": "14/8191/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.19999998807907,
+          "tile_id": "14/8192/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.30000001192093,
+          "tile_id": "14/8191/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8193/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8192/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8194/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8193/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8194/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8191/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8191/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.4000000357628,
+          "tile_id": "14/8194/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8194/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8190/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8192/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8190/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8193/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8195/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8195/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8190/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.5,
+          "tile_id": "14/8191/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.60000002384186,
+          "tile_id": "14/8190/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8194/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8195/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8195/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8190/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8189/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8189/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8195/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8189/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8189/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 197.69999998807907,
+          "tile_id": "14/8189/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 570.6999999880791,
+          "tile_id": "14/8192/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 977.1999999880791,
+          "tile_id": "14/8193/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 977.8000000119209,
+          "tile_id": "14/8193/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 978.4000000357628,
+          "tile_id": "14/8192/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 978.9000000357628,
+          "tile_id": "14/8192/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 979.3000000119209,
+          "tile_id": "14/8192/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 979.8000000119209,
+          "tile_id": "14/8191/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 980.1999999880791,
+          "tile_id": "14/8191/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1590.1000000238419,
+          "tile_id": "14/8194/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1591,
+          "tile_id": "14/8194/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1591.300000011921,
+          "tile_id": "14/8190/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1591.6000000238419,
+          "tile_id": "14/8194/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1592,
+          "tile_id": "14/8193/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1592.199999988079,
+          "tile_id": "14/8191/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1592.699999988079,
+          "tile_id": "14/8191/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1593.1000000238419,
+          "tile_id": "14/8190/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2220.400000035763,
+          "tile_id": "14/8193/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2220.800000011921,
+          "tile_id": "14/8195/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.100000023842,
+          "tile_id": "14/8194/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.400000035763,
+          "tile_id": "14/8195/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.5,
+          "tile_id": "14/8191/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.800000011921,
+          "tile_id": "14/8190/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.900000035763,
+          "tile_id": "14/8190/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2221.900000035763,
+          "tile_id": "14/8192/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2872.400000035763,
+          "tile_id": "14/8189/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2873.100000023842,
+          "tile_id": "14/8193/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2873.400000035763,
+          "tile_id": "14/8194/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2873.699999988079,
+          "tile_id": "14/8195/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2873.900000035763,
+          "tile_id": "14/8190/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2874.100000023842,
+          "tile_id": "14/8189/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2874.300000011921,
+          "tile_id": "14/8189/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2874.5,
+          "tile_id": "14/8195/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 3375.199999988079,
+          "tile_id": "14/8195/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 3375.699999988079,
+          "tile_id": "14/8189/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 3375.800000011921,
+          "tile_id": "14/8189/8190",
+          "source_loaded": true
+        }
+      ],
+      "interference": [],
+      "errors": [],
+      "selection": {
+        "id": "01A10DD9809D7CB48A0ED880634E9523",
+        "generation": 1024,
+        "routed_workouts": 329,
+        "range": {
+          "endDate": "2026-12-31",
+          "startDate": "2026-01-01",
+          "timezone": "UTC"
+        }
+      },
+      "peak_in_flight": 35,
+      "source_loaded_ms": 3375.800000011921,
+      "idle_ms": 3379,
+      "source_loaded": true,
+      "camera": {
+        "center": [
+          0.0195,
+          0.0195
+        ],
+        "zoom": 14,
+        "bearing": 0,
+        "pitch": 0
+      },
+      "canvas_css": {
+        "width": 3095,
+        "height": 1973
+      },
+      "frame_changes": [],
+      "source_interference": [],
+      "pending_requests": 0,
+      "unique_tile_ids": [
+        "14/8189/8189",
+        "14/8189/8190",
+        "14/8189/8191",
+        "14/8189/8192",
+        "14/8189/8193",
+        "14/8190/8189",
+        "14/8190/8190",
+        "14/8190/8191",
+        "14/8190/8192",
+        "14/8190/8193",
+        "14/8191/8189",
+        "14/8191/8190",
+        "14/8191/8191",
+        "14/8191/8192",
+        "14/8191/8193",
+        "14/8192/8189",
+        "14/8192/8190",
+        "14/8192/8191",
+        "14/8192/8192",
+        "14/8192/8193",
+        "14/8193/8189",
+        "14/8193/8190",
+        "14/8193/8191",
+        "14/8193/8192",
+        "14/8193/8193",
+        "14/8194/8189",
+        "14/8194/8190",
+        "14/8194/8191",
+        "14/8194/8192",
+        "14/8194/8193",
+        "14/8195/8189",
+        "14/8195/8190",
+        "14/8195/8191",
+        "14/8195/8192",
+        "14/8195/8193"
+      ],
+      "missing_planned_tiles": [],
+      "extra_observed_tiles": [],
+      "total_bytes": 86870,
+      "http_completion_ms": 2958.9355069999983,
+      "capture_success": true,
+      "comparison_reasons": [],
+      "comparison_valid": true,
+      "cdp": {
+        "status": "RECORDED",
+        "protocol_counts": {
+          "h2": 35
+        },
+        "requests": [
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8191.pbf",
+            "started_at": 379847.3125,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379847.665485,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379847.665485,
+            "encoded_data_length": 29225
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8190.pbf",
+            "started_at": 379847.31304,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379847.806247,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379847.77979,
+            "encoded_data_length": 19762
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8191.pbf",
+            "started_at": 379847.313667,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379847.780429,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379847.778847,
+            "encoded_data_length": 19435
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8190.pbf",
+            "started_at": 379847.315159,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379847.773245,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379847.768198,
+            "encoded_data_length": 12701
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8191.pbf",
+            "started_at": 379847.315609,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.064983,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.063375,
+            "encoded_data_length": 3036
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8192.pbf",
+            "started_at": 379847.316047,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379847.973642,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379847.970703,
+            "encoded_data_length": 2705
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8190.pbf",
+            "started_at": 379847.318215,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.060391,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.059199,
+            "encoded_data_length": 2409
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8192.pbf",
+            "started_at": 379847.31883,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.470546,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.462589,
+            "encoded_data_length": 1864
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8189.pbf",
+            "started_at": 379847.320496,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.068327,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.058319,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8191.pbf",
+            "started_at": 379847.323076,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.245813,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.243318,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8189.pbf",
+            "started_at": 379847.325758,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.374891,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.370675,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8190.pbf",
+            "started_at": 379847.326523,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.175977,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.172553,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8192.pbf",
+            "started_at": 379847.329064,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.561856,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.550707,
+            "encoded_data_length": 768
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8189.pbf",
+            "started_at": 379847.332869,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.561161,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.549138,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8192.pbf",
+            "started_at": 379847.333911,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.361983,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.357716,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8189.pbf",
+            "started_at": 379847.334466,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.881914,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.86995,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8191.pbf",
+            "started_at": 379847.334955,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.268441,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.266057,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8192/8193.pbf",
+            "started_at": 379847.338996,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.28854,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.286143,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8190.pbf",
+            "started_at": 379847.339494,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.175913,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.170101,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8193/8193.pbf",
+            "started_at": 379847.339809,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.7614,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.745899,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8191.pbf",
+            "started_at": 379847.342074,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.070374,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.062747,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8190.pbf",
+            "started_at": 379847.343361,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.873498,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.864653,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8192.pbf",
+            "started_at": 379847.344392,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.171796,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.167238,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8191/8193.pbf",
+            "started_at": 379847.345074,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.072214,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.066937,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8189.pbf",
+            "started_at": 379847.345759,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379848.662824,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379848.659216,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8194/8193.pbf",
+            "started_at": 379847.346402,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.474595,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.470587,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8192.pbf",
+            "started_at": 379847.347078,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.965329,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.964473,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8189.pbf",
+            "started_at": 379847.347697,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.651565,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.641947,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8190/8193.pbf",
+            "started_at": 379847.348395,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.751341,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.746641,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8191.pbf",
+            "started_at": 379847.349748,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.757108,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.751504,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8190.pbf",
+            "started_at": 379847.351228,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379850.054266,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379850.049578,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8195/8193.pbf",
+            "started_at": 379847.357548,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379850.053286,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379850.047834,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8192.pbf",
+            "started_at": 379847.36309,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.464075,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.453608,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8189.pbf",
+            "started_at": 379847.363796,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379850.053846,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379850.049236,
+            "encoded_data_length": 525
+          },
+          {
+            "path": "/api/map-selections/01A10DD9809D7CB48A0ED880634E9523/route-tiles/1024/14/8189/8193.pbf",
+            "started_at": 379847.375599,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 18735,
+            "response_at": 379849.762727,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379849.751868,
+            "encoded_data_length": 524
+          }
+        ],
+        "scope": "Actual CDP Network observations from this page and its context's worker targets; no protocol inferred from URL or configuration."
+      },
+      "recorded_at": "2026-10-05T20:55:24.763Z"
+    },
+    {
+      "profile": "typical",
+      "profile_version": 1,
+      "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+      "schema_version": 3,
+      "namespace": "workouts-acceptance",
+      "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+      "source": "coverage",
+      "period": "year",
+      "started_at": "2026-10-05T20:55:24.801Z",
+      "status": "RECORDED_NO_ACCEPTANCE_THRESHOLD",
+      "requests": [
+        {
+          "tile_id": "14/8192/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8191.pbf",
+          "started_ms": 269.1086280000018,
+          "status": 200,
+          "response_ms": 1331.1265710000007,
+          "finished_ms": 1341.9202930000029,
+          "duration_ms": 1072.811665000001,
+          "failure": null,
+          "bytes": 11476,
+          "sha256": "c403fdac0a553a54be08c42448fe9604c455fff101c93e7e55b7ac604cc78bd4",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8192/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8190.pbf",
+          "started_ms": 270.0930460000018,
+          "status": 200,
+          "response_ms": 747.7609630000006,
+          "finished_ms": 774.2132520000014,
+          "duration_ms": 504.1202059999996,
+          "failure": null,
+          "bytes": 8489,
+          "sha256": "b65fdb4635f44c6598e00fb568568156b94914a01231183f326dc1a11ef3bdc1",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8193/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8191.pbf",
+          "started_ms": 270.5804250000001,
+          "status": 200,
+          "response_ms": 744.0493060000008,
+          "finished_ms": 744.4484950000005,
+          "duration_ms": 473.86807000000044,
+          "failure": null,
+          "bytes": 8626,
+          "sha256": "5c6f5c4373b932a815842251d3619ccca6e8086b3e5f0f5c41b1120bc372bc74",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8193/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8190.pbf",
+          "started_ms": 282.0398750000022,
+          "status": 200,
+          "response_ms": 1334.1036270000004,
+          "finished_ms": 1345.7232570000015,
+          "duration_ms": 1063.6833819999993,
+          "failure": null,
+          "bytes": 7068,
+          "sha256": "3ec09247bee9b4f8c1611b27bca92639f9ad04f856844083d7ad137726c15fdd",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8191/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8191.pbf",
+          "started_ms": 282.62876000000324,
+          "status": 200,
+          "response_ms": 1111.8629580000015,
+          "finished_ms": 1114.6651500000007,
+          "duration_ms": 832.0363899999975,
+          "failure": null,
+          "bytes": 2037,
+          "sha256": "046a9cd25b70f6e02bd2f63f2667ea2c399358b435c1b29f739ca5d2a7fbf64f",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8192/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8192.pbf",
+          "started_ms": 283.0741850000013,
+          "status": 200,
+          "response_ms": 736.4322120000033,
+          "finished_ms": 747.6864550000028,
+          "duration_ms": 464.61227000000144,
+          "failure": null,
+          "bytes": 1926,
+          "sha256": "1c4b3464a0f54f81c6028633e2eec15847c6b59ca8d3a8513253f1c03b519210",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8191/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8190.pbf",
+          "started_ms": 283.40262000000075,
+          "status": 200,
+          "response_ms": 921.8786680000012,
+          "finished_ms": 933.7467450000004,
+          "duration_ms": 650.3441249999996,
+          "failure": null,
+          "bytes": 1327,
+          "sha256": "08a1268fc77708d487b474f82d5ef1bb09e28cba796eff12c923dc83efb957bc",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8193/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8192.pbf",
+          "started_ms": 283.6308160000008,
+          "status": 200,
+          "response_ms": 933.4592140000022,
+          "finished_ms": 946.057079000002,
+          "duration_ms": 662.4262630000012,
+          "failure": null,
+          "bytes": 1188,
+          "sha256": "ac095014d283e542ca23eacdece40edbd8557bcef162ee90d267a85368ab5d99",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8192/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8189.pbf",
+          "started_ms": 286.9836290000021,
+          "status": 200,
+          "response_ms": 510.7564060000004,
+          "finished_ms": 511.3651110000028,
+          "duration_ms": 224.3814820000007,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8194/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8191.pbf",
+          "started_ms": 287.46332000000257,
+          "status": 200,
+          "response_ms": 1620.468718,
+          "finished_ms": 1630.0469380000031,
+          "duration_ms": 1342.5836180000006,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8193/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8189.pbf",
+          "started_ms": 287.804331000003,
+          "status": 200,
+          "response_ms": 811.9625590000032,
+          "finished_ms": 812.2379209999999,
+          "duration_ms": 524.4335899999969,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8194/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8190.pbf",
+          "started_ms": 291.2629190000007,
+          "status": 200,
+          "response_ms": 943.2581970000028,
+          "finished_ms": 946.2910970000012,
+          "duration_ms": 655.0281780000005,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8191/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8192.pbf",
+          "started_ms": 291.5994840000021,
+          "status": 200,
+          "response_ms": 1424.7253350000028,
+          "finished_ms": 1432.249334,
+          "duration_ms": 1140.649849999998,
+          "failure": null,
+          "bytes": 347,
+          "sha256": "6dc9a44b646b74608dfe7c4a4e206326c13e26bf5766ad7026d0ce462d21ccf1",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8191/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8189.pbf",
+          "started_ms": 292.20860900000116,
+          "status": 200,
+          "response_ms": 1496.665323000001,
+          "finished_ms": 1502.3378170000033,
+          "duration_ms": 1210.129208000002,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8194/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8192.pbf",
+          "started_ms": 292.51584,
+          "status": 200,
+          "response_ms": 1111.2664300000033,
+          "finished_ms": 1112.0696270000008,
+          "duration_ms": 819.5537870000007,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8194/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8189.pbf",
+          "started_ms": 292.76012000000264,
+          "status": 200,
+          "response_ms": 1296.8915480000032,
+          "finished_ms": 1299.0269800000024,
+          "duration_ms": 1006.2668599999997,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8190/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8191.pbf",
+          "started_ms": 297.4937060000011,
+          "status": 200,
+          "response_ms": 1337.7900100000006,
+          "finished_ms": 1345.7535380000008,
+          "duration_ms": 1048.2598319999997,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8192/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8193.pbf",
+          "started_ms": 298.1278330000023,
+          "status": 200,
+          "response_ms": 1523.9418460000015,
+          "finished_ms": 1525.4978670000019,
+          "duration_ms": 1227.3700339999996,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8190/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8190.pbf",
+          "started_ms": 298.6305620000021,
+          "status": 200,
+          "response_ms": 1499.824281000001,
+          "finished_ms": 1505.2415980000005,
+          "duration_ms": 1206.6110359999984,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8193/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8193.pbf",
+          "started_ms": 299.367040000001,
+          "status": 200,
+          "response_ms": 1504.7841090000002,
+          "finished_ms": 1505.2648210000007,
+          "duration_ms": 1205.8977809999997,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8195/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8191.pbf",
+          "started_ms": 386.4296549999999,
+          "status": 200,
+          "response_ms": 1206.6845439999997,
+          "finished_ms": 1207.4038110000001,
+          "duration_ms": 820.9741560000002,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19129
+        },
+        {
+          "tile_id": "14/8195/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8190.pbf",
+          "started_ms": 387.626693000002,
+          "status": 200,
+          "response_ms": 1808.0800740000013,
+          "finished_ms": 1809.8352270000032,
+          "duration_ms": 1422.2085340000012,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8190/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8192.pbf",
+          "started_ms": 388.19442400000116,
+          "status": 200,
+          "response_ms": 1718.716940000002,
+          "finished_ms": 1719.0036990000008,
+          "duration_ms": 1330.8092749999996,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8191/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8193.pbf",
+          "started_ms": 392.10112200000003,
+          "status": 200,
+          "response_ms": 1621.4514589999999,
+          "finished_ms": 1630.0840590000007,
+          "duration_ms": 1237.9829370000007,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8190/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8189.pbf",
+          "started_ms": 392.6203330000026,
+          "status": 200,
+          "response_ms": 1706.7110220000031,
+          "finished_ms": 1707.0349590000005,
+          "duration_ms": 1314.414625999998,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8194/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8193.pbf",
+          "started_ms": 393.0366549999999,
+          "status": 200,
+          "response_ms": 1925.275037000003,
+          "finished_ms": 1925.7004350000025,
+          "duration_ms": 1532.6637800000026,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8195/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8192.pbf",
+          "started_ms": 393.44228900000235,
+          "status": 200,
+          "response_ms": 1629.6803330000002,
+          "finished_ms": 1630.6654960000014,
+          "duration_ms": 1237.223206999999,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8195/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8189.pbf",
+          "started_ms": 393.8118830000021,
+          "status": 200,
+          "response_ms": 1805.2927310000014,
+          "finished_ms": 1807.8842089999998,
+          "duration_ms": 1414.0723259999977,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8190/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8193.pbf",
+          "started_ms": 394.1440840000032,
+          "status": 200,
+          "response_ms": 1809.218850000001,
+          "finished_ms": 1810.6196600000003,
+          "duration_ms": 1416.475575999997,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8189/8191",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8191.pbf",
+          "started_ms": 394.5236810000024,
+          "status": 200,
+          "response_ms": 2006.1015910000024,
+          "finished_ms": 2007.252192,
+          "duration_ms": 1612.7285109999975,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8189/8190",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8190.pbf",
+          "started_ms": 395.4047290000017,
+          "status": 200,
+          "response_ms": 1902.275370000003,
+          "finished_ms": 1905.9685150000005,
+          "duration_ms": 1510.5637859999988,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8195/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8193.pbf",
+          "started_ms": 395.91663900000276,
+          "status": 200,
+          "response_ms": 2010.7429890000021,
+          "finished_ms": 2015.5194740000006,
+          "duration_ms": 1619.6028349999979,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8189/8192",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8192.pbf",
+          "started_ms": 396.43868000000293,
+          "status": 200,
+          "response_ms": 2014.9895450000004,
+          "finished_ms": 2015.541959000002,
+          "duration_ms": 1619.103278999999,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8189/8189",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8189.pbf",
+          "started_ms": 396.70724300000074,
+          "status": 200,
+          "response_ms": 1995.8282440000003,
+          "finished_ms": 1996.1317830000007,
+          "duration_ms": 1599.42454,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        },
+        {
+          "tile_id": "14/8189/8193",
+          "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8193.pbf",
+          "started_ms": 396.9414660000002,
+          "status": 200,
+          "response_ms": 1928.5875330000017,
+          "finished_ms": 1929.290791000003,
+          "duration_ms": 1532.3493250000029,
+          "failure": null,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "cdp_protocol": "h2",
+          "cdp_connection_id": 19428
+        }
+      ],
+      "source_events": [
+        {
+          "type": "sourcedataloading",
+          "time_ms": 0.09999996423721313,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "visibility",
+          "time_ms": 1.399999976158142,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "metadata",
+          "time_ms": 3.599999964237213,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "source_data_type": "content",
+          "time_ms": 3.599999964237213,
+          "tile_id": null,
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8192/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8192/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8193/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8193/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8191/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8192/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.30000001192093,
+          "tile_id": "14/8191/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8193/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8192/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8194/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8193/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8194/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8191/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8191/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8194/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8194/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8190/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8192/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.39999997615814,
+          "tile_id": "14/8190/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5,
+          "tile_id": "14/8193/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5,
+          "tile_id": "14/8195/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5,
+          "tile_id": "14/8195/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8190/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8191/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8190/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8194/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8195/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8195/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8190/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8189/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8189/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8195/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8189/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8189/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedataloading",
+          "time_ms": 219.5999999642372,
+          "tile_id": "14/8189/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 607.6999999880791,
+          "tile_id": "14/8192/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1034.5,
+          "tile_id": "14/8193/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1034.8999999761581,
+          "tile_id": "14/8192/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1035.0999999642372,
+          "tile_id": "14/8192/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1035.300000011921,
+          "tile_id": "14/8193/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1035.3999999761581,
+          "tile_id": "14/8191/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1035.5,
+          "tile_id": "14/8194/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1035.699999988079,
+          "tile_id": "14/8193/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1479.8999999761581,
+          "tile_id": "14/8194/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1480.5,
+          "tile_id": "14/8191/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1480.8999999761581,
+          "tile_id": "14/8195/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1481.0999999642372,
+          "tile_id": "14/8194/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1481.5,
+          "tile_id": "14/8190/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1482,
+          "tile_id": "14/8192/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1482.5,
+          "tile_id": "14/8193/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 1483.5999999642372,
+          "tile_id": "14/8191/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2000.199999988079,
+          "tile_id": "14/8191/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2000.5999999642372,
+          "tile_id": "14/8190/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2001,
+          "tile_id": "14/8193/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2001.300000011921,
+          "tile_id": "14/8192/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2001.800000011921,
+          "tile_id": "14/8194/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2002.300000011921,
+          "tile_id": "14/8191/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2004,
+          "tile_id": "14/8195/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2004.3999999761581,
+          "tile_id": "14/8190/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2004.699999988079,
+          "tile_id": "14/8190/8192",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2005.5999999642372,
+          "tile_id": "14/8195/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2005.8999999761581,
+          "tile_id": "14/8195/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2006.199999988079,
+          "tile_id": "14/8190/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2006.3999999761581,
+          "tile_id": "14/8189/8190",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2006.699999988079,
+          "tile_id": "14/8194/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2007.699999988079,
+          "tile_id": "14/8189/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2008,
+          "tile_id": "14/8189/8189",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2008.300000011921,
+          "tile_id": "14/8189/8191",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2494.5,
+          "tile_id": "14/8195/8193",
+          "source_loaded": false
+        },
+        {
+          "type": "sourcedata",
+          "time_ms": 2494.899999976158,
+          "tile_id": "14/8189/8192",
+          "source_loaded": true
+        }
+      ],
+      "interference": [],
+      "errors": [],
+      "selection": {
+        "id": "01A10DD9A4E5716CBB34085BFCC3EF34",
+        "generation": 1024,
+        "routed_workouts": 329,
+        "range": {
+          "endDate": "2026-12-31",
+          "startDate": "2026-01-01",
+          "timezone": "UTC"
+        }
+      },
+      "peak_in_flight": 35,
+      "source_loaded_ms": 2494.899999976158,
+      "idle_ms": 2511.800000011921,
+      "source_loaded": true,
+      "camera": {
+        "center": [
+          0.0195,
+          0.0195
+        ],
+        "zoom": 14,
+        "bearing": 0,
+        "pitch": 0
+      },
+      "canvas_css": {
+        "width": 3095,
+        "height": 1973
+      },
+      "frame_changes": [],
+      "source_interference": [],
+      "pending_requests": 0,
+      "unique_tile_ids": [
+        "14/8189/8189",
+        "14/8189/8190",
+        "14/8189/8191",
+        "14/8189/8192",
+        "14/8189/8193",
+        "14/8190/8189",
+        "14/8190/8190",
+        "14/8190/8191",
+        "14/8190/8192",
+        "14/8190/8193",
+        "14/8191/8189",
+        "14/8191/8190",
+        "14/8191/8191",
+        "14/8191/8192",
+        "14/8191/8193",
+        "14/8192/8189",
+        "14/8192/8190",
+        "14/8192/8191",
+        "14/8192/8192",
+        "14/8192/8193",
+        "14/8193/8189",
+        "14/8193/8190",
+        "14/8193/8191",
+        "14/8193/8192",
+        "14/8193/8193",
+        "14/8194/8189",
+        "14/8194/8190",
+        "14/8194/8191",
+        "14/8194/8192",
+        "14/8194/8193",
+        "14/8195/8189",
+        "14/8195/8190",
+        "14/8195/8191",
+        "14/8195/8192",
+        "14/8195/8193"
+      ],
+      "missing_planned_tiles": [],
+      "extra_observed_tiles": [],
+      "total_bytes": 42484,
+      "http_completion_ms": 2015.541959000002,
+      "capture_success": true,
+      "comparison_reasons": [],
+      "comparison_valid": true,
+      "cdp": {
+        "status": "RECORDED",
+        "protocol_counts": {
+          "h2": 35
+        },
+        "requests": [
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8191.pbf",
+            "started_at": 379856.331057,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.421449,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.418847,
+            "encoded_data_length": 12032
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8190.pbf",
+            "started_at": 379856.331948,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379856.839268,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379856.830236,
+            "encoded_data_length": 9046
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8191.pbf",
+            "started_at": 379856.364084,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379856.827988,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379856.826552,
+            "encoded_data_length": 9183
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8190.pbf",
+            "started_at": 379856.364716,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.425287,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.420663,
+            "encoded_data_length": 7616
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8191.pbf",
+            "started_at": 379856.365246,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.206664,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.199856,
+            "encoded_data_length": 2582
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8192.pbf",
+            "started_at": 379856.365818,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379856.826032,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379856.825444,
+            "encoded_data_length": 2471
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8190.pbf",
+            "started_at": 379856.366471,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.01934,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.017263,
+            "encoded_data_length": 1872
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8192.pbf",
+            "started_at": 379856.366939,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.021422,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.018285,
+            "encoded_data_length": 1733
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8189.pbf",
+            "started_at": 379856.367559,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379856.60676,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379856.604571,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8191.pbf",
+            "started_at": 379856.368256,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.715423,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.709535,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8189.pbf",
+            "started_at": 379856.368852,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379856.903963,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379856.900532,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8190.pbf",
+            "started_at": 379856.369507,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.027182,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.021081,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8192.pbf",
+            "started_at": 379856.370072,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.510707,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.501907,
+            "encoded_data_length": 891
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8189.pbf",
+            "started_at": 379856.370948,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.588236,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.584151,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8192.pbf",
+            "started_at": 379856.371894,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.206194,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.188852,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8189.pbf",
+            "started_at": 379856.372564,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.388461,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.384379,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8191.pbf",
+            "started_at": 379856.37371,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.42645,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.420039,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8192/8193.pbf",
+            "started_at": 379856.375077,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.610905,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.609211,
+            "encoded_data_length": 523
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8190.pbf",
+            "started_at": 379856.375839,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.588836,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.584994,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8193/8193.pbf",
+            "started_at": 379856.377654,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.595667,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.588395,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8191.pbf",
+            "started_at": 379856.378854,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19129,
+            "response_at": 379857.296641,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.292816,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8190.pbf",
+            "started_at": 379856.382202,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.905537,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.895589,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8192.pbf",
+            "started_at": 379856.3828,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.812329,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.810668,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8191/8193.pbf",
+            "started_at": 379856.383325,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.71627,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.710222,
+            "encoded_data_length": 525
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8189.pbf",
+            "started_at": 379856.383812,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.796441,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.789428,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8194/8193.pbf",
+            "started_at": 379856.384265,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.01727,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.013504,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8192.pbf",
+            "started_at": 379856.384604,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.718889,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.710912,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8189.pbf",
+            "started_at": 379856.384919,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.903109,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.895096,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8190/8193.pbf",
+            "started_at": 379856.386413,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.906402,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.90065,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8191.pbf",
+            "started_at": 379856.386751,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.09943,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.094874,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8190.pbf",
+            "started_at": 379856.38705,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379857.993575,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379857.987397,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8195/8193.pbf",
+            "started_at": 379856.387362,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.105516,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.100655,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8192.pbf",
+            "started_at": 379856.387672,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.108262,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.102509,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8189.pbf",
+            "started_at": 379856.38796,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.086368,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.08438,
+            "encoded_data_length": 524
+          },
+          {
+            "path": "/api/map-selections/01A10DD9A4E5716CBB34085BFCC3EF34/coverage-tiles/1024/14/8189/8193.pbf",
+            "started_at": 379856.390988,
+            "target_type": "worker",
+            "protocol": "h2",
+            "status": 200,
+            "connection_id": 19428,
+            "response_at": 379858.020769,
+            "from_disk_cache": false,
+            "from_service_worker": false,
+            "finished_at": 379858.018882,
+            "encoded_data_length": 524
+          }
+        ],
+        "scope": "Actual CDP Network observations from this page and its context's worker targets; no protocol inferred from URL or configuration."
+      },
+      "recorded_at": "2026-10-05T20:55:33.015Z"
+    }
+  ],
+  "errors": [],
+  "limitations": [
+    "One cold source capability per mode; server, database and OS caches are not flushed.",
+    "Test-only React ref traversal obtains the existing map; public MapLibre methods replace the source and preserve its layers without changing product code.",
+    "Source load and idle observations are not time-to-usable-render; no 3-second product render pass is inferred.",
+    "Remote shared Chromium scheduling/software rendering and a single run are not a production benchmark."
+  ],
+  "browser": {
+    "version": "151.0.7922.34",
+    "client": "1.62.0",
+    "remote": true
+  },
+  "actual_canvas_css": {
+    "width": 3095,
+    "height": 1973,
+    "device_pixel_ratio": 1,
+    "page_width": 3431,
+    "page_height": 2049
+  },
+  "cdp_observer": {
+    "status": "RECORDED",
+    "errors": [],
+    "target_types": {
+      "worker": 1
+    },
+    "flatten": true,
+    "wait_for_debugger": false
+  },
+  "recorded_at": "2026-10-05T20:55:33.102Z",
+  "capture_success": true,
+  "comparison_valid": true,
+  "export_metadata": {
+    "profile": "typical",
+    "profile_version": 1,
+    "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+    "schema_version": 3,
+    "namespace": "workouts-acceptance",
+    "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+    "recorded_at": "2026-10-05T20:57:04.709Z",
+    "raw_artifact_sha256": "a668e8df66ab3a861b943379bc61dad012745bb77167ce3fbe22e05a132303ad",
+    "note": "Fresh browser-only rerun. Raw browser artifact and prior Go/browser evidence are unchanged; original capture flags and measurements are preserved.",
+    "preserved_evidence_sha256": {
+      "/home/erhhung/workspace/workouts-explorer/deploy/acceptance/results/typical-results.json": "b76b577dd18a4224615c243dcd9342bf9c09ebc76d4579e618d46befd65ebfa1",
+      "/home/erhhung/workspace/workouts-explorer/deploy/acceptance/results/stress-results.json": "e3132e60b5bab093a17935ec11a7ebfaf4db5809912e975bdf799825ff00462e",
+      "/tmp/opencode/coverage-typical-viewport.json": "467d8a338c55b35038e0f913db5200072138185e15b6b7681328b16b51a0009a",
+      "/tmp/opencode/coverage-stress-viewport.json": "10d9898b03a1d0e5c9d72a4961119c77951e0228b1be6f147dcd785f5eaca72d"
+    },
+    "previous_browser_report_receipt": "/tmp/opencode/coverage-typical-viewport-browser-report-5084836b-0b7b-4d5c-95eb-8d87c62044af-1791233824224-superseded.json"
+  },
+  "fixture_verification": {
+    "profile": "typical",
+    "profile_version": 1,
+    "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+    "schema_version": 3,
+    "namespace": "workouts-acceptance",
+    "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+    "recorded_at": "2026-10-05T20:57:04.713Z",
+    "validate_status": "PASS",
+    "seed": {
+      "duration_seconds": 212.858381539,
+      "gps_sample_seconds": 5,
+      "manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+      "namespace": "workouts-acceptance",
+      "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+      "profile": "typical",
+      "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+      "profile_version": 1,
+      "route_points": 480443,
+      "routed_workouts": 329,
+      "schema_version": 3,
+      "seed": 7104,
+      "segment_matches": 19938,
+      "total_workouts": 365,
+      "year": 2026,
+      "started_at": "2026-10-05T13:50:50.286298694-07:00",
+      "recorded_at": "2026-10-05T13:54:24.054972194-07:00",
+      "driver_started_at": "2026-10-05T20:50:49.644Z",
+      "driver_finished_at": "2026-10-05T20:54:24.070Z",
+      "window_kind": "Go test case, including fixture setup and controlled slot hold",
+      "provenance": {
+        "profile": "typical",
+        "profile_version": 1,
+        "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+        "kind": "captured_fenced_run",
+        "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48"
+      },
+      "status": "PASS",
+      "seed_seconds": 212.858381539,
+      "driver_elapsed_seconds": 214.426,
+      "note": "Seed-only duration is reported only from the Go fixture; driver wall time includes build/startup."
+    },
+    "post_browser_database": {
+      "schema": 21,
+      "workouts": 365,
+      "active_jobs": 0,
+      "failed_jobs": 0,
+      "route_points": 480443,
+      "matcher_slots": 0,
+      "routed_workouts": 329,
+      "segment_matches": 19938
+    },
+    "deployment_specs": {
+      "acceptance-basemap": [
+        {
+          "name": "basemap",
+          "image": "nginxinc/nginx-unprivileged:1.29-alpine",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "acceptance-postgres": [
+        {
+          "name": "postgres",
+          "image": "postgis/postgis:18-3.6",
+          "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          }
+        }
+      ],
+      "acceptance-telemetry": [
+        {
+          "name": "collector",
+          "image": "otel/opentelemetry-collector-contrib:0.146.1",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "workouts-explorer-api": [
+        {
+          "name": "api",
+          "image": "harbor.fourteeners.local/library/workouts-api:dev-20261001@sha256:581875cd8df35b038caa280dc2e8ad1ae6909a7dd4e01b23027907727747e278",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "workouts-explorer-coverage-worker": [
+        {
+          "name": "coverage-worker",
+          "image": "harbor.fourteeners.local/library/workouts-worker:dev-20261001@sha256:bc8a9f36d2f34d6639bacaf990532841f5aa3e4cac148173d228954dc1788296",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "workouts-explorer-tiles": [
+        {
+          "name": "martin",
+          "image": "ghcr.io/maplibre/martin:1.15.0@sha256:84f406ac96839aad3ea06ddaa68ef7617ed55305c21038c182d59f100e48dd6d",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "workouts-explorer-ui": [
+        {
+          "name": "ui",
+          "image": "harbor.fourteeners.local/library/workouts-ui:dev-20261001@sha256:baa8911d979b6c9179e5d6af9ba97c0bc356b0c69ffff26eda273ab727d4c41f",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ],
+      "workouts-explorer-worker": [
+        {
+          "name": "worker",
+          "image": "harbor.fourteeners.local/library/workouts-worker:dev-20261001@sha256:bc8a9f36d2f34d6639bacaf990532841f5aa3e4cac148173d228954dc1788296",
+          "limits": {
+            "cpu": "250m",
+            "memory": "256Mi"
+          },
+          "requests": {
+            "cpu": "25m",
+            "memory": "64Mi"
+          }
+        }
+      ]
+    },
+    "pvc_count": 0,
+    "source_geometry_unchanged": true
+  },
+  "operational_state": {
+    "profile": "typical",
+    "profile_version": 1,
+    "profile_manifest_sha256": "1081959ad31aa04bdc9b36357e569383819a12baaf0e51db0273e3df10bdce7a",
+    "schema_version": 3,
+    "namespace": "workouts-acceptance",
+    "namespace_uid": "26960c93-ce11-4dc3-8bf9-20f171c76b48",
+    "context": "xdev",
+    "actions_completed": [
+      "provision",
+      "forward",
+      "seed",
+      "validate",
+      "browser-viewport",
+      "export-browser-only",
+      "cleanup"
+    ],
+    "browser_runs": 1,
+    "serial_reads_run": false,
+    "go_viewport_run": false,
+    "hardware_changes": false,
+    "live_writes": false,
+    "images_published": false,
+    "pbf_imports": false,
+    "full_visual_matrix_run": false,
+    "source_changes": false,
+    "human_docs_changed": false,
+    "cleanup_status": "PASS",
+    "namespace_deleted": true,
+    "supervisor_stopped": true,
+    "localhost_ports": {
+      "postgres": 15432,
+      "api": 18081,
+      "ui": 18080,
+      "tiles": 18083,
+      "telemetry": 18089,
+      "browser_ws": 19123
+    },
+    "supervisor_pid_and_lock_absent": true,
+    "ports_verified_closed": [
+      15432,
+      18081,
+      18080,
+      18083,
+      18089,
+      19123
+    ],
+    "cleanup_verified_at": "2026-10-05T20:57:40.010Z"
+  },
+  "observed_case_review": [
+    {
+      "source": "route",
+      "capture_success": true,
+      "comparison_valid": true,
+      "captured_http_status_counts": {
+        "200": 35
+      },
+      "actual_frame_stable": true,
+      "exact_planned_35": true,
+      "old_capability_interference": 0,
+      "raw_source_loaded_ms": 3375.800000011921,
+      "terminal_source_loaded_state": true,
+      "first_observed_loaded_event_ms": 3375.800000011921,
+      "last_observed_loaded_event_ms": 3375.800000011921,
+      "loaded_event_source_data_types": [
+        "NOT_PRESENT"
+      ],
+      "note": "Observed source-loaded event times are additional facts, not replacements for the raw source_loaded_ms or a relabeling of capture/comparison success."
+    },
+    {
+      "source": "coverage",
+      "capture_success": true,
+      "comparison_valid": true,
+      "captured_http_status_counts": {
+        "200": 35
+      },
+      "actual_frame_stable": true,
+      "exact_planned_35": true,
+      "old_capability_interference": 0,
+      "raw_source_loaded_ms": 2494.899999976158,
+      "terminal_source_loaded_state": true,
+      "first_observed_loaded_event_ms": 2494.899999976158,
+      "last_observed_loaded_event_ms": 2494.899999976158,
+      "loaded_event_source_data_types": [
+        "NOT_PRESENT"
+      ],
+      "note": "Observed source-loaded event times are additional facts, not replacements for the raw source_loaded_ms or a relabeling of capture/comparison success."
+    }
+  ]
+}

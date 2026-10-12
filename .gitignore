@@ -1,5 +1,6 @@
 .opencode/
 .playwright-mcp/
+docs/internal/
 data/**
 ui/dist/
 ui/node_modules/
@@ -7,6 +8,7 @@ ui/vite.config.js
 ui/vite.config.d.ts
 ui/*.tsbuildinfo
 helm/*.local.yaml
+deploy/acceptance/fixtures/
 *.out
 *.log
 NOTES

@@ -1,0 +1,67 @@
+image:
+  registry: harbor.fourteeners.local/library
+  tag: dev-20261001
+  pullPolicy: IfNotPresent
+  digests:
+    workouts-api: sha256:295e9338d2b02f56b32df74c11303b873d2da14c2984b85b5fa42df8bf4e3274
+    workouts-worker: sha256:937c20cec9821868ce45c246470d178d5950e15858e733cca4804d809e415131
+    workouts-ui: sha256:dedcf440482991a201db5975dbff0facdc660c15ba4bd2e64c95f1db28c41917
+api:
+  publicUrl: http://localhost:18080
+  localDevelopment: true
+  smtp:
+    address: localhost:1025
+    username: ""
+    allowInsecureLocal: true
+  coverageDiagnostics:
+    enabled: true
+    concurrency: 1
+  publicConfig:
+    baseMaps:
+      styleFamilies:
+        - id: synthetic-city
+          label: Synthetic Acceptance City
+          styles:
+            light: https://acceptance.workouts.xdev.fourteeners.local/synthetic/light.json
+            dark: https://acceptance.workouts.xdev.fourteeners.local/synthetic/dark.json
+          attribution:
+            text: Public synthetic grid; not OpenStreetMap
+            links: []
+          resourceOrigins: [https://acceptance.workouts.xdev.fourteeners.local]
+      fallbackFamilyId: synthetic-city
+      workoutTypeMappings: []
+worker:
+  autoSyncInterval: 168h
+  autoSyncStaleDays: 30
+  fileConcurrency: 1
+  accountFileConcurrency: 1
+  globalFileConcurrency: 1
+coverageWorker:
+  replicas: 1
+  heartbeatInterval: 1s
+  reconciliationScanInterval: 720h
+osm:
+  autoAddRegions: false
+  regions: [fixture:dense]
+  timezoneBoundaries:
+    enabled: false
+sources:
+  nfs:
+    enabled: false
+  localRoots: [/tmp/acceptance-source]
+ingress:
+  enabled: true
+  className: nginx
+  host: acceptance.workouts.xdev.fourteeners.local
+  tlsSecretName: acceptance-tls
+  certificateSecretName: acceptance-tls-x-workouts-acceptance-x-dev
+otel:
+  endpoint: http://acceptance-telemetry:4318
+
+# Shared dashboard UIDs must not let acceptance releases replace live dashboards.
+grafanaDashboards:
+  enabled: false
+
+# Synthetic traffic must not create objectives in the shared monitoring system.
+pyrraSLOs:
+  enabled: false

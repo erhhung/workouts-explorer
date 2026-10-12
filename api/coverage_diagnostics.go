@@ -16,10 +16,10 @@ import (
 	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/erhhung/workouts-explorer/internal/coverage"
 	"github.com/erhhung/workouts-explorer/internal/coverage/routepipeline"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -58,15 +58,9 @@ func newCoverageDiagnosticService(ctx context.Context, cfg config.CoverageDiagno
 	if !cfg.Enabled {
 		return service, nil
 	}
-	poolConfig, err := pgxpool.ParseConfig(cfg.OSMDatabaseURL)
+	pool, err := database.OpenWithMaxConns(ctx, cfg.OSMDatabaseURL, "workouts-api-coverage-diagnostics", int32(cfg.Concurrency))
 	if err != nil {
-		return nil, fmt.Errorf("parse coverage diagnostics OSM database configuration")
-	}
-	poolConfig.MaxConns = int32(cfg.Concurrency)
-	poolConfig.ConnConfig.RuntimeParams["application_name"] = "workouts-api-coverage-diagnostics"
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		return nil, fmt.Errorf("create coverage diagnostics OSM database pool")
+		return nil, fmt.Errorf("open coverage diagnostics OSM database pool: %w", err)
 	}
 	go func() {
 		<-ctx.Done()
