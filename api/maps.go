@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -12,9 +14,14 @@ import (
 
 	"github.com/erhhung/workouts-explorer/api/generated"
 	internalcoverage "github.com/erhhung/workouts-explorer/internal/coverage"
+	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -103,8 +110,28 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 		writeFieldError(w, r, "dateRangeEnum", "limit", "the resolved period contains more than 5000 routed workouts")
 		return
 	}
+	if focusedWorkoutID != nil {
+		var selected bool
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM app.map_selection_workouts
+			WHERE account_id=$1 AND selection_id=$2 AND workout_id=$3)`, accountID, selectionID, *focusedWorkoutID).Scan(&selected); err != nil {
+			writeMapUnavailable(w, r)
+			return
+		}
+		if !selected {
+			writeProblem(w, r, http.StatusNotFound, "Not Found", "one or more routed workouts are unavailable")
+			return
+		}
+	}
 	response, err := readMapSelection(r.Context(), tx, accountID, selectionID, generation, expiresAt, resolved, focusedWorkoutID)
-	if err != nil || tx.Commit(r.Context()) != nil {
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		var pgError *pgconn.PgError
+		if errors.As(err, &pgError) {
+			slog.WarnContext(r.Context(), "map selection commit failed", "sqlstate", pgError.Code, "constraint", pgError.ConstraintName)
+		}
 		writeMapUnavailable(w, r)
 		return
 	}
@@ -239,7 +266,7 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		}
 		item := generated.MapSelectionWorkout{
 			Id: compactUUID(workoutID), StartedAt: startedAt, EndedAt: endedAt, Duration: duration, PartialRoute: false,
-			Type:              generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: typeName},
+			Type:              generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: healthautoexport.CanonicalActivityLabel(typeName)},
 			Bounds:            generated.RouteBounds{MinimumLongitude: minimumLongitude, MinimumLatitude: minimumLatitude, MaximumLongitude: maximumLongitude, MaximumLatitude: maximumLatitude},
 			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, appliedCoverage, appliedCoverageCurrent),
 		}
@@ -609,10 +636,33 @@ func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, map
 		writeMapUnavailable(w, r)
 		return
 	}
+	s.proxyMapSelectionTile(w, r, request, source)
+}
+
+func (s *Server) proxyMapSelectionTile(w http.ResponseWriter, r, request *http.Request, source string) {
+	duration, err := otel.Meter("github.com/erhhung/workouts-explorer/api").Float64Histogram(
+		"workouts.api.tile.duration", metric.WithDescription("Private tile forwarding through response body write"),
+		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(.01, .05, .1, .25, .5, 1, 2.5, 5, 10))
+	if err != nil {
+		otel.Handle(err)
+	}
+	tileKind := "route"
+	if source == "app.coverage_mvt" {
+		tileKind = "coverage"
+	}
 	client := s.tileClient
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
+	status, outcome := http.StatusBadGateway, "upstream_error"
+	started := time.Now()
+	defer func() {
+		if duration != nil {
+			duration.Record(r.Context(), time.Since(started).Seconds(), metric.WithAttributes(
+				attribute.String("tile_kind", tileKind), attribute.String("outcome", outcome),
+				attribute.Int("http.response.status_code", status)))
+		}
+	}()
 	response, err := client.Do(request)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
@@ -620,11 +670,16 @@ func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, map
 	}
 	defer response.Body.Close()
 	if !validMVTResponse(response.StatusCode, response.Header.Get("Content-Type")) {
+		outcome = "invalid_response"
 		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maximumTileBytes+1))
 	if err != nil || len(body) > maximumTileBytes {
+		outcome = "body_error"
+		if len(body) > maximumTileBytes {
+			outcome = "too_large"
+		}
 		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
 		return
 	}
@@ -633,7 +688,10 @@ func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, map
 	w.Header().Set("Vary", "Cookie, Authorization")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	status, outcome = http.StatusOK, "success"
+	if _, err := w.Write(body); err != nil {
+		outcome = "write_error"
+	}
 }
 
 func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID, generation int64, z, x, y int) (string, error) {

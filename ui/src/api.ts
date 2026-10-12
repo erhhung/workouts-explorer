@@ -33,11 +33,23 @@ export interface Preferences {
   dateRange?: DateRangePreference | null;
 }
 
-export type DateRangeEnum = "thisWeek" | "lastWeek" | "last7Days" | "last30Days" | "thisMonth" | "lastMonth" | "thisYear" | "lastYear";
+export type DateRangeEnum =
+  | "thisWeek"
+  | "lastWeek"
+  | "last7Days"
+  | "last30Days"
+  | "thisMonth"
+  | "lastMonth"
+  | "thisYear"
+  | "lastYear";
 export type DateRangePreference = DateRangeEnum | `${string}/${string}`;
-export type WorkoutColumn = "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevationGain";
+export type WorkoutColumn =
+  "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevationGain";
 export type WorkoutSortDirection = "asc" | "desc";
-export interface WorkoutSort { field: WorkoutColumn; direction: WorkoutSortDirection }
+export interface WorkoutSort {
+  field: WorkoutColumn;
+  direction: WorkoutSortDirection;
+}
 export const DEFAULT_WORKOUT_SORT: WorkoutSort = { field: "date", direction: "desc" };
 
 export interface ResolvedDateRange {
@@ -175,7 +187,11 @@ export interface BaseMapFamily {
 export interface BaseMapsConfig {
   families: BaseMapFamily[];
   fallbackFamilyId: string;
-  workoutTypeMappings: Array<{ providerLabel: string; normalizedTypeKey: string; familyId: string }>;
+  workoutTypeMappings: Array<{
+    providerLabel: string;
+    normalizedTypeKey: string;
+    familyId: string;
+  }>;
 }
 
 export interface MapSelectionWorkout {
@@ -186,7 +202,12 @@ export interface MapSelectionWorkout {
   duration: string;
   localStartDate: string | null;
   partialRoute: boolean;
-  bounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  bounds: {
+    minimumLongitude: number;
+    minimumLatitude: number;
+    maximumLongitude: number;
+    maximumLatitude: number;
+  };
   distance: ExactMetric | null;
   pace: ExactMetric | null;
   calories: ExactMetric | null;
@@ -204,7 +225,12 @@ export interface MapSelection {
   expiresAt: string;
   dataGeneration: number;
   range: { startDate: string; endDate: string };
-  bounds: null | { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  bounds: null | {
+    minimumLongitude: number;
+    minimumLatitude: number;
+    maximumLongitude: number;
+    maximumLatitude: number;
+  };
   workouts: MapSelectionWorkout[];
   focusedWorkoutId: string | null;
   routeTileUrl: string;
@@ -213,11 +239,27 @@ export interface MapSelection {
 
 export type CoverageFocusFeatureCollection = {
   type: "FeatureCollection";
-  features: Array<{ type: "Feature"; properties: { entityKind: "path" | "park"; countBucket: number }; geometry: { type: "LineString"; coordinates: number[][] } | { type: "MultiLineString"; coordinates: number[][][] } }>;
+  features: Array<{
+    type: "Feature";
+    properties: { entityKind: "path" | "park"; countBucket: number };
+    geometry:
+      | { type: "LineString"; coordinates: number[][] }
+      | { type: "MultiLineString"; coordinates: number[][][] };
+  }>;
 };
 
-export type RoadCoverageSortField = "rangeCount" | "name" | "cityOrRegion" | "rangeFirst" | "allTimeFirst" | "rangeLatest" | "allTimeLatest";
-export interface RoadCoverageSort { field: RoadCoverageSortField; direction: WorkoutSortDirection }
+export type RoadCoverageSortField =
+  | "rangeCount"
+  | "name"
+  | "cityOrRegion"
+  | "rangeFirst"
+  | "allTimeFirst"
+  | "rangeLatest"
+  | "allTimeLatest";
+export interface RoadCoverageSort {
+  field: RoadCoverageSortField;
+  direction: WorkoutSortDirection;
+}
 
 export interface RoadCoverageEntity {
   entityId: string;
@@ -237,7 +279,12 @@ export interface RoadCoverageEntity {
   allTimeFirstWorkoutId: string;
   allTimeLatestDate: string;
   allTimeLatestWorkoutId: string;
-  bounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  bounds: {
+    minimumLongitude: number;
+    minimumLatitude: number;
+    maximumLongitude: number;
+    maximumLatitude: number;
+  };
 }
 
 export interface RoadCoverageList {
@@ -246,8 +293,15 @@ export interface RoadCoverageList {
 }
 
 export interface RoadCoverageDetail extends RoadCoverageEntity {
-  geometry: { type: "LineString"; coordinates: number[][] } | { type: "MultiLineString"; coordinates: number[][][] };
-  fitBounds: { minimumLongitude: number; minimumLatitude: number; maximumLongitude: number; maximumLatitude: number };
+  geometry:
+    | { type: "LineString"; coordinates: number[][] }
+    | { type: "MultiLineString"; coordinates: number[][][] };
+  fitBounds: {
+    minimumLongitude: number;
+    minimumLatitude: number;
+    maximumLongitude: number;
+    maximumLatitude: number;
+  };
 }
 
 export type CoverageDiagnosticOverallLabel = "correct" | "incorrect" | "uncertain";
@@ -324,7 +378,67 @@ interface CoverageDiagnosticRunThroughV60 {
   routeRevision: number;
   rulesVersion: "coverage-experimental-v1";
   samplingVersion: "coverage-sampling-experimental-v1";
-  pathPolicyVersion: "coverage-path-policy-experimental-v1" | "coverage-path-policy-experimental-v2" | "coverage-path-policy-experimental-v3" | "coverage-path-policy-experimental-v4" | "coverage-path-policy-experimental-v5" | "coverage-path-policy-experimental-v6" | "coverage-path-policy-experimental-v7" | "coverage-path-policy-experimental-v8" | "coverage-path-policy-experimental-v9" | "coverage-path-policy-experimental-v10" | "coverage-path-policy-experimental-v11" | "coverage-path-policy-experimental-v12" | "coverage-path-policy-experimental-v13" | "coverage-path-policy-experimental-v14" | "coverage-path-policy-experimental-v15" | "coverage-path-policy-experimental-v16" | "coverage-path-policy-experimental-v17" | "coverage-path-policy-experimental-v18" | "coverage-path-policy-experimental-v19" | "coverage-path-policy-experimental-v20" | "coverage-path-policy-experimental-v21" | "coverage-path-policy-experimental-v22" | "coverage-path-policy-experimental-v23" | "coverage-path-policy-experimental-v24" | "coverage-path-policy-experimental-v25" | "coverage-path-policy-experimental-v26" | "coverage-path-policy-experimental-v27" | "coverage-path-policy-experimental-v28" | "coverage-path-policy-experimental-v29" | "coverage-path-policy-experimental-v30" | "coverage-path-policy-experimental-v31" | "coverage-path-policy-experimental-v32" | "coverage-path-policy-experimental-v33" | "coverage-path-policy-experimental-v34" | "coverage-path-policy-experimental-v35" | "coverage-path-policy-experimental-v36" | "coverage-path-policy-experimental-v37" | "coverage-path-policy-experimental-v38" | "coverage-path-policy-experimental-v39" | "coverage-path-policy-experimental-v40" | "coverage-path-policy-experimental-v41" | "coverage-path-policy-experimental-v42" | "coverage-path-policy-experimental-v43" | "coverage-path-policy-experimental-v44" | "coverage-path-policy-experimental-v45" | "coverage-path-policy-experimental-v46" | "coverage-path-policy-experimental-v47" | "coverage-path-policy-experimental-v48" | "coverage-path-policy-experimental-v49" | "coverage-path-policy-experimental-v50" | "coverage-path-policy-experimental-v51" | "coverage-path-policy-experimental-v52" | "coverage-path-policy-experimental-v53" | "coverage-path-policy-experimental-v54" | "coverage-path-policy-experimental-v55" | "coverage-path-policy-experimental-v56" | "coverage-path-policy-experimental-v57" | "coverage-path-policy-experimental-v58" | "coverage-path-policy-experimental-v59" | "coverage-path-policy-experimental-v60";
+  pathPolicyVersion:
+    | "coverage-path-policy-experimental-v1"
+    | "coverage-path-policy-experimental-v2"
+    | "coverage-path-policy-experimental-v3"
+    | "coverage-path-policy-experimental-v4"
+    | "coverage-path-policy-experimental-v5"
+    | "coverage-path-policy-experimental-v6"
+    | "coverage-path-policy-experimental-v7"
+    | "coverage-path-policy-experimental-v8"
+    | "coverage-path-policy-experimental-v9"
+    | "coverage-path-policy-experimental-v10"
+    | "coverage-path-policy-experimental-v11"
+    | "coverage-path-policy-experimental-v12"
+    | "coverage-path-policy-experimental-v13"
+    | "coverage-path-policy-experimental-v14"
+    | "coverage-path-policy-experimental-v15"
+    | "coverage-path-policy-experimental-v16"
+    | "coverage-path-policy-experimental-v17"
+    | "coverage-path-policy-experimental-v18"
+    | "coverage-path-policy-experimental-v19"
+    | "coverage-path-policy-experimental-v20"
+    | "coverage-path-policy-experimental-v21"
+    | "coverage-path-policy-experimental-v22"
+    | "coverage-path-policy-experimental-v23"
+    | "coverage-path-policy-experimental-v24"
+    | "coverage-path-policy-experimental-v25"
+    | "coverage-path-policy-experimental-v26"
+    | "coverage-path-policy-experimental-v27"
+    | "coverage-path-policy-experimental-v28"
+    | "coverage-path-policy-experimental-v29"
+    | "coverage-path-policy-experimental-v30"
+    | "coverage-path-policy-experimental-v31"
+    | "coverage-path-policy-experimental-v32"
+    | "coverage-path-policy-experimental-v33"
+    | "coverage-path-policy-experimental-v34"
+    | "coverage-path-policy-experimental-v35"
+    | "coverage-path-policy-experimental-v36"
+    | "coverage-path-policy-experimental-v37"
+    | "coverage-path-policy-experimental-v38"
+    | "coverage-path-policy-experimental-v39"
+    | "coverage-path-policy-experimental-v40"
+    | "coverage-path-policy-experimental-v41"
+    | "coverage-path-policy-experimental-v42"
+    | "coverage-path-policy-experimental-v43"
+    | "coverage-path-policy-experimental-v44"
+    | "coverage-path-policy-experimental-v45"
+    | "coverage-path-policy-experimental-v46"
+    | "coverage-path-policy-experimental-v47"
+    | "coverage-path-policy-experimental-v48"
+    | "coverage-path-policy-experimental-v49"
+    | "coverage-path-policy-experimental-v50"
+    | "coverage-path-policy-experimental-v51"
+    | "coverage-path-policy-experimental-v52"
+    | "coverage-path-policy-experimental-v53"
+    | "coverage-path-policy-experimental-v54"
+    | "coverage-path-policy-experimental-v55"
+    | "coverage-path-policy-experimental-v56"
+    | "coverage-path-policy-experimental-v57"
+    | "coverage-path-policy-experimental-v58"
+    | "coverage-path-policy-experimental-v59"
+    | "coverage-path-policy-experimental-v60";
   movementMode: "foot" | "bicycle" | "shared_public";
   minimumTraversalMeters: number;
   outcome: "evaluated" | "no_evidence";
@@ -337,11 +451,35 @@ interface CoverageDiagnosticRunThroughV60 {
 }
 
 export type CoverageDiagnosticRun = Omit<CoverageDiagnosticRunThroughV60, "pathPolicyVersion"> & {
-  pathPolicyVersion: CoverageDiagnosticRunThroughV60["pathPolicyVersion"] | "coverage-path-policy-experimental-v61" | "coverage-path-policy-experimental-v62" | "coverage-path-policy-experimental-v63" | "coverage-path-policy-experimental-v64" | "coverage-path-policy-experimental-v65" | "coverage-path-policy-experimental-v66" | "coverage-path-policy-experimental-v67" | "coverage-path-policy-experimental-v68" | "coverage-path-policy-experimental-v69" | "coverage-path-policy-experimental-v70" | "coverage-path-policy-experimental-v71" | "coverage-path-policy-experimental-v72" | "coverage-path-policy-experimental-v73" | "coverage-path-policy-experimental-v74" | "coverage-path-policy-experimental-v75" | "coverage-path-policy-experimental-v76" | "coverage-path-policy-experimental-v77" | "coverage-path-policy-experimental-v78" | "coverage-path-policy-experimental-v79" | "coverage-path-policy-experimental-v80" | "coverage-path-policy-experimental-v81" | "coverage-path-policy-experimental-v82";
+  pathPolicyVersion:
+    | CoverageDiagnosticRunThroughV60["pathPolicyVersion"]
+    | "coverage-path-policy-experimental-v61"
+    | "coverage-path-policy-experimental-v62"
+    | "coverage-path-policy-experimental-v63"
+    | "coverage-path-policy-experimental-v64"
+    | "coverage-path-policy-experimental-v65"
+    | "coverage-path-policy-experimental-v66"
+    | "coverage-path-policy-experimental-v67"
+    | "coverage-path-policy-experimental-v68"
+    | "coverage-path-policy-experimental-v69"
+    | "coverage-path-policy-experimental-v70"
+    | "coverage-path-policy-experimental-v71"
+    | "coverage-path-policy-experimental-v72"
+    | "coverage-path-policy-experimental-v73"
+    | "coverage-path-policy-experimental-v74"
+    | "coverage-path-policy-experimental-v75"
+    | "coverage-path-policy-experimental-v76"
+    | "coverage-path-policy-experimental-v77"
+    | "coverage-path-policy-experimental-v78"
+    | "coverage-path-policy-experimental-v79"
+    | "coverage-path-policy-experimental-v80"
+    | "coverage-path-policy-experimental-v81"
+    | "coverage-path-policy-experimental-v82";
 };
 
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
-export type JobStatus = "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
+export type JobStatus =
+  "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
 export type JobTrigger = "manual" | "scheduled" | "system";
 export type NotificationState = "unresolved" | "remind" | "resolved" | "dismissed";
 export type NotificationSeverity = "info" | "warning" | "error";
@@ -521,7 +659,9 @@ export interface IngestAccepted {
   reused: boolean;
 }
 
-export interface SafeFields { [key: string]: string | number }
+export interface SafeFields {
+  [key: string]: string | number;
+}
 
 export interface JobFile {
   id: string;
@@ -552,9 +692,18 @@ export interface JobLog extends Omit<JobEvent, "severity"> {
   severity: "debug" | NotificationSeverity;
 }
 
-export interface JobFileList { pagination: Pagination; items: JobFile[] }
-export interface JobEventList { pagination: Pagination; items: JobEvent[] }
-export interface JobLogList { pagination: Pagination; items: JobLog[] }
+export interface JobFileList {
+  pagination: Pagination;
+  items: JobFile[];
+}
+export interface JobEventList {
+  pagination: Pagination;
+  items: JobEvent[];
+}
+export interface JobLogList {
+  pagination: Pagination;
+  items: JobLog[];
+}
 
 export interface ApiProblem {
   title?: string;
@@ -563,7 +712,10 @@ export interface ApiProblem {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public problem: ApiProblem = {}) {
+  constructor(
+    public status: number,
+    public problem: ApiProblem = {},
+  ) {
     super(problem.title ?? "Request failed");
   }
 }
@@ -575,10 +727,20 @@ function isPublicRequest(pathname: string, method: string) {
   if (pathname === "/api/session") return method === "GET" || method === "POST";
   if (pathname === "/api/session-tokens") return method === "POST";
   if (/^\/api\/invitations\/[^/]+$/.test(pathname)) return method === "GET";
-  return method === "POST" && (pathname === "/api/registrations" || pathname === "/api/password-reset-requests" || pathname === "/api/password-resets");
+  return (
+    method === "POST" &&
+    (pathname === "/api/registrations" ||
+      pathname === "/api/password-reset-requests" ||
+      pathname === "/api/password-resets")
+  );
 }
 
-async function request(path: string, init: RequestInit, csrfToken: string | undefined, accept: string) {
+async function request(
+  path: string,
+  init: RequestInit,
+  csrfToken: string | undefined,
+  accept: string,
+) {
   const pathname = new URL(path, window.location.origin).pathname;
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
@@ -603,14 +765,24 @@ async function request(path: string, init: RequestInit, csrfToken: string | unde
 }
 
 export async function api<T>(path: string, init: RequestInit = {}, csrfToken?: string): Promise<T> {
-  const response = await request(path, init, csrfToken, "application/json, application/problem+json");
+  const response = await request(
+    path,
+    init,
+    csrfToken,
+    "application/json, application/problem+json",
+  );
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-export async function downloadApi(path: string, init: RequestInit = {}, accept = "application/json, application/problem+json"): Promise<{ blob: Blob; filename: string }> {
+export async function downloadApi(
+  path: string,
+  init: RequestInit = {},
+  accept = "application/json, application/problem+json",
+): Promise<{ blob: Blob; filename: string }> {
   const response = await request(path, init, undefined, accept);
   const disposition = response.headers.get("Content-Disposition") ?? "";
-  const filename = /^attachment;\s*filename="([A-Za-z0-9._-]+)"$/.exec(disposition)?.[1] ?? "workout-export.json";
+  const filename =
+    /^attachment;\s*filename="([A-Za-z0-9._-]+)"$/.exec(disposition)?.[1] ?? "workout-export.json";
   return { blob: await response.blob(), filename };
 }

@@ -310,7 +310,7 @@ safer and auditable.
 
 ### Argon2id benchmark
 
-The benchmark ran on 2026-08-03 with Go 1.26.5 and
+The benchmark ran on 8/3/2026 with Go 1.26.5 and
 `golang.org/x/crypto/argon2` (Argon2 version 19) on Linux/amd64, a 13th Gen Intel
 Core i9-13900HK virtualized host. The host cgroup exposed a two-CPU quota and 10
 GiB memory ceiling. The representative API pod assumption is `1 CPU / 512 MiB`,

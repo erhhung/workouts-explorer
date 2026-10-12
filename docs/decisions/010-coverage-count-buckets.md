@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-09-13 and amended on 2026-09-14. Production Coverage uses the fixed six-class
+Accepted on 9/13/2026 and amended on 9/14/2026. Production Coverage uses the fixed six-class
 approximately logarithmic contract defined below. Historical distribution and
 visual checks validate the accepted contract and inform a future ADR revision;
 they do not block its initial implementation.

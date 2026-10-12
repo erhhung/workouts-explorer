@@ -40,5 +40,7 @@ Contributor setup, database verification, and packaging guidance are in
 | ✅ | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
 | ✅ | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
 | 🔳 | 8  | Private iCloud setup; remote workout imports; clear prompts when access expires |
-| 🔳 | 9  | User and invitation management; announcements; account deletion; backup and recovery guidance |
-| 🔳 | 10 | Responsive use with large workout histories; recovery from common failures; accessibility and release polish |
+| 🔳 | 9  | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
+| 🔳 | 10 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
+| 🔳 | 11 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |
+| 🔳 | 12 | Production deployment; measured scaling and resource limits; least-privilege credentials; network/TLS/security hardening; production recovery validation |

@@ -76,19 +76,21 @@ spec:
           readinessProbe:
             exec:
               command: [pg_isready, -U, postgres, -d, workouts]
-            initialDelaySeconds: 2
-            periodSeconds: 2
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             exec:
               command: [pg_isready, -U, postgres, -d, workouts]
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+              memory: 256Mi
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql

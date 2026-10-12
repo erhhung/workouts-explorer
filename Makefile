@@ -1,6 +1,6 @@
 .PHONY: all generate check-generated check-ui-artifacts check-version check-dev-postgres \
-				fmt vet test test-ui build helm verify images publish-dev-images osm-update \
-				migration-test vcluster-test compose-up compose-down
+				fmt format format-check vet test test-ui build helm verify images publish-dev-images osm-update \
+				migration-test coverage-worker-test vcluster-test compose-up compose-down
 
 SHORT_SHA ?= $(shell git rev-parse HEAD | cut -c1-8)
 APP_VERSION := $(shell tr -d '\n' < VERSION)
@@ -22,8 +22,15 @@ check-version:
 check-dev-postgres:
 	@./scripts/check-dev-postgres.sh
 
-fmt:
-	@test -z "$$(gofmt -l api internal worker)"
+fmt: format-check
+
+format:
+	@gofmt -w api internal worker tests
+	@npm --prefix ui run format
+
+format-check:
+	@test -z "$$(gofmt -l api internal worker tests)"
+	@npm --prefix ui run format:check
 
 vet:
 	@go vet ./...
@@ -81,6 +88,9 @@ osm-update:
 
 migration-test:
 	@./scripts/test-migrations.sh
+
+coverage-worker-test:
+	@bash scripts/test-coverage-worker.sh
 
 vcluster-test:
 	@./scripts/test-vcluster.sh

@@ -4,7 +4,7 @@
 
 Accepted
 
-Accepted on 2026-08-04 before Milestone 3 source configuration persistence.
+Accepted on 8/4/2026 before Milestone 3 source configuration persistence.
 
 ## Context
 

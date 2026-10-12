@@ -2,9 +2,16 @@
 
 ## Status
 
-Accepted. The canonical multi-region promotion slice described here is
-implemented. External download, build, validation policy, job orchestration, and
-application reconciliation remain the next delivery slice.
+Accepted. The canonical multi-region promotion contract and operator-run
+download, import, resumable derivation, validation, promotion and storage-GC
+lifecycle are implemented, as is automatic application Coverage reconciliation
+after promotion. Current tooling uses Osmium 1.19.0, osm2pgsql 2.3.1, importer
+version 3 and derivation version 20. Administrator status/refresh workflows
+remain Milestone 9 work; dedicated OSM reader credential provisioning belongs
+to the final production/security Milestone 12. Automatic region addition is
+independently and indefinitely deferred. See the
+[resumable rebuild contract](../osm-resumable-rebuild.md) for checkpoint and
+operator-blocking behavior.
 
 ## Context
 
@@ -61,8 +68,10 @@ importer, derivation tools, schema, or stable segment identity.
 
 ## Decision Process
 
-Evaluate importer and derivation toolchains against the configured Northern
-California extract and a subsequent full refresh. The spike must prove:
+The toolchain evaluation used the configured Northern California extract and
+full-refresh workflow. Its acceptance requirements are retained here; the dated
+spike measurements below are historical evidence, not current storage or latency
+guarantees:
 
 - retention of source node, way, relation, tags, versions, and timestamps needed
   for diagnostics;
@@ -87,7 +96,7 @@ California extract and a subsequent full refresh. The spike must prove:
   nodes, 2,021,280 ways, and 435 relations; final PostgreSQL sizing still requires
   the representative import.
 
-The initial NorCal spike on 2026-08-12 selected Osmium 1.19.0 and osm2pgsql
+The initial NorCal spike on 8/12/2026 selected Osmium 1.19.0 and osm2pgsql
 2.3.1 for further evaluation. The 648,847,614-byte source produced a
 190,143,549-byte selective PBF with 21,690,263 nodes, 2,021,280 ways, and 435
 relations. Every highway way-node reference was complete; clipped regional
@@ -104,7 +113,7 @@ query improved from a 13.7-second parallel scan to a 15.6-millisecond geography
 GiST index scan. These are spike measurements, not yet acceptance of segment or
 logical-path derivation.
 
-The full NorCal derivation completed on 2026-08-12 after replacing global
+The full NorCal derivation completed on 8/12/2026 after replacing global
 node/cut materialization with 20,000-way batches. Global staging was rejected
 because 24,557,767 node occurrences plus overlapping indexes exhausted the
 PostgreSQL volume, and a single global window sort exhausted temporary storage.
@@ -148,22 +157,25 @@ derivation algorithm must not silently reuse old identity.
 
 ### Logical path and locality constraints
 
-The accepted design must retain a second identity above matching segments for
-user-facing attribution and Path Coverage rows. Named logical paths begin with an
-authoritative municipal city/town locality identity, normalized path name, and a
-broad compatible path class. Locality identity uses imported administrative
-provenance rather than postal-city or display text alone. Thus `El Camino Real, Mountain View` and `El Camino
-Real, Sunnyvale` are distinct logical paths even when their source geometry is
-part of one continuous road.
+The accepted design retains a second identity above matching segments for
+user-facing attribution and Path Coverage rows. Named logical paths use connected
+name groups and authoritative locality identity; current grouping may cross
+road/path classes. Locality identity uses imported administrative provenance
+rather than postal-city or display text alone. Thus `El Camino Real, Mountain
+View` and `El Camino Real, Sunnyvale` remain distinct logical paths even when
+their source geometry belongs to one connected component across municipalities.
 
-Coverage identity primarily follows OSM graph connectivity within an attribution
-scope. That scope is a named educational ground for eligible unnamed geometry,
-otherwise a named park for non-road geometry, an authoritative municipality or
-county, or finally the provider region. Compatible connected segments may share
-an identity across source-way and path-class transitions, while disconnected
-components and scope or name boundaries remain separate. Named roads also use
-bounded proximity connections to join nearby divided carriageways and topology
-gaps as described by derivation versions 13 and 14 below.
+Coverage identity primarily follows OSM graph connectivity. Unnamed geometry is
+scoped by a named educational ground, otherwise a named park for non-road
+geometry, otherwise an authoritative municipality or county, or finally the
+provider region. Named groups use the original case/whitespace-normalized label
+across the provider region, compute components across locality boundaries, and
+then receive locality-scoped final IDs. Compatible connected named segments may
+share a component across source-way and path-class transitions; conservative
+branch rules apply to unnamed groups. Named roads also use bounded proximity
+connections to join nearby divided carriageways and topology gaps, as described
+by derivation versions 13 and 14 below. Version 20 preserves directional labels
+and adds bounded short-component absorption, as recorded below.
 
 Derivation version 6 applies a second, connectivity-bounded identity pass after
 park attribution. Its scope is the stable selected park ID when present, otherwise
@@ -376,7 +388,9 @@ tuples. A fresh empty database follows the same migration without requiring an
 active generation. `region_storage` records each attached generation and its
 three leaves. Replacement detaches rather than drops prior leaves, while
 `storage_gc` queues those leaves and the now-unneeded build schema for bounded,
-out-of-transaction cleanup. This foundation does not yet add worker GC execution.
+out-of-transaction cleanup. The schema foundation records the cleanup work; the
+implemented operator updater executes retryable GC before new work and after
+successful promotion, independently of the general application job runner.
 Downgrade must not copy data and explicitly refuses once a schema-4 replacement
 has queued retired leaves; the legacy schema cannot safely recover after GC.
 
@@ -384,15 +398,24 @@ has queued retired leaves; the legacy schema cannot safely recover after GC.
 
 Configured named regions define the initial loaded region set. Overlapping regions
 deduplicate source objects by OSM type and ID and retain source-region provenance.
-A route outside every promoted region remains visible in Routes mode but reports
-coverage pending when automatic addition has queued an eligible named region, or
-unavailable when automatic addition is disabled, no provider region contains it,
-or the smallest region exceeds the byte ceiling. The worker never performs public
-OSM or Overpass lookups per point.
-Automatic named-region addition is deferred from the current implementation. Until
-it is implemented, a no-evidence diagnostic reports cataloged regions covering route
-points that lack an active configured generation; the UI presents those regions as
-unavailable and retains the raw route.
+A route requiring unpromoted map data remains visible in Routes mode but reports
+Coverage unavailable while automatic addition is disabled. The worker never
+performs public OSM or Overpass lookups per point. A no-evidence diagnostic can
+report cataloged regions covering route points that lack an active configured
+generation; production readiness stores usable active-generation targets, not an
+exhaustive list of missing provider regions.
+
+As decided on 10/4/2026, automatic named-region addition is indefinitely deferred
+and is not a Milestone 7 completion gate. Keep `osm.autoAddRegions=false`: limited
+PostgreSQL PVC capacity makes implicit downloads/rebuilds unsafe. An operator
+consciously selects each additional region, prepares storage and replica headroom,
+then invokes the storage-preflighted updater. Missing data disables result-less
+Coverage focus with **Map data not available**, without hiding the raw route.
+Successful operator promotion still triggers automatic Coverage reconciliation.
+Before any future automatic-addition implementation is enabled, it must resolve
+provider-qualified requirements, enforce download and storage ceilings, coalesce
+updates globally by region, and report pending only after an eligible update is
+actually queued; impossible additions remain unavailable.
 
 Refresh downloads complete current PBFs and rebuilds selective candidate tables
 containing eligible paths, required node and relation lineage, municipal
@@ -414,7 +437,7 @@ is queued or running. Completion queues a successor when the desired generation
 advanced. Individual workouts may be skipped only when their applied OSM
 generation and matcher version already equal the job targets.
 
-## Alternatives To Evaluate
+## Alternatives Considered
 
 - `osm2pgsql` with a custom flexible output and derivation pipeline;
 - `imposm` or another maintained PostGIS importer;
@@ -422,8 +445,10 @@ generation and matcher version already equal the job targets.
 - a custom minimal importer only if maintained tools cannot preserve required
   hierarchy and refresh behavior.
 
-A routing engine remains outside this ADR because ADR 0001 selects nearest-path
-matching for the MVP.
+A separate routing-engine service remains outside this ADR. The implemented
+matcher uses bounded candidate lookup, graph traversal and sequence-aware Viterbi
+decoding under [ADR 0009](009-coverage-matching-rules.md), not nearest-segment-only
+assignment.
 
 ## Acceptance Evidence
 
@@ -442,5 +467,9 @@ measured 225 ms cold and 7.3 ms warm. The manual regional updater now implements
 the external lifecycle with digest-pinned Osmium 1.19.0 and osm2pgsql 2.3.1,
 transactional single-flight generation reservation, bounded download provenance,
 an injectable validation-gated pipeline, schema-4 promotion, and retryable
-post-promotion storage GC. It intentionally remains an operator-run command;
-automatic API/job and UI contracts are deferred.
+post-promotion storage GC. It intentionally remains an operator-run command.
+The 10/4/2026 closeout decision formally assigns the remaining administrator
+status/refresh API and job/status contract to Milestone 9. Milestone 7 covers the
+completed operator status/refresh/rebuild lifecycle and automatic copied-segment
+reconciliation; it does not require an administrator API or UI. Automatic
+route-triggered region addition remains independently and indefinitely deferred.

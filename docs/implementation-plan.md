@@ -47,11 +47,11 @@ implementation that depends on an unresolved choice.
 | Before Milestone 6 Map implementation | ADR 0011 | Theme-aware style families, workout-type defaults, fallback and override behavior, provider access, and private-overlay restoration are accepted. |
 | Before Milestone 7 OSM schema/bootstrap | ADR 0008 | The measured importer, derivation schema, segment identity, refresh, and promotion design are accepted. |
 | Before Milestone 7 matching acceptance | ADR 0009 | Curated fixtures establish concrete matching thresholds, quality rules, tie-breaking, and rule versioning. |
-| Accepted 2026-09-13; amended 2026-09-14 | ADR 010 | Six fixed date-range buckets, paired aggregate/focus palettes, legend labels, and backend tile semantics are concrete; distribution and visual checks validate the contract. |
+| Accepted 9/13/2026; amended 9/14/2026 | ADR 010 | Six fixed date-range buckets, paired aggregate/focus palettes, legend labels, and backend tile semantics are concrete; distribution and visual checks validate the contract. |
 
-ADRs 0001 through 0007 and ADRs 0011 through 0012 are accepted. ADRs 0008 through 0010 remain
-Proposed until their stated acceptance evidence is recorded. A proposed record's
-status must change before dependent application work begins.
+ADRs 0001 through 0012 are accepted. Future proposed records must have their
+stated acceptance evidence recorded and status changed before dependent
+application work begins.
 
 ## Milestone 1: Executable Skeleton
 
@@ -175,7 +175,7 @@ An owner configures a local/NFS Health Auto Export source through Swagger, impor
 - ADR 0007 envelope tampering, key-version, rotation, and source-generation race tests
 - Account-scoped SQL tests
 
-### Completion evidence (2026-08-05)
+### Completion evidence (8/5/2026)
 
 - Schema 1-to-5 migration, upgrade, RLS, API, worker, parser, and UI suites pass against PostgreSQL 18.
 - The `xdev` deployment imported all three supplied NFS fixtures into five workouts, three workout types, and 788 route points.
@@ -224,7 +224,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 - Notification remind state across sessions
 - Diagnostic redaction tests using deliberately hostile upstream errors
 
-### Completion evidence (2026-08-06)
+### Completion evidence (8/6/2026)
 
 - Schema 1-to-6 migration, upgrade, tenant isolation, job-state, scheduler, file-slot, recovery, API, worker, and UI suites pass against PostgreSQL 18.
 - The `xdev` deployment completed a two-source parent sync, reused an equivalent active request, and persisted independent source-child progress and diagnostics.
@@ -268,7 +268,7 @@ Users can inspect where a workout came from, export normalized route data, and d
 - Delete/retry race tests with concurrent ingest
 - Provenance and location-data purge verification
 
-### Progress (2026-08-07)
+### Progress (8/7/2026)
 
 - Added the owner-only chronological workout provenance contract and responsive
   Summary action/dialog flow, including normalized compact or dashed UUID input,
@@ -346,20 +346,29 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 
 ## Milestone 7: OSM Path Coverage
 
+### Status (10/11/2026)
+
+Complete under the user-approved scope in
+[Acceptance Decisions](#acceptance-decisions-10112026). Core functionality is
+accepted; remaining administration, tablet, benchmark and production work is
+assigned to Milestones 9-12. Automatic region addition remains indefinitely
+deferred. Scope completion does not turn unexecuted checks or historical budget
+misses into passing evidence or certify production capacity/security.
+
 ### Outcome
 
 Users can see and tabulate visited roads, trails, and other paths with accurate distinct-workout counts.
 
 ### Vertical slice
 
-- Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract. ADR 0008 is accepted with canonical multi-region promotion, executable overlap/replacement fixtures, and indexed xdev candidate-query evidence; external update orchestration remains next.
+- Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract. ADR 0008 is accepted with canonical multi-region promotion, executable overlap/replacement fixtures, and indexed xdev candidate-query evidence; the operator-run resumable updater is implemented.
 - Provision the public-data-only `osm` database on the production PostgreSQL server for shared development and production reads.
-- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The manual schema-4 updater, pinned importer image, failure-safe generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented; administrator API/job integration and the next live refresh remain pending.
+- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The pinned importer image, failure-safe resumable generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented and exercised through derivation 20/generation 60. Administrator status/refresh API and job integration move to Milestone 9 by the 10/4/2026 scope decision; they are not unfinished Milestone 7 operator execution.
 - Import authoritative locality boundaries and derive deterministic locality-scoped logical paths above matching segments.
 - Add offline IANA timezone boundaries. Completed with a pinned, checksummed,
   versioned `timezone-boundary-builder` import, direct route-start lookup,
   offset-safe nearest-workout inference, and restartable ingest/deletion backfill.
-- Implement named-region coverage detection, bounded provider-catalog auto-addition, globally coalesced region updates, and raw-route-only pending/unavailable behavior outside promoted regions.
+- Implement active-region Coverage detection and raw-route-only unavailable behavior outside promoted regions. Automatic provider-catalog region downloads and their bounded, globally coalesced update orchestration are indefinitely deferred by the 10/4/2026 scope decision in ADR 0008. Operators add regions only after conscious selection and storage preparation; promotion still triggers reconciliation.
 - Chain successful promotions to account/region coverage updates using desired/applied generation watermarks; refresh every intersecting routed workout after an existing region changes.
 - Decouple coverage from ingest completion: persist route revision/readiness and transactionally enqueue or coalesce one unclaimed account/region `coverage_update` parent with a `coverage_update_route` child per eligible stale workout revision, then make the workout and raw route available while matching remains pending.
 - Add queued, running, current, failed, and stale per-workout coverage state with target/applied route revision, matcher version, OSM generation vector, timestamps, bounded progress, and safe failure categories. Preserve prior valid coverage until a replacement commits.
@@ -369,10 +378,10 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Persist parent route counters for total, processed, succeeded, failed, cancelled, and superseded. Show those counters and authorized per-workout child status, attempts, duration, and safe failure category in the Data Sync Run detail without exposing coordinates.
 - Allow a failed or partially successful coverage parent to retry only failed/cancelled eligible routes using their current route revisions and matcher/OSM target; never rerun successful or superseded routes. Reuse the linear ingest retry contract: the original parent is First, each retry links to its immediate predecessor and root, only the latest parent may be retried, and Run detail navigates every parent by First, Second, ... latest ordinal. Link each retried route child to the corresponding unsuccessful child in the preceding parent. Do not advance the fully applied account/region watermark on partial failure or automatically hot-loop the failed target; retry only by user request or after desired work/OSM state advances.
 - Add PostgreSQL-coordinated global, per-account, and optional per-region matcher slots. Default to one active matcher route globally across production and diagnostics and one active production route per account, independent of worker or API replica count.
-- Give coverage workers dedicated least-privilege application/OSM credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts.
+- Give coverage workers dedicated least-privilege application credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts. Dedicated OSM reader credentials for production Coverage and diagnostics belong to the final production/security milestone, Milestone 12; xdev temporarily shares the updater credential without relaxing application-database isolation.
 - Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
 - Derive clipped positive-length segment traversals from decoded transitions; point projections alone create neither attribution nor rendered coverage.
-- Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning. Accepted on 2026-09-11 with matcher rules `coverage-experimental-v1` and path policy `coverage-path-policy-experimental-v82`.
+- Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning. Accepted on 9/11/2026 with matcher rules `coverage-experimental-v1` and path policy `coverage-path-policy-experimental-v82`.
 - Implement the accepted ADR 010 six-bucket Coverage rendering contract and retain aggregate/visual validation evidence.
 - Copy matched segment and logical-path identity, geometry, name, locality, class, and version into the application database.
 - Persist one match per workout and physical segment by dissolving overlapping or contiguous traversal spans regardless of direction, retaining disjoint spans as one `MultiLineString`, and computing unique covered length without filling gaps.
@@ -382,15 +391,15 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Preserve route-level matcher review behind the per-user **Enable coverage diagnostics** preference in a **Diagnostics** preference section. When enabled, Coverage synchronously runs and displays diagnostics for only the selected route; when disabled, Coverage displays durable aggregate coverage and statistics for all checked routes. Keep the existing bounded request timeout, local gate, and fast `429 Retry-After` behavior; additionally require cluster-wide matcher admission so API replicas cannot multiply OSM load. Do not introduce diagnostic jobs or polling in this milestone.
 - Implement searchable, sortable, paginated Road Coverage in a modal dialog that preserves the mounted map and supports entity/workout navigation.
 - Serve production Coverage tiles and statistics only from durable application data. Poll bounded processing state rather than invoking matching interactively, refresh private capabilities after committed generation changes, and identify omitted pending, failed, or unavailable checked routes when presenting partial coverage.
-- Set separate CPU/memory requests and limits for API, Martin, general-worker, and coverage-worker pods. Measure queue age, matcher duration, slot and pool contention, query timeouts, leases, retries, stale-result rejection, and interactive API/tile latency before raising matcher concurrency above one.
-- Implement manual OSM status/refresh and copied-segment reconciliation.
+- Set separate CPU/memory requests and limits for UI, API, Martin, general-worker, Coverage-worker, and OSM/operator pods. The starting envelope is requests **25m CPU / 64Mi memory**, limits **250m CPU / 256Mi memory**, including chart hook containers. Keep shared matcher concurrency at one. Retain privacy-safe queue-age, matcher/route/admission timing, timeout/outcome, lease, retry, stale-rejection, pool-wait, and tile-latency instruments (see `coverage-metrics.md`); record a representative resource-capped backlog/interactive-latency run before raising concurrency. Full dashboards/alerts belong to Milestone 9, typical/stress benchmarking to Milestone 11, and final production sizing/hardening to Milestone 12.
+- Complete the operator-run OSM status, refresh/rebuild, and copied-segment reconciliation lifecycle. The remaining administrator status/refresh API and job/status contract belong to Milestone 9, not Milestone 7.
 
 ### Acceptance
 
 - Repeated traversal and multiple matched segments of one logical path in one workout contribute exactly one count.
 - Repeated or jittering traversal of one physical segment produces one match with no duplicated covered length; disjoint visited spans remain separate `MultiLineString` components.
 - Equally named roads in different localities produce separate rows; compatible same-name segments within one locality produce one row.
-- Unnamed paths appear as N/A.
+- Unnamed paths retain locality and stable identity and use type-specific fallback names: Unnamed road, Bike path, Pedestrian path, Trail, or Unnamed path.
 - Unmatched points remain visible in Routes but create no false coverage.
 - Month/year coverage remains interactive at the target scale.
 - OSM refresh failure leaves existing copied coverage usable.
@@ -425,20 +434,21 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Summary, Routes, Coverage tile, and ordinary API latency under a representative matching backlog
 - Pool and PostgreSQL connection limits, reserved heartbeat capacity, pod resource limits, and saturation metrics
 
-### Progress (2026-09-12)
+### Progress (9/12/2026)
 
 - Extracted the complete route-level matcher pipeline from the synchronous
   diagnostic API into `internal/coverage/routepipeline`. Sampling, bounded
   overlapping windows, v82 cross-window repairs, exact clipping, invalid-geometry
   filtering, generation provenance, unavailable-region lookup, movement-mode
   inference, and diagnostic limits now form one side-effect-free implementation
-  reusable by diagnostics and future `coverage_update_route` workers.
+  reusable by diagnostics and the subsequently delivered `coverage_update_route` workers.
 - The diagnostic API retains request admission, timeout, OSM snapshot lifecycle,
   immutable run persistence, labels, response conversion, and summary logging.
   The manual evaluator shares the canonical window size and movement-mode policy.
-- Focused and full Go tests plus `go vet ./...` pass after the extraction. Durable
+- Focused and full Go tests plus `go vet ./...` passed after the extraction. Durable
   production job schema, matcher admission, route-child execution, copied coverage
-  persistence, rollups, APIs, and UI remain next.
+  persistence, rollups, APIs, and UI were subsequent work at that historical checkpoint
+  and are now delivered.
 - Migration 16 adds unclaimed `coverage_update` parents, independently leased
   `coverage_update_route` children, immutable route/matcher/OSM targets,
   per-workout queued/running/current/failed/stale state, exact parent route
@@ -476,15 +486,15 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   persistence. Inactive targets complete as superseded, and queued children are
   replaced when either route revision or generation vector changes. Aggregate
   rollups, production tiles/stats, Data Sync coverage details, and the production
-  Coverage UI remain next.
+  Coverage UI were subsequent work at that checkpoint and are now delivered.
 - Cumulative migration 18 adds workout-local attribution dates, transactionally maintained
   account/path daily and all-time distinct-workout rollups, immutable map-selection
   range/subset metadata, and a capability-fenced selected-path aggregate read.
   Complete date ranges use daily rollups; explicit checked-workout subsets use
   direct attribution membership. Map generations now advance once on successful
   applied/no-evidence completion rather than on queued, running, failed, stale, or
-  cancellation state transitions. Fixed rendering buckets and Coverage MVT remain
-  remained blocked on ADR 010 acceptance at that checkpoint.
+  cancellation state transitions. Fixed rendering buckets and Coverage MVT
+  remained blocked on ADR 010 acceptance at that checkpoint and are now delivered.
 - Coverage jobs are now owner-visible through the existing Jobs API and Data Sync
   page. History supports a Coverage update filter and system trigger; detail shows
   safe account/region context, route totals, per-workout outcomes and duration,
@@ -496,7 +506,11 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   migration 018 defines park-attributed unnamed segments as exclusively park-owned,
   with the final explorer filters installed by migration 019. Migration 013 uses
   positional arguments when persisting diagnostics so columns added by later
-  migrations cannot collide with its inputs. The next application migration ordinal is 020.
+  migrations cannot collide with its inputs. Migration 020 aligns facility identities
+  across explorer reads. On 10/6/2026, the development-only Coverage metadata grants
+  were consolidated into migration 015; the separate 021 file was removed after
+  compatibility checks and coordinated xdev bookkeeping repair. Schema support
+  ends at 020 with minimum runtime 18. The next application migration ordinal is 021.
 - ADR 010 is accepted with date-range workout buckets `1`, `2`, `3-5`, `6-10`,
   `11-25`, and `26+`, exact tile counts, paired amber and magenta sequential
   palettes, and backend-authoritative assignment. Cumulative migration 017 adds the
@@ -604,6 +618,82 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   generations; diagnostics no longer filter every candidate when pgx encodes an
   unset Go slice as SQL NULL.
 
+### Closeout Scope (10/4/2026)
+
+- Core OSM generation, matching, durable persistence, reconciliation, Coverage
+  rendering, Road Coverage, facility/state-park identities, and selective retry
+  are implemented. Row-level readiness icons and disabled-row reasons satisfy
+  partial-coverage omission reporting; no separate omission summary is required.
+- Ten-second no-result readiness polling is complemented by bounded background
+  generation checks for displayed current/stale results. Private capabilities are
+  replaced on committed data-generation changes even if readiness labels are unchanged.
+- Automatic region addition is indefinitely deferred; `osm.autoAddRegions` stays
+  false. Missing promoted data leaves raw routes available and result-less Coverage
+  disabled. Dedicated OSM reader credentials are deferred to Milestone 12 before
+  production deployment; application role isolation remains required in xdev.
+- All application/OSM components start with the same 25m/64Mi requests and
+  250m/256Mi limits. These are provisional dev settings, not measured production
+  capacity; importer stages and concurrent API password hashing especially need
+  resource-capped validation. PostgreSQL resources/PVCs are not changed here.
+- Small Coverage lifecycle and tile measurements plus existing DB-pool metrics
+  are the Milestone 7 observability scope. Matcher concurrency remains one;
+  dashboards/alerting move to Milestone 9, profile benchmarking to Milestone 11,
+  and final production sizing/scale tuning to Milestone 12.
+- The CoverageRunner end-to-end integration matrix passes ten cases and
+  three race repetitions and runs in its own CI job. Month/year backend reads
+  are recorded; earlier host full-length matcher correctness is separate from
+  current profile receipts, whose matcher-smoke fields are null. Resource-capped
+  backlogs, theme/device/color-vision checks, real-device/native-zoom checks and
+  overlapping general-worker responsiveness were closeout gates at the earlier
+  checkpoint. The 10/11/2026 acceptance decisions below carry them forward;
+  unexecuted checks remain unmeasured rather than passing evidence. See
+  `coverage-acceptance.md` and its reports.
+  The administrator status/refresh API and job/status contract are
+  formally moved to Milestone 9 by the 10/4/2026 decision; the completed operator
+  lifecycle and automatic copied-segment reconciliation remain in Milestone 7.
+- Representative per-user acceptance uses `coverage-acceptance.md`: typical
+  365/year with 329 routed workouts, stress 730/year with 511 routed workouts,
+  requested activity/distance/duration mixtures and no repeated daily type.
+  Both fixtures and backend reads are verified; the stress year Coverage tile
+  misses the provisional budget. The retained runs contain no warm serial phase
+  or latency retry. Full profile-specific acceptance remains unmeasured and is
+  carried forward by the explicit decisions below, not claimed as a pass.
+
+### Acceptance Decisions (10/11/2026)
+
+These user-approved decisions supersede the corresponding closeout gates above
+and complete Milestone 7's agreed scope. Unexecuted checks remain unmeasured,
+not passing evidence. The future milestone assignments below are required work,
+not removed requirements or a production-readiness claim.
+
+- **Resource-capped backlog: accepted for Milestone 7.** The current worker
+  correctness evidence and conservative settings are sufficient for this milestone.
+  Move the representative 48/96-route backlog and CPU/memory/throttling/peak-resource
+  measurements to Milestone 11. Matcher concurrency remains one; this decision
+  does not certify throughput, spare capacity or production sizing.
+- **Mixed-workload responsiveness: accepted for Milestone 7.** Dedicated Coverage
+  execution and shared matcher admission controls are sufficient for this milestone.
+  Move sustained Summary/Routes/Coverage/API latency and general-worker
+  ingest/check/delete responsiveness during matching, including competing
+  diagnostics, to Milestone 11. No overlapping-load responsiveness pass is claimed.
+- **Profile benchmarking and visual matrix: accepted for Milestone 7.** Move
+  typical/stress benchmarking and profile-specific theme/color-vision visual
+  review to MVP verification, now Milestone 11. The stress year tile and viewport
+  budget misses and unmeasured initial-map render timing remain recorded, not
+  converted to passes. Tablet UI/UX development and its device-specific visual
+  review belong to the new Milestone 10. iPad-sized devices and larger are the supported mobile target;
+  iPhone-sized UI/UX development is explicitly out of scope.
+- **Real-device and native-zoom checks: accepted for Milestone 7.** Move supported
+  iPad device, rotation, keyboard and browser-zoom validation to Milestone 10,
+  and desktop native-zoom regressions to Milestone 11. The existing UI is accepted
+  for this milestone without claiming that the unexecuted matrix passed.
+- **Production scaling and security hardening: deferred to Milestone 12.** The
+  final milestone owns production deployment, capacity/scaling, final resource
+  and retention settings, least-privilege OSM reader credentials, and production
+  security controls. Earlier milestones retain application authorization,
+  account isolation and privacy regression requirements; this is not permission
+  to weaken existing boundaries or treat xdev exceptions as production-ready.
+
 ## Milestone 8: iCloud/Rclone Source
 
 ### Outcome
@@ -647,10 +737,18 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
 
 - Complete admin user list, invitation resend/revoke, and asynchronous account deletion that cancels and drains account jobs before capturing purge targets.
 - Implement all-user in-app announcements, expiration, independent acknowledgement, and retraction.
-- Complete OSM status and refresh diagnostics.
+- Implement the administrator OSM status/refresh API and job/status contract,
+  moved from Milestone 7 on 10/4/2026, including authorized generation/stage
+  status, manual refresh requests, globally coalesced region operations, bounded
+  progress and safe failures. Reuse the completed operator updater and promotion
+  reconciliation rather than introducing a separate lifecycle or administrator UI.
 - Add all required OTel metrics, traces, dashboards, and suggested Alertmanager rules.
 - Add source freshness, expired credentials, stuck job, cleanup failure, OSM failure, API latency, and tile latency alerts.
 - Complete Helm resources, network policies where supported, service accounts, Secrets, probes, PodDisruptionBudget decisions, and emptyDir limits.
+- Document operator prerequisites for the final production milestone. Dedicated
+  OSM reader credentials, enforced production network boundaries and final
+  production security/scaling validation belong to Milestone 12, not this
+  administration slice.
 - Add backup/restore and migration runbooks.
 - Add Argo CD multi-source example documentation for app chart plus `homelab-apps` values.
 
@@ -670,23 +768,72 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
 - Backup restore followed by migration
 - Alert rule tests from synthetic metrics
 
-## Milestone 10: MVP Hardening And Release
+## Milestone 10: Tablet-Focused UI/UX
 
 ### Outcome
 
-The documented MVP is secure, performant, recoverable, and ready for sustained personal use.
+The product is practical to use on iPad-sized tablets and larger, in portrait
+and landscape, without compromising the established desktop experience.
+iPhone-sized layouts and phone-focused development are explicitly out of scope.
+This milestone precedes the former Milestone 10, now Milestone 11.
+
+### Vertical slice
+
+- Choose and document iPad-class reference devices and viewports; do not add
+  iPhone-sized requirements or spend development effort on phone layouts.
+- Review navigation, authentication/preferences dialogs, Summary, Data Sync,
+  Map and Road Coverage as complete tablet user journeys, not just CSS reflow.
+- Adapt dense tables, row expansion, filters, date controls, modal sizing and
+  scroll ownership for portrait/landscape tablet use.
+- Make Map controls and sheets usable by touch, preserve map space, and provide
+  touch-accessible alternatives to hover-only details and selection interactions.
+- Verify on-screen/external keyboard behavior, focus management, browser zoom,
+  rotation and safe-area handling without losing selection or map state.
+- Review light/dark themes, contrast, color-vision distinctions and touch targets
+  on the supported tablet layouts while preserving desktop behavior.
+
+### Acceptance
+
+- Core user journeys work on the documented iPad-class devices in both orientations.
+- Controls, dialogs and tables remain reachable without unintended nested scrolling
+  or obscured content; the Map remains a usable primary surface.
+- Touch users can access essential details and actions without a mouse hover.
+- Rotation and keyboard/zoom changes preserve current selections and private scope.
+- Tablet light/dark and accessibility reviews reference actual captured evidence.
+- No iPhone-sized implementation or acceptance matrix is required.
+
+### Verification focus
+
+- Real iPad-class device and tablet browser checks
+- Portrait/landscape, touch, keyboard, zoom and safe-area scenarios
+- Tablet theme/contrast/color-vision review and desktop regressions
+- Summary/Data Sync/Map/dialog navigation and state-preservation journeys
+
+## Milestone 11: MVP Verification And Release Readiness
+
+### Outcome
+
+The feature-complete MVP has reproducible benchmark, functional, privacy and
+recovery evidence and coordinated release artifacts. Production deployment,
+scaling and environment-specific security hardening remain Milestone 12.
 
 ### Vertical slice
 
 - Run the complete historical NFS import with production-like limits.
+- Complete the carried-forward typical/stress profile benchmarks, resource-capped
+  48/96-route backlogs, resource peaks, mixed-workload responsiveness and
+  profile-specific visual review. Preserve earlier failures and unmeasured fields
+  until new bound evidence is collected; retain conservative matcher concurrency
+  until capacity measurements justify a change.
 - Define and commit a reproducible benchmark profile covering the 2022-present 5.4 GB source archive, normalized record counts, synthetic multi-account load, pod resources, request mix, cache state, and concurrent worker activity.
 - Tune indexes, SQL, rollups, matching, and tiles from measured traces.
 - Validate responsiveness while ingest and OSM work run.
 - Run cross-account security tests across every private resource and tile route.
 - Run dependency, container, OpenAPI, and migration compatibility checks.
 - Exercise failed source, worker crash, database restart, deletion failure, SMTP failure, and OSM failure runbooks.
-- Finalize resource limits and retention from measured operation; matching distance and coverage buckets are already resolved in Milestone 7.
-- Reconcile all documentation and publish a coordinated semver release.
+- Record benchmark resource envelopes and tuning recommendations; final production
+  resources, scale limits and retention decisions belong to Milestone 12.
+- Reconcile all documentation and prepare coordinated semver release artifacts.
 
 ### Acceptance
 
@@ -700,10 +847,61 @@ The documented MVP is secure, performant, recoverable, and ready for sustained p
 ### Verification focus
 
 - End-to-end user and admin journeys
+- Desktop native-zoom regressions and profile-specific theme/color-vision review
 - Multi-year import and map benchmark
 - Security boundary and log/telemetry leak audit
 - Failure injection and recovery
 - Release artifact and GitOps provenance
+
+## Milestone 12: Production Deployment, Scaling And Security Hardening
+
+### Outcome
+
+The validated MVP is deployed directly to the production host cluster with measured
+capacity, least-privilege credentials, enforced isolation and tested recovery.
+This is the final planned MVP milestone, not an extension of Milestone 7.
+
+### Vertical slice
+
+- Prepare production-only application values, Secrets, database and storage;
+  preserve private development/production data separation while sharing only
+  public OSM data. Coordinate shared infrastructure through its owning automation.
+- Provision distinct least-privilege OSM reader credentials/client certificates
+  for Coverage and API diagnostics, separate from updater write access. Verify
+  generation, segment, topology and locality permissions and revoke mutation access.
+- Validate enforced API-only Martin networking, service-account permissions,
+  application database roles/RLS and private-resource authorization in production.
+  Do not carry accepted xdev namespace-sync/network-policy exceptions into production.
+- Review TLS verification, certificate renewal, Secret/key rotation, ingress
+  exposure and deployment/dependency security findings; never enable plaintext
+  fallback or broaden private-data access to simplify rollout.
+- Measure production-like multi-account traffic, import/matching overlap and
+  resource/storage/database pressure. Set final requests/limits, pool budgets,
+  replicas, matcher admission and supported scale from evidence rather than
+  extrapolating single-user fixture results.
+- Finalize retention, staging/PVC capacity, backup schedules and recovery
+  objectives; test restore, migration, rollout/rollback and failure recovery.
+- Verify production telemetry origin scope, actionable alerts and alert delivery,
+  and publish the production operating/security/scale runbooks and release.
+
+### Acceptance
+
+- No shared updater credential or development-only isolation exception remains
+  in the production application deployment.
+- Production cross-account, private-tile and least-privilege negative tests pass;
+  critical/high security findings are resolved before exposure.
+- The documented production load meets agreed latency/resource limits without
+  exhausting database connections, temporary storage or matcher admission capacity.
+- Scaling changes preserve isolation, single-flight maintenance and bounded work.
+- Certificate/key rotation, alert delivery, backup restore and rollback are verified.
+- Production deployment and operating limits are reproducible and documented.
+
+### Verification focus
+
+- Production permissions, TLS/network boundaries and Secret rotation
+- Multi-account capacity, scaling, database/resource budgets and saturation
+- Operational alert delivery, retention, backup/restore and rollout recovery
+- Production release and infrastructure-ownership provenance
 
 ## Post-MVP Sequence
 

@@ -24,6 +24,44 @@ func setSourceConfig(t *testing.T) {
 	t.Setenv("LOCAL_SOURCE_ROOTS", "/data/workouts")
 }
 
+func TestOTLPEndpointDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
+	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
+	t.Setenv("OSM_DATABASE_URL", "postgresql://database.invalid/osm")
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://database.invalid/osm")
+	setAccountLifecycleConfig(t)
+	for _, test := range []struct {
+		name     string
+		endpoint string
+		unset    bool
+	}{
+		{"default", "grpcs://otel-gateway-collector.observability.svc.cluster.local:4317", true},
+		{"explicitly disabled", "", false},
+		{"legacy HTTP", "http://collector:4328", false},
+		{"legacy HTTPS", "https://collector:4318", false},
+		{"TLS gRPC override", "grpcs://collector:4317", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", test.endpoint)
+			if test.unset {
+				if err := os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			api, apiErr := LoadAPI()
+			worker, workerErr := LoadWorker()
+			coverage, coverageErr := LoadCoverageWorker()
+			if apiErr != nil || workerErr != nil || coverageErr != nil {
+				t.Fatalf("load configs: api=%v worker=%v coverage=%v", apiErr, workerErr, coverageErr)
+			}
+			if api.OTLPEndpoint != test.endpoint || worker.OTLPEndpoint != test.endpoint || coverage.OTLPEndpoint != test.endpoint {
+				t.Fatalf("endpoints: api=%q worker=%q coverage=%q; want %q", api.OTLPEndpoint, worker.OTLPEndpoint, coverage.OTLPEndpoint, test.endpoint)
+			}
+		})
+	}
+}
+
 func TestLoadAPIValidatesPublicConfig(t *testing.T) {
 	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
 	setAccountLifecycleConfig(t)

@@ -12,6 +12,9 @@ spec:
       labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: ui}
       annotations:
         checksum/nginx-config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if include "workouts.collector.enabled" . }}
+        checksum/collector-config: {{ include (print $.Template.BasePath "/collector-configmap.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.image.pullSecrets }}
@@ -24,14 +27,17 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           ports: [{name: http, containerPort: 8080}]
-          livenessProbe: {httpGet: {path: /health/live, port: http}}
-          readinessProbe: {httpGet: {path: /health/ready, port: http}}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, failureThreshold: 6, timeoutSeconds: 5}
+          readinessProbe: {httpGet: {path: /health/ready, port: http}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml .Values.ui.resources | nindent 12 }}
           volumeMounts:
             - {name: nginx-config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
             - {name: cache, mountPath: /var/cache/nginx}
             - {name: run, mountPath: /var/run}
             - {name: tmp, mountPath: /tmp}
+        {{- if include "workouts.collector.enabled" . }}
+        {{- include "workouts.collector.container" . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: nginx-config
           configMap:
@@ -39,6 +45,9 @@ spec:
         - {name: cache, emptyDir: {}}
         - {name: run, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
+        {{- if include "workouts.collector.enabled" . }}
+        {{- include "workouts.collector.volumes" (list . "ui") | nindent 8 }}
+        {{- end }}
 ---
 {{- if gt (int .Values.worker.accountFileConcurrency) (int .Values.worker.globalFileConcurrency) }}
 {{- fail "worker.accountFileConcurrency must not exceed worker.globalFileConcurrency" }}
@@ -75,6 +84,10 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           envFrom: [{configMapRef: {name: {{ include "workouts.fullname" . }}-api}}]
           env:
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "service.namespace=%s,service.instance.id=$(POD_UID),deployment.environment.name=%s" .Values.otel.serviceNamespace .Values.otel.environment | quote }}
             - name: API_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
             - name: RATE_LIMIT_KEY
@@ -86,8 +99,8 @@ spec:
             {{- end }}
             - {name: SSL_CERT_FILE, value: /var/run/secrets/workouts-trust/ca.crt}
           ports: [{name: http, containerPort: 8080}]
-          livenessProbe: {httpGet: {path: /health/live, port: http}}
-          readinessProbe: {httpGet: {path: /health/ready, port: http}}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, failureThreshold: 6, timeoutSeconds: 5}
+          readinessProbe: {httpGet: {path: /health/ready, port: http}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
@@ -154,6 +167,11 @@ spec:
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "service.namespace=%s,service.instance.id=$(POD_UID),deployment.environment.name=%s" .Values.otel.serviceNamespace .Values.otel.environment | quote }}
+            - {name: SSL_CERT_FILE, value: /tls/prod-db/ca.crt}
             - {name: COVERAGE_WORKER_POLL_INTERVAL, value: {{ .Values.coverageWorker.pollInterval | quote }}}
             - {name: COVERAGE_WORKER_ADMISSION_INTERVAL, value: {{ .Values.coverageWorker.admissionInterval | quote }}}
             - {name: COVERAGE_WORKER_LEASE_DURATION, value: {{ .Values.coverageWorker.leaseDuration | quote }}}
@@ -169,8 +187,8 @@ spec:
             - name: COVERAGE_WORKER_OSM_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.osmDatabaseKey is required" .Values.coverageWorker.osmDatabaseKey }}}}
           ports: [{name: health, containerPort: 8082}]
-          livenessProbe: {httpGet: {path: /health/live, port: health}}
-          readinessProbe: {httpGet: {path: /health/ready, port: health}}
+          livenessProbe: {httpGet: {path: /health/live, port: health}, failureThreshold: 6, timeoutSeconds: 5}
+          readinessProbe: {httpGet: {path: /health/ready, port: health}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml .Values.coverageWorker.resources | nindent 12 }}
           volumeMounts:
             - {name: database-tls, mountPath: /tls/prod-db, readOnly: true}
@@ -213,6 +231,11 @@ spec:
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "service.namespace=%s,service.instance.id=$(POD_UID),deployment.environment.name=%s" .Values.otel.serviceNamespace .Values.otel.environment | quote }}
+            - {name: SSL_CERT_FILE, value: /tls/prod-db/ca.crt}
             - {name: SOURCE_KEYRING_FILE, value: /var/run/secrets/workouts-source/keyring.json}
             - {name: LOCAL_SOURCE_ROOTS, value: {{ join "," .Values.sources.localRoots | quote }}}
             - {name: WORKER_FILE_CONCURRENCY, value: {{ .Values.worker.fileConcurrency | quote }}}
@@ -233,8 +256,8 @@ spec:
             - name: OSM_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ required "worker.osmDatabaseKey is required" .Values.worker.osmDatabaseKey }}}}
           ports: [{name: health, containerPort: 8081}]
-          livenessProbe: {httpGet: {path: /health/live, port: health}}
-          readinessProbe: {httpGet: {path: /health/ready, port: health}}
+          livenessProbe: {httpGet: {path: /health/live, port: health}, failureThreshold: 6, timeoutSeconds: 5}
+          readinessProbe: {httpGet: {path: /health/ready, port: health}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml .Values.worker.resources | nindent 12 }}
           volumeMounts:
             - {name: source-keyring, mountPath: /var/run/secrets/workouts-source, readOnly: true}
@@ -278,6 +301,9 @@ spec:
       labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: tiles}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/tile-server-configmap.yaml") . | sha256sum }}
+        {{- if include "workouts.collector.enabled" . }}
+        checksum/collector-config: {{ include (print $.Template.BasePath "/collector-configmap.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.image.pullSecrets }}
@@ -294,11 +320,17 @@ spec:
             - name: MARTIN_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "tileServer.databaseSecret.name is required" .Values.tileServer.databaseSecret.name }}, key: {{ required "tileServer.databaseSecret.key is required" .Values.tileServer.databaseSecret.key }}}}
           ports: [{name: http, containerPort: 3000}]
-          livenessProbe: {httpGet: {path: /health, port: http}}
-          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}, failureThreshold: 6, timeoutSeconds: 5}
+          readinessProbe: {httpGet: {path: /health, port: http}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml .Values.tileServer.resources | nindent 12 }}
           volumeMounts:
             - {name: config, mountPath: /etc/martin, readOnly: true}
+        {{- if include "workouts.collector.enabled" . }}
+        {{- include "workouts.collector.container" . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: config
           configMap: {name: workouts-explorer-tiles}
+        {{- if include "workouts.collector.enabled" . }}
+        {{- include "workouts.collector.volumes" (list . "tiles") | nindent 8 }}
+        {{- end }}

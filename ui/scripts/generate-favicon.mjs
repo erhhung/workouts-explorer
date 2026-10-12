@@ -50,13 +50,27 @@ function render(size) {
       const t = step / 80;
       const inverse = 1 - t;
       const next = [
-        inverse ** 3 * start[0] + 3 * inverse ** 2 * t * controlA[0] + 3 * inverse * t ** 2 * controlB[0] + t ** 3 * end[0],
-        inverse ** 3 * start[1] + 3 * inverse ** 2 * t * controlA[1] + 3 * inverse * t ** 2 * controlB[1] + t ** 3 * end[1],
+        inverse ** 3 * start[0] +
+          3 * inverse ** 2 * t * controlA[0] +
+          3 * inverse * t ** 2 * controlB[0] +
+          t ** 3 * end[0],
+        inverse ** 3 * start[1] +
+          3 * inverse ** 2 * t * controlA[1] +
+          3 * inverse * t ** 2 * controlB[1] +
+          t ** 3 * end[1],
       ];
-      const distance = Math.max(1, Math.ceil(Math.hypot(next[0] - previous[0], next[1] - previous[1])));
+      const distance = Math.max(
+        1,
+        Math.ceil(Math.hypot(next[0] - previous[0], next[1] - previous[1])),
+      );
       for (let segment = 0; segment <= distance; segment += 1) {
         const ratio = segment / distance;
-        circle(previous[0] + (next[0] - previous[0]) * ratio, previous[1] + (next[1] - previous[1]) * ratio, width * 0.039, fill);
+        circle(
+          previous[0] + (next[0] - previous[0]) * ratio,
+          previous[1] + (next[1] - previous[1]) * ratio,
+          width * 0.039,
+          fill,
+        );
       }
       previous = next;
     }
@@ -76,9 +90,10 @@ function render(size) {
       for (let channel = 0; channel < 4; channel += 1) {
         let sum = 0;
         for (let sy = 0; sy < scale; sy += 1) {
-          for (let sx = 0; sx < scale; sx += 1) sum += source[(((y * scale + sy) * width + x * scale + sx) * 4) + channel];
+          for (let sx = 0; sx < scale; sx += 1)
+            sum += source[((y * scale + sy) * width + x * scale + sx) * 4 + channel];
         }
-        rgba[((y * size + x) * 4) + channel] = Math.round(sum / scale ** 2);
+        rgba[(y * size + x) * 4 + channel] = Math.round(sum / scale ** 2);
       }
     }
   }
@@ -127,7 +142,8 @@ images.forEach((image, index) => {
 const generated = Buffer.concat([header, ...images]);
 
 if (process.argv.includes("--check")) {
-  if (!generated.equals(readFileSync(output))) throw new Error("favicon.ico is out of date; run npm run generate:favicon");
+  if (!generated.equals(readFileSync(output)))
+    throw new Error("favicon.ico is out of date; run npm run generate:favicon");
 } else {
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, generated);

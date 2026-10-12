@@ -2,7 +2,7 @@
 
 ## Status
 
-Acceptance evidence for ADR 0009, accepted on 2026-09-11 with matcher rules
+Acceptance evidence for ADR 0009, accepted on 9/11/2026 with matcher rules
 `coverage-experimental-v1`, adaptive sampling, and path policy
 `coverage-path-policy-experimental-v82`. Production Coverage persistence remains
 the next delivery slice. The owner-only diagnostic API and UI persist bounded
@@ -157,7 +157,7 @@ bounds, and the proximity-only no-traversal invariant.
 
 ## Measured Result
 
-Command on 2026-08-31:
+Command on 8/31/2026:
 
 ```text
 go test ./internal/coverage/... -v
@@ -282,18 +282,18 @@ they cannot establish false-positive or false-negative accuracy.
   Policy v7 permits private drivable street centerlines as attribution targets for
   owner foot/bicycle traces while continuing to reject private pedestrian paths,
   driveways, and parking aisles.
-- On the labeled 2025-09-24 Outdoor Walk, v7 increased matched observations from
+- On the labeled 9/24/2025 Outdoor Walk, v7 increased matched observations from
   489 to 658, reduced unmatched observations from 738 to 569, reduced no-candidate
   splits from 746 to 575, and increased positive portions from 538 to 708. This
   confirms private-road rejection was material while leaving additional gaps for
   review.
-- The 2025-10-29 Outdoor Run showed that v7 still discarded road candidates after
+- The 10/29/2025 Outdoor Run showed that v7 still discarded road candidates after
   fetching them: its 1.3-meter reported accuracy produced a 7.5-meter decoder
   radius, while sidewalk traces were commonly 9-13 meters from the road centerline.
   Policy v8 scores foot/bicycle road candidates relative to an estimated road edge
   plus sidewalk setback. It prefers explicit width and otherwise estimates width
   from lane and roadside-facility tags using validated deployment assumptions.
-- The 2025-10-28 Outdoor Walk retained 359 unmatched observations under v8.
+- The 10/28/2025 Outdoor Walk retained 359 unmatched observations under v8.
   Heatherstone Way and Dale Avenue had sustained 15-40 meter trace displacement
   despite reported 1.3-3 meter accuracy, while mapped sidewalk candidates remained
   close and parallel. At Americana/El Camino/Sylvan, excluded pedestrian topology
@@ -331,7 +331,7 @@ they cannot establish false-positive or false-negative accuracy.
   emits no evidence for reviewed service segment
   `2E304D5BE098E31C0A70A8298B376CC0`, and retains only the west/raw-route-side
   Americana carriageway before El Camino. It produced 785 matched, 296 ambiguous,
-  301 unmatched, and 33 rejected observations. The 2025-10-29 regression retained
+  301 unmatched, and 33 rejected observations. The 10/29/2025 regression retained
   2,234 matched and 436 ambiguous observations with 32 unmatched and 21 rejected.
 - v15 targets the two disconnected El Camino stubs at Americana/Sylvan. OSM already
   contains a direct Sylvan continuation from the west Americana endpoint, but v14
@@ -339,13 +339,13 @@ they cannot establish false-positive or false-negative accuracy.
   promotes road candidates parallel to the closest tagged crossing and suppresses
   transverse road candidates while an observation is on that crossing.
 - v16 narrows transverse suppression to one-way primary/secondary carriageways
-  after v15 increased fragmentation on the 2025-10-29 regression route. The aligned
+  after v15 increased fragmentation on the 10/29/2025 regression route. The aligned
   continuation promotion remains available at all tagged crossings.
   The deployed v16 walk rerun contains neither reported El Camino physical segment
   and emits the connected source-way chain `550541672 -> 707878800 -> 8935940 ->
   417071555` from west Americana through the direct Sylvan continuation. It yielded
   775 matched, 306 ambiguous, 301 unmatched, and 33 rejected observations. The
-  2025-10-29 regression retained 2,214 matched and 456 ambiguous observations with
+  10/29/2025 regression retained 2,214 matched and 456 ambiguous observations with
   32 unmatched and 21 rejected, equal in accepted-observation total to v14.
 - v17 targets a northbound Wright Avenue discontinuity where an 8.3-meter
   `service=parking_aisle` candidate sat under the GPS trace while Wright remained
@@ -360,8 +360,8 @@ they cannot establish false-positive or false-negative accuracy.
   `85B205D190F4F1F88998F0F4C47FA599` and replaces the two separated intervals on
   Wright physical segment `B96E0D23047BEC13122D5D36429F2098` with one continuous
   37.8-meter portion. Traversal count drops from 33 to 31 with observation statuses
-  unchanged. The v18 October 28 regression remains unchanged from v17.
-- v19 targets the 2025-10-27 Grant/Fremont review. Competing Grant carriageways
+  unchanged. The v18 10/28/2025 regression remains unchanged from v17.
+- v19 targets the 10/27/2025 Grant/Fremont review. Competing Grant carriageways
   previously tied inside a zero-cost road envelope despite the expected branch being
   0-2 meters from the trace and the selected branch growing to 4-15 meters away.
   A 0.002-per-square-meter secondary cost preserves the envelope while breaking that
@@ -373,7 +373,7 @@ they cannot establish false-positive or false-negative accuracy.
   gap. Policy v20 strengthens the raw-distance tie-break from 0.002 to 0.01 and
   raises only the bridge observation-count bound from 8 to 16 while retaining the
   30-meter same-logical-road limit.
-- On the 2025-10-27 route, v20 suppressed the named Stevens Creek Trail candidates
+- On the 10/27/2025 route, v20 suppressed the named Stevens Creek Trail candidates
   where its bridge met Heatherstone/Dale because a road centerline was within 5
   meters. The decoder selected a 5.6-meter road stub, then resumed the trail at an
   interior projection. Policy v21 retains named or `bridge=yes` independent path
@@ -405,9 +405,9 @@ they cannot establish false-positive or false-negative accuracy.
   allows a same-physical-segment direction reversal at the projected point, retaining
   the U-turn cost but avoiding an endpoint/intersection loop not present in raw data.
   The deployed v27 rerun emits none of the four reviewed physical segments. It
-  improves October 29 from 2,307/301 matched/ambiguous and 33 rejected to
-  2,340/289 and 12 rejected, with unmatched fixed at 82. October 27 improves to
-  2,103 matched with the trail repair retained; October 28 improves to 930 matched
+  improves 10/29/2025 from 2,307/301 matched/ambiguous and 33 rejected to
+  2,340/289 and 12 rejected, with unmatched fixed at 82. 10/27/2025 improves to
+  2,103 matched with the trail repair retained; 10/28/2025 improves to 930 matched
   and 18 rejected while preserving Rainbow segment
   `1E92DDE708C34F99830F0C4A88525A6E` unchanged at 8.4 meters.
 - v27's direct U-turn model removed the Homestead loop but changed the Stevens Creek
@@ -428,7 +428,7 @@ they cannot establish false-positive or false-negative accuracy.
   on earlier projections of the self-looping bridge geometry. Policy v31 permits the
   bounded connector only for graph segments classified as named/bridge independent
   paths. Road and unnamed-path boundary repairs still require raw-distance agreement.
-- On the 2025-10-24 run, two connected unnamed `highway=cycleway` segments from OSM
+- On the 10/24/2025 run, two connected unnamed `highway=cycleway` segments from OSM
   source way 195656378 received different logical-path IDs around trail junctions.
   A short interval selected closer West Dana Street despite viable trail candidates
   for 68 of 77 raw observations. Policy v32 adds path-versus-road continuity scoring
@@ -445,7 +445,7 @@ they cannot establish false-positive or false-negative accuracy.
   traversal. Policy v35 permits only a `path | short road | path` boundary repair
   with a uniform middle class, path-only graph connector, bidirectional raw-distance
   agreement, and strict 75/500-meter and 64-observation bounds.
-- On the 2025-10-25 walk, v35 selected a 21.9-meter two-portion Vallco traversal
+- On the 10/25/2025 walk, v35 selected a 21.9-meter two-portion Vallco traversal
   between two Wolfe traversals on the same logical path. Policy v36's in-traversal
   generalization did not apply because the Vallco interval is its own traversal.
   Policy v37 raises the existing same-logical cross-traversal middle cap to 30 meters
@@ -455,7 +455,7 @@ they cannot establish false-positive or false-negative accuracy.
   the existing `A -> short B | A` repair to a contiguous suffix totaling at most 30
   meters, still requiring an A-only graph connector.
 - The v38 Wolfe repair succeeded but its post-merge inverse cancellation removed a
-  legitimate Rainbow Drive out-and-back physical segment on the 2025-10-28 walk.
+  legitimate Rainbow Drive out-and-back physical segment on the 10/28/2025 walk.
   Policy v39 coalesces only same-direction portions after this boundary repair,
   preserving reversals while retaining the Vallco replacement.
 - The deployed v39 rerun emits neither Vallco segment
@@ -463,14 +463,14 @@ they cannot establish false-positive or false-negative accuracy.
   Wolfe is endpoint-contiguous through `3A5815D6513A7EED8AA054DAB1ABA312`,
   connector segments `9988FB37BAC3BE3E69C5355C28FB7331` and
   `85D20530C4BB95BC4D23CC705BEFAC99`, and
-  `12444568B55639A02452AE0F50566AA5`. October 28 retains both directions of
+  `12444568B55639A02452AE0F50566AA5`. 10/28/2025 retains both directions of
   legitimate Rainbow segment `BC285C32AFBA8EF3F67621A79DDCABBB` totaling 95.4
-  meters and the reviewed 8.4-meter service segment. October 27 remains at 2,104
+  meters and the reviewed 8.4-meter service segment. 10/27/2025 remains at 2,104
   matched/296 ambiguous/113 unmatched/4 rejected with the complete 284-meter trail
-  repair, while October 29 remains at 2,342/287/82/12 with all reviewed artifacts
+  repair, while 10/29/2025 remains at 2,342/287/82/12 with all reviewed artifacts
   absent.
 - The deployed v40 rerun promotes only two short crossing edges already selected
-  by accepted transitions on the 2025-10-25 walk:
+  by accepted transitions on the 10/25/2025 walk:
   `4B2F41496770DFCA2AF62C2A52BD0AC3` at 4.096 meters between
   `C3E24779452B4503EDB017209ECB899A` and
   `738DD54A8348825E3D3D49A32A2B98EC`, and
@@ -478,12 +478,12 @@ they cannot establish false-positive or false-negative accuracy.
   `6994E19C4C6FD051BBFA525C152FC0BD` and
   `E64A8980F87DB39EF3D58F4E4F1297AE`. Point classifications and traversal count
   remain `449/54/110/5` and 12; portions increase from 91 to 93 and unique
-  segments from 64 to 66. The complete evidence rows for the reviewed October 27,
-  28, and 29 routes are unchanged from v39. October 27 retains the complete
-  283.962-meter Stevens Creek Trail segment, October 28 retains both Rainbow
+  segments from 64 to 66. The complete evidence rows for the reviewed 10/27/2025,
+  10/28/2025, and 10/29/2025 routes are unchanged from v39. 10/27/2025 retains the complete
+  283.962-meter Stevens Creek Trail segment, 10/28/2025 retains both Rainbow
   directions totaling 95.365 meters and the 8.433-meter reviewed service segment,
-  and all reviewed October 29 artifacts remain absent.
-- The 2025-10-16 walk exposes a remaining dead-end turning-bulb threshold cliff.
+  and all reviewed 10/29/2025 artifacts remain absent.
+- The 10/16/2025 walk exposes a remaining dead-end turning-bulb threshold cliff.
   Viterbi selects both directions of the southern Madrone Avenue cul-de-sac,
   `F69974F6E88F08818694F8DE4936A93C` and
   `B2A38F95041DDB9E433E5BB410EA5405`, between the cited through segments
@@ -502,7 +502,7 @@ they cannot establish false-positive or false-negative accuracy.
   no-candidate gap; globally widening road attribution or disabling inverse
   cleanup would be less controlled.
 - The deployed v41 policy adds 3 meters of attribution allowance only within
-  1 meter of a degree-one drivable-road endpoint. On the 2025-10-16 walk it
+  1 meter of a degree-one drivable-road endpoint. On the 10/16/2025 walk it
   restores the southern cul-de-sac as full forward and reverse spans on
   `F69974F6E88F08818694F8DE4936A93C` (9.447 meters) and
   `B2A38F95041DDB9E433E5BB410EA5405` (22.797 meters). It also restores one
@@ -511,13 +511,13 @@ they cannot establish false-positive or false-negative accuracy.
   and `629324C93CF5808FDBB5FFFF2639BC17`. Counts move from
   `851/204/44/6` to `854/203/42/6`; traversals fall from 20 to 18 as the two
   isolated no-candidate U-turn splits close, portions rise from 208 to 218, and
-  unique segments rise from 128 to 133. The 2025-10-25 geometry is unchanged
-  from v40. October 27 and 29 retain byte-equivalent traversal geometry, while
-  October 28 retains the same physical segment set and extends one terminal span
+  unique segments rise from 128 to 133. The 10/25/2025 geometry is unchanged
+  from v40. 10/27/2025 and 10/29/2025 retain byte-equivalent traversal geometry, while
+  10/28/2025 retains the same physical segment set and extends one terminal span
   by 0.509 meters with a fully overlapping 0.855-meter reverse fragment. All
-  reviewed October 27-29 artifacts remain absent, including the rejected trail,
-  Rainbow/service behavior, and October 29 false positives.
-- Two remaining 2025-10-16 path-to-road discontinuities are caused by explicit
+  reviewed 10/27/2025-10/29/2025 artifacts remain absent, including the rejected trail,
+  Rainbow/service behavior, and 10/29/2025 false positives.
+- Two remaining 10/16/2025 path-to-road discontinuities are caused by explicit
   driveway exclusion rather than failed graph search. OSM path
   `EFC2948F0260ECFD821746803D265963` shares its north endpoint directly with
   Madrone Avenue, but its south endpoint reaches the junction of Ferndale
@@ -543,13 +543,13 @@ they cannot establish false-positive or false-negative accuracy.
   road-centerline join `411C6FAF7A8A6CF5415387C45891BD22`; the Manzanita
   connector adds `2FFE5CF5897FDA7B6ECC4BB749F8791A` at 15.922 meters and
   `9F2BF4FDB8BA96AD9A6BAEB535728A66` at 6.958 meters. Relative to v41, the
-  2025-10-16 run changes only by those four physical segments, increases portions
+  10/16/2025 run changes only by those four physical segments, increases portions
   from 218 to 234 and unique segments from 133 to 137, and reduces traversals from
   18 to 14 by joining the four path/road boundaries. Point classifications remain
-  `852/205/42/6`. The reviewed October 25, 27, 28, and 29 routes retain exactly the
+  `852/205/42/6`. The reviewed 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 routes retain exactly the
   same physical segment sets as v41 and all previously reviewed outcomes remain
   intact.
-- The 2025-10-14 Outdoor Run has two unrelated gap causes. Between Prospect Road
+- The 10/14/2025 Outdoor Run has two unrelated gap causes. Between Prospect Road
   segments `02850E6319EC182912B3E5B68FB76435` and
   `2FD47CFB72B53E1A52E0D28DD609DFB6`, raw sequences 5685-5693 advance at
   approximately 17.1-17.4 meters per second. That exceeds the 15-meter-per-second
@@ -567,7 +567,7 @@ they cannot establish false-positive or false-negative accuracy.
   require an explicit access-policy decision rather than a continuity repair.
 - The deployed v47 policy treats private pedestrian access as permission-limited
   rather than prohibited while preserving explicit `no` restrictions. On the
-  2025-10-14 run, private park footway `902D744B7552C0283E21917C1A383571`
+  10/14/2025 run, private park footway `902D744B7552C0283E21917C1A383571`
   is emitted for its complete 34.385 meters in each direction, and
   `7B64415515241C945215B69A96B0D595` is emitted across the directly supported
   spans. Private sidewalk and crossing members remain transition-only. Counts move
@@ -575,8 +575,8 @@ they cannot establish false-positive or false-negative accuracy.
   portions rise from 205 to 213, and unique segments rise from 139 to 144. The
   route replaces several nearby private-road projections with ten directly
   supported path, crossing, and continuity segments while removing five prior
-  road projections. The reviewed October 25, 27, 28, and 29 physical segment sets
-  are unchanged from v46. The October 16 walk likewise shifts from nearby road
+  road projections. The reviewed 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 physical segment sets
+  are unchanged from v46. The 10/16/2025 walk likewise shifts from nearby road
   projections onto eight directly traversed private-path/continuity segments while
   removing three prior projections, reducing unmatched points from 42 to 1.
 - The remaining visible gaps around private park path
@@ -604,8 +604,8 @@ they cannot establish false-positive or false-negative accuracy.
   Relative to v47, point classifications and traversal count remain
   `1387/154/223/35` and 24; portions rise from 213 to 221 and unique segments
   from 144 to 151 through seven raw-supported accessory connectors. The reviewed
-  October 16, 25, 27, 28, and 29 routes retain exactly the same physical segment
-  sets as v47; October 16 has only evidence-class and portion-coalescing changes.
+  10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 routes retain exactly the same physical segment
+  sets as v47; 10/16/2025 has only evidence-class and portion-coalescing changes.
 - One v50 park traversal still exposes a candidate-state detour. The direct OSM
   route from crossing `1EB6E14E4CF4131B8D56E0FF8A4243BD` to sidewalk
   `0CE76301BDEF68E639F206DEB7DAAD22` is crossing
@@ -626,12 +626,12 @@ they cannot establish false-positive or false-negative accuracy.
   `0DF729B8B0B635C78F334BC8FF43B4E9`,
   `B1B9E95A7D0847F7F0F53F09A8B5E845`, and
   `35D97F8A81D9458778FD5EAEB5EC382C`; these are the only physical segment-set
-  differences from v50 on the 2025-10-14 run. Point classifications and traversal
+  differences from v50 on the 10/14/2025 run. Point classifications and traversal
   count remain `1387/154/223/35` and 24, while portions fall from 221 to 219 and
   unique segments from 151 to 149. The previously accepted park sidewalk/crossing
-  connectors remain present. The reviewed October 16, 25, 27, 28, and 29 physical
+  connectors remain present. The reviewed 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 physical
   segment sets and counts are unchanged from v50.
-- The 2025-10-10 Outdoor Run exposes raw-supported path endpoint truncation that
+- The 10/10/2025 Outdoor Run exposes raw-supported path endpoint truncation that
   is distinct from v51's detour replacement. Private footway
   `2F2347EAA6D4352C9A86E9AC96FAEF4D` is 58.118 meters long, but v51 emits only
   source fractions 0.050683-0.708674 in reverse for 38.095 meters. Approximately
@@ -653,24 +653,24 @@ they cannot establish false-positive or false-negative accuracy.
   only when the omitted tail is short and continuously raw-supported, and may
   absorb one directly connected raw-supported eligible path below the sampling
   threshold without extending beyond its next sharp turn or graph node.
-- The v53 endpoint-window policy completes all three reviewed 2025-10-10 cases. Private
+- The v53 endpoint-window policy completes all three reviewed 10/10/2025 cases. Private
   path `2F2347EAA6D4352C9A86E9AC96FAEF4D` expands from 38.095 meters to its
   complete 58.118 meters, `9D14BE001810095994587F856A5BECED` expands from
   16.589 meters to its complete 18.873 meters, and directly connected private
   path `35D9CD08EEE50786537DB5A73293940F` is added for its full 4.253 meters.
   Point classifications and traversal count remain `707/93/177/25` and 19;
   portions rise from 147 to 148 and unique segments from 85 to 86. Additional
-  traversal-row extensions on the reviewed October 14 and 29 routes affect only
+  traversal-row extensions on the reviewed 10/14/2025 and 10/29/2025 routes affect only
   overlapping forward/reverse evidence on physical paths whose union was already
-  complete, so dissolved durable geometry is unchanged. The reviewed October 14,
-  16, 25, 27, 28, and 29 physical segment sets remain unchanged from v51 except
+  complete, so dissolved durable geometry is unchanged. The reviewed 10/14/2025,
+  10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 physical segment sets remain unchanged from v51 except
   for the intended 4.253-meter `35D9CD08...` addition.
 - The deployed v54 policy clamps endpoint-window evidence at temporal and spatial
   hard splits. Its complete evidence rows are identical to v53 for the reviewed
-  October 10, 14, 16, 25, 27, 28, and 29 routes, preserving the intended endpoint
+  10/10/2025, 10/14/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 routes, preserving the intended endpoint
   completions while preventing a relocated continuation from proving them.
 - Hiking workout types map to the same foot movement mode as walking and running,
-  so path completion applies without a separate activity rule. On the 2025-10-07
+  so path completion applies without a separate activity rule. On the 10/7/2025
   hike, v54 emitted only source fraction 0-0.919983 of curved footway
   `F44B7824BF60F20E7B83D3820D162884` (70.698 of 75.933 meters). The raw route
   passes within 1.28 meters of the physical endpoint, but its local eastward tail
@@ -683,7 +683,7 @@ they cannot establish false-positive or false-negative accuracy.
   meters with no OSM segment across that gap, so coverage correctly stops at the
   physical footway endpoint. Point classifications, traversal count, portions,
   and unique-segment count remain `1569/76/96/1`, 18, 127, and 46.
-- The 2025-10-08 Outdoor Run exposes three policy distinctions. At South Bernardo
+- The 10/8/2025 Outdoor Run exposes three policy distinctions. At South Bernardo
   and El Camino Real, the raw route follows the northeast sidewalk and turns south,
   but HMM road attribution selects unnamed 8.341-meter service spur
   `6F18D7647EFA8CD6C04E7169B11E4C4E`. The direct road-centerline chain between
@@ -746,14 +746,14 @@ they cannot establish false-positive or false-negative accuracy.
   Cameron segments `3E543FCB...` and `EDE2E276...` are traversed in both
   directions. `DCEF198A...` itself is no longer selected because the newly
   eligible named streets and adjacent paths provide better observation states,
-  not because unqualified service roads became prohibited. On the full 2025-10-08
+  not because unqualified service roads became prohibited. On the full 10/8/2025
   run, counts move from `2122/369/368/76` to `2237/390/253/55`; traversals fall
   from 49 to 47, portions rise from 366 to 405, and unique segments rise from 307
   to 333 as additional directly traversed named HOA streets replace nearby proxies.
-  The reviewed October 25, 27, 28, and 29 physical segment sets are unchanged.
-  October 14 replaces one unnamed service loop with direct Seven Springs Lane;
-  October 16 removes two unnamed service spurs while preserving both reviewed
-  cul-de-sacs and all four driveway connectors. October 7 and 10 endpoint
+  The reviewed 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 physical segment sets are unchanged.
+  10/14/2025 replaces one unnamed service loop with direct Seven Springs Lane;
+  10/16/2025 removes two unnamed service spurs while preserving both reviewed
+  cul-de-sacs and all four driveway connectors. 10/7/2025 and 10/10/2025 endpoint
   completions remain unchanged.
 - The first v57 rerun also exposed one unsupported named-road branch at Georgetown:
   `38979C07882D38B5FA8F39F4E0ECEB0F` and
@@ -764,10 +764,10 @@ they cannot establish false-positive or false-negative accuracy.
   multi-edge palindrome because its turnaround lacks raw support within 15 meters,
   reducing v57's 405 portions and 333 unique segments to 399 and 330 without
   changing point classifications or traversal count. The complete Georgetown
-  through chain remains. Genuine 10/16 cul-de-sacs, Rainbow's reversal, the
-  complete Stevens Creek Trail, and all reviewed October 25-29 outcomes retain
+  through chain remains. Genuine 10/16/2025 cul-de-sacs, Rainbow's reversal, the
+  complete Stevens Creek Trail, and all reviewed 10/25/2025-10/29/2025 outcomes retain
   their v57 evidence.
-- The 2025-10-08 office/industrial park cluster after North Whisman segment
+- The 10/8/2025 office/industrial park cluster after North Whisman segment
   `8B6EF01BD5E4F505C2B6051717836B90` is fragmented by intentional
   `service=parking_aisle` exclusion. `8B6EF...` is already complete at 19.304
   meters; the raw route turns east into parking geometry beginning with aisle
@@ -788,7 +788,7 @@ they cannot establish false-positive or false-negative accuracy.
   preferably limited to strongly raw-supported aisle runs between eligible roads;
   extending the adjacent eligible roads would be geometrically incorrect.
 - The deployed v60 policy implements that raw-gated aisle evidence. On the
-  2025-10-08 run it adds six parking aisles and no other physical segments:
+  10/8/2025 run it adds six parking aisles and no other physical segments:
   `10B06D215E803C38AF8A8FBB0B50FE85` (10.811 meters),
   `634A119BA59612E478C0FF75ED11E37C` (10.773 meters),
   `CB838472D24909CA902D80147633B33B` (36.727 meters),
@@ -800,9 +800,9 @@ they cannot establish false-positive or false-negative accuracy.
   meters. `9AB0F0CB...`, `19741218...`, and `B61C45FA...` retain their v59
   lengths. Point classifications remain `2237/390/253/55`; traversals fall from
   47 to 45 by joining supported gaps, portions rise from 399 to 405, and unique
-  segments rise from 330 to 336. The reviewed October 16 and 25-29 routes retain
+  segments rise from 330 to 336. The reviewed 10/16/2025 and 10/25/2025-10/29/2025 routes retain
   identical v59 physical segment sets and counts.
-- Policy v61 addresses the 2025-10-06 Fremont/Bernardo left turn. v60 emitted
+- Policy v61 addresses the 10/6/2025 Fremont/Bernardo left turn. v60 emitted
   `0A0202A1E82CD6918EA1B7E522DC36C0 -> A7BF828957A447EDEFFAF14C80172A8D
   -> 321170F48A12135EEA08E7059FCCC4A6`, even though `A7BF...` is the Bernardo
   segment south of the intersection and the raw route turns north. The decoded
@@ -811,9 +811,9 @@ they cannot establish false-positive or false-negative accuracy.
   `6D989EA158A1D2E1A7458177FAE8AFF5`, yielding connected normal travel into
   `321170F48A12135EEA08E7059FCCC4A6`. Point classifications, traversal count,
   portion count, and unique-segment count are unchanged; the physical set is an
-  exact one-for-one replacement. The deployed v61 reruns of October 8, 16, 25,
-  and 27-29 retain the v60 physical segment sets and diagnostic counts.
-- Policy v62 trims the 2025-10-08 Whisman/East Dana turn artifact
+  exact one-for-one replacement. The deployed v61 reruns of 10/8/2025, 10/16/2025, 10/25/2025,
+  and 10/27/2025-10/29/2025 retain the v60 physical segment sets and diagnostic counts.
+- Policy v62 trims the 10/8/2025 Whisman/East Dana turn artifact
   `13E6F16A38721A5AF8C3892516E8AEA9`. v61 emitted its full 12.610 meters in reverse
   and immediately forward between directly connected Whisman and Dana portions.
   The raw sidewalk trace approached the segment's outer endpoint to 0.39 meters
@@ -822,9 +822,9 @@ they cannot establish false-positive or false-negative accuracy.
   out-and-back; endpoint proximity alone no longer preserves it. The deployed
   result keeps point classifications and 45 traversals unchanged, removes the two
   inverse portions (405 to 403), and reduces unique segments from 336 to 335. The
-  reviewed October 6, 16, 25, and 27-29 routes retain their exact v61 physical
+  reviewed 10/6/2025, 10/16/2025, 10/25/2025, and 10/27/2025-10/29/2025 routes retain their exact v61 physical
   segment sets and diagnostic counts.
-- Policy v63 restores the 2025-10-09 Heatherstone/Stevens Creek Trail invariant
+- Policy v63 restores the 10/9/2025 Heatherstone/Stevens Creek Trail invariant
   previously established by v26. The overlapping Dale Avenue reversal
   `E2961AFE9D461BAA6A5A3ADC0F93010C` is replaced by trail segments
   `6B8AB48259B02CD59B33981F18A0B605`, `DD7CC5AB3E2CFFADF738D7ACC6A0E72E`,
@@ -835,14 +835,14 @@ they cannot establish false-positive or false-negative accuracy.
   the 3.943-meter Bonita subdivision `3C87E537F307EF4FC10B18A002228190`.
   Untaken driveway `20E06EFB1B6F19FD02560D81E16CFE2A` remains absent. Classifications
   remain `1806/207/286/11`; traversals fall from 28 to 27, portions rise from 240
-  to 246, and unique physical segments rise from 154 to 156. October 6, 8, 25,
-  and 29 retain exact v62 physical sets and counts. Raw-supported dead-end
+  to 246, and unique physical segments rise from 154 to 156. 10/6/2025, 10/8/2025, 10/25/2025,
+  and 10/29/2025 retain exact v62 physical sets and counts. Raw-supported dead-end
   driveways `26F2C63ECF897CDC1D3B55309CF6E4DC`,
   `1EF5ABB5144D3AE0ED825CB1E9CEDFD6`, and
   `58422ED472F09F86100906855E1557CA` add one physical segment and two portions
-  respectively to October 16, 27, and 28 without changing classifications or
+  respectively to 10/16/2025, 10/27/2025, and 10/28/2025 without changing classifications or
   traversal counts.
-- Policy v64 removes two false parking-aisle loops from the 2025-10-10 Outdoor Run.
+- Policy v64 removes two false parking-aisle loops from the 10/10/2025 Outdoor Run.
   `A53F6A80B29A368E31BB5568BCA776C6` shares both graph nodes with predominant
   Seven Springs segment `88E0D5E2BFAC316F2FFD8283CEA8875A`, while
   `23D1228F03B90575FA0A48BFEDAA04F1` shares both nodes with
@@ -851,17 +851,17 @@ they cannot establish false-positive or false-negative accuracy.
   identical to those direct roads even though their source geometries bend away.
   Classifications remain `707/93/177/25` and traversals remain 19; portions fall
   from 150 to 148 and unique physical segments from 88 to 86. The parking-heavy
-  October 8 route and the v63 October 9 path/driveway result retain exact physical
+  10/8/2025 route and the v63 10/9/2025 path/driveway result retain exact physical
   sets and diagnostic counts.
-- Policy v65 applies the same conservative shadow rule to the 2025-10-14 Outdoor
+- Policy v65 applies the same conservative shadow rule to the 10/14/2025 Outdoor
   Run, where parking aisle `A5BEE9B70CB8C27438D6CF8F7062ADFD` spans the same
   endpoints as the shorter two-segment Seven Springs path
   `5023D3BE7C048B302E15697D52C614EB -> 1E717523FAB78B4E563766CBF9DDA26C`.
   The raw route follows those predominant road segments, not the curved aisle loop.
   Classifications remain `1387/154/223/35` and traversals remain 24; portions fall
-  from 220 to 219 and unique physical segments from 150 to 149. The v64 October 10
-  result and the parking-heavy October 8 result retain exact physical sets and counts.
-- Policy v66 corrects three 2025-09-11 Outdoor Run cases. Villa Nueva Court
+  from 220 to 219 and unique physical segments from 150 to 149. The v64 10/10/2025
+  result and the parking-heavy 10/8/2025 result retain exact physical sets and counts.
+- Policy v66 corrects three 9/11/2025 Outdoor Run cases. Villa Nueva Court
   `A27D25EAF0FCD2F4DD8447540B0D753D` is emitted for its complete 99.017 meters
   outbound and inbound at the fully reached Villa Nueva Way junction. Unsupported
   7.512-meter South Drive reversal `E45DC4DD2BAA9BF35243A7E5DF43CF37`
@@ -873,12 +873,12 @@ they cannot establish false-positive or false-negative accuracy.
   Classifications remain `2059/274/158/25` and traversals remain 25; portions rise
   from 279 to 280 and unique physical segments from 199 to 200. The final physical
   delta is exactly those three additions and the two removals above. The same turn
-  correction removes `76ED...` from the equivalent October 9 return route.
+  correction removes `76ED...` from the equivalent 10/9/2025 return route.
   Unsupported non-dead-end side-road prefixes `A3EAFBD70BD943B3BBF53DEE6627A671`
-  and `FFC6E713AD755CDDDA18773B4D870DB2` are also removed from October 16 and 27;
-  October 6, 8, 10, 14, 25, 28, and 29 retain their v65 physical segment sets.
+  and `FFC6E713AD755CDDDA18773B4D870DB2` are also removed from 10/16/2025 and 10/27/2025;
+  10/6/2025, 10/8/2025, 10/10/2025, 10/14/2025, 10/25/2025, 10/28/2025, and 10/29/2025 retain their v65 physical segment sets.
 - Policy v67 restores the complete 127.544-meter Arboleda Drive segment
-  `930ED654C26CB6EE258E93D7E326E86F` on the 2025-09-10 Outdoor Run. After
+  `930ED654C26CB6EE258E93D7E326E86F` on the 9/10/2025 Outdoor Run. After
   `8C04976C5B771307063F159A1608D473`, v66 selected a 154.8-meter cycleway/road
   traversal tail even though the raw route follows `930ED...` completely in reverse
   west along Arboleda and north around its bend to Cuesta segment
@@ -888,10 +888,10 @@ they cannot establish false-positive or false-negative accuracy.
   from 367 to 365 and unique physical segments from 221 to 219. The exact physical
   delta adds `930ED...` and removes incorrect suffix segments
   `67608678D8CECCABED6946DA69B8F928`, `EFD4DDDC21BA34323D20348AE1B9AB38`,
-  and `5D195D75671EF45D78B27E6086619AF3`. The v66 September 11 result and all
-  reviewed October 8-10, 14, 16, and 25-29 results retain exact physical sets and
+  and `5D195D75671EF45D78B27E6086619AF3`. The v66 9/11/2025 result and all
+  reviewed 10/8/2025-10/10/2025, 10/14/2025, 10/16/2025, and 10/25/2025-10/29/2025 results retain exact physical sets and
   diagnostic counts.
-- Policy v68 corrects the 2025-09-09 1.56-mile Outdoor Walk parallel-route choice.
+- Policy v68 corrects the 9/9/2025 1.56-mile Outdoor Walk parallel-route choice.
   The raw route follows parking aisle `DDB1D3F4585617346FF3620B2DCB9602` in both
   directions, not Knickerbocker segment `E3315CC17A84869EACBAE3DA357C7CA1` and
   northern connectors `A843D76EC053A10A67F0C843EFA9AD32` and
@@ -903,30 +903,30 @@ they cannot establish false-positive or false-negative accuracy.
   58 to 59, and unique physical segments remain 27. The physical delta removes
   `E331...`, `A843...`, and `5FCD...` and adds only the three alley connectors;
   `DDB1...` was already present and gains its reverse traversal. The complete v67
-  September 10, v66 September 11, and parking-heavy October 8 results retain exact
+  9/10/2025, v66 9/11/2025, and parking-heavy 10/8/2025 results retain exact
   physical sets and diagnostic counts.
 - Policy v69 connects South Blaney segment `A353347AE109BBABB285E2C224B0CD85`
-  to paved footway `DCB940D2B53F751E56844CF4EFD8C340` on the 2025-09-05 Outdoor
+  to paved footway `DCB940D2B53F751E56844CF4EFD8C340` on the 9/5/2025 Outdoor
   Run through raw-supported parking aisles `D6B7917B875B80674CAF86C6466C1B32`
   (6.158 meters), `0683435155B6D918FF5C818DA55DF6FA` (8.804 meters), and
   `4609780B70777316D2B4437ED742A102` (52.171 meters). The first short connector
   uses directed travel past its mapped endpoint; the main aisle retains normal
   interval support. The two decoded traversals merge without inventing a road/path
   jump. Classifications remain `413/47/4/1`; traversals fall from 7 to 6, portions
-  rise from 55 to 58, and unique physical segments from 44 to 47. The v68 September
-  9 parallel-route correction and parking-heavy October 8 result retain exact
+  rise from 55 to 58, and unique physical segments from 44 to 47. The v68
+  9/9/2025 parallel-route correction and parking-heavy 10/8/2025 result retain exact
   physical sets and diagnostic counts.
-- Policy v70 addresses September 1, 17, and 20 route boundaries. On September 1,
+- Policy v70 addresses 9/1/2025, 9/17/2025, and 9/20/2025 route boundaries. On 9/1/2025,
   selected driveway `A5713CED98286FD4093913350233A6EB` now continues through
   same-way segment `F3820DF4556FCA5ECBED6F7BBE14AB5B` for its remaining 69.538
   meters outbound and inbound. After `3F35421191D5740C8DD6B1FB97B6A512`,
   the unsupported perpendicular network prefix through
   `25BE904E93B8D5834837FB08C2EC9A65` is removed and supported travel resumes at
   `91DFF90FD7C749949B21A67B0AA29563`.
-- On September 17, service-road tangent `81390AB8DAFB33A460F0501ED737082C`
+- On 9/17/2025, service-road tangent `81390AB8DAFB33A460F0501ED737082C`
   and its rectangular continuation are replaced by direct 39.337-meter Homestead
   segment `42BC22738F117728B597EFD021E89D9F` between `D6BA...` and `1CFE...`.
-- On September 20, `F7B210B4BED1A41F8CA5DD0308AD27D9` is removed from a
+- On 9/20/2025, `F7B210B4BED1A41F8CA5DD0308AD27D9` is removed from a
   traversal head, the unsupported prefix beginning with
   `2D72C14EF29246F3E567C422FE89F57B` is removed until supported Morningside travel,
   and partial `3BD537EA9E9FED1619AF8F7F2E3C6850` is completed through
@@ -935,10 +935,10 @@ they cannot establish false-positive or false-negative accuracy.
   is absent.
 - The initial deployed v70 corpus run was rejected: although the three target routes
   improved, local traversal-prefix and head rules removed 26 physical segments from
-  the accepted October 8 route and 10 unrelated physical segments from September 17.
+  the accepted 10/8/2025 route and 10 unrelated physical segments from 9/17/2025.
   Policy v71 therefore restores v69 matcher behavior. The v70 diagnostic rows remain
   available as evidence, but v70 is not an accepted matcher policy.
-- Policy v72 limits the September 20 turn correction to a within-traversal connected
+- Policy v72 limits the 9/20/2025 turn correction to a within-traversal connected
   road alternative and adds ordered out-and-back chain completion. The chain rule is
   additive: it requires every outbound and reverse endpoint in observation order,
   rejects competing first branches, and permits excluded driveway continuation only
@@ -946,26 +946,26 @@ they cannot establish false-positive or false-negative accuracy.
   deletion rules remain disabled. Deployed corpus results are required before v72 is
   accepted.
 - The deployed v72 audit was rejected. It corrected Thorsen Court and the
-  `3BD... -> C3BB... -> 012F...` turn on September 20, but added 16 unrelated
-  physical segments and removed one accepted segment from October 8; September 17
+  `3BD... -> C3BB... -> 012F...` turn on 9/20/2025, but added 16 unrelated
+  physical segments and removed one accepted segment from 10/8/2025; 9/17/2025
   exceeded the diagnostic timeout. It also could not extend `8D0E...` through
   `7380...` because the selected directions fell in separate 128-point windows.
   Policy v73 restores v69/v71 behavior while retaining v72 as diagnostic evidence.
-  The deployed v73 October 8 control exactly matches v71 at
+  The deployed v73 10/8/2025 control exactly matches v71 at
   `2237/390/253/55`, 45 traversals, 403 portions, and 335 unique physical
   segments, with zero physical-set differences.
 - Policy v74 isolates the Thorsen Court evidence shape from rejected v72 additions:
   a two-or-three-segment ordinary-road branch on one logical path and source way,
   totaling 60-150 meters, taken out-and-back while the selected route continues
-  through the same logical road at the junction. The deployed September 20 result
+  through the same logical road at the junction. The deployed 9/20/2025 result
   adds only `28E590CC573B51CEAC2B115CE7D06F02` and
   `57D469D40B44EACB7E49FE535242C6C5`, each forward and reverse. Observation
   classifications remain `3401/451/217/15`, traversals remain 38, portions rise
-  from 442 to 446, and unique physical segments rise from 295 to 297. September 9
-  and October 8, 16, 25, 27, 28, and 29 retain exact v71 physical sets; the October
-  8 counts remain `2237/390/253/55`, 45 traversals, 403 portions, and 335 unique
+  from 442 to 446, and unique physical segments rise from 295 to 297. 9/9/2025
+  and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact v71 physical sets; the
+  10/8/2025 counts remain `2237/390/253/55`, 45 traversals, 403 portions, and 335 unique
   segments.
-- Policy v75 targets two remaining September 20 boundaries after the final driveway
+- Policy v75 targets two remaining 9/20/2025 boundaries after the final driveway
   inference stage. Selected driveway `8D0E2B7FF34E8CA49A2A884921934247`
   now continues through same-source-way segment
   `7380024D482970918FBEE82140B1E2B3` for 110.718 meters outbound and
@@ -976,10 +976,10 @@ they cannot establish false-positive or false-negative accuracy.
   `AD40BA9D473FB5C69720BE47932D40FE` is absent. Thorsen Court remains
   present in both directions. Classifications remain `3401/451/217/15`;
   traversals fall from 38 to 37, portions rise from 446 to 448, and unique
-  physical segments from 297 to 298. September 9 and October 8, 16, 25, 27,
-  28, and 29 retain exact v74 physical sets. October 8 remains
+  physical segments from 297 to 298. 9/9/2025 and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025,
+  10/28/2025, and 10/29/2025 retain exact v74 physical sets. 10/8/2025 remains
   `2237/390/253/55`, 45 traversals, 403 portions, and 335 unique segments.
-- Policy v76 targets the September 17 Condor Way sequence where parking aisle
+- Policy v76 targets the 9/17/2025 Condor Way sequence where parking aisle
   `61A2E776F3E77744C9FA8217746A8363` departs from the same node as the raw-supported
   continuation `BAFEB430074A0E1A9BAA5C0E24094DFC` before the route reaches cycleway
   `DB96D9B909F504733D489DC7A096C725`. The parking aisle is removed only when the
@@ -989,9 +989,9 @@ they cannot establish false-positive or false-negative accuracy.
   `BAFEB430074A0E1A9BAA5C0E24094DFC` remains fully selected at 81.984 meters and
   cycleway `DB96D9B909F504733D489DC7A096C725` remains selected at 11.405 meters.
   Classifications remain `2874/337/338/24`, traversals remain 39, portions fall from
-  358 to 357, and unique physical segments fall from 282 to 281. September 9 and 20
-  and October 8, 16, 25, 27, 28, and 29 retain exact v75 physical sets.
-- Policy v77 targets two remaining September 17 shapes. It replaces the service-road
+  358 to 357, and unique physical segments fall from 282 to 281. 9/9/2025 and 9/20/2025
+  and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact v75 physical sets.
+- Policy v77 targets two remaining 9/17/2025 shapes. It replaces the service-road
   rectangle from `D6BA62DB8BE229A7794247EF93009125` to
   `1CFEFB42F1179AF80CCC100E1FCCEA1E` with raw-supported 39.337-meter Homestead
   segment `42BC22738F117728B597EFD021E89D9F`, and removes unsupported 20.555-meter
@@ -1000,8 +1000,8 @@ they cannot establish false-positive or false-negative accuracy.
   it. The deployed result adds only `42BC...` and removes `8139...`, `3A96...`,
   `B7B0...`, `B465...`, `B6A8...`, and `EA60...`. Classifications remain
   `2874/337/338/24`, traversals remain 39, portions fall from 357 to 351, and unique
-  physical segments fall from 281 to 276. September 9 and 20 and October 8, 16, 25,
-  27, 28, and 29 retain exact v76 physical sets.
+  physical segments fall from 281 to 276. 9/9/2025 and 9/20/2025 and 10/8/2025, 10/16/2025, 10/25/2025,
+  10/27/2025, 10/28/2025, and 10/29/2025 retain exact v76 physical sets.
 - Policy v78 targets the June 10 perpendicular driveway
   `99638F38F5FEC8A43A66C53831F0C6A2`, selected out-and-back between connected Crist
   Drive subdivisions while the raw trace continues north/south on the opposite side
@@ -1012,7 +1012,7 @@ they cannot establish false-positive or false-negative accuracy.
   `95A09FAE64313ACE4E93A2EFEA49F2AE`. The deployed June 10 result removes exactly
   `9963...` and `95A0...`; classifications remain `2011/241/84/13`, traversals remain
   21, portions fall from 286 to 283, and unique physical segments fall from 219 to
-  217. September 9, 17, and 20 and October 8, 16, 25, 27, 28, and 29 retain exact
+  217. 9/9/2025, 9/17/2025, and 9/20/2025 and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact
   v77 physical sets.
   Partial 23.142-meter Grant segment `7FE971836B1E2B6366E740784C851D32`
   remains unchanged; replacing that parking-area attribution is optional and requires
@@ -1028,8 +1028,8 @@ they cannot establish false-positive or false-negative accuracy.
   South Mary subdivisions and removes the five service portions `3647...`, `4AC8...`,
   `87A8...`, `C6A6...`, and `F5A0...`. Classifications remain
   `1862/348/332/19`, traversals remain 27, portions fall from 311 to 308, and unique
-  physical segments fall from 263 to 260. June 10, September 9, 17, and 20, and
-  October 8, 16, 25, 27, 28, and 29 retain exact v78 physical sets.
+  physical segments fall from 263 to 260. June 10, 9/9/2025, 9/17/2025, and 9/20/2025, and
+  10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact v78 physical sets.
 - Policy v80 targets the April 28 Victor Way to Castro Street right turn. The selected
   Victor portion currently stops about 7 meters before the shared graph node and the
   selected Castro portion begins about 8 meters after it. v80 completes both existing
@@ -1041,7 +1041,7 @@ they cannot establish false-positive or false-negative accuracy.
   to 79.726 meters and Castro reverse from 75.144 to its full 83.349 meters, meeting
   at their exact common node. Classifications remain `1693/246/131/18`, traversals
   remain 30, and portion/unique-segment counts remain `277/191`. June 10, July 24,
-  September 9, 17, and 20, and October 8, 16, 25, 27, 28, and 29 retain exact v79
+  9/9/2025, 9/17/2025, and 9/20/2025, and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact v79
   evidence tuples, including direction, source intervals, and multiplicity.
 - Policy v81 targets three July 18 continuity gaps: Maranta Avenue
   `A4A084228F985D21D03C9EFD4BF2EA9A` into Knickerbocker
@@ -1058,19 +1058,19 @@ they cannot establish false-positive or false-negative accuracy.
   adding full 289.853-meter and 86.925-meter Sunnymount portions.
   Classifications remain `1833/171/150/32`, traversals remain 29, portions rise from
   214 to 217, and unique physical segments rise from 132 to 134. April 28, June 10,
-  July 24, September 9, 17, and 20, and October 8, 16, 25, 27, 28, and 29 retain exact
+  July 24, 9/9/2025, 9/17/2025, and 9/20/2025, and 10/8/2025, 10/16/2025, 10/25/2025, 10/27/2025, 10/28/2025, and 10/29/2025 retain exact
   v80 evidence tuples, including direction, source intervals, and multiplicity.
 - Policy v82 removes the July 18 Georgetown Court reversal
   `9543CAE049808B0B2E5695C2F2052E82`. The 25.811-meter court runs perpendicular to
   the north/south raw route and the trace never reaches its terminal endpoint. The
   ordinary-road dead-end rule applies only to full physical-segment reversals and
-  retains endpoint-supported residential turnarounds such as the accepted September
-  20 control. The deployed result removes only the forward/reverse `9543...` portions;
+  retains endpoint-supported residential turnarounds such as the accepted
+  9/20/2025 control. The deployed result removes only the forward/reverse `9543...` portions;
   classifications remain `1833/171/150/32`, traversals remain 29, portions fall from
   217 to 215, and unique physical segments fall from 134 to 133. The reviewed v81
-  corpus remains unchanged, including the formerly sensitive June 10 and October 8
+  corpus remains unchanged, including the formerly sensitive June 10 and 10/8/2025
   partial reversals.
-- On the 2025-10-25 walk, v35 emitted a 21.9-meter two-portion Vallco Parkway
+- On the 10/25/2025 walk, v35 emitted a 21.9-meter two-portion Vallco Parkway
   excursion between two Wolfe Road portions of the same logical path. Policy v36
   permits the existing same-logical-path repair to replace a contiguous middle run
   totaling at most 30 meters using only the surrounding path's graph.
@@ -1079,15 +1079,15 @@ they cannot establish false-positive or false-negative accuracy.
   `43D898E60A784D54ADDF308DE4802B10 -> 15ACD006A7F4C7DB49F66F18200FB536
   -> E5BBF676F0D7AAE6DB2E339B30BCC322`, all from OSM source way 195656378. The 15
   observations from the removed road traversal become rejected, leaving unmatched
-  count unchanged. October 27 retains the complete 284-meter Stevens Creek Trail
-  repair, October 29 retains zero reviewed Homestead/Mary artifacts, and October 28
+  count unchanged. 10/27/2025 retains the complete 284-meter Stevens Creek Trail
+  repair, 10/29/2025 retains zero reviewed Homestead/Mary artifacts, and 10/28/2025
   retains the Rainbow segment unchanged; its two removed unique segments were
   pedestrian crossing artifacts at the reviewed Americana/El Camino transition.
 - The deployed v31 rerun restores a single complete 284-meter traversal of
   `1D3F989027F8E20AB43842E0E56114CA`, connected from `6B8AB48259B02CD59B33981F18A0B605`
   through both short trail connectors and onward to the next Stevens Creek Trail
-  segment; the Dale stub remains absent. October 27 retains 2,103 matched, 297
-  ambiguous, 113 unmatched, and 4 rejected observations. October 28/29 totals are
+  segment; the Dale stub remains absent. 10/27/2025 retains 2,103 matched, 297
+  ambiguous, 113 unmatched, and 4 rejected observations. 10/28/2025 and 10/29/2025 totals are
   unchanged from v27, the Rainbow segment remains 8.4 meters, and all four reviewed
   Homestead/South Mary artifacts remain absent.
 - The deployed v26 rerun emits no evidence for Dale segment
@@ -1095,9 +1095,9 @@ they cannot establish false-positive or false-negative accuracy.
   segments `6B8AB48259B02CD59B33981F18A0B605`, the two short trail connectors, and
   `1D3F989027F8E20AB43842E0E56114CA`, then covers the full 284-meter physical trail
   segment into the continuing trail. Observation counts remain unchanged while one
-  traversal, four portions, and one unique segment are removed. October 28 remains
+  traversal, four portions, and one unique segment are removed. 10/28/2025 remains
   byte-for-byte equivalent in counts and retains the reviewed Rainbow service
-  segment at 8.4 meters; October 29 retains its accepted total while shifting three
+  segment at 8.4 meters; 10/29/2025 retains its accepted total while shifting three
   observations from ambiguous to matched.
 - The deployed v20 rerun removes Grant segments `EB13E19A239D4E523FF8F40867DC3511`
   and `69AA7FA95C8F8E3C7C3FA7733D190165`, selecting the connected direct branch
@@ -1106,7 +1106,7 @@ they cannot establish false-positive or false-negative accuracy.
   removes both Belleville/Fremont nested-excursion IDs, and fills the Fremont gap
   from `C5DD429B7AD3DB7C674E98E04C4E992B` through the shared endpoint into
   `0A0202A1E82CD6918EA1B7E522DC36C0`. The run yielded 2,100 matched, 300 ambiguous,
-  113 unmatched, and 4 rejected observations. October 28 and 29 regressions shift
+  113 unmatched, and 4 rejected observations. 10/28/2025 and 10/29/2025 regressions shift
   substantial ambiguity to matched status while retaining comparable accepted totals.
 - The labeled corpus is finite and biased toward the reviewed NorCal Health Auto
   Export routes. Additional devices, regions, dense urban grids, switchbacks, and

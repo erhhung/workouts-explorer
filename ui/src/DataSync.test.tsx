@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
-import { type DataSync as DataSyncModel, type JobDetail, type JobProgress, type Preferences } from "./api";
+import {
+  type DataSync as DataSyncModel,
+  type JobDetail,
+  type JobProgress,
+  type Preferences,
+} from "./api";
 import { DataSync } from "./DataSync";
 
 const SOURCE_A = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -10,37 +15,129 @@ const SOURCE_B = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 const SOURCE_C = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 const JOB_ID = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
 const progress: JobProgress = {
-  current: 2, total: 4, filesDiscovered: 4, filesSkipped: 0, filesSucceeded: 1, filesFailed: 1,
-  workoutsCreated: 3, workoutsUpdated: 2, workoutsUnchanged: 1, workoutsRejected: 1,
+  current: 2,
+  total: 4,
+  filesDiscovered: 4,
+  filesSkipped: 0,
+  filesSucceeded: 1,
+  filesFailed: 1,
+  workoutsCreated: 3,
+  workoutsUpdated: 2,
+  workoutsUnchanged: 1,
+  workoutsRejected: 1,
 };
 const preferences: Preferences = {
-  theme: "dark", units: "metric", timezone: "UTC", firstWeekday: "monday", clockFormat: "24h",
-  workoutColumns: ["date", "type", "duration"], pageSize: 25, coverageDiagnosticsEnabled: false, initialized: true,
+  theme: "dark",
+  units: "metric",
+  timezone: "UTC",
+  firstWeekday: "monday",
+  clockFormat: "24h",
+  workoutColumns: ["date", "type", "duration"],
+  pageSize: 25,
+  coverageDiagnosticsEnabled: false,
+  initialized: true,
 };
 const snapshot: DataSyncModel = {
-  schedule: { enabled: true, sourceCount: 1, cadence: "Daily at 02:00", cadenceSeconds: 86400, staleDays: 3, nextRunAt: "2026-08-07T02:00:00Z" },
+  schedule: {
+    enabled: true,
+    sourceCount: 1,
+    cadence: "Daily at 02:00",
+    cadenceSeconds: 86400,
+    staleDays: 3,
+    nextRunAt: "2026-08-07T02:00:00Z",
+  },
   sources: [
-    { id: SOURCE_A, displayName: "Phone exports", type: "health-auto-export-local", status: "connected", autoSyncEnabled: true, freshness: { lastSyncSucceededAt: "2026-08-06T01:00:00Z", lastNewExportDate: "2026-08-05" } },
-    { id: SOURCE_B, displayName: "Watch archive", type: "health-auto-export-local", status: "connected", autoSyncEnabled: false, freshness: {} },
-    { id: SOURCE_C, displayName: "Old folder", type: "health-auto-export-local", status: "connection-failed", autoSyncEnabled: true, freshness: { staleSince: "2026-08-01" } },
+    {
+      id: SOURCE_A,
+      displayName: "Phone exports",
+      type: "health-auto-export-local",
+      status: "connected",
+      autoSyncEnabled: true,
+      freshness: { lastSyncSucceededAt: "2026-08-06T01:00:00Z", lastNewExportDate: "2026-08-05" },
+    },
+    {
+      id: SOURCE_B,
+      displayName: "Watch archive",
+      type: "health-auto-export-local",
+      status: "connected",
+      autoSyncEnabled: false,
+      freshness: {},
+    },
+    {
+      id: SOURCE_C,
+      displayName: "Old folder",
+      type: "health-auto-export-local",
+      status: "connection-failed",
+      autoSyncEnabled: true,
+      freshness: { staleSince: "2026-08-01" },
+    },
   ],
-  notifications: [{ id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", type: "source-stale", severity: "warning", state: "remind", subjectType: "source", sourceId: SOURCE_C, title: "Export is stale", message: "No new export has arrived.", createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z", remindAt: "2026-08-08T00:00:00Z" }],
+  notifications: [
+    {
+      id: "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+      type: "source-stale",
+      severity: "warning",
+      state: "remind",
+      subjectType: "source",
+      sourceId: SOURCE_C,
+      title: "Export is stale",
+      message: "No new export has arrived.",
+      createdAt: "2026-08-02T00:00:00Z",
+      updatedAt: "2026-08-02T00:00:00Z",
+      remindAt: "2026-08-08T00:00:00Z",
+    },
+  ],
   notificationsTruncated: false,
 };
 const detail: JobDetail = {
-  id: JOB_ID, trigger: "manual", status: "partially_succeeded", attempt: 0, progress, children: [], results: { filesSucceeded: 1, filesFailed: 1, workoutsCreated: 3 },
-  retriedByJobIds: [], cancelRequested: false, createdAt: "2026-08-06T12:00:00Z", updatedAt: "2026-08-06T12:05:00Z", terminalAt: "2026-08-06T12:05:00Z",
+  id: JOB_ID,
+  trigger: "manual",
+  status: "partially_succeeded",
+  attempt: 0,
+  progress,
+  children: [],
+  results: { filesSucceeded: 1, filesFailed: 1, workoutsCreated: 3 },
+  retriedByJobIds: [],
+  cancelRequested: false,
+  createdAt: "2026-08-06T12:00:00Z",
+  updatedAt: "2026-08-06T12:05:00Z",
+  terminalAt: "2026-08-06T12:05:00Z",
 };
 
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" },
+  });
 }
 
-function renderDataSync(selectedJobId?: string, navigate = vi.fn(), pollingIntervalSeconds = 30, userPreferences = preferences) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const component = (jobId = selectedJobId) => <QueryClientProvider client={client}><DataSync csrfToken="csrf-data-sync" preferences={userPreferences} pollingIntervalSeconds={pollingIntervalSeconds} selectedJobId={jobId} navigate={navigate} /></QueryClientProvider>;
+function renderDataSync(
+  selectedJobId?: string,
+  navigate = vi.fn(),
+  pollingIntervalSeconds = 30,
+  userPreferences = preferences,
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const component = (jobId = selectedJobId) => (
+    <QueryClientProvider client={client}>
+      <DataSync
+        csrfToken="csrf-data-sync"
+        preferences={userPreferences}
+        pollingIntervalSeconds={pollingIntervalSeconds}
+        selectedJobId={jobId}
+        navigate={navigate}
+      />
+    </QueryClientProvider>
+  );
   const view = render(component());
-  return { ...view, client, navigate, rerenderJob: (jobId?: string) => view.rerender(component(jobId)) };
+  return {
+    ...view,
+    client,
+    navigate,
+    rerenderJob: (jobId?: string) => view.rerender(component(jobId)),
+  };
 }
 
 function baseFetch(handler?: (path: string, init?: RequestInit) => Response | undefined) {
@@ -49,7 +146,10 @@ function baseFetch(handler?: (path: string, init?: RequestInit) => Response | un
     const handled = handler?.(path, init);
     if (handled) return Promise.resolve(handled);
     if (path === "/api/data-sync") return Promise.resolve(json(snapshot));
-    if (path === "/api/jobs?page=1&pageSize=25") return Promise.resolve(json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }));
+    if (path === "/api/jobs?page=1&pageSize=25")
+      return Promise.resolve(
+        json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }),
+      );
     if (path === `/api/jobs/${JOB_ID}`) return Promise.resolve(json(detail));
     throw new Error(`Unhandled fetch: ${init?.method ?? "GET"} ${path}`);
   });
@@ -69,7 +169,10 @@ describe("DataSync", () => {
     let request: { body: unknown; csrf: string | null } | undefined;
     baseFetch((path, init) => {
       if (path === "/api/ingest" && init?.method === "POST") {
-        request = { body: JSON.parse(String(init.body)), csrf: new Headers(init.headers).get("X-CSRF-Token") };
+        request = {
+          body: JSON.parse(String(init.body)),
+          csrf: new Headers(init.headers).get("X-CSRF-Token"),
+        };
         return json({ jobId: JOB_ID, status: "queued", reused: true }, 202);
       }
       return undefined;
@@ -79,7 +182,9 @@ describe("DataSync", () => {
     expect(screen.getByRole("checkbox", { name: /Watch archive/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Old folder/ })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
-    await waitFor(() => expect(request).toEqual({ body: { sourceIds: [SOURCE_A] }, csrf: "csrf-data-sync" }));
+    await waitFor(() =>
+      expect(request).toEqual({ body: { sourceIds: [SOURCE_A] }, csrf: "csrf-data-sync" }),
+    );
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${JOB_ID}`);
     expect(await screen.findByText("Existing run selected.")).toBeInTheDocument();
   });
@@ -87,7 +192,10 @@ describe("DataSync", () => {
   test("validates bounded dates and sends only contract fields", async () => {
     let body: unknown;
     baseFetch((path, init) => {
-      if (path === "/api/ingest") { body = JSON.parse(String(init?.body)); return json({ jobId: JOB_ID, status: "queued", reused: false }, 202); }
+      if (path === "/api/ingest") {
+        body = JSON.parse(String(init?.body));
+        return json({ jobId: JOB_ID, status: "queued", reused: false }, 202);
+      }
       return undefined;
     });
     renderDataSync();
@@ -99,20 +207,43 @@ describe("DataSync", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("both inclusive dates");
     await waitFor(() => expect(alert).toHaveFocus());
-    expect(screen.getByLabelText("End date")).toHaveAccessibleDescription("Enter both inclusive dates.");
+    expect(screen.getByLabelText("End date")).toHaveAccessibleDescription(
+      "Enter both inclusive dates.",
+    );
     expect(body).toBeUndefined();
     await userEvent.clear(screen.getByLabelText("Start date"));
     await userEvent.type(screen.getByLabelText("Start date"), "2026-08-07");
     await userEvent.clear(screen.getByLabelText("End date"));
     await userEvent.type(screen.getByLabelText("End date"), "2026-08-07");
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
-    await waitFor(() => expect(body).toEqual({ sourceIds: [SOURCE_A], startDate: "2026-08-07", endDate: "2026-08-07" }));
+    await waitFor(() =>
+      expect(body).toEqual({
+        sourceIds: [SOURCE_A],
+        startDate: "2026-08-07",
+        endDate: "2026-08-07",
+      }),
+    );
   });
 
   test("renders persisted partial progress and does not fetch logs before disclosure", async () => {
-    const fetchMock = baseFetch((path) => path === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`
-      ? json({ pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 }, items: [{ id: 1, jobId: JOB_ID, severity: "info", code: "import-finished", message: "Import finished safely", fields: { files: 2 }, createdAt: "2026-08-06T12:05:00Z" }] })
-      : undefined);
+    const fetchMock = baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`
+        ? json({
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+            items: [
+              {
+                id: 1,
+                jobId: JOB_ID,
+                severity: "info",
+                code: "import-finished",
+                message: "Import finished safely",
+                fields: { files: 2 },
+                createdAt: "2026-08-06T12:05:00Z",
+              },
+            ],
+          })
+        : undefined,
+    );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     expect(await within(region).findByText("Partially completed")).toBeInTheDocument();
@@ -121,15 +252,42 @@ describe("DataSync", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/logs?"))).toBe(false);
     await userEvent.click(within(region).getByRole("button", { name: /Logs/ }));
     expect(await within(region).findByText(/Import finished safely/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`)).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input]) => String(input) === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`,
+      ),
+    ).toBe(true);
   });
 
   test("dismisses reminders with an empty body and server pagination stays authoritative", async () => {
     let dismissal: { body: string; csrf: string | null } | undefined;
     baseFetch((path, init) => {
-      if (path.includes("page=2&pageSize=25")) return json({ pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 }, items: [] });
-      if (path.endsWith("/dismissal")) { dismissal = { body: String(init?.body), csrf: new Headers(init?.headers).get("X-CSRF-Token") }; return json({ ...snapshot.notifications[0], state: "dismissed" }); }
-      if (path === "/api/jobs?page=1&pageSize=25") return json({ pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 2 }, items: [{ id: JOB_ID, trigger: "manual", status: "partially_succeeded", progress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }] });
+      if (path.includes("page=2&pageSize=25"))
+        return json({
+          pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 },
+          items: [],
+        });
+      if (path.endsWith("/dismissal")) {
+        dismissal = {
+          body: String(init?.body),
+          csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+        };
+        return json({ ...snapshot.notifications[0], state: "dismissed" });
+      }
+      if (path === "/api/jobs?page=1&pageSize=25")
+        return json({
+          pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 2 },
+          items: [
+            {
+              id: JOB_ID,
+              trigger: "manual",
+              status: "partially_succeeded",
+              progress,
+              createdAt: detail.createdAt,
+              updatedAt: detail.updatedAt,
+            },
+          ],
+        });
       return undefined;
     });
     renderDataSync();
@@ -143,14 +301,28 @@ describe("DataSync", () => {
   test("retains task rows, table geometry, and scroll position while a new page loads", async () => {
     const pageTwoJobId = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
     let resolvePageTwo!: (response: Response) => void;
-    const deferredPageTwo = new Promise<Response>((resolve) => { resolvePageTwo = resolve; });
+    const deferredPageTwo = new Promise<Response>((resolve) => {
+      resolvePageTwo = resolve;
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = String(input);
       if (path === "/api/data-sync") return Promise.resolve(json(snapshot));
-      if (path === "/api/jobs?page=1&pageSize=25") return Promise.resolve(json({
-        pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 2 },
-        items: [{ id: JOB_ID, trigger: "manual", status: "partially_succeeded", progress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }],
-      }));
+      if (path === "/api/jobs?page=1&pageSize=25")
+        return Promise.resolve(
+          json({
+            pagination: { page: 1, pageSize: 25, totalItems: 26, totalPages: 2 },
+            items: [
+              {
+                id: JOB_ID,
+                trigger: "manual",
+                status: "partially_succeeded",
+                progress,
+                createdAt: detail.createdAt,
+                updatedAt: detail.updatedAt,
+              },
+            ],
+          }),
+        );
       if (path === "/api/jobs?page=2&pageSize=25") return deferredPageTwo;
       throw new Error(`Unhandled fetch: ${path}`);
     });
@@ -159,7 +331,17 @@ describe("DataSync", () => {
     const table = document.querySelector<HTMLTableElement>(".sync-history-table table")!;
     const rows = within(table).getAllByRole("row").slice(1);
     const results = table.closest<HTMLElement>(".sync-history-results")!;
-    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 900, height: 420, top: 0, right: 900, bottom: 420, left: 0, toJSON: () => ({}) });
+    vi.spyOn(results, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 900,
+      height: 420,
+      top: 0,
+      right: 900,
+      bottom: 420,
+      left: 0,
+      toJSON: () => ({}),
+    });
     const scrollTo = vi.spyOn(window, "scrollTo");
     await userEvent.click(next);
     expect(document.querySelector(".sync-history-table table")).toBe(table);
@@ -167,39 +349,89 @@ describe("DataSync", () => {
     expect(results).toHaveAttribute("aria-busy", "true");
     expect(results).toHaveStyle({ minHeight: "420px" });
     expect(screen.queryByText("Loading task history...")).not.toBeInTheDocument();
-    resolvePageTwo(json({
-      pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 },
-      items: [{ id: pageTwoJobId, trigger: "automatic", status: "succeeded", progress, createdAt: "2026-08-07T12:00:00Z", updatedAt: "2026-08-07T12:05:00Z" }],
-    }));
-    expect(await screen.findByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
+    resolvePageTwo(
+      json({
+        pagination: { page: 2, pageSize: 25, totalItems: 26, totalPages: 2 },
+        items: [
+          {
+            id: pageTwoJobId,
+            trigger: "automatic",
+            status: "succeeded",
+            progress,
+            createdAt: "2026-08-07T12:00:00Z",
+            updatedAt: "2026-08-07T12:05:00Z",
+          },
+        ],
+      }),
+    );
+    expect(
+      await screen.findByText("Page 2 of 2", { selector: ".pagination span" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(within(table).getByText("Completed")).toBeVisible());
     await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(0, 0));
   });
 
   test("keeps embedded notifications authoritative, marks truncation statically, and links only job notifications", async () => {
     const navigate = vi.fn();
-    const jobNotification = { ...snapshot.notifications[0], id: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", subjectType: "job" as const, sourceId: undefined, jobId: JOB_ID, title: "Workout deletion failed", message: "The workout could not be deleted, but you can retry the task." };
-    baseFetch((path) => path === "/api/data-sync" ? json({ ...snapshot, notifications: [...snapshot.notifications, jobNotification], notificationsTruncated: true }) : undefined);
+    const jobNotification = {
+      ...snapshot.notifications[0],
+      id: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      subjectType: "job" as const,
+      sourceId: undefined,
+      jobId: JOB_ID,
+      title: "Workout deletion failed",
+      message: "The workout could not be deleted, but you can retry the task.",
+    };
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            notifications: [...snapshot.notifications, jobNotification],
+            notificationsTruncated: true,
+          })
+        : undefined,
+    );
     renderDataSync(undefined, navigate);
     const stale = await screen.findByText("Export is stale");
-    expect(screen.getByText("The workout could not be deleted, but you can retry the task.")).toBeInTheDocument();
+    expect(
+      screen.getByText("The workout could not be deleted, but you can retry the task."),
+    ).toBeInTheDocument();
     expect(stale.closest("article")).not.toHaveAttribute("role");
     expect(screen.getByText("More notifications are available.")).not.toHaveAttribute("role");
     expect(screen.getAllByRole("button", { name: "View detail" })).toHaveLength(1);
-    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).startsWith("/api/notifications"))).toBe(false);
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).startsWith("/api/notifications")),
+    ).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "View detail" }));
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${JOB_ID}`);
   });
 
   test("shows status-aware zero progress, labels creation as queued, and omits the API attempt", async () => {
-    const zero = { ...progress, current: 0, total: 0, filesDiscovered: 0, filesSucceeded: 0, filesFailed: 0, workoutsCreated: 0, workoutsUpdated: 0, workoutsUnchanged: 0, workoutsRejected: 0 };
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({ ...detail, status: "succeeded", attempt: 4, progress: zero, results: {} }) : undefined);
+    const zero = {
+      ...progress,
+      current: 0,
+      total: 0,
+      filesDiscovered: 0,
+      filesSucceeded: 0,
+      filesFailed: 0,
+      workoutsCreated: 0,
+      workoutsUpdated: 0,
+      workoutsUnchanged: 0,
+      workoutsRejected: 0,
+    };
+    baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}`
+        ? json({ ...detail, status: "succeeded", attempt: 4, progress: zero, results: {} })
+        : undefined,
+    );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     expect(await within(region).findByText("No new data.")).toBeInTheDocument();
     expect(within(region).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(within(region).queryByText(/Discovering files/)).not.toBeInTheDocument();
-    const queued = [...region.querySelectorAll(".job-metadata dt")].find((node) => node.textContent === "Queued")!.closest("div")!;
+    const queued = [...region.querySelectorAll(".job-metadata dt")]
+      .find((node) => node.textContent === "Queued")!
+      .closest("div")!;
     expect(queued.querySelector("dd")).not.toHaveTextContent("Never");
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
     expect(within(region).queryByText(/Retry of job/)).not.toBeInTheDocument();
@@ -208,145 +440,280 @@ describe("DataSync", () => {
   });
 
   test("distinguishes original queue time from a previously started Coverage parent waiting again", async () => {
-    const waiting = { ...detail, operation: "coverage_update" as const, trigger: "system" as const, status: "queued" as const,
-      startedAt: "2026-08-06T12:01:00Z", updatedAt: "2026-08-06T12:10:00Z",
-      routeStats: { total: 3, processed: 1, running: 0, succeeded: 1, failed: 0, cancelled: 0, superseded: 0 } };
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json(waiting) : undefined);
+    const waiting = {
+      ...detail,
+      operation: "coverage_update" as const,
+      trigger: "system" as const,
+      status: "queued" as const,
+      startedAt: "2026-08-06T12:01:00Z",
+      updatedAt: "2026-08-06T12:10:00Z",
+      routeStats: {
+        total: 3,
+        processed: 1,
+        running: 0,
+        succeeded: 1,
+        failed: 0,
+        cancelled: 0,
+        superseded: 0,
+      },
+    };
+    baseFetch((path) => (path === `/api/jobs/${JOB_ID}` ? json(waiting) : undefined));
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     await within(region).findByText("Waiting since");
-    const queued = [...region.querySelectorAll(".job-metadata dt")].find((node) => node.textContent === "Queued")!.closest("div")!;
+    const queued = [...region.querySelectorAll(".job-metadata dt")]
+      .find((node) => node.textContent === "Queued")!
+      .closest("div")!;
     const started = within(region).getByText("First started").closest("div")!;
     const waitingSince = within(region).getByText("Waiting since").closest("div")!;
     expect(queued.querySelector("dd")).not.toHaveTextContent("Never");
     expect(started.querySelector("dd")).not.toHaveTextContent("Never");
     expect(waitingSince.querySelector("dd")).not.toHaveTextContent("Never");
-    expect(waitingSince.querySelector("dd")?.textContent).not.toBe(queued.querySelector("dd")?.textContent);
+    expect(waitingSince.querySelector("dd")?.textContent).not.toBe(
+      queued.querySelector("dd")?.textContent,
+    );
   });
 
-	test.each([[1, "First", ""], [2, "Second", "first"], [5, "Fifth", "fourth"]] as const)("renders retry ordinal %i with root and previous-job navigation", async (retryOrdinal, ordinalLabel, previousLabel) => {
-    const rootJobId = "ABCDEF1234567890ABCDEF1234567890";
-    const previousJobId = "1234567890ABCDEF1234567890ABCDEF";
-    const navigate = vi.fn();
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({
-      ...detail,
-      retryRootJobId: rootJobId,
-      retryOrdinal,
-      retryOfJobId: retryOrdinal > 1 ? previousJobId : rootJobId,
-      latestRetryJobId: retryOrdinal > 1 && retryOrdinal < 5 ? "FEDCBA0987654321FEDCBA0987654321" : undefined,
-      latestRetryOrdinal: retryOrdinal > 1 && retryOrdinal < 5 ? 5 : undefined,
-    }) : undefined);
-    renderDataSync(JOB_ID, navigate);
-    const region = await screen.findByRole("region", { name: "Selected run" });
-    if (retryOrdinal === 1) {
+  test.each([
+    [1, "First", ""],
+    [2, "Second", "first"],
+    [5, "Fifth", "fourth"],
+  ] as const)(
+    "renders retry ordinal %i with root and previous-job navigation",
+    async (retryOrdinal, ordinalLabel, previousLabel) => {
+      const rootJobId = "ABCDEF1234567890ABCDEF1234567890";
+      const previousJobId = "1234567890ABCDEF1234567890ABCDEF";
+      const navigate = vi.fn();
+      baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}`
+          ? json({
+              ...detail,
+              retryRootJobId: rootJobId,
+              retryOrdinal,
+              retryOfJobId: retryOrdinal > 1 ? previousJobId : rootJobId,
+              latestRetryJobId:
+                retryOrdinal > 1 && retryOrdinal < 5
+                  ? "FEDCBA0987654321FEDCBA0987654321"
+                  : undefined,
+              latestRetryOrdinal: retryOrdinal > 1 && retryOrdinal < 5 ? 5 : undefined,
+            })
+          : undefined,
+      );
+      renderDataSync(JOB_ID, navigate);
+      const region = await screen.findByRole("region", { name: "Selected run" });
+      if (retryOrdinal === 1) {
+        expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
+        expect(within(region).queryByText(/Retry of job|Retry by job/)).not.toBeInTheDocument();
+        return;
+      }
+      const link = await within(region).findByRole("link", { name: rootJobId.slice(0, 8) });
+      expect(link).toHaveAttribute("href", `/data-sync/jobs/${rootJobId}`);
+      expect(link.closest("dt")).toHaveTextContent(`Retry of job ${rootJobId.slice(0, 8)}`);
+      expect(link.closest("div")).toHaveTextContent(ordinalLabel);
+      expect(link.closest("div")?.querySelector("dd")).toHaveClass("retry-ordinal");
+      expect(within(region).queryByText(/Retry by job/)).not.toBeInTheDocument();
+      if (retryOrdinal > 1) {
+        const previous = within(region).getByRole("link", { name: previousLabel });
+        expect(previous).toHaveAttribute("href", `/data-sync/jobs/${previousJobId}`);
+        expect(previous).toHaveTextContent(previousLabel);
+        expect(previous).not.toHaveTextContent("view");
+        expect(previous.closest("small")).toHaveClass("retry-previous");
+        expect(previous.closest("small")).toHaveTextContent(`| view ${previousLabel}`);
+        await userEvent.click(previous);
+        expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${previousJobId}`);
+      } else {
+        expect(within(region).queryByRole("link", { name: /view/ })).not.toBeInTheDocument();
+      }
+      await userEvent.click(link);
+      expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${rootJobId}`);
       expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
-      expect(within(region).queryByText(/Retry of job|Retry by job/)).not.toBeInTheDocument();
-      return;
-    }
-    const link = await within(region).findByRole("link", { name: rootJobId.slice(0, 8) });
-    expect(link).toHaveAttribute("href", `/data-sync/jobs/${rootJobId}`);
-    expect(link.closest("dt")).toHaveTextContent(`Retry of job ${rootJobId.slice(0, 8)}`);
-    expect(link.closest("div")).toHaveTextContent(ordinalLabel);
-    expect(link.closest("div")?.querySelector("dd")).toHaveClass("retry-ordinal");
-    expect(within(region).queryByText(/Retry by job/)).not.toBeInTheDocument();
-    if (retryOrdinal > 1) {
-      const previous = within(region).getByRole("link", { name: previousLabel });
-      expect(previous).toHaveAttribute("href", `/data-sync/jobs/${previousJobId}`);
-      expect(previous).toHaveTextContent(previousLabel);
-      expect(previous).not.toHaveTextContent("view");
-      expect(previous.closest("small")).toHaveClass("retry-previous");
-      expect(previous.closest("small")).toHaveTextContent(`| view ${previousLabel}`);
-      await userEvent.click(previous);
-      expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${previousJobId}`);
-    } else {
-      expect(within(region).queryByRole("link", { name: /view/ })).not.toBeInTheDocument();
-    }
-    await userEvent.click(link);
-    expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${rootJobId}`);
+    },
+  );
+
+  test("renders coverage route outcomes, counters, and ingest-style retry navigation", async () => {
+    const first = "11111111111111111111111111111111";
+    const third = "33333333333333333333333333333333";
+    const coverageJob: JobDetail = {
+      ...detail,
+      operation: "coverage_update",
+      trigger: "system",
+      retryOrdinal: 4,
+      retryRootJobId: first,
+      retryOfJobId: third,
+      routeStats: {
+        total: 3,
+        processed: 3,
+        running: 0,
+        succeeded: 1,
+        failed: 1,
+        cancelled: 0,
+        superseded: 1,
+      },
+      coverage: {
+        regionId: "geofabrik:test",
+        targetOsmGeneration: 2,
+        targetWorkRevision: 4,
+        rulesVersion: "coverage-experimental-v1",
+        samplingVersion: "coverage-sampling-experimental-v1",
+        pathPolicyVersion: "coverage-path-policy-experimental-v82",
+      },
+      children: [
+        {
+          ...detail,
+          id: "44444444444444444444444444444444",
+          operation: "coverage_update",
+          trigger: "system",
+          status: "succeeded",
+          results: undefined,
+          routeStats: undefined,
+          children: [],
+          coverageRoute: {
+            workoutId: "55555555555555555555555555555555",
+            startedAt: "2026-08-05T08:00:00Z",
+            localStartDate: "2026-08-05",
+            workoutType: "Outdoor Run",
+            resultOutcome: "applied",
+            durationMilliseconds: 1234,
+            targetGenerations: [
+              { regionId: "geofabrik:north", generation: 7, latest: true },
+              { regionId: "geofabrik:north", generation: 2, latest: false },
+              { regionId: "geofabrik:south", generation: 9, latest: false },
+            ],
+          },
+        },
+      ],
+    };
+    baseFetch((path) => (path === `/api/jobs/${JOB_ID}` ? json(coverageJob) : undefined));
+    renderDataSync(JOB_ID);
+    const region = await screen.findByRole("region", { name: "Selected run" });
+    expect(
+      await within(region).findByRole("heading", { name: "Coverage update" }),
+    ).toBeInTheDocument();
+    expect(within(region).getByText("Routes Processed").closest("div")).toHaveTextContent("3");
+    expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
+    expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
+    const routeRun = region.querySelector(".coverage-route-run")!;
+    expect(routeRun.querySelector(".coverage-route-title")).toHaveTextContent(
+      "Outdoor Run (2026 M08 5)",
+    );
+    const generations = within(routeRun as HTMLElement).getByRole("table", {
+      name: "OSM generations",
+    });
+    expect(
+      [...generations.querySelectorAll("tr")].map((row) =>
+        [...row.querySelectorAll("td")].map((cell) => cell.textContent),
+      ),
+    ).toEqual([
+      ["geofabrik:north", "7"],
+      ["geofabrik:north", "2"],
+      ["geofabrik:south", "9"],
+    ]);
+    expect(within(generations).getByText("7")).toHaveClass("is-latest");
+    expect(within(generations).getByText("2")).not.toHaveClass("is-latest");
+    expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
-	});
+    expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute(
+      "href",
+      `/data-sync/jobs/${first}`,
+    );
+    expect(within(region).getByText("Fourth")).toBeVisible();
+    expect(within(region).getByRole("link", { name: "third" })).toHaveAttribute(
+      "href",
+      `/data-sync/jobs/${third}`,
+    );
+    expect(within(region).queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+  });
 
-	test("renders coverage route outcomes, counters, and ingest-style retry navigation", async () => {
-		const first = "11111111111111111111111111111111";
-		const third = "33333333333333333333333333333333";
-		const coverageJob: JobDetail = {
-			...detail, operation: "coverage_update", trigger: "system", retryOrdinal: 4, retryRootJobId: first, retryOfJobId: third,
-			routeStats: { total: 3, processed: 3, running: 0, succeeded: 1, failed: 1, cancelled: 0, superseded: 1 },
-			coverage: { regionId: "geofabrik:test", targetOsmGeneration: 2, targetWorkRevision: 4,
-				rulesVersion: "coverage-experimental-v1", samplingVersion: "coverage-sampling-experimental-v1",
-				pathPolicyVersion: "coverage-path-policy-experimental-v82" },
-			children: [{ ...detail, id: "44444444444444444444444444444444", operation: "coverage_update", trigger: "system",
-				status: "succeeded", results: undefined, routeStats: undefined, children: [], coverageRoute: {
-					workoutId: "55555555555555555555555555555555", startedAt: "2026-08-05T08:00:00Z",
-					localStartDate: "2026-08-05", workoutType: "Outdoor Run", resultOutcome: "applied", durationMilliseconds: 1234,
-					targetGenerations: [
-						{ regionId: "geofabrik:north", generation: 7, latest: true },
-						{ regionId: "geofabrik:north", generation: 2, latest: false },
-						{ regionId: "geofabrik:south", generation: 9, latest: false },
-					],
-				} }],
-		};
-		baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json(coverageJob) : undefined);
-		renderDataSync(JOB_ID);
-		const region = await screen.findByRole("region", { name: "Selected run" });
-		expect(await within(region).findByRole("heading", { name: "Coverage update" })).toBeInTheDocument();
-		expect(within(region).getByText("Routes Processed").closest("div")).toHaveTextContent("3");
-		expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
-		expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
-		const routeRun = region.querySelector(".coverage-route-run")!;
-		expect(routeRun.querySelector(".coverage-route-title")).toHaveTextContent("Outdoor Run (2026 M08 5)");
-		const generations = within(routeRun as HTMLElement).getByRole("table", { name: "OSM generations" });
-		expect([...generations.querySelectorAll("tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent))).toEqual([
-			["geofabrik:north", "7"], ["geofabrik:north", "2"], ["geofabrik:south", "9"],
-		]);
-		expect(within(generations).getByText("7")).toHaveClass("is-latest");
-		expect(within(generations).getByText("2")).not.toHaveClass("is-latest");
-		expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
-		expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
-		expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute("href", `/data-sync/jobs/${first}`);
-		expect(within(region).getByText("Fourth")).toBeVisible();
-		expect(within(region).getByRole("link", { name: "third" })).toHaveAttribute("href", `/data-sync/jobs/${third}`);
-		expect(within(region).queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
-	});
-
-	test("distinguishes matching Coverage parents from parents waiting for the matcher", async () => {
-		const matching = { ...detail, id: "1".repeat(32), operation: "coverage_update" as const, trigger: "system" as const,
-			status: "running" as const, routeStats: { total: 3, processed: 1, running: 1, succeeded: 1, failed: 0, cancelled: 0, superseded: 0 } };
-		const waiting = { ...matching, id: "2".repeat(32), status: "queued" as const, routeStats: { ...matching.routeStats, total: 2, processed: 0, running: 0, succeeded: 0 } };
-		let historyReads = 0;
-		baseFetch((path) => {
-			if (path !== "/api/jobs?page=1&pageSize=25") return undefined;
-			historyReads++;
-			return json({ pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 }, items: historyReads === 1 ? [matching, waiting] : [
-				{ ...matching, status: "queued" as const, routeStats: { ...matching.routeStats, running: 0 } },
-				{ ...waiting, status: "running" as const, routeStats: { ...waiting.routeStats, running: 1 } },
-			] });
-		});
-		renderDataSync(undefined, vi.fn(), 1);
-		const history = screen.getByRole("region", { name: "Recent activity" });
-		await within(history).findAllByText("1 of 3 routes");
-		const table = history.querySelector(".sync-history-table") as HTMLElement;
-		const matchingRow = within(table).getByText("1 of 3 routes").closest("tr")!;
-		const waitingRow = within(table).getByText("0 of 2 routes").closest("tr")!;
-		expect(within(matchingRow).getByText("Running")).toBeVisible();
-		expect(within(waitingRow).getByText("Queued")).toBeVisible();
-		await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(2), { timeout: 2000 });
-		expect(within(matchingRow).getByText("Queued")).toBeVisible();
-		expect(within(waitingRow).getByText("Running")).toBeVisible();
-	});
+  test("distinguishes matching Coverage parents from parents waiting for the matcher", async () => {
+    const matching = {
+      ...detail,
+      id: "1".repeat(32),
+      operation: "coverage_update" as const,
+      trigger: "system" as const,
+      status: "running" as const,
+      routeStats: {
+        total: 3,
+        processed: 1,
+        running: 1,
+        succeeded: 1,
+        failed: 0,
+        cancelled: 0,
+        superseded: 0,
+      },
+    };
+    const waiting = {
+      ...matching,
+      id: "2".repeat(32),
+      status: "queued" as const,
+      routeStats: { ...matching.routeStats, total: 2, processed: 0, running: 0, succeeded: 0 },
+    };
+    let historyReads = 0;
+    baseFetch((path) => {
+      if (path !== "/api/jobs?page=1&pageSize=25") return undefined;
+      historyReads++;
+      return json({
+        pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 },
+        items:
+          historyReads === 1
+            ? [matching, waiting]
+            : [
+                {
+                  ...matching,
+                  status: "queued" as const,
+                  routeStats: { ...matching.routeStats, running: 0 },
+                },
+                {
+                  ...waiting,
+                  status: "running" as const,
+                  routeStats: { ...waiting.routeStats, running: 1 },
+                },
+              ],
+      });
+    });
+    renderDataSync(undefined, vi.fn(), 1);
+    const history = screen.getByRole("region", { name: "Recent activity" });
+    await within(history).findAllByText("1 of 3 routes");
+    const table = history.querySelector(".sync-history-table") as HTMLElement;
+    const matchingRow = within(table).getByText("1 of 3 routes").closest("tr")!;
+    const waitingRow = within(table).getByText("0 of 2 routes").closest("tr")!;
+    expect(within(matchingRow).getByText("Running")).toBeVisible();
+    expect(within(waitingRow).getByText("Queued")).toBeVisible();
+    await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(2), { timeout: 2000 });
+    expect(within(matchingRow).getByText("Queued")).toBeVisible();
+    expect(within(waitingRow).getByText("Running")).toBeVisible();
+  });
 
   test("renders result counts in the approved DOM order with derived values and rejected help", async () => {
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({ ...detail, results: undefined }) : undefined);
+    baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}` ? json({ ...detail, results: undefined }) : undefined,
+    );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     await within(region).findByText("Files Processed");
     const counts = region.querySelector(".result-counts")!;
     expect([...counts.querySelectorAll("dt")].map((node) => node.textContent)).toEqual([
-      "Files Processed", "Workouts Imported", "Workouts Unchanged", "Files Failed", "Workouts Updated", "Workouts Rejected",
+      "Files Processed",
+      "Workouts Imported",
+      "Workouts Unchanged",
+      "Files Failed",
+      "Workouts Updated",
+      "Workouts Rejected",
     ]);
-    expect([...counts.querySelectorAll("dd")].map((node) => node.textContent)).toEqual(["2", "3", "1", "1", "2", "1"]);
-    const rejected = within(counts as HTMLElement).getByText("Workouts Rejected").closest("div")!.querySelector("dd")!;
-    expect(rejected).toHaveAccessibleDescription("Workout records skipped while their source file continued processing.");
+    expect([...counts.querySelectorAll("dd")].map((node) => node.textContent)).toEqual([
+      "2",
+      "3",
+      "1",
+      "1",
+      "2",
+      "1",
+    ]);
+    const rejected = within(counts as HTMLElement)
+      .getByText("Workouts Rejected")
+      .closest("div")!
+      .querySelector("dd")!;
+    expect(rejected).toHaveAccessibleDescription(
+      "Workout records skipped while their source file continued processing.",
+    );
     expect(rejected).not.toHaveAttribute("title");
   });
 
@@ -355,10 +722,17 @@ describe("DataSync", () => {
       ...detail,
       id: "22222222222222222222222222222222",
       status: "succeeded",
-      source: { sourceId: SOURCE_A, generation: 1, displayName: "Phone exports", sourceType: "health-auto-export-local" },
+      source: {
+        sourceId: SOURCE_A,
+        generation: 1,
+        displayName: "Phone exports",
+        sourceType: "health-auto-export-local",
+      },
       children: [],
     };
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({ ...detail, children: [child] }) : undefined);
+    baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}` ? json({ ...detail, children: [child] }) : undefined,
+    );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     await within(region).findByText("Source runs");
@@ -368,22 +742,33 @@ describe("DataSync", () => {
     expect(heading.lastElementChild).toHaveClass("sync-status", "sync-status--succeeded");
     expect(heading.lastElementChild).toHaveTextContent("Completed");
     expect(heading.lastElementChild).toHaveStyle({ position: "relative", top: ".2rem" });
-    expect(region.querySelector(".source-run .sync-progress")).toHaveStyle({ margin: ".7rem 0 -.3rem 0" });
+    expect(region.querySelector(".source-run .sync-progress")).toHaveStyle({
+      margin: ".7rem 0 -.3rem 0",
+    });
   });
 
   test("uses filled semantic detail statuses and explicit schedule states", async () => {
     const statuses = ["succeeded", "failed", "partially_succeeded", "cancelled"] as const;
-    const children = statuses.map((status, index) => ({ ...detail, id: String(index + 3).repeat(32), status, children: [] }));
+    const children = statuses.map((status, index) => ({
+      ...detail,
+      id: String(index + 3).repeat(32),
+      status,
+      children: [],
+    }));
     baseFetch((path) => {
-      if (path === "/api/data-sync") return json({ ...snapshot, schedule: { ...snapshot.schedule, enabled: false } });
+      if (path === "/api/data-sync")
+        return json({ ...snapshot, schedule: { ...snapshot.schedule, enabled: false } });
       if (path === `/api/jobs/${JOB_ID}`) return json({ ...detail, status: "succeeded", children });
       return undefined;
     });
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     await within(region).findByText("Source runs");
-    for (const status of statuses) expect(region.querySelector(`.sync-status--${status}`)).toBeInTheDocument();
-    expect(screen.getByText("Disabled", { selector: ".schedule-state" })).toHaveClass("schedule-state--disabled");
+    for (const status of statuses)
+      expect(region.querySelector(`.sync-status--${status}`)).toBeInTheDocument();
+    expect(screen.getByText("Disabled", { selector: ".schedule-state" })).toHaveClass(
+      "schedule-state--disabled",
+    );
     expect(within(region).getByText("Canceled")).toHaveClass("sync-status--cancelled");
   });
 
@@ -391,8 +776,15 @@ describe("DataSync", () => {
     const nextJob = "11111111111111111111111111111111";
     const logRequests: string[] = [];
     baseFetch((path) => {
-      if (path === `/api/jobs/${nextJob}`) return json({ ...detail, id: nextJob, status: "failed" });
-      if (path.includes("/logs?")) { logRequests.push(path); return json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }); }
+      if (path === `/api/jobs/${nextJob}`)
+        return json({ ...detail, id: nextJob, status: "failed" });
+      if (path.includes("/logs?")) {
+        logRequests.push(path);
+        return json({
+          pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+          items: [],
+        });
+      }
       return undefined;
     });
     const view = renderDataSync(JOB_ID);
@@ -403,7 +795,10 @@ describe("DataSync", () => {
     view.rerenderJob(nextJob);
     const nextRegion = screen.getByRole("region", { name: "Selected run" });
     await within(nextRegion).findByText("Failed");
-    expect(within(nextRegion).getByRole("button", { name: /Logs/ })).toHaveAttribute("aria-expanded", "false");
+    expect(within(nextRegion).getByRole("button", { name: /Logs/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(logRequests).toEqual([`/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`]);
   });
 
@@ -412,7 +807,17 @@ describe("DataSync", () => {
     baseFetch((path) => {
       if (path === "/api/data-sync") {
         snapshotCalls += 1;
-        return json(snapshotCalls === 1 ? snapshot : { ...snapshot, sources: snapshot.sources.map((source) => ({ ...source, autoSyncEnabled: source.id === SOURCE_B })) });
+        return json(
+          snapshotCalls === 1
+            ? snapshot
+            : {
+                ...snapshot,
+                sources: snapshot.sources.map((source) => ({
+                  ...source,
+                  autoSyncEnabled: source.id === SOURCE_B,
+                })),
+              },
+        );
       }
       return undefined;
     });
@@ -439,10 +844,14 @@ describe("DataSync", () => {
   });
 
   test("starts with the operational cards and renders exact schedule labels, values, and help", async () => {
-    baseFetch((path) => path === "/api/data-sync" ? json({
-      ...snapshot,
-      schedule: { ...snapshot.schedule, cadence: null, cadenceSeconds: 43200, staleDays: 1 },
-    }) : undefined);
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            schedule: { ...snapshot.schedule, cadence: null, cadenceSeconds: 43200, staleDays: 1 },
+          })
+        : undefined,
+    );
     renderDataSync();
     const main = await screen.findByRole("main");
     expect(main.querySelector("h1, .data-sync-heading, .eyebrow")).toBeNull();
@@ -455,13 +864,19 @@ describe("DataSync", () => {
     const expected = [
       ["Interval", "Automatically run a sync job on this interval"],
       ["Sources enabled", "Number of sources with automated sync enabled"],
-      ["Stale after", "Show a warning after this period if no new workouts have been imported by auto-sync"],
+      [
+        "Stale after",
+        "Show a warning after this period if no new workouts have been imported by auto-sync",
+      ],
       ["Next run", "Local date/time when the next sync job will run"],
     ];
     for (const [label, content] of expected) {
       const trigger = within(card).getByRole("button", { name: `About ${label}` });
       expect(trigger).toHaveAccessibleDescription(content);
-      expect(document.getElementById(trigger.getAttribute("aria-describedby")!)).toHaveAttribute("role", "tooltip");
+      expect(document.getElementById(trigger.getAttribute("aria-describedby")!)).toHaveAttribute(
+        "role",
+        "tooltip",
+      );
       expect(trigger).not.toHaveAttribute("title");
       expect(trigger).toHaveAttribute("aria-expanded", "false");
     }
@@ -506,28 +921,70 @@ describe("DataSync", () => {
   });
 
   test.each([
-    ["summer PDT", "2026-07-15T19:30:00Z", "America/Los_Angeles", "12h" as const, "PDT", "America/Los_Angeles (UTC-7:00)"],
-    ["winter PST", "2026-01-15T20:30:00Z", "America/Los_Angeles", "24h" as const, "PST", "America/Los_Angeles (UTC-8:00)"],
-    ["half-hour offset", "2026-08-07T02:00:00Z", "Asia/Kolkata", "24h" as const, "GMT+5:30", "Asia/Kolkata (UTC+5:30)"],
-  ])("formats the Next run instant with its %s badge", async (_case, nextRunAt, timezone, clockFormat, badgeText, description) => {
-    baseFetch((path) => path === "/api/data-sync" ? json({ ...snapshot, schedule: { ...snapshot.schedule, nextRunAt } }) : undefined);
-    renderDataSync(undefined, vi.fn(), 30, { ...preferences, timezone, clockFormat });
-    const badge = await screen.findByLabelText(description);
-    const card = badge.closest("section")!;
-    const expectedDateTime = new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium", timeStyle: "short", timeZone: timezone, hour12: clockFormat === "12h",
-    }).format(new Date(nextRunAt));
-    expect(badge).toHaveTextContent(badgeText);
-    expect(badge).toHaveAccessibleDescription(description);
-    expect(badge).not.toHaveAttribute("title");
-    expect(within(card).getByText("Next run").closest("div")?.querySelector("dd .next-run-value")).toHaveTextContent(expectedDateTime);
-  });
+    [
+      "summer PDT",
+      "2026-07-15T19:30:00Z",
+      "America/Los_Angeles",
+      "12h" as const,
+      "PDT",
+      "America/Los_Angeles (UTC-7:00)",
+    ],
+    [
+      "winter PST",
+      "2026-01-15T20:30:00Z",
+      "America/Los_Angeles",
+      "24h" as const,
+      "PST",
+      "America/Los_Angeles (UTC-8:00)",
+    ],
+    [
+      "half-hour offset",
+      "2026-08-07T02:00:00Z",
+      "Asia/Kolkata",
+      "24h" as const,
+      "GMT+5:30",
+      "Asia/Kolkata (UTC+5:30)",
+    ],
+  ])(
+    "formats the Next run instant with its %s badge",
+    async (_case, nextRunAt, timezone, clockFormat, badgeText, description) => {
+      baseFetch((path) =>
+        path === "/api/data-sync"
+          ? json({ ...snapshot, schedule: { ...snapshot.schedule, nextRunAt } })
+          : undefined,
+      );
+      renderDataSync(undefined, vi.fn(), 30, { ...preferences, timezone, clockFormat });
+      const badge = await screen.findByLabelText(description);
+      const card = badge.closest("section")!;
+      const expectedDateTime = new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: timezone,
+        hour12: clockFormat === "12h",
+      }).format(new Date(nextRunAt));
+      expect(badge).toHaveTextContent(badgeText);
+      expect(badge).toHaveAccessibleDescription(description);
+      expect(badge).not.toHaveAttribute("title");
+      expect(
+        within(card).getByText("Next run").closest("div")?.querySelector("dd .next-run-value"),
+      ).toHaveTextContent(expectedDateTime);
+    },
+  );
 
   test("formats fractional-hour intervals exactly and handles absent or invalid Next run zones truthfully", async () => {
-    baseFetch((path) => path === "/api/data-sync" ? json({
-      ...snapshot,
-      schedule: { ...snapshot.schedule, cadence: "Ignored server cadence", cadenceSeconds: 4500, nextRunAt: undefined },
-    }) : undefined);
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            schedule: {
+              ...snapshot.schedule,
+              cadence: "Ignored server cadence",
+              cadenceSeconds: 4500,
+              nextRunAt: undefined,
+            },
+          })
+        : undefined,
+    );
     const view = renderDataSync();
     await screen.findByText("Interval");
     const card = screen.getByRole("heading", { name: "Schedule & freshness" }).closest("section")!;
@@ -538,11 +995,15 @@ describe("DataSync", () => {
     view.unmount();
 
     vi.mocked(fetch).mockRestore();
-    baseFetch((path) => path === "/api/data-sync" ? json(snapshot) : undefined);
+    baseFetch((path) => (path === "/api/data-sync" ? json(snapshot) : undefined));
     renderDataSync(undefined, vi.fn(), 30, { ...preferences, timezone: "Not/AZone" });
     await screen.findByLabelText("Not/AZone unavailable; displayed in UTC (UTC+0:00)");
-    const invalidCard = screen.getByRole("heading", { name: "Schedule & freshness" }).closest("section")!;
-    expect(within(invalidCard).getByLabelText("Not/AZone unavailable; displayed in UTC (UTC+0:00)")).toHaveTextContent("UTC");
+    const invalidCard = screen
+      .getByRole("heading", { name: "Schedule & freshness" })
+      .closest("section")!;
+    expect(
+      within(invalidCard).getByLabelText("Not/AZone unavailable; displayed in UTC (UTC+0:00)"),
+    ).toHaveTextContent("UTC");
     expect(within(invalidCard).getByText("Next run").closest("div")).not.toHaveTextContent("Never");
   });
 
@@ -551,21 +1012,59 @@ describe("DataSync", () => {
     let snapshots = 0;
     let details = 0;
     let historyRequests = 0;
-    const running = { ...detail, status: "running" as const, terminalAt: undefined, cancelRequested: false };
+    const running = {
+      ...detail,
+      status: "running" as const,
+      terminalAt: undefined,
+      cancelRequested: false,
+    };
     baseFetch((path) => {
-      if (path === "/api/data-sync") { snapshots += 1; return json(snapshots === 1 ? snapshot : { ...snapshot, activeJob: { ...running, children: undefined, attempt: undefined, retriedByJobIds: undefined, cancelRequested: undefined } }); }
-      if (path.startsWith("/api/jobs?")) { historyRequests += 1; return json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }); }
-      if (path === `/api/jobs/${JOB_ID}`) { details += 1; return json(details === 1 ? running : { ...detail, status: "cancelled", cancelRequested: true }); }
+      if (path === "/api/data-sync") {
+        snapshots += 1;
+        return json(
+          snapshots === 1
+            ? snapshot
+            : {
+                ...snapshot,
+                activeJob: {
+                  ...running,
+                  children: undefined,
+                  attempt: undefined,
+                  retriedByJobIds: undefined,
+                  cancelRequested: undefined,
+                },
+              },
+        );
+      }
+      if (path.startsWith("/api/jobs?")) {
+        historyRequests += 1;
+        return json({
+          pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+          items: [],
+        });
+      }
+      if (path === `/api/jobs/${JOB_ID}`) {
+        details += 1;
+        return json(
+          details === 1 ? running : { ...detail, status: "cancelled", cancelRequested: true },
+        );
+      }
       return undefined;
     });
     const view = renderDataSync(JOB_ID, vi.fn(), 1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(details).toBe(1);
     expect(snapshots).toBe(1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
     expect(details).toBe(2);
     expect(snapshots).toBe(2);
-    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
     expect(details).toBe(2);
     expect(snapshots).toBeGreaterThanOrEqual(4);
     expect(historyRequests).toBeGreaterThanOrEqual(2);
@@ -582,14 +1081,29 @@ describe("DataSync", () => {
       if (path === "/api/data-sync") return json(snapshot);
       if (path === `/api/jobs/${JOB_ID}`) {
         detailReads += 1;
-        return json({ ...detail, operation: "workout_deletion", status: detailReads === 1 ? "running" : "succeeded", progress: detailReads === 1 ? runningProgress : completedProgress });
+        return json({
+          ...detail,
+          operation: "workout_deletion",
+          status: detailReads === 1 ? "running" : "succeeded",
+          progress: detailReads === 1 ? runningProgress : completedProgress,
+        });
       }
       if (path === "/api/jobs?page=1&pageSize=25") {
         historyReads += 1;
         const completed = historyReads > 1;
         return json({
           pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
-          items: [{ id: JOB_ID, operation: "workout_deletion", trigger: "manual", status: completed ? "succeeded" : "running", progress: completed ? completedProgress : runningProgress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }],
+          items: [
+            {
+              id: JOB_ID,
+              operation: "workout_deletion",
+              trigger: "manual",
+              status: completed ? "succeeded" : "running",
+              progress: completed ? completedProgress : runningProgress,
+              createdAt: detail.createdAt,
+              updatedAt: detail.updatedAt,
+            },
+          ],
         });
       }
       return undefined;
@@ -608,16 +1122,39 @@ describe("DataSync", () => {
   });
 
   test("cancellation posts an empty body and refetches snapshot, history, and detail", async () => {
-    const running = { ...detail, status: "running" as const, terminalAt: undefined, cancelRequested: false };
+    const running = {
+      ...detail,
+      status: "running" as const,
+      terminalAt: undefined,
+      cancelRequested: false,
+    };
     let snapshotReads = 0;
     let historyReads = 0;
     let detailReads = 0;
     let cancellation: { body: string; csrf: string | null } | undefined;
     baseFetch((path, init) => {
-      if (path === "/api/data-sync") { snapshotReads += 1; return json(snapshot); }
-      if (path.startsWith("/api/jobs?")) { historyReads += 1; return json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }); }
-      if (path === `/api/jobs/${JOB_ID}`) { detailReads += 1; return json(running); }
-      if (path.endsWith("/cancellation")) { cancellation = { body: String(init?.body), csrf: new Headers(init?.headers).get("X-CSRF-Token") }; return json({ ...running, cancelRequested: true }); }
+      if (path === "/api/data-sync") {
+        snapshotReads += 1;
+        return json(snapshot);
+      }
+      if (path.startsWith("/api/jobs?")) {
+        historyReads += 1;
+        return json({
+          pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 },
+          items: [],
+        });
+      }
+      if (path === `/api/jobs/${JOB_ID}`) {
+        detailReads += 1;
+        return json(running);
+      }
+      if (path.endsWith("/cancellation")) {
+        cancellation = {
+          body: String(init?.body),
+          csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+        };
+        return json({ ...running, cancelRequested: true });
+      }
       return undefined;
     });
     renderDataSync(JOB_ID);
@@ -636,30 +1173,43 @@ describe("DataSync", () => {
   test("handles retry 409 with safe copy and refetches operation state", async () => {
     let detailReads = 0;
     baseFetch((path) => {
-      if (path === `/api/jobs/${JOB_ID}`) { detailReads += 1; return json(detail); }
-      if (path.endsWith("/retry")) return json({ title: "Worker lease secret", detail: "private detail" }, 409);
+      if (path === `/api/jobs/${JOB_ID}`) {
+        detailReads += 1;
+        return json(detail);
+      }
+      if (path.endsWith("/retry"))
+        return json({ title: "Worker lease secret", detail: "private detail" }, 409);
       return undefined;
     });
     renderDataSync(JOB_ID);
     expect(await screen.findByRole("button", { name: "Retry run" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel run" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry run" }));
-    expect(await screen.findByText("The run changed before retry could be started.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The run changed before retry could be started."),
+    ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("Worker lease secret");
     expect(detailReads).toBeGreaterThan(1);
   });
 
   test("renders deletion targets without sync artifacts and retries the captured set", async () => {
     const deletionDetail: JobDetail = {
-      ...detail, operation: "workout_deletion", status: "failed", progress: { ...progress, current: 0, total: 3 },
-      failureCode: "workout-delete-failed", failureSummary: "The workout deletion could not be completed.",
+      ...detail,
+      operation: "workout_deletion",
+      status: "failed",
+      progress: { ...progress, current: 0, total: 3 },
+      failureCode: "workout-delete-failed",
+      failureSummary: "The workout deletion could not be completed.",
     };
     let retry: { body: string; csrf: string | null } | undefined;
     baseFetch((path, init) => {
       if (path === `/api/jobs/${JOB_ID}`) return json(deletionDetail);
       if (path.endsWith("/retry")) {
         retry = { body: String(init?.body), csrf: new Headers(init?.headers).get("X-CSRF-Token") };
-        return json({ jobId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", status: "queued", reused: false }, 202);
+        return json(
+          { jobId: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", status: "queued", reused: false },
+          202,
+        );
       }
       return undefined;
     });
@@ -675,65 +1225,112 @@ describe("DataSync", () => {
   test("links a superseded deletion to its latest retry and removes the stale retry action", async () => {
     const latestRetryJobId = "B8EDF88F1D12472AB2AF82EB3F958A07";
     const navigate = vi.fn();
-    baseFetch((path) => path === `/api/jobs/${JOB_ID}` ? json({
-      ...detail,
-      operation: "workout_deletion",
-      status: "failed",
-      latestRetryJobId,
-      latestRetryOrdinal: 2,
-      retriedByJobIds: [latestRetryJobId],
-    }) : undefined);
+    baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}`
+        ? json({
+            ...detail,
+            operation: "workout_deletion",
+            status: "failed",
+            latestRetryJobId,
+            latestRetryOrdinal: 2,
+            retriedByJobIds: [latestRetryJobId],
+          })
+        : undefined,
+    );
     renderDataSync(JOB_ID, navigate);
     const region = await screen.findByRole("region", { name: "Selected run" });
     const link = await within(region).findByRole("link", { name: latestRetryJobId.slice(0, 8) });
     expect(link.closest("dt")).toHaveTextContent(`Retry by job ${latestRetryJobId.slice(0, 8)}`);
     expect(link.closest("div")?.querySelector("dd")).toHaveClass("visually-hidden");
     expect(link.closest("div")).not.toHaveTextContent("Second");
-    expect(within(region).queryByRole("button", { name: "Retry deletion" })).not.toBeInTheDocument();
+    expect(
+      within(region).queryByRole("button", { name: "Retry deletion" }),
+    ).not.toBeInTheDocument();
     await userEvent.click(link);
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${latestRetryJobId}`);
   });
 
   test("uses operation-aware history headings and plain status text on desktop and mobile", async () => {
-    baseFetch((path) => path === "/api/jobs?page=1&pageSize=25" ? json({
-      pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
-      items: [{ id: JOB_ID, trigger: "manual", status: "cancelled", progress, createdAt: detail.createdAt, startedAt: detail.createdAt, updatedAt: detail.updatedAt }],
-    }) : undefined);
+    baseFetch((path) =>
+      path === "/api/jobs?page=1&pageSize=25"
+        ? json({
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+            items: [
+              {
+                id: JOB_ID,
+                trigger: "manual",
+                status: "cancelled",
+                progress,
+                createdAt: detail.createdAt,
+                startedAt: detail.createdAt,
+                updatedAt: detail.updatedAt,
+              },
+            ],
+          })
+        : undefined,
+    );
     renderDataSync();
     expect(await screen.findByRole("heading", { name: "Recent activity" })).toBeInTheDocument();
     await screen.findAllByText("Canceled");
     expect(screen.getByText("Task history", { selector: ".card-kicker" })).toBeInTheDocument();
     const table = document.querySelector(".sync-history-table")!;
-    expect(within(table as HTMLElement).getByRole("columnheader", { name: "Started" })).toBeInTheDocument();
+    expect(
+      within(table as HTMLElement).getByRole("columnheader", { name: "Started" }),
+    ).toBeInTheDocument();
     expect(table.querySelector("tbody .sync-status")).toBeNull();
     expect(table.querySelector("tbody .sync-status-text--cancelled")).toHaveTextContent("Canceled");
     expect(Array.from(table.querySelectorAll("col")).map((column) => column.className)).toEqual([
-      "history-started-column", "history-operation-column", "history-results-column", "history-status-column", "history-action-column",
+      "history-started-column",
+      "history-operation-column",
+      "history-results-column",
+      "history-status-column",
+      "history-action-column",
     ]);
     const cards = document.querySelector(".sync-history-cards")!;
     expect(cards.querySelector(".sync-status-text--cancelled")).toHaveTextContent("Canceled");
-    expect(screen.getByText("Enabled", { selector: ".schedule-state" })).toHaveClass("schedule-state--enabled");
+    expect(screen.getByText("Enabled", { selector: ".schedule-state" })).toHaveClass(
+      "schedule-state--enabled",
+    );
   });
 
   test("keeps dismissed deletion failures discoverable and retryable through task history", async () => {
     const navigate = vi.fn();
     const deletionDetail: JobDetail = {
-      ...detail, operation: "workout_deletion", status: "failed", progress: { ...progress, current: 0, total: 1 },
-      failureCode: "workout-delete-failed", failureSummary: "The workout deletion could not be completed.",
+      ...detail,
+      operation: "workout_deletion",
+      status: "failed",
+      progress: { ...progress, current: 0, total: 1 },
+      failureCode: "workout-delete-failed",
+      failureSummary: "The workout deletion could not be completed.",
     };
     baseFetch((path) => {
       if (path === "/api/data-sync") return json({ ...snapshot, notifications: [] });
-      if (path === "/api/jobs?page=1&pageSize=25") return json({
-        pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
-        items: [{ id: JOB_ID, operation: "workout_deletion", trigger: "manual", status: "failed", progress: deletionDetail.progress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }],
-      });
+      if (path === "/api/jobs?page=1&pageSize=25")
+        return json({
+          pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+          items: [
+            {
+              id: JOB_ID,
+              operation: "workout_deletion",
+              trigger: "manual",
+              status: "failed",
+              progress: deletionDetail.progress,
+              createdAt: detail.createdAt,
+              updatedAt: detail.updatedAt,
+            },
+          ],
+        });
       if (path === `/api/jobs/${JOB_ID}`) return json(deletionDetail);
       return undefined;
     });
     const view = renderDataSync(undefined, navigate);
     expect(await screen.findAllByText("Workout deletion")).toHaveLength(2);
     expect(screen.getAllByText("0 of 1 deleted")).toHaveLength(2);
-    await userEvent.click(within(document.querySelector(".sync-history-table") as HTMLElement).getByRole("button", { name: "View detail" }));
+    await userEvent.click(
+      within(document.querySelector(".sync-history-table") as HTMLElement).getByRole("button", {
+        name: "View detail",
+      }),
+    );
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${JOB_ID}`);
     view.rerenderJob(JOB_ID);
     expect(await screen.findByRole("button", { name: "Retry deletion" })).toBeInTheDocument();
@@ -747,7 +1344,16 @@ describe("DataSync", () => {
       const page = Number(new URL(path, "http://test").searchParams.get("page"));
       return json({
         pagination: { page, pageSize: 25, totalItems: 26, totalPages: 2 },
-        items: [{ id: JOB_ID, trigger: "manual", status: "failed", progress, createdAt: detail.createdAt, updatedAt: detail.updatedAt }],
+        items: [
+          {
+            id: JOB_ID,
+            trigger: "manual",
+            status: "failed",
+            progress,
+            createdAt: detail.createdAt,
+            updatedAt: detail.updatedAt,
+          },
+        ],
       });
     });
     renderDataSync();
@@ -762,7 +1368,10 @@ describe("DataSync", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Next" }));
     await waitFor(() => expect(requests).toContain("/api/jobs?page=2&pageSize=25"));
     await userEvent.click(statusTrigger);
-    expect(await screen.findByRole("menuitemradio", { name: "All statuses" })).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByRole("menuitemradio", { name: "All statuses" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("menuitemradio", { name: /All statuses/ })).not.toBeInTheDocument();
     expect(statusTrigger).toHaveFocus();
@@ -775,7 +1384,11 @@ describe("DataSync", () => {
     await userEvent.click(operationTrigger);
     await screen.findByRole("menuitemradio", { name: "All operations" });
     await userEvent.click(screen.getByRole("menuitemradio", { name: "Automated sync" }));
-    await waitFor(() => expect(requests).toContain("/api/jobs?page=1&pageSize=25&operation=automated_sync&status=failed"));
+    await waitFor(() =>
+      expect(requests).toContain(
+        "/api/jobs?page=1&pageSize=25&operation=automated_sync&status=failed",
+      ),
+    );
     expect(operationTrigger).toHaveTextContent("OperationAutomated syncv");
   });
 
@@ -787,7 +1400,10 @@ describe("DataSync", () => {
         snapshotSignal = init?.signal;
         return new Promise(() => undefined);
       }
-      if (path.startsWith("/api/jobs?")) return Promise.resolve(json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }));
+      if (path.startsWith("/api/jobs?"))
+        return Promise.resolve(
+          json({ pagination: { page: 1, pageSize: 25, totalItems: 0, totalPages: 0 }, items: [] }),
+        );
       throw new Error(`Unhandled fetch: ${path}`);
     });
     const view = renderDataSync();

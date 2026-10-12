@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: acceptance-basemap, namespace: workouts-acceptance}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: acceptance-basemap}
+  template:
+    metadata:
+      labels: {app: acceptance-basemap}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: basemap
+          image: nginxinc/nginx-unprivileged:1.29-alpine
+          ports: [{containerPort: 8080}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data, readOnly: true}
+            - {name: data, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
+      volumes:
+        - name: data
+          configMap: {name: acceptance-basemap}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: acceptance-basemap, namespace: workouts-acceptance}
+spec:
+  selector: {app: acceptance-basemap}
+  ports: [{port: 80, targetPort: 8080}]

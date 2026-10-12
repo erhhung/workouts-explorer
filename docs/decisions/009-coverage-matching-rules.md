@@ -2,11 +2,15 @@
 
 ## Status
 
-Accepted on 2026-09-11. The accepted baseline uses matcher rules
+Accepted on 9/11/2026. The accepted baseline uses matcher rules
 `coverage-experimental-v1`, adaptive sampling, and path policy
-`coverage-path-policy-experimental-v82`. Durable production coverage persistence,
-aggregation, and rendering are the next Milestone 7 delivery slice; the retained
+`coverage-path-policy-experimental-v82`. Durable production Coverage persistence,
+aggregation and rendering are implemented, with a dedicated Coverage runner,
+fenced route-child checkpoints and OSM-promotion reconciliation. The retained
 diagnostic workflow remains the review and future policy-evaluation surface.
+Implementation does not establish complete multi-user capacity acceptance; see
+[architecture](../architecture.md#coverage-processing-concurrency) and the
+[acceptance evidence](../coverage-acceptance-results.md) for scope and limits.
 
 ## Context
 
@@ -122,8 +126,8 @@ geometry, not by summing the pre-dissolution traversal lengths.
 
 ### One fixed nearest-segment distance
 
-This is simple and remains the baseline. It may be sufficient if representative
-routes show acceptable ambiguity.
+This is a simple comparison baseline, not the accepted sequence-aware matcher.
+It may be sufficient if representative routes show acceptable ambiguity.
 
 ### Accuracy-adjusted candidate distance
 
@@ -241,7 +245,7 @@ coverage attribution targets for foot/bicycle traces even when access or the
 mode-specific tag is private/no. Private pedestrian paths and private service
 driveways/parking aisles remain ineligible.
 
-Review of the 2025-10-29 Outdoor Run exposed that the supplemental 20-meter query
+Review of the 10/29/2025 Outdoor Run exposed that the supplemental 20-meter query
 radius was undone by the decoder's accuracy-derived 7.5-meter acceptance radius.
 Policy v8 retains raw point-to-centerline distance but computes a separate lateral
 road-attribution offset for foot and bicycle road candidates. Explicit `width=*`
@@ -252,7 +256,7 @@ remaining distance beyond that envelope contributes to candidate acceptance and
 emission cost, and the original 20-meter centerline query remains a hard cap.
 Non-road and shared-public candidates retain unadjusted geometric distance.
 
-Review of the 2025-10-28 Outdoor Walk identified two remaining failure modes.
+Review of the 10/28/2025 Outdoor Walk identified two remaining failure modes.
 First, a watch trace reported 1.3-3 meter accuracy while drifting 15-40 meters
 from Heatherstone Way and Dale Avenue, but remained close and parallel to mapped
 `footway=sidewalk` geometry. Policy v9 searches a bounded 40-meter corridor and
@@ -591,7 +595,7 @@ support, and unsupported road stubs up to 30 meters may be removed at traversal 
 Policy v71 disables the v70 matcher repairs after deployed corpus evaluation showed
 that traversal-boundary and head heuristics removed supported portions from unrelated
 routes. Matcher behavior returns to v69 while retaining v70 as immutable diagnostic
-provenance. The September 1, 17, and 20 cases require shape-aware or globally
+provenance. The 9/1/2025, 9/17/2025, and 9/20/2025 cases require shape-aware or globally
 windowed evidence rather than local traversal-prefix inference.
 Policy v72 restores only the within-traversal incomplete-road-turn repair and adds an
 ordered, additive out-and-back chain repair. A chain may contain at most three new
@@ -603,8 +607,8 @@ on the same source way. Competing supported first branches reject the repair. Th
 traversal-boundary, traversal-head, and unsupported-prefix deletion rules remain
 disabled.
 Policy v73 disables the v72 repairs after deployed evaluation added 16 unrelated
-physical segments and removed one accepted segment from the October 8 route; the
-September 17 diagnostic also exceeded its timeout. Matcher behavior again equals
+physical segments and removed one accepted segment from the 10/8/2025 route; the
+9/17/2025 diagnostic also exceeded its timeout. Matcher behavior again equals
 v69/v71. The v72 diagnostic rows remain immutable rejected evidence.
 Policy v74 enables only the normal-road branch subset of v72's additive repair. The
 selected route must continue through the same non-empty logical road at the junction.

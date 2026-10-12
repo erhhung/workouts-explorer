@@ -72,3 +72,17 @@ data:
             try_files /index.html =503;
         }
     }
+
+    server {
+        listen 127.0.0.1:8083;
+        server_name _;
+
+        location = /nginx_status {
+            stub_status;
+            access_log off;
+        }
+
+        location / {
+            return 404;
+        }
+    }

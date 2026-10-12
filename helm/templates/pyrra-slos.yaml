@@ -1,0 +1,55 @@
+{{- if .Values.pyrraSLOs.enabled }}
+{{- if not .Values.otel.endpoint }}
+{{- fail "pyrraSLOs.enabled requires otel.endpoint" }}
+{{- end }}
+{{- $scope := printf "service_name=%s,service_namespace=%s,deployment_environment=%s" ("workouts-api" | toJson) (.Values.otel.serviceNamespace | toJson) (.Values.otel.environment | toJson) }}
+{{- $api := printf "%s,http_route=~\"/api/.*\",http_request_method=\"GET\"" $scope }}
+{{- $eligible := printf "%s,http_response_status_code=~\"2..|3..|5..\"" $api }}
+{{- $objectives := list
+  (dict "name" "api-availability" "target" .Values.pyrraSLOs.targets.apiAvailability "type" "ratio"
+    "description" "Eligible API GET attempts succeed without 5xx. Excludes probes, all 4xx and non-GET operations; not whole-API or user-journey availability."
+    "numerator" (printf "http_server_request_duration_seconds_count{%s,http_response_status_code=~\"5..\"}" $api)
+    "total" (printf "http_server_request_duration_seconds_count{%s}" $eligible))
+  (dict "name" "api-latency-500ms" "target" .Values.pyrraSLOs.targets.apiLatency "type" "latency"
+    "description" "Eligible API GET attempts finish within 500ms. Latency-only: fast 5xx meet this time bound but fail API availability."
+    "numerator" (printf "http_server_request_duration_seconds_bucket{%s,le=\"0.5\"}" $eligible)
+    "total" (printf "http_server_request_duration_seconds_count{%s}" $eligible))
+  (dict "name" "tile-forwarding-success" "target" .Values.pyrraSLOs.targets.tileSuccess "type" "ratio"
+    "description" "Tile forwarding attempts have a success outcome. Includes forwarding/write failures; excludes pre-forward authentication and capability failures."
+    "numerator" (printf "workouts_api_tile_duration_seconds_count{%s,outcome!=\"success\"}" $scope)
+    "total" (printf "workouts_api_tile_duration_seconds_count{%s}" $scope))
+  (dict "name" "tile-forwarding-latency-1s" "target" .Values.pyrraSLOs.targets.tileLatency "type" "latency"
+    "description" "Successful tile forwards finish within 1s. Excludes failed forwards; not browser fetch completion or map rendering."
+    "numerator" (printf "workouts_api_tile_duration_seconds_bucket{%s,outcome=\"success\",le=\"1.0\"}" $scope)
+    "total" (printf "workouts_api_tile_duration_seconds_count{%s,outcome=\"success\"}" $scope))
+}}
+{{- range $objective := $objectives }}
+---
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: {{ include "workouts.fullname" $ }}-{{ $objective.name }}
+  namespace: {{ $.Release.Namespace }}
+  {{- if $.Values.pyrraSLOs.skipBacksync }}
+  annotations:
+    vcluster.loft.sh/skip-backsync: "true"
+  {{- end }}
+  labels:
+    {{- include "workouts.labels" $ | nindent 4 }}
+    pyrra-rule: "true"
+spec:
+  description: {{ $objective.description | quote }}
+  target: {{ $objective.target | quote }}
+  window: {{ $.Values.pyrraSLOs.window | quote }}
+  partial_response_strategy: abort
+  alerting:
+    absent: true
+    burnrates: true
+  indicator:
+    {{ $objective.type }}:
+      {{ ternary "errors" "success" (eq $objective.type "ratio") }}:
+        metric: {{ $objective.numerator | quote }}
+      total:
+        metric: {{ $objective.total | quote }}
+{{- end }}
+{{- end }}

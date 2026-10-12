@@ -8,6 +8,11 @@ The expected deployment has up to 10 accounts and 10 concurrent users, but each 
 
 The system handles sensitive health and location data. Account isolation, credential protection, authenticated private map tiles, safe diagnostics, and deletion behavior are first-class architectural constraints.
 
+This document describes implemented structure unless a feature is explicitly
+marked planned, optional or deferred. Capacity targets are design requirements,
+not proof of multi-user load acceptance. Dated operational measurements belong in
+the focused acceptance and telemetry guides rather than this component overview.
+
 ## Components
 
 ### Owned components
@@ -18,9 +23,14 @@ The `workouts-explorer` repository contains three independently deployable compo
 |---|---|---|---|
 | UI | `ui/` | `workouts-ui` | React SPA, responsive Summary and Map views, Swagger-independent user workflows |
 | API | `api/` | `workouts-api` | REST API, authentication, authorization, queries, commands, notifications, private tile proxy, static/public runtime config |
-| Worker | `worker/` | `workouts-worker` | Durable jobs, source access, ingest, deletion, matching, aggregation, OSM maintenance, connection checks |
+| Worker | `worker/` | `workouts-worker` | General job runner and separate Coverage runner: source checks, ingest, workout deletion, matching, reconciliation and aggregates |
 
 API and worker are separate Go binaries and Kubernetes Deployments. They may share Go domain packages and generated OpenAPI types from the same repository, but they have independent processes, resource limits, health checks, and scaling.
+
+General and Coverage workers are separate Deployments from the same worker image.
+The additional operator-only `workouts-osm` image is built from
+`worker/osm-update.Dockerfile` and runs public-data update/identity-evaluation
+commands in short-lived Jobs; it is not the general job runner.
 
 ### Supporting components
 
@@ -32,10 +42,10 @@ API and worker are separate Go binaries and Kubernetes Deployments. They may sha
 | Martin (`workouts-explorer-tiles`) | Generates dense private route and coverage vector tiles from the application database |
 | Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
 | NFS archive | Immediately usable source archive for Health Auto Export JSON |
-| Rclone/iCloud Drive | Preferred remote source transport when upstream ADP support permits |
+| Rclone/iCloud Drive (planned) | Preferred remote source transport when upstream ADP support permits; current worker execution supports local/NFS |
 | SMTP server | Sends invitations and password resets using iCloud SMTP initially |
-| OTel Collector | Receives API and worker traces and metrics |
-| Prometheus/Alertmanager | Evaluates operational metrics and sends operator alerts |
+| OTel gateway and UI/tiles sidecars | Gateway receives Go metrics/traces and sidecar metrics; Contrib 0.156.0 sidecars collect native nginx/Martin and separate collector self-telemetry |
+| Prometheus, Thanos Ruler, Pyrra and Alertmanager | Collect/store metrics, generate and evaluate app SLO rules, and route alerts; shared provisioning is infrastructure-owned |
 
 ### High-level flow
 
@@ -54,11 +64,14 @@ API --enqueue durable jobs--> Application PostgreSQL
                                   v
                                Worker
                               /   |   \
-                         NFS/rclone |  shared `osm` PostgreSQL/PostGIS
+                         NFS/local  |  shared `osm` PostgreSQL/PostGIS
                                     |
                                     +--> copied matched segments and rollups
 
-API/Worker --> OTel Collector --> Prometheus/Alertmanager
+API/General worker/Coverage worker --TLS OTLP/gRPC--> OTel gateway
+UI nginx status/Martin native metrics --> local sidecars --TLS OTLP/gRPC--> OTel gateway
+Sidecar self-metrics --> separate local self pipelines  --TLS OTLP/gRPC--> OTel gateway
+OTel gateway --> Prometheus/Thanos --> Grafana/Alertmanager
 API        --> SMTP
 Browser    --> public base-map tiles
 ```
@@ -76,6 +89,7 @@ Browser    --> public base-map tiles
 - Uses MapLibre for selectable, theme-aware public base-map styles and authenticated private vector layers.
 - Reinstalls product-owned private sources and layers after a public style change without resetting current map state.
 - Never receives source credentials, database topology, or the internal tile-server URL.
+- Exposes nginx `stub_status` only on `127.0.0.1:8083/nginx_status` for its local native receiver; no public status/metrics route or API proxy is added.
 
 ### API
 
@@ -101,7 +115,7 @@ Browser    --> public base-map tiles
 - Parses Health Auto Export incrementally and writes workout transactions.
 - Removes staged files and clears encrypted snapshots at every terminal outcome.
 - Updates derived timezone, elevation, attribution, and aggregate data.
-- Runs source checks, deletion, OSM import, and OSM refresh work.
+- The general runner executes source checks, source-child ingest and workout deletion. The dedicated Coverage runner executes route matching and reconciliation. OSM import/refresh uses the operator Job workflow described below, not general-runner dispatch.
 - Emits safe structured logs, job events, OTel metrics, and traces.
 
 ### Martin (`workouts-explorer-tiles`)
@@ -112,33 +126,38 @@ Browser    --> public base-map tiles
 - Does not implement end-user authentication itself.
 - Receives API-authorized account and selection parameters as one validated JSON function argument.
 - Disables its internal tile cache because private selections expire and API responses are `private, no-store`.
+- Martin 1.15.0's standard image enables native HTTP metrics at `/_/metrics` without a metrics switch; its local sidecar scrapes port 3000 without opening another network-policy path. `/metrics` is not this endpoint.
 
 ## Data Model
 
-All application-owned IDs are UUIDv7 stored as native PostgreSQL `uuid`. API serialization uses compact uppercase UUIDs.
+API-created application entity IDs use UUIDv7 stored as native PostgreSQL `uuid`;
+database-generated internal IDs may use random UUIDs. Copied public segment/path
+identities retain the deterministic OSM derivation identity rather than receiving
+fresh UUIDv7 IDs. API serialization uses compact uppercase UUIDs.
 
 ### Identity and account
 
 | Entity | Purpose |
 |---|---|
-| `users` | Immutable username/email, mutable full name, account lifecycle |
-| `administrators` | Separate bootstrap administrative identities with no workout ownership |
+| `authentication_principals` | Role, immutable username/email identity, password hash, mutable full name and disabled state |
+| `users` | Data-owner principal subtype and unique personal-account association |
+| `administrators` | Administrative principal subtype with no workout ownership |
 | `accounts` | Tenant boundary; one personal account per data user in the MVP |
-| `account_memberships` | One owner membership now; preserves a future sharing-compatible boundary without implementing sharing |
-| `auth_identities` | Local password identity now, OIDC identity later |
-| `sessions` | Opaque revocable sessions, absolute expiration, CSRF secret, hashed bearer verifier |
+| `sessions` | Opaque revocable cookie or bearer sessions, absolute expiration, hashed credential verifier and cookie-session CSRF token |
 | `invitations` | Expiring single-use signup tokens stored as hashed verifiers |
 | `password_resets` | Expiring single-use reset tokens stored as hashed verifiers |
-| `user_preferences` | Theme, units, timezone, week start, clock, table, and date preferences |
+| `preferences` | Account-owned theme, units, timezone, week start, clock, table, date and diagnostics preferences |
 
 Administrator and data-owner logins remain different identities even when controlled by one person.
+Separate membership/sharing and external authentication-identity tables are
+future designs, not current schema objects.
 
 ### Sources and ingest
 
 | Entity | Purpose |
 |---|---|
 | `sources` | Current account-owned source, display name, immutable type, auto-sync flag, health status, encrypted current config |
-| `source_tombstones` or tombstone columns | Minimal deleted source identity retained for provenance; not exposed by CRUD APIs |
+| `sources.deleted_at` | Tombstoned source identity retained for provenance; configuration is cleared and CRUD excludes deleted rows |
 | `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state |
 | `jobs` | Parent/child hierarchy, type, priority, status, progress, retry/cancel links, safe parameters |
 | `job_config_snapshots` | Encrypted source configuration copied for one job and cleared at terminal state |
@@ -184,9 +203,15 @@ with the provider's preserved offset.
 
 ### OSM and coverage
 
-The OSM database retains standard public-map hierarchy and derived matching paths. Exact importer schema is an implementation decision constrained by preserving node, way, relation, tag, and version provenance.
+The OSM database retains selective public-map provenance and derived matching
+paths. ADR 0008's toolchain is implemented: Osmium 1.19.0 filtering/reference
+checks, osm2pgsql 2.3.1 flex output using `osm/import.lua`, and checked-in batched
+PostGIS derivation, validation and promotion SQL. The Go updater in
+`internal/osm/` coordinates that pipeline; importer version is 3 and derivation
+version is 20. Node/way/relation lineage, tags, current versions and timestamps
+are retained as required by the selective contract, not a full OSM history copy.
 
-The public-data model separates deterministic matching segments from logical paths. Segments are split at intersections, relevant topology changes, and locality boundaries and retain exact OSM provenance. A logical path groups compatible named segments by normalized name, broad path class, and authoritative municipal city/town locality identity derived from OSM administrative boundary relations. The locality identity includes stable administrative provenance rather than postal-city or display text alone, so equally named localities cannot collide. Unnamed paths use deterministic source/topology lineage within a locality instead of collapsing every unnamed segment into one group.
+The public-data model separates deterministic matching segments from logical paths. Segments are split at intersections, relevant topology changes, and locality boundaries and retain exact OSM provenance. Named logical paths group connected segments by case/whitespace-normalized original name, with bounded proximity joining for roads; connected named groups may cross road/path classes. Components are computed across locality boundaries before final identities are scoped by authoritative municipality/county, or provider region when no locality exists. Locality identity includes stable OSM administrative provenance rather than postal-city or display text alone, so equally named localities cannot collide. Unnamed paths use scoped source/topology lineage and conservative branch rules instead of collapsing every unnamed segment into one group.
 
 The application database intentionally copies only matched segment and logical-path data required for private queries and rendering:
 
@@ -202,7 +227,7 @@ The application database intentionally copies only matched segment and logical-p
 
 The unique workout/physical-segment constraint collapses repeated passes and GPS-jitter spans into one segment match. Persistence dissolves overlapping or contiguous spans regardless of direction, computes length from the dissolved geometry, and stores disjoint visited spans as separate components of one `MultiLineString`; it never fills gaps between them. The unique workout/logical-path constraint ensures matching multiple member segments and outbound/inbound traversal count once. Segment evidence therefore retains only clipped, positive-length geometry actually traversed by selected workouts. Every emitted span receives the containing logical path's count and fixed bucket; unvisited spans and members are not emitted.
 
-Public graph derivation batches source ways to bound PostgreSQL temporary and shared-memory use. Physical segments split at shared OSM nodes and municipal boundaries. Municipal assignment requires geometry coverage within 1 cm; ambiguous complex pieces retain public geometry but no locality rather than receiving a false city attribution. Named roads remove one leading spelled-out cardinal direction for logical identity while preserving the exact OSM display name on physical segments.
+Public graph derivation batches source ways to bound PostgreSQL temporary and shared-memory use. Physical segments split at shared OSM nodes and locality boundaries. Locality assignment requires geometry coverage within 1 cm; ambiguous complex pieces retain public geometry without a false locality attribution. Derivation v20 preserves directional labels in named identity groups: East, West and plain road names remain separate even when search normalization strips a leading cardinal direction. A road component of at most 25 m may join exactly one neighboring component with the same base name and locality; ambiguous fragments remain separate. See [ADR 0008](decisions/008-osm-import-and-segment-identity.md) for the versioned identity rules.
 
 Daily rollups support named periods and arbitrary explicit ranges without maintaining separate mutable materializations for each shortcut.
 
@@ -213,9 +238,11 @@ Selections containing all workouts in a date range use daily rollups. Arbitrary 
 | Entity | Purpose |
 |---|---|
 | `notifications` | Per-user severity, server-owned display state, typed subject reference, message, expiration |
-| `announcements` | Admin-created all-user title, message, severity, expiration, retraction audit |
+| Announcements (planned) | Future admin-created all-user title, message, severity, expiration and retraction audit; no current `app.announcements` table |
 
-Reminder notifications retain enough typed condition data to evaluate persisted state at the next signin without an external call.
+Typed notification subjects support owner-visible job outcomes. The complete
+signin-reminder and announcement policy remains planned rather than a claim
+that every notification lifecycle is implemented.
 
 ## Jobs And Concurrency
 
@@ -228,9 +255,13 @@ Priority order:
 1. Source connection checks and deletion
 2. Manual ingest
 3. Scheduled ingest
-4. OSM bootstrap, refresh, and coverage updates
+4. Coverage updates (dedicated runner; operator OSM Jobs are outside this queue)
 
-OSM maintenance is single-flight. High-priority work bypasses ingest-file semaphores and remains intentionally unpooled because it is rare. Duplicate active checks and deletions are coalesced.
+Source checks and deletions bypass ingest-file semaphores. Duplicate active checks
+and deletions are coalesced. The separate OSM updater uses a database-wide advisory
+lock and durable region/generation checkpoints; its operator Jobs are not rows
+executed by the general application job runner. Queue priority for future automatic
+OSM orchestration is design intent.
 
 ### Ingest hierarchy
 
@@ -289,12 +320,17 @@ but must also acquire the cluster-wide matcher capacity so
 additional API replicas cannot multiply OSM load. Diagnostics are not durable jobs
 and do not preempt an active route; infrequent review retries at a route checkpoint.
 
-Coverage workers use dedicated least-privilege application and OSM credentials,
+Coverage workers use a dedicated least-privilege application credential,
 small explicit data pools, and reserved application control capacity for claims,
 heartbeats, cancellation checks, and terminal transitions. Pool acquisition,
 statements, locks, individual queries, and route-child matching have
 explicit timeouts. API, Martin, general-worker, and coverage-worker pods have
 separate CPU/memory requests and limits.
+
+Dedicated least-privilege OSM reader credentials for Coverage and API diagnostics
+remain a pre-production requirement in Milestone 12. xdev currently permits
+the explicit development exception of sharing the updater's OSM credential; a separate pool
+or read-only transaction is not equivalent to a read-only database login.
 
 The application credential is the dedicated `workouts_coverage_worker` login.
 It can claim, heartbeat, read through fenced functions, persist/fail/supersede a
@@ -314,10 +350,13 @@ eligible failed or cancelled route children. Parent and corresponding route-chil
 lineage reuse the Data Sync retry root and ordinals, allowing Run detail to
 navigate First, Second, and every later attempt through the latest without
 rerunning successful or superseded routes.
-Metrics include queue age, matcher duration, slot occupancy, pool wait, query
-timeouts, lease renewal, retries, stale-result rejection, and interactive API/tile
-latency. Matcher concurrency increases above one only after those measurements
-show adequate shared-database and active-user headroom.
+Implemented event metrics include first-claim queue age, matcher/admission/attempt
+duration, committed terminal outcomes, control/lease results, retries and
+stale-result rejection, alongside shared pool and API/tile metrics. Slot occupancy,
+backlog/oldest age, reconciliation/deadline freshness and complete lifecycle/timeout
+statistics remain instrumentation gaps, not existing gauges. Matcher concurrency
+increases above one only after representative measurements show adequate
+shared-database and active-user headroom.
 
 OSM promotion emits an immutable monotonic public event in the same transaction
 that activates a generation. Each application database observes only the event
@@ -337,18 +376,19 @@ generation is already inactive when the snapshot begins, the child is superseded
 rather than failed and reconciliation schedules the current target.
 
 OSM importer version 3 retains bounded named local, state, and national-park polygons only
-inside the generation build schema. Derivation version 17 attaches stable park
+inside the generation build schema. The current derivation version 20 attaches stable park
 metadata to fully contained segments before canonical partitions are prepared;
 park polygons themselves are not promoted. Local park identity remains scoped by
 authoritative municipality and OSM source. State and national park identity is
 instead scoped by provider region and OSM source, so one regional park remains
 one entity across municipal boundaries and may attribute segments without a
 municipality.
-After park attribution, connectivity scope is the selected named park, otherwise
-the authoritative municipality, otherwise the provider region. Exact shared OSM
-graph nodes merge physical segments when their normalized names and road/path
-classes match when unnamed. Named groups use normalized name without a road/path
-boundary and merge across all exact graph connections. Named road geometry also
+For unnamed geometry, connectivity scope is the selected educational ground,
+otherwise a named park for non-road geometry, otherwise the authoritative
+municipality/county, otherwise the provider region. Named groups use the preserved
+case/whitespace-normalized original name across the provider region without a
+road/path class boundary, then receive locality-scoped final identities. Exact
+shared OSM graph nodes connect compatible physical segments. Named road geometry also
 connects within 15 m, extended to 50 m only for two explicitly one-way segments,
 to represent divided carriageways. For unnamed groups, different source ways merge only when exactly
 two eligible segments meet. At a larger unnamed branch, exactly two segments of
@@ -365,12 +405,13 @@ Named school, college, university, and generic education-ground polygons are als
 retained. Education scope applies only to unnamed segments, outranks park scope
 for those segments, and is exposed by matcher copy as a display-name fallback;
 canonical source names remain unchanged.
-Park scope takes precedence over locality, so contained geometry cannot bridge to
-outside geometry, and municipality scope keeps cities separate. The derivation
-stages deduplicated physical-segment edges and their participating segments, not
+For unnamed non-road geometry, park scope takes precedence over locality, so
+contained geometry cannot bridge to outside geometry. Named final identities
+remain locality-scoped even though graph components are computed across boundaries.
+The derivation stages deduplicated physical-segment edges and their participating segments, not
 all segment endpoints. Isolated segments become singleton components. Computing
 from physical segments rather than incoming logical IDs also splits legacy
-disconnected geometry, prevents road components from bridging path components,
+disconnected geometry, prevents unnamed road components from bridging unnamed path components,
 and prevents an unnamed branching pedestrian network from becoming one identity.
 Application persistence derives a separate once-per-workout park attribution
 from copied segment tags. State- and national-park roads and paths retain their
@@ -395,7 +436,11 @@ visible in Coverage tiles.
 6. Retry uses current validated source parameters.
 7. Stale-job maintenance clears snapshots left by abnormal termination after reaching a terminal state.
 
-If an adapter refreshes mutable credentials such as rclone cookies, the worker writes them back only with a compare-and-swap on the source generation captured by the job. If the source was updated or deleted, refreshed values from the older snapshot are discarded rather than overwriting current credentials.
+The planned rclone adapter must write refreshed mutable credentials back only
+with a compare-and-swap on the source generation captured by the job. If the
+source was updated or deleted, refreshed values from the older snapshot must be
+discarded rather than overwriting current credentials. Current local/NFS ingest
+does not refresh remote credentials.
 
 PostgreSQL WAL and infrastructure backups may retain older encrypted values according to operator retention. Logical clearing does not promise immediate physical erasure from backups.
 
@@ -406,8 +451,8 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 1. The adapter enumerates metadata matching incremental or explicit-range rules.
 2. Incremental sync selects only new or changed source objects.
 3. Bounded Manual Sync selects all matching objects, even previously processed ones.
-4. A worker slot downloads at most one remote file into `/tmp/<user-id>/<job-id>/`.
-5. Partial downloads use a non-final filename and are atomically promoted when complete.
+4. Planned remote adapters stage at most one file per worker slot beneath the configured `WORKER_STAGING_ROOT`, default `/var/lib/workouts/staging`; the old `/tmp/<user-id>/<job-id>/` layout is not the current contract.
+5. Planned remote downloads use a non-final filename and are atomically promoted when complete.
 6. Local/NFS adapters may read directly when staging is unnecessary.
 7. File processing writes transactional workout results and source-file state.
 8. Cleanup removes the staged file before the slot claims another.
@@ -449,7 +494,8 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 - Async commands: `202 Accepted` plus job location
 - Source request validation: discriminated adapter-specific schemas
 
-The complete route inventory and observable rules are in `functional-spec.md` and the OpenAPI document to be created during implementation.
+The implemented route contract is in `api/openapi.yaml`; product behavior and
+explicitly planned features are described in `functional-spec.md`.
 
 ### Private vector tiles
 
@@ -479,22 +525,30 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - Runtime configuration names these datasets regions: `osm.regions` is the explicit initial list, `osm.dataProviders` is the ordered automatic-discovery catalog list, `osm.autoAddRegions` controls discovery, and `osm.maxAutoDownloadBytes` bounds each automatically selected PBF.
 - Development and production use the same public-data-only `osm` database on the production PostgreSQL server; private workout matching results remain isolated in each environment's application database.
 - The updater resolves extract metadata through Geofabrik's versioned index, downloads current PBF files into ephemeral local scratch space, validates and records source metadata, and removes the files after processing.
+- `scripts/osm-update-operator.sh` is the implemented interactive entry point for a new or existing provider-qualified region. It launches `osm/manual-update-job.yaml` with the `workouts-osm` image and supports start, status, resume, unblock and abort. The Go updater filters/imports public data, runs checked-in resumable SQL stages, validates and atomically promotes a generation. Resume checks tool/version/checksum fences; operator-blocked builds do not retry without an explicit unblock. See [ADR 0008](decisions/008-osm-import-and-segment-identity.md) and the [resumable rebuild contract](osm-resumable-rebuild.md).
 - Selective import retains eligible paths, required node/relation lineage, municipal boundaries, and derived matching data while omitting buildings, POIs, addresses, and unrelated rendering features.
-- Routes outside promoted regions remain raw-route-only while coverage is pending or unavailable. When automatic addition is enabled, the worker resolves a containing named provider region from locally cached public catalog polygons, records only its public region ID in the maintenance queue, and never sends route coordinates to the provider.
+- Routes outside promoted regions remain raw-route-only while coverage is unavailable. Any future automatic-addition implementation must resolve a containing named provider region from locally cached public catalog polygons, record only its public region ID in the maintenance queue, and never send route coordinates to the provider; no automatic download is currently queued.
 - Automatic region addition remains deferred. A no-evidence diagnostic resolves its route against the local provider catalog and reports each required but inactive region so the UI can present coverage as unavailable rather than as a successful zero-match review.
 - The unavailable-region fallback samples at most 256 evenly distributed route points, including both endpoints. The diagnostic response lists stable provider-qualified region IDs and display names; the Coverage UI shows its alert/retry state and suppresses normal review controls while preserving the raw route.
 - Diagnostic clipping discards non-positive or degenerate LineStrings before persistence, logs their count, and recomputes portion/segment totals and generation provenance from valid evidence. One unusable OSM substring cannot abort an otherwise valid diagnostic run.
-- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; in Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels and regenerated after map movement; each bearing is averaged from three GPS points before and after the marker so loops remain readable without depending on physical-distance spacing.
+- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; in Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels. Arrows hide immediately during camera movement, regenerate for the final viewport, and reappear only after the current GeoJSON worker update and source tiles are ready. Superseded route/camera/style updates cannot reveal stale arrows; route lines and start/finish markers do not wait for this handoff. Each bearing is averaged from three GPS points before and after the marker so loops remain readable without depending on physical-distance spacing.
 - Clicking a visible route feature in Routes mode immediately focuses and fits that workout, ensures it is checked, and issues a one-time centered scroll for its route-list row. Clicking a route-list row performs the same focus/fit selection without automatic list scrolling.
+- Summary's Show on map handoff checks the fresh capability's target readiness before fitting. If production Coverage is active but the target has no coverage result, it switches to raw Routes and retains focus; current/stale usable coverage keeps Coverage active. This one-time handoff does not force mode changes on ordinary tab reopening or capability refreshes. Cached readiness cannot clear the requested focus while capability creation is pending.
+- Accepted Summary deletions, including an already-unavailable response, notify the shared shell. It prunes the Map catalog, checked IDs and deleted focus, invalidates cached Coverage views, and advances a collection revision without changing the date range or refetching the complete workout collection. Late capability/overlay results cannot restore deleted entries. An external deletion that makes an explicit capability return 404 triggers one authoritative range-catalog recovery and retains only the still-available checked IDs, preserving explicit none rather than selecting all.
+- Map capability creation validates optional focus against the actual selected rows before commit, returning 404 rather than a retryable 503 for unavailable focus. Fresh-login and deep-link recovery also covers all-range selections: it clears unavailable focus/history/overlays and reuses one unfocused catalog capability without broadening an explicit subset or changing preferences. Genuine 503 errors retain bounded retries.
 - In Routes mode, start/finish markers use the same cached raw-route owner as the direction arrows: delayed hover takes precedence over persistent focus, and both endpoint markers are moved above the magenta route and direction-marker layers.
 - Map's Space-key isolation follows the [three-mode layer visibility contract](functional-spec.md#space-key-layer-visibility). Hidden layers fade out and back in over 400ms without source teardown; directional markers use that transition only in diagnostic Coverage, with zero-duration opacity changes in Routes mode.
-- Before matching exists, the application stores a canonical route-input digest and monotonic revision plus pre-matcher readiness only. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; this records only region generation provenance and truthfully remains processing `not_started`, with no covered-path claim.
+- Before a route's first match commits, the application stores a canonical route-input digest and monotonic revision plus map-data readiness. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; readiness records region generation provenance, not successful matching or a covered-path claim. Separate processing and result states distinguish queued/running/failed work from durable current/stale results.
 - Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
 - Coverage updates are account-owned and single-flight by account/region. Desired and applied OSM-generation watermarks guarantee that a promotion racing an active coverage job produces a successor rather than losing rematch work.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
 - Manual OSM refresh replaces or updates regional data and reconciles copied matched segments.
 
 ### Rclone
+
+This is the planned Milestone 8 adapter contract, not an implemented subprocess
+or cookie-refresh lifecycle. The current worker checks and ingests local/NFS
+sources.
 
 - The user runs rclone's external interactive 2FA setup.
 - Source CRUD accepts only whitelisted fields needed for the iCloud adapter.
@@ -508,7 +562,7 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 
 - Initial provider: `smtp.mail.me.com` using STARTTLS and an app-specific password.
 - Email is used only for invitations and password resets in the MVP.
-- Admin announcements remain in-app.
+- Planned admin announcements remain in-app rather than adding email delivery.
 
 ## Authentication And Authorization
 
@@ -521,14 +575,16 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - Browser sessions use Secure, HTTP-only, SameSite cookies.
 - API clients may use the opaque session token as a bearer token.
 - Cookie mutations require a session-bound CSRF token.
-- Session lifetime is globally configured, default two hours absolute.
+- Session lifetime is globally configured, default six hours absolute (`SESSION_LIFETIME`); it is not extended by route clicks.
+- A private 401 is a signal to confirm the cookie session, not proof of expiration. In response to that signal, the UI clears private state only after a confirmed session 401; canceled/unavailable authentication lookups return 503 rather than invalidating credentials. A valid-cookie refresh of a login return URL resumes the protected route instead of falling through to Summary.
+- Navigation, including clicking the already-active Map tab, must not disable session confirmation. Background session-query 401s also confirm the current cookie before clearing cached private state. Deadline checks rearm after an unchanged valid response or transient failure, retrying every ten seconds once the advertised deadline has elapsed; confirmed logout preserves the current protected return path. A newer login or unmounted application remains protected from late checks.
 - Password reset revokes all existing sessions.
 - OIDC remains behind a future authentication-provider boundary.
 
 ### Authorization
 
 - Administrator and data-owner roles are separate identities.
-- Administrators manage users, invitations, announcements, and OSM jobs only.
+- Administrators can create invitations. User-management completion, announcements, account purge and administrator OSM status/refresh remain planned; none grants access to private workout data.
 - Administrators cannot access workout records, routes, source configuration, private tiles, user notifications, or user job logs.
 - Data owners can access only their personal account.
 - Account identity is derived from the authenticated session, never trusted from client parameters.
@@ -546,7 +602,7 @@ Application-layer authorization is mandatory. ADR 0002 adds selective, forced Po
 - Component folders: `ui/`, `api/`, `worker/`
 - Images: `workouts-ui`, `workouts-api`, `workouts-worker`
 - Helm chart: `helm/`, chart name `workouts-explorer`
-- Runtime namespace: `workouts-explorer`, set by Argo CD rather than hardcoded in the chart
+- Runtime namespace: operator-selected Helm release namespace (normally `workouts-explorer`); templates do not require an Argo CD deployment
 
 ### CI and images
 
@@ -560,30 +616,33 @@ Gitea Actions performs:
 
 Helm `version` and `appVersion` follow `VERSION` for the coordinated release.
 
-### GitOps
+### Deployment Ownership
 
 - The application repository contains the chart but no live Argo CD Application.
-- `homelab-apps/workouts-explorer/` contains the live Application and values.
-- Environment values pin immutable image SHA tags.
+- The current xdev release is installed/upgraded directly with Helm. Shared infrastructure is provisioned by its owning Ansible automation; this repository does not assert the existence of an external live Argo CD Application.
+- Argo CD is supported by chart hook annotations but is not required. A future live Application and environment values belong to deployment automation, not this application repository.
+- Environment values can pin immutable image SHA tags or digests; mutable development tags require deliberate rollout handling.
 - Chart defaults set `ingress.enabled: false`.
 - Hostnames, image registries, resources, Secret names, storage limits, and ingress settings are deployment values.
-- There is one primary main-branch environment rather than dev/test/prod duplication.
+- xdev is development/test. Eventual production deploys directly to the host cluster. Separate environments keep private application databases and use explicit telemetry environment labels; they may share the public OSM database.
 
 ### Database migrations
 
 - Goose owns ordered application and app-derived schema migrations.
 - API and worker do not migrate on startup.
-- An Argo CD PreSync migration Job runs the API image's migration command.
+- A Helm pre-install/pre-upgrade migration Job runs the API image's migration command; equivalent Argo CD PreSync annotations support GitOps deployments.
 - Migrations acquire a PostgreSQL advisory lock.
 - Deployment stops if migration fails.
-- Migrations are immutable after merge; fixes are forward migrations.
+- Shipped migrations are normally immutable and fixes use forward migrations. Explicitly approved development-only consolidation is an exception and requires a coordinated runtime/bookkeeping repair; it is not a general production procedure.
 - Expand-and-contract changes preserve compatibility during rollout.
 - CI validates clean creation and supported upgrade paths.
 - Destructive migrations require an operator backup note.
 
 ### Runtime configuration
 
-Secret runtime configuration is mounted into API and worker. The configuration should expose only actual operator policy or environment values, not correct-by-construction domain logic.
+Secret references supply API/worker environment variables and mounted keyring,
+CA/client TLS and other secret files. The configuration should expose only actual
+operator policy or environment values, not correct-by-construction domain logic.
 
 Appropriate settings include:
 
@@ -600,7 +659,58 @@ Timezone inference order, deletion semantics, attribution uniqueness, and cleanu
 
 ## Observability
 
+The implemented component/metric inventory, dated collection evidence, dashboard
+models, SLO definitions and remaining gaps are in
+[Telemetry and monitoring](telemetry-and-monitoring.md). This section describes
+the collection architecture, not a fixed live pod/IP/series-count snapshot.
+The broader minimum-metric list remains intended scope, not a claim of complete
+instrumentation or validated multi-user capacity.
+
+### Collection And Identity
+
+API, general worker and Coverage worker export Go runtime/HTTP/database/pool
+metrics through the OTel SDK. API adds private-tile forwarding metrics and the
+Coverage worker adds eight owned instruments. UI and Martin use Contrib 0.156.0
+sidecars for native metrics and separate collector self-telemetry. Collector
+CPU/memory/uptime belongs to the sidecar, not nginx, Martin or another app process.
+
+All seven producer/self identities preserve datapoint aliases `service_name`,
+`service_namespace`, `service_instance_id` and `deployment_environment`. The Go
+exporter projects these bounded aliases from standard resource attributes; the
+sidecars do the same in their pipelines. Namespace/environment are chart values
+and the instance is the originating pod UID. Current Go Prometheus job identities
+are namespace-qualified too. Grafana retains compatibility with older unqualified
+Go history, but the app SLOs use the explicit origin aliases rather than gateway
+pod identity. `target_info` remains a resource-label exception, not a substitute
+for datapoint origin or successful application work.
+
+The default exporter endpoint is
+`grpcs://otel-gateway-collector.observability.svc.cluster.local:4317`, with CA and
+hostname verification and no plaintext fallback. Explicit HTTP/HTTPS overrides
+remain for fixtures; an empty endpoint disables the Go instrumentation and Helm
+sidecars. Sidecar trust mounts contain public CA material, not database credentials
+or private keys. Gateway scraping is infrastructure-owned; the app chart does not
+add an application ServiceMonitor/PodMonitor or public metrics proxy.
+
+Virtual-cluster DNS needs a narrow host-gateway forwarding rule while preserving
+other custom forwards. See the
+[reachability notes](telemetry-and-monitoring.md#private-dns-and-reachability).
+Service IPs, live series counts, pool occupancies and memory samples are mutable
+operational evidence, not architectural constants or capacity guarantees.
+
+The Helm-owned Operational and Historical Grafana dashboards are provisioned
+from the chart. Four opt-in Pyrra SLO resources define scoped API GET availability
+and latency, tile forwarding success and successful-forward latency. The host
+Pyrra controller generates labeled rule ConfigMaps, and Thanos Ruler evaluates
+them with ABORT partial-response semantics. Namespace-sync deployments preserve
+names; xdev enables the chart's generated-ConfigMap backsync guard. Only the
+namespace badge is propagated to the dashboard. Healthy evaluation and collection
+do not establish full-window compliance, target attainment or alert delivery.
+
 ### Traces
+
+The intended trace coverage includes the following; this is not an inventory of
+completed spans across every worker or operator stage.
 
 - Trace API commands through job creation.
 - Link worker job traces to the originating request without requiring one long-lived span.
@@ -609,7 +719,7 @@ Timezone inference order, deletion semantics, attribution uniqueness, and cleanu
 
 ### Metrics
 
-Minimum metrics include:
+Intended minimum metrics include (several remain unimplemented):
 
 - Request rate, latency, status, and active requests
 - Database pool utilization and query latency
@@ -621,6 +731,33 @@ Minimum metrics include:
 - OSM import/refresh age and failures
 - Private tile latency and error rate
 - Notification and SMTP delivery outcomes
+
+General-worker job/ingest/scheduler/freshness lifecycle instruments, Coverage state/
+reconciliation gauges, active requests, diagnostic-specific matching and browser
+signals remain gaps. Native nginx request counts are not request latency/status
+histograms; native Martin HTTP timing is not API authorization or browser render
+latency. All proposed SLOs require eligibility, missing-data, retention and
+full-window rule-evaluation validation. The four opt-in API/tile objectives
+described above are implemented and installed in xdev; additional lifecycle,
+matching and browser SLOs remain proposals. Installation alone does not establish
+an accepted full-window compliance or alert-delivery result.
+
+### Deferred Jobs And Databases
+
+OSM update/identity-evaluation and bootstrap, migration, role-provisioning and
+timezone hooks are rare short-lived Jobs without an active provider or metrics
+endpoint. Basic Go runtime only, with bounded final metric flush/shutdown in the
+Go commands, is the first deferred candidate. Stage/total durations, outcomes,
+stale-result observations and durable result freshness are later candidates, not
+implemented Job instruments or a new Runner API. Collector self-runtime and local
+scrape `up` must not be attributed to a parent Job. Logs, durable records and
+Kubernetes Job status remain current evidence; no Job SLO is promised.
+
+Application/OSM database server exporter additions are also deferred. Client
+`otelpgx` metrics are not PostgreSQL server metrics. Existing external cluster
+exporters may support optional infrastructure dashboard panels, but this chart
+does not add a server exporter, private SQL aggregate datasource or broader DB
+permissions. Deployment collection verification is separate from all this work.
 
 ### Logs
 
@@ -652,7 +789,7 @@ Minimum metrics include:
 - Active jobs continue with their immutable snapshot when a source is updated.
 - Source deletion cancels queued jobs and clears their snapshots immediately;
   running lease holders clear snapshots at their safe cancellation boundary.
-- Stale-source reminders reappear at next signin only if persisted source state still fails.
+- Stale-source notifications use persisted condition evaluation and reminder timing. Reappearance specifically at the next signin remains planned; current signin does not run that lifecycle.
 
 ### Ingest failure
 
@@ -670,6 +807,10 @@ Minimum metrics include:
 
 ### Account deletion
 
+The following is the accepted lifecycle target, not a claim of a completed
+general-worker account-purge implementation. Current runner dispatch is limited
+to source checks, source-child ingest and workout deletion.
+
 - Account deletion atomically disables authentication and prevents new jobs.
 - Queued and running account jobs are cancelled before purge enumeration.
 - Purge waits for terminal jobs or expired leases, clears snapshots and staging, then captures the complete private-data target scope.
@@ -678,7 +819,7 @@ Minimum metrics include:
 
 ### OSM failure
 
-- OSM bootstrap/refresh is single-flight and lowest priority.
+- OSM bootstrap/refresh uses the separate single-flight operator Job workflow; automatic application-queue orchestration remains deferred.
 - Refresh failure does not make API readiness fail.
 - Existing copied segment data remains usable until a successful reconciliation.
 
@@ -705,14 +846,14 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 ### Worker boundary
 
 - Worker has source and OSM permissions the API does not need.
-- Decrypted credentials live only in process memory except for a private job-scoped rclone config file required by the subprocess.
-- Rclone config files use mode `0600`, contain only one source, live in the job staging directory, and are removed on success, failure, cancellation, and worker-startup scavenging.
+- Current local/NFS source configuration is decrypted in process memory. The planned rclone adapter may additionally require a private job-scoped config file for its subprocess.
+- Planned rclone config files must use mode `0600`, contain only one source, live in the job staging directory, and be removed on success, failure, cancellation, and worker-startup scavenging.
 - Temporary files use private permissions and job-scoped paths.
 - Rclone subprocess arguments and logs must not contain plaintext secrets.
 
 ### Database boundary
 
-- Use separate least-privilege roles for API, worker, migration, OSM import, OSM read, and tile service.
+- Application API, general worker, Coverage worker, migration and tile service use separate roles. Dedicated OSM read/import credential separation remains required before production; the explicit xdev development exception is described above.
 - Application and OSM databases remain separate.
 - Martin connects as `workouts_tiles`, can execute only approved application tile functions, and has no private-table `SELECT` privileges.
 - Source encryption key is not stored in PostgreSQL.
@@ -726,11 +867,11 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 
 ## Deferred Decisions
 
-- Exact OSM importer and segment derivation toolchain pending the ADR 0008 spike
+- Automatic region addition/download orchestration, dedicated read-only OSM credential provisioning and administrator OSM status/refresh workflows; the manual importer/derivation/operator toolchain is implemented, not pending the ADR 0008 spike
 - Future matcher-policy revisions beyond the accepted ADR 0009 v82 baseline
 - Future Coverage bucket revisions beyond the accepted ADR 010 six-class baseline
 - Retention limits for job history and owner-visible diagnostic logs
-- Public base-map provider for externally exposed installations
+- Installation-specific public provider selection, origin restrictions, quotas and key rotation beyond the implemented configurable family catalog
 - Additional adapters and provider-normalization rules
 - OIDC identity linking and account migration
 - Sharing grants, temporal/geofence filters, comparison authorization, and overlap rendering

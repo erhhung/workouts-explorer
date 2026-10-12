@@ -92,6 +92,7 @@ BEGIN
           CROSS JOIN LATERAL ST_Dump(route.route) component
          WHERE selected.selection_id = target_selection_id AND selected.account_id = target_account_id
            AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL
+           AND route.route && ST_Transform(bounds, 4326)
            AND ST_Length(component.geom) = 0
            AND component.geom && ST_Transform(bounds, 4326)
       ) tile_rows;

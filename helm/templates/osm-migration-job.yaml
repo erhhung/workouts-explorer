@@ -31,6 +31,7 @@ spec:
           image: {{ include "workouts.image" (list . .Values.worker.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/app/osm-migrate]
+          resources: {{- toYaml .Values.osm.resources | nindent 12 }}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }

@@ -89,6 +89,67 @@ func TestFacilityCoverageIdentityDowngrade(t *testing.T) {
 	}
 }
 
+func TestCoverageJobMetadataPermissionsSurviveFacilityDowngrade(t *testing.T) {
+	db := openTestDatabases(t)
+	tx, err := db.migration.Begin(db.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	source, err := migrations.Files.ReadFile("020_facility_coverage_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(source), "-- +goose Down")
+	otherGrants := `SELECT array_agg(has_column_privilege(role_name,'app.jobs',column_name,'SELECT') ORDER BY role_name,column_name)
+		FROM unnest(ARRAY['workouts_api','workouts_worker','workouts_tiles']) roles(role_name)
+		CROSS JOIN unnest(ARRAY['created_at','attempt','retry_of_job_id']) columns(column_name)`
+	var originalGrants []bool
+	if err := tx.QueryRow(db.ctx, otherGrants).Scan(&originalGrants); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		sql     string
+		version int
+	}{{parts[1], 19}, {parts[0], 20}} {
+		if _, err := tx.Exec(db.ctx, step.sql); err != nil {
+			t.Fatalf("020 migration to schema %d: %v", step.version, err)
+		}
+		var version, minimum int
+		if err := tx.QueryRow(db.ctx, `SELECT schema_version, minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil {
+			t.Fatal(err)
+		}
+		if version != step.version || minimum != 18 {
+			t.Fatalf("020 schema metadata=%d/%d, want %d/18", version, minimum, step.version)
+		}
+		for _, column := range []string{"created_at", "attempt", "retry_of_job_id"} {
+			var readable bool
+			if err := tx.QueryRow(db.ctx, `SELECT has_column_privilege('workouts_coverage_worker','app.jobs',$1,'SELECT')`, column).Scan(&readable); err != nil {
+				t.Fatal(err)
+			}
+			if !readable {
+				t.Fatalf("020 schema %d lost 015 column grant %s", version, column)
+			}
+		}
+		var boundaries bool
+		if err := tx.QueryRow(db.ctx, `SELECT
+			(SELECT bool_and(has_column_privilege('workouts_coverage_worker','app.jobs',column_name,'SELECT'))
+			 FROM unnest(ARRAY['id','account_id','kind','status','cancel_requested_at','worker_id','lease_token','lease_expires_at']) columns(column_name))
+			AND NOT has_table_privilege('workouts_coverage_worker','app.jobs','SELECT')
+			AND NOT has_column_privilege('workouts_coverage_worker','app.jobs','parameters','SELECT')
+			AND NOT has_column_privilege('workouts_coverage_worker','app.jobs','failure_summary','SELECT')`).Scan(&boundaries); err != nil || !boundaries {
+			t.Fatalf("020 schema %d changed existing privilege boundaries: %t err=%v", version, boundaries, err)
+		}
+		var currentGrants []bool
+		if err := tx.QueryRow(db.ctx, otherGrants).Scan(&currentGrants); err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(originalGrants) != fmt.Sprint(currentGrants) {
+			t.Fatal("020 migration changed other runtime roles' metadata privileges")
+		}
+	}
+}
+
 func TestCleanSchemaV1Upgrade(t *testing.T) {
 	migrationURL := os.Getenv("UPGRADE_MIGRATION_DATABASE_URL")
 	apiURL := os.Getenv("UPGRADE_API_DATABASE_URL")
@@ -214,6 +275,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		AND has_function_privilege('workouts_coverage_worker','app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE')
 		AND has_function_privilege('workouts_coverage_worker','app.persist_coverage_route(uuid,text,uuid,integer,jsonb,jsonb)','EXECUTE')
 		AND has_function_privilege('workouts_coverage_worker','app.sync_coverage_region_catalog(jsonb)','EXECUTE')
+		AND has_column_privilege('workouts_coverage_worker','app.jobs','created_at','SELECT')
+		AND has_column_privilege('workouts_coverage_worker','app.jobs','attempt','SELECT')
+		AND has_column_privilege('workouts_coverage_worker','app.jobs','retry_of_job_id','SELECT')
+		AND NOT has_table_privilege('workouts_coverage_worker','app.jobs','SELECT')
+		AND NOT has_column_privilege('workouts_coverage_worker','app.jobs','parameters','SELECT')
 		AND NOT has_function_privilege('workouts_worker','app.claim_next_coverage_route(text,uuid,interval,integer)','EXECUTE')
 		AND NOT has_function_privilege('workouts_worker','app.sync_coverage_region_catalog(jsonb)','EXECUTE')
 		AND to_regprocedure('app.initialize_workout_coverage(uuid,uuid,bytea,uuid,text,uuid)') IS NOT NULL

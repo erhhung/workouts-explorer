@@ -23,6 +23,27 @@ func TestSupportedSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestRuntimeReadinessBackwardCompatibleSchema(t *testing.T) {
+	sql := strings.Join(strings.Fields(runtimeReadinessSQL), " ")
+	for _, required := range []string{
+		"COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1",
+		"WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1",
+		"has_column_privilege('workouts_coverage_worker','app.jobs','created_at','SELECT')",
+		"has_column_privilege('workouts_coverage_worker','app.jobs','attempt','SELECT')",
+		"has_column_privilege('workouts_coverage_worker','app.jobs','retry_of_job_id','SELECT')",
+		"NOT has_table_privilege('workouts_coverage_worker','app.jobs','SELECT')",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("runtime readiness SQL is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"schema_version = $1", "schema_version <= $1", "schema_version BETWEEN", "max(version_id) FILTER (WHERE is_applied), 0) = $1"} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("runtime readiness SQL rejects compatible newer schemas: %q", forbidden)
+		}
+	}
+}
+
 func TestOpenDoesNotReturnDatabaseCredentials(t *testing.T) {
 	secret := "do-not-expose-this-value"
 	_, err := Open(context.Background(), "postgresql://user:"+secret+"@%zz", "test")

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/oapi-codegen/nullable"
@@ -327,6 +328,7 @@ func (s *Server) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, wor
 		writeWorkoutUnavailable(w, r)
 		return
 	}
+	result.WorkoutType = healthautoexport.CanonicalActivityLabel(result.WorkoutType)
 	rows, err := tx.Query(r.Context(), `SELECT sequence,recorded_at,timestamp_offset_minutes,longitude,latitude,altitude,speed,course,
 		horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy
 		FROM app.workout_route_points WHERE workout_id=$1 AND account_id=$2 ORDER BY sequence`, id, *session.accountID)
@@ -420,6 +422,7 @@ func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, wo
 		writeWorkoutUnavailable(w, r)
 		return
 	}
+	result.Properties.WorkoutType = healthautoexport.CanonicalActivityLabel(result.Properties.WorkoutType)
 	if minimumAltitude != nil && maximumAltitude != nil && elevationGain != nil {
 		result.Properties.ElevationSummary.Set(generated.RouteElevation{MinimumMeters: *minimumAltitude, MaximumMeters: *maximumAltitude, GainMeters: *elevationGain})
 	} else {
@@ -533,6 +536,7 @@ func (s *Server) ListWorkoutTypes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.Id = compactUUID(id)
+		item.DisplayName = healthautoexport.CanonicalActivityLabel(item.DisplayName)
 		result.Items = append(result.Items, item)
 	}
 	if rows.Err() != nil {
@@ -753,6 +757,7 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 		return item, err
 	}
 	item.Id, item.SourceId, item.Type.Id = compactUUID(id), compactUUID(sourceID), compactUUID(typeID)
+	item.Type.DisplayName = healthautoexport.CanonicalActivityLabel(item.Type.DisplayName)
 	setNullable(&item.LocalStartDate, mapDate(localDate))
 	setNullable(&item.Timezone, timezone)
 	setNullable(&item.OriginalStartOffsetMinutes, startOffset)
@@ -807,6 +812,7 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 			return nil, generated.SummaryTotals{}, err
 		}
 		item.Type.Id = compactUUID(id)
+		item.Type.DisplayName = healthautoexport.CanonicalActivityLabel(item.Type.DisplayName)
 		item.Totals.Duration = duration
 		setMetric(&item.Totals.Distance, distance, stringPointer("km"))
 		setMetric(&item.Totals.Energy, energy, stringPointer("kcal"))

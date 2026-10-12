@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -155,6 +156,159 @@ func TestMapSelectionSessionIsolationIntegration(t *testing.T) {
 		compactUUID(fixture.workouts[0])+`"],"focusedWorkoutId":"`+compactUUID(fixture.workouts[1])+`"}`, firstBearer)
 	if focusOutsideSubset.Code != http.StatusBadRequest {
 		t.Fatalf("focus outside subset status=%d body=%s", focusOutsideSubset.Code, focusOutsideSubset.Body.String())
+	}
+}
+
+func TestMapSelectionFocusedMembershipIntegration(t *testing.T) {
+	apiURL, migrationURL, workerURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL"), os.Getenv("WORKER_DATABASE_URL")
+	if apiURL == "" || migrationURL == "" || workerURL == "" {
+		t.Skip("API_DATABASE_URL, MIGRATION_DATABASE_URL, and WORKER_DATABASE_URL are required")
+	}
+	ctx := context.Background()
+	apiDB, err := pgxpool.New(ctx, apiURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer apiDB.Close()
+	adminDB, err := pgxpool.New(ctx, migrationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	workerDB, err := pgxpool.New(ctx, workerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerDB.Close()
+
+	principalID, accountID := insertSourceTestUser(t, adminDB)
+	fixture := insertWorkoutReadFixtures(t, adminDB, workerDB, accountID)
+	_, foreignAccountID := insertSourceTestUser(t, adminDB)
+	foreignFixture := insertWorkoutReadFixtures(t, adminDB, workerDB, foreignAccountID)
+	bearer := insertTestSession(t, apiDB, principalID, "bearer", "")
+	server := integrationServer(t, apiDB, &recordingSender{})
+	routerContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	handler, err := NewHandlerContext(routerContext, server.config, apiDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missingID := uuid.New()
+	cases := []struct {
+		name       string
+		focus      *uuid.UUID
+		explicit   *uuid.UUID
+		endDate    string
+		markDelete bool
+		status     int
+	}{
+		{name: "omitted focus", status: http.StatusCreated},
+		{name: "valid complete-range focus", focus: &fixture.workouts[0], status: http.StatusCreated},
+		{name: "valid explicit focus", focus: &fixture.workouts[0], explicit: &fixture.workouts[0], status: http.StatusCreated},
+		{name: "missing focus", focus: &missingID, status: http.StatusNotFound},
+		{name: "nonrouted focus", focus: &fixture.workouts[2], status: http.StatusNotFound},
+		{name: "outside-range focus", focus: &fixture.workouts[1], endDate: "2026-03-07", status: http.StatusNotFound},
+		{name: "deletion-marked focus", focus: &fixture.workouts[1], markDelete: true, status: http.StatusNotFound},
+		{name: "foreign-account focus", focus: &foreignFixture.workouts[0], status: http.StatusNotFound},
+		{name: "focus outside explicit subset", focus: &fixture.workouts[2], explicit: &fixture.workouts[0], status: http.StatusBadRequest},
+		{name: "filtered explicit focus", focus: &fixture.workouts[2], explicit: &fixture.workouts[2], status: http.StatusNotFound},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if test.markDelete {
+				deleted := routeMapRequest(handler, http.MethodDelete, "/api/workouts/"+compactUUID(*test.focus), "", bearer)
+				if deleted.Code != http.StatusAccepted {
+					t.Fatalf("mark deletion status=%d body=%s", deleted.Code, deleted.Body.String())
+				}
+				var marked bool
+				if err := adminDB.QueryRow(ctx, `SELECT deletion_requested_at IS NOT NULL FROM app.workouts
+					WHERE account_id=$1 AND id=$2`, accountID, *test.focus).Scan(&marked); err != nil || !marked {
+					t.Fatalf("fixture deletion marker=%t err=%v", marked, err)
+				}
+			}
+			var beforeSelections, beforeWorkouts int
+			if err := adminDB.QueryRow(ctx, `SELECT
+				(SELECT count(*) FROM app.map_selections WHERE account_id IN ($1,$2)),
+				(SELECT count(*) FROM app.map_selection_workouts WHERE account_id IN ($1,$2))`,
+				accountID, foreignAccountID).Scan(&beforeSelections, &beforeWorkouts); err != nil {
+				t.Fatal(err)
+			}
+			endDate := test.endDate
+			if endDate == "" {
+				endDate = "2026-03-09"
+			}
+			body := `{"startDate":"2026-03-07","endDate":"` + endDate + `"`
+			if test.focus != nil {
+				body += `,"focusedWorkoutId":"` + compactUUID(*test.focus) + `"`
+			}
+			if test.explicit != nil {
+				body += `,"workoutIds":["` + compactUUID(*test.explicit) + `"]`
+			}
+			response := routeMapRequest(handler, http.MethodPost, "/api/map-selections", body+`}`, bearer)
+			if response.Code != test.status {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.status, response.Body.String())
+			}
+			validateRecordedResponse(t, http.MethodPost, "/api/map-selections", response)
+			if test.status != http.StatusCreated {
+				var afterSelections, afterWorkouts int
+				if err := adminDB.QueryRow(ctx, `SELECT
+					(SELECT count(*) FROM app.map_selections WHERE account_id IN ($1,$2)),
+					(SELECT count(*) FROM app.map_selection_workouts WHERE account_id IN ($1,$2))`,
+					accountID, foreignAccountID).Scan(&afterSelections, &afterWorkouts); err != nil {
+					t.Fatal(err)
+				}
+				if afterSelections != beforeSelections || afterWorkouts != beforeWorkouts {
+					t.Fatalf("failed request leaked committed selection rows: selections %d -> %d, workouts %d -> %d",
+						beforeSelections, afterSelections, beforeWorkouts, afterWorkouts)
+				}
+				if response.Header().Get("Location") != "" {
+					t.Fatal("failed request returned a selection location")
+				}
+				if test.status == http.StatusNotFound {
+					var problem struct{ Detail string }
+					if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Detail != "one or more routed workouts are unavailable" {
+						t.Fatalf("unexpected unavailable detail: %s", response.Body.String())
+					}
+					if strings.Contains(response.Body.String(), compactUUID(*test.focus)) || strings.Contains(response.Body.String(), test.focus.String()) {
+						t.Fatal("unavailable response disclosed workout ID")
+					}
+				}
+				t.Logf("HTTP %d; no committed selection or membership leak", response.Code)
+				return
+			}
+			var selection generated.MapSelection
+			if err := json.Unmarshal(response.Body.Bytes(), &selection); err != nil {
+				t.Fatal(err)
+			}
+			wantWorkouts := fixture.workouts[:2]
+			if test.explicit != nil {
+				wantWorkouts = []uuid.UUID{*test.explicit}
+			}
+			if len(selection.Workouts) != len(wantWorkouts) {
+				t.Fatalf("selected %d workouts, want %d", len(selection.Workouts), len(wantWorkouts))
+			}
+			for i, id := range wantWorkouts {
+				if selection.Workouts[i].Id != compactUUID(id) {
+					t.Fatal("selection changed requested scope")
+				}
+			}
+			if test.focus == nil {
+				if !selection.FocusedWorkoutId.IsNull() {
+					t.Fatal("omitted focus must be returned as null")
+				}
+			} else if focus, err := selection.FocusedWorkoutId.Get(); err != nil || focus != compactUUID(*test.focus) {
+				t.Fatal("selection dropped or changed requested focus")
+			}
+			var committed, memberships int
+			if err := adminDB.QueryRow(ctx, `SELECT
+				(SELECT count(*) FROM app.map_selections WHERE account_id=$1 AND id=$2),
+				(SELECT count(*) FROM app.map_selection_workouts WHERE account_id=$1 AND selection_id=$2)`,
+				accountID, selection.Id).Scan(&committed, &memberships); err != nil || committed != 1 || memberships != len(wantWorkouts) {
+				t.Fatalf("successful selection not committed: selections=%d workouts=%d err=%v", committed, memberships, err)
+			}
+			t.Logf("HTTP 201; %d workouts committed with requested focus and scope", memberships)
+		})
 	}
 }
 

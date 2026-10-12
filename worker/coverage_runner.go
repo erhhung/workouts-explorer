@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
 )
 
 // Production consumes already-normalized, trusted route data and can safely
@@ -36,6 +37,7 @@ type CoverageRunner struct {
 	leaseDuration     time.Duration
 	heartbeatInterval time.Duration
 	routeTimeout      time.Duration
+	metrics           coverageMetrics
 }
 
 type CoverageRunnerOptions struct {
@@ -73,7 +75,8 @@ func NewCoverageRunner(db, osmDB *pgxpool.Pool, logger *slog.Logger) *CoverageRu
 func NewCoverageRunnerWithOptions(db, osmDB *pgxpool.Pool, logger *slog.Logger, options CoverageRunnerOptions) *CoverageRunner {
 	runner := &CoverageRunner{db: db, osmDB: osmDB, logger: logger, workerID: "coverage-worker-" + uuid.NewString(),
 		pollInterval: time.Second, admissionInterval: time.Second, leaseDuration: 4 * time.Minute,
-		heartbeatInterval: 20 * time.Second, routeTimeout: 3 * time.Minute}
+		heartbeatInterval: 20 * time.Second, routeTimeout: 3 * time.Minute,
+		metrics: newCoverageMetrics(otel.Meter(coverageMeterName))}
 	if options.PollInterval > 0 {
 		runner.pollInterval = options.PollInterval
 	}
@@ -118,19 +121,22 @@ func (r *CoverageRunner) Run(ctx context.Context) error {
 
 func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	claim, found, err := r.claim(ctx)
+	started := time.Now()
+	if found {
+		defer func() { r.metrics.routeDuration.Record(ctx, time.Since(started).Seconds()) }()
+	}
 	if err != nil && found {
-		return true, r.failDetached(claim, time.Now(), "coverage-route-invalid", "Coverage job parameters are invalid.")
+		return true, r.failDetached(claim, started, "coverage-route-invalid", "Coverage job parameters are invalid.")
 	}
 	if err != nil || !found {
 		return found, err
 	}
-	started := time.Now()
 	opCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	heartbeatDone := make(chan error, 1)
 	go r.heartbeat(opCtx, claim, cancel, heartbeatDone)
 
-	route, err := r.loadRoute(opCtx, claim)
+	route, err := r.loadRoute(opCtx, claim, started)
 	if err != nil {
 		cause := context.Cause(opCtx)
 		cancel(err)
@@ -148,19 +154,26 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	}
 
 	slotID := uuid.New()
+	admissionStarted := time.Now()
 	for {
 		acquired, acquireErr := r.acquireSlot(opCtx, claim, slotID)
 		if acquireErr != nil {
+			r.metrics.admissionWait.Record(ctx, time.Since(admissionStarted).Seconds())
 			cancel(acquireErr)
 			<-heartbeatDone
+			if handled, interruptedErr := r.handleInterruption(claim, context.Cause(opCtx)); handled {
+				return true, interruptedErr
+			}
 			return true, acquireErr
 		}
 		if acquired {
+			r.metrics.admissionWait.Record(ctx, time.Since(admissionStarted).Seconds())
 			break
 		}
 		timer := time.NewTimer(r.admissionInterval)
 		select {
 		case <-opCtx.Done():
+			r.metrics.admissionWait.Record(ctx, time.Since(admissionStarted).Seconds())
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -187,21 +200,28 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	}
 	snapshot, err := osm.BeginMatcherSnapshotForGenerations(matchCtx, r.osmDB, targetGenerations)
 	if err != nil {
+		cause := context.Cause(opCtx)
+		code, summary := classifyCoverageFailure(matchCtx, err)
 		stopMatch()
 		cancel(err)
 		<-heartbeatDone
 		_ = r.releaseSlotDetached(claim, slotID)
 		released = true
+		if handled, interruptedErr := r.handleInterruption(claim, cause); handled {
+			return true, interruptedErr
+		}
 		if errors.Is(err, osm.ErrMatcherGenerationChanged) {
 			return true, r.supersedeDetached(claim, started)
 		}
-		return true, r.failDetached(claim, started, "coverage-osm-unavailable", "Coverage map data is temporarily unavailable.")
+		return true, r.failDetached(claim, started, code, summary)
 	}
+	matcherStarted := time.Now()
 	result, matchErr := routepipeline.Evaluate(matchCtx, snapshot, route.observations, routepipeline.Config{
 		Rules:    coverage.ExperimentalRules().WithMinimumTraversalMeters(claim.minimumTraversalMeters),
 		Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: coverage.DefaultRoadGeometryRules(),
 		MovementMode: routepipeline.MovementMode(route.typeKey, route.providerLabel), Limits: routepipeline.ProductionLimits(),
 	})
+	r.metrics.matcherDuration.Record(ctx, time.Since(matcherStarted).Seconds())
 	var prepared []routepipeline.PreparedMatch
 	if matchErr == nil {
 		matchErr = verifyCoverageGenerations(matchCtx, snapshot, claim.targetGenerations)
@@ -220,6 +240,11 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 			persistFailed = matchErr != nil
 		}
 	}
+	// Classify before cleanup can cancel or expire the matcher context.
+	failureCode, failureSummary := classifyCoverageFailure(matchCtx, matchErr)
+	if persistFailed && failureCode != "coverage-route-timeout" {
+		failureCode, failureSummary = "coverage-persist-failed", "Coverage results could not be persisted."
+	}
 	closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	closeErr := snapshot.Close(closeCtx)
 	closeCancel()
@@ -236,11 +261,10 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 		if handled, interruptedErr := r.handleInterruption(claim, cause); handled {
 			return true, interruptedErr
 		}
-		if persistFailed {
-			return true, r.failDetached(claim, started, "coverage-persist-failed", "Coverage results could not be persisted.")
+		if errors.Is(matchErr, errLeaseLost) {
+			return true, nil
 		}
-		code, summary := classifyCoverageFailure(matchCtx, matchErr)
-		return true, r.failDetached(claim, started, code, summary)
+		return true, r.failDetached(claim, started, failureCode, failureSummary)
 	}
 	cancel(nil)
 	<-heartbeatDone
@@ -259,8 +283,10 @@ func (r *CoverageRunner) handleInterruption(claim coverageClaim, cause error) (b
 			return true, err
 		}
 		if !ok {
+			r.metrics.reject(ctx, "cancel")
 			return true, errLeaseLost
 		}
+		r.metrics.terminal(ctx, "cancelled", "")
 		return true, nil
 	}
 	if errors.Is(cause, errLeaseLost) || errors.Is(cause, context.Canceled) {
@@ -270,6 +296,8 @@ func (r *CoverageRunner) handleInterruption(claim coverageClaim, cause error) (b
 }
 
 func (r *CoverageRunner) claim(ctx context.Context) (coverageClaim, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+	defer cancel()
 	lease := uuid.New()
 	var claim coverageClaim
 	var generations []byte
@@ -302,17 +330,26 @@ func (r *CoverageRunner) claim(ctx context.Context) (coverageClaim, bool, error)
 	return claim, true, nil
 }
 
-func (r *CoverageRunner) loadRoute(ctx context.Context, claim coverageClaim) (coverageRoute, error) {
-	tx, err := beginAccount(ctx, r.db, claim.accountID)
+func (r *CoverageRunner) loadRoute(ctx context.Context, claim coverageClaim, claimedAt time.Time) (coverageRoute, error) {
+	tx, err := r.beginAccount(ctx, claim.accountID)
 	if err != nil {
 		return coverageRoute{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer r.rollback(tx)
 	var result coverageRoute
+	var createdAt time.Time
+	var attempts int
+	var retry bool
+	if err := tx.QueryRow(ctx, `SELECT created_at, attempt, retry_of_job_id IS NOT NULL FROM app.jobs
+		WHERE id=$1 AND account_id=$2 AND status='running' AND worker_id=$3 AND lease_token=$4`,
+		claim.jobID, claim.accountID, r.workerID, claim.leaseID).Scan(&createdAt, &attempts, &retry); err != nil {
+		return coverageRoute{}, err
+	}
 	if err := tx.QueryRow(ctx, `SELECT app.coverage_route_timeout_retry_count($1,$2,$3)`,
 		claim.jobID, r.workerID, claim.leaseID).Scan(&result.timeoutRetryCount); err != nil {
 		return coverageRoute{}, err
 	}
+	r.metrics.loaded(ctx, claimedAt, createdAt, attempts, retry, result.timeoutRetryCount)
 	rows, err := tx.Query(ctx, `SELECT * FROM app.read_coverage_route($1,$2,$3)`, claim.jobID, r.workerID, claim.leaseID)
 	if err != nil {
 		return coverageRoute{}, err
@@ -371,27 +408,34 @@ func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, can
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tx, err := beginAccount(ctx, r.db, claim.accountID)
+			// Bound the entire control transaction so a blocked call cannot
+			// silently starve lease renewal for the route timeout's duration.
+			controlCtx, stop := context.WithTimeout(ctx, cleanupTimeout)
+			tx, err := r.beginAccount(controlCtx, claim.accountID)
+			var alive, cancelled bool
 			if err == nil {
-				var alive bool
-				err = tx.QueryRow(ctx, `SELECT app.heartbeat_job($1,$2,$3,$4)`, claim.jobID, r.workerID, claim.leaseID, r.leaseDuration).Scan(&alive)
-				var cancelled bool
+				err = tx.QueryRow(controlCtx, `SELECT app.heartbeat_job($1,$2,$3,$4)`, claim.jobID, r.workerID, claim.leaseID, r.leaseDuration).Scan(&alive)
 				if err == nil && alive {
-					err = tx.QueryRow(ctx, `SELECT cancel_requested_at IS NOT NULL FROM app.jobs WHERE id=$1`, claim.jobID).Scan(&cancelled)
+					err = tx.QueryRow(controlCtx, `SELECT cancel_requested_at IS NOT NULL FROM app.jobs WHERE id=$1`, claim.jobID).Scan(&cancelled)
 				}
 				if err == nil {
-					err = tx.Commit(ctx)
-				} else {
-					_ = tx.Rollback(ctx)
+					err = tx.Commit(controlCtx)
 				}
-				if err == nil && (!alive || cancelled) {
-					if cancelled {
-						err = errCancellationRequested
-					} else {
-						err = errLeaseLost
-					}
-				}
+				r.rollback(tx)
 			}
+			// Some database timeout errors do not wrap the context error.
+			metricErr := err
+			if err != nil && controlCtx.Err() != nil {
+				metricErr = controlCtx.Err()
+			}
+			stop()
+			result := "renewed"
+			if err == nil && !alive {
+				result, err = "lost", errLeaseLost
+			} else if err == nil && cancelled {
+				err = errCancellationRequested
+			}
+			r.metrics.control(ctx, "heartbeat", result, metricErr)
 			if err != nil {
 				cancel(err)
 				return
@@ -401,29 +445,51 @@ func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, can
 }
 
 func (r *CoverageRunner) acquireSlot(ctx context.Context, claim coverageClaim, slot uuid.UUID) (bool, error) {
-	return r.accountBool(ctx, claim.accountID, `SELECT app.acquire_coverage_matcher_slot($1,$2,$3,$4)`,
+	acquired, err := r.accountBool(ctx, claim.accountID, `SELECT app.acquire_coverage_matcher_slot($1,$2,$3,$4)`,
 		claim.jobID, r.workerID, claim.leaseID, slot)
+	result := "denied"
+	if acquired {
+		result = "acquired"
+	}
+	r.metrics.control(ctx, "admission", result, err)
+	return acquired, err
 }
 
 func (r *CoverageRunner) releaseSlotDetached(claim coverageClaim, slot uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	_, err := r.accountBool(ctx, claim.accountID, `SELECT app.release_matcher_slot($1,$2,$3)`, slot, r.workerID, claim.leaseID)
+	released, err := r.accountBool(ctx, claim.accountID, `SELECT app.release_matcher_slot($1,$2,$3)`, slot, r.workerID, claim.leaseID)
+	result := "not_found"
+	if released {
+		result = "released"
+	}
+	r.metrics.control(ctx, "release", result, err)
+	if err != nil {
+		r.logger.Warn("coverage matcher slot release failed", "error", err)
+	}
 	return err
 }
 
 func (r *CoverageRunner) persist(ctx context.Context, claim coverageClaim, duration int, generations, matches []byte) (string, error) {
-	tx, err := beginAccount(ctx, r.db, claim.accountID)
+	tx, err := r.beginAccount(ctx, claim.accountID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
-	var outcome string
+	defer r.rollback(tx)
+	var outcome *string
 	if err := tx.QueryRow(ctx, `SELECT app.persist_coverage_route($1,$2,$3,$4,$5,$6)`, claim.jobID,
 		r.workerID, claim.leaseID, duration, generations, matches).Scan(&outcome); err != nil {
 		return "", err
 	}
-	return outcome, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if outcome == nil {
+		r.metrics.reject(ctx, "persist")
+		return "", errLeaseLost
+	}
+	r.metrics.terminal(ctx, *outcome, "")
+	return *outcome, nil
 }
 
 func (r *CoverageRunner) failDetached(claim coverageClaim, started time.Time, code, summary string) error {
@@ -435,8 +501,10 @@ func (r *CoverageRunner) failDetached(claim coverageClaim, started time.Time, co
 		return err
 	}
 	if !ok {
+		r.metrics.reject(ctx, "fail")
 		return errLeaseLost
 	}
+	r.metrics.terminal(ctx, "failed", code)
 	return nil
 }
 
@@ -449,22 +517,51 @@ func (r *CoverageRunner) supersedeDetached(claim coverageClaim, started time.Tim
 		return err
 	}
 	if !ok {
+		r.metrics.reject(ctx, "supersede")
 		return errLeaseLost
 	}
+	r.metrics.terminal(ctx, "superseded", "")
 	return nil
 }
 
-func (r *CoverageRunner) accountBool(ctx context.Context, account uuid.UUID, query string, args ...any) (bool, error) {
-	tx, err := beginAccount(ctx, r.db, account)
+func (r *CoverageRunner) accountBool(ctx context.Context, account uuid.UUID, query string, args ...any) (value bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+	defer cancel()
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = errors.Join(err, ctx.Err())
+		}
+	}()
+	tx, err := r.beginAccount(ctx, account)
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
-	var value bool
+	defer r.rollback(tx)
 	if err := tx.QueryRow(ctx, query, args...).Scan(&value); err != nil {
 		return false, err
 	}
 	return value, tx.Commit(ctx)
+}
+
+func (r *CoverageRunner) beginAccount(ctx context.Context, account uuid.UUID) (pgx.Tx, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.account_id',$1,true)`, account.String()); err != nil {
+		r.rollback(tx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+func (r *CoverageRunner) rollback(tx pgx.Tx) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		r.metrics.control(ctx, "rollback", "", err)
+		r.logger.Warn("coverage transaction rollback failed", "error", err)
+	}
 }
 
 func verifyCoverageGenerations(ctx context.Context, snapshot *osm.MatcherSnapshot, targets []coverageTargetGeneration) error {
@@ -505,7 +602,7 @@ func coveragePersistencePayload(matches []routepipeline.PreparedMatch) []map[str
 }
 
 func classifyCoverageFailure(ctx context.Context, err error) (string, string) {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return "coverage-route-timeout", "Coverage matching timed out."
 	}
 	var bounds *osm.MatcherBoundsError
