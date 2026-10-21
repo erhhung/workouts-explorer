@@ -5,6 +5,9 @@
 Accepted
 
 Accepted on 8/4/2026 before Milestone 3 source configuration persistence.
+Amended for M8 decisions accepted on 10/11/2026. Implementation and synthetic
+verification are ready for owner review as of 10/12/2026; this is not milestone
+closeout, live-cloud acceptance or production validation.
 
 ## Context
 
@@ -130,6 +133,27 @@ fence. A stale check may finish its job but cannot publish status for newer
 configuration. `checking-connection` and `connected` sources permit refresh;
 `connection-failed` permits only a connection-check result, not ingest refresh.
 
+M8 implements cookie-only refresh: native changes to identity, password, trust
+token or client ID cannot be promoted. Successful check completion publishes its
+cookie refresh and `connected` atomically, avoiding a generation increment that
+invalidates the check's own status fence. Refresh encryption or persistence errors
+retain recoverable work rather than clearing a snapshot or falsely succeeding.
+
+The closed `health-auto-export-icloud` version-1 config requires path, write-only
+Apple ID, reversibly obscured password, full cookie string and trust token, with
+optional non-secret client identity. Public config exposes only version/path/
+optional client identity, never Apple ID or masked credential placeholders.
+PATCH retains omitted credentials and rejects null/empty required values; a
+canonical path/client identity change also increments generation and queues a
+check. [The setup guide](../icloud-source-setup.md) records exact schema limits.
+
+Immutable forward migration `021_icloud_sources.sql` supplies typed snapshot,
+cookie-CAS, atomic check/status and source-failure functions and raises current
+schema/minimum runtime to 21. Version-20 claims and scheduler leases acquired
+before upgrade are fenced. This is independent of the earlier development-only
+Coverage/tile consolidation; historical schema-20/minimum-18 receipts remain valid
+for their dated runs.
+
 ## Alternatives Considered
 
 ### Encrypt individual secret fields
@@ -169,9 +193,21 @@ objects and would grant the application Kubernetes write authority.
   destruction are operator responsibilities.
 - Crash diagnostics must never include envelopes, key IDs, adapter config,
   private paths, payloads, or decrypted values. Errors use stable safe codes.
-- Rclone configuration files are an accepted future plaintext exception: one
-  job and source per mode-0600 file in private staging, absent from arguments
-  and logs, removed on every terminal path and startup scavenging.
+- M8 rclone configuration files are an accepted plaintext exception: one profile
+  per mode-0600 file in a random job directory with `0700` access (possibly inherited
+  setgid) beneath the worker-owned
+  `WORKER_STAGING_ROOT/private` child. A UID-0/fsGroup-writable emptyDir outer root
+  is not the adapter's private root. Staging is per pod, never shared with other
+  independent worker processes; Linux `openat2` and `/proc/self/fd` pin access.
+  Native 1.75.2 runs noninteractively with credential-free argv, stripped
+  `RCLONE*` environment and private HOME/XDG/cache/temp paths. Config backups,
+  endpoint files and downloads join the cleanup scope.
+- A local attempt's cleanup failure blocks its terminal writes and that worker's
+  new claims/readiness until cleanup is confirmed. Bounded retries and startup
+  scavenging are worker/pod-local, not distributed cross-pod cleanup or a
+  lost-volume guarantee. Permission, read-only filesystem or hardware faults are
+  not automatically repaired. Eventual per-pod volume disposal is a recovery
+  boundary, not evidence of immediate physical erasure.
 - An unknown historical key or authentication failure affects only the envelope
   operation: API reads fail with a generic internal problem, mutations fail with
   a generic service-unavailable problem when encryption is unavailable, and a
@@ -194,6 +230,13 @@ The consequences section records the required database, pod, backup, crash,
 and temporary-file threat model and residual risks. This evidence authorizes
 Milestone 3 implementation but does not replace its tamper, rotation, race,
 redaction, and cleanup tests.
+
+M8's [10/12/2026 verification summary](../implementation-plan.md#verification-results-10122026)
+records actual disposable PostGIS CAS/status/runtime-fence/readiness checks,
+synthetic cleanup/refresh/race tests and non-root native/private-root checks.
+The bind-root private child retains setgid as mode `2700` with `0700` access.
+These scoped results are ready for owner review, not a wider database-suite pass,
+distributed cleanup guarantee or production/security validation.
 
 ## Conditions That Would Trigger Reconsideration
 

@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
+	"github.com/erhhung/workouts-explorer/internal/workouttimezone"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -273,7 +275,7 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 		defer tx.Rollback(ctx)
 		firstFile := insertFile(t, tx, "original.json")
 		for _, workout := range document.Workouts {
-			kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, firstFile, workout)
+			kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, firstFile, workout, workouttimezone.Resolution{})
 			if err != nil || kind != "created" {
 				t.Fatalf("create=%s err=%v", kind, err)
 			}
@@ -325,7 +327,7 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 		for _, phase := range []string{"legacy aliases", "already canonical"} {
 			t.Run(phase, func(t *testing.T) {
 				for _, workout := range document.Workouts {
-					kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, repairFile, workout)
+					kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, repairFile, workout, workouttimezone.Resolution{})
 					if err != nil || kind != "matched_unchanged" {
 						t.Fatalf("repair=%s err=%v", kind, err)
 					}
@@ -358,12 +360,12 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 		}
 		defer tx.Rollback(ctx)
 		var sourceID uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3)`, job.id, runner.workerID, job.lease).Scan(&sourceID); err != nil || sourceID != fixture.sourceID {
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, job.id, runner.workerID, job.lease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil || sourceID != fixture.sourceID {
 			t.Fatalf("suppression fixture fence=%s err=%v", sourceID, err)
 		}
 		fileID := insertFile(t, tx, "suppression.json")
 		for _, workout := range document.Workouts {
-			kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout)
+			kind, err := runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout, workouttimezone.Resolution{})
 			if err != nil || kind != "created" {
 				t.Fatalf("suppression seed=%s err=%v", kind, err)
 			}
@@ -383,7 +385,7 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 			if _, err := tx.Exec(ctx, `UPDATE app.workouts SET provider_label=$2 WHERE id=$1`, workoutID, workout.ProviderLabel); err != nil {
 				t.Fatal(err)
 			}
-			kind, err = runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout)
+			kind, err = runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout, workouttimezone.Resolution{})
 			if err != nil || kind != "matched_unchanged" {
 				t.Fatalf("summary-state repair=%s err=%v", kind, err)
 			}
@@ -394,7 +396,7 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 			if err := tx.QueryRow(ctx, `SELECT job_id FROM app.enqueue_workout_deletion($1,$2)`, workoutID, principalID).Scan(&deletionID); err != nil {
 				t.Fatal(err)
 			}
-			kind, err = runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout)
+			kind, err = runner.persistWorkout(ctx, tx, job, fixture.sourceID, fileID, workout, workouttimezone.Resolution{})
 			if err != nil || kind != "suppressed" {
 				t.Fatalf("raw identity suppression=%s err=%v", kind, err)
 			}

@@ -117,14 +117,14 @@ func (s *Server) enqueueIngest(ctx context.Context, tx pgx.Tx, accountID uuid.UU
 	}
 	sources := make([]ingestSource, 0, len(lockedSources))
 	for _, source := range lockedSources {
-		if source.typeName != sourceconfig.LocalType || source.status != "connected" {
+		if source.status != "connected" {
 			return ingestEnqueueResult{}, errIngestSourceDisconnected
 		}
 		plaintext, decryptErr := s.sourceKeys.Decrypt(sourcecrypto.Context{Purpose: sourcecrypto.SourceConfig, AccountID: accountID, RecordID: source.id}, source.configEnvelope)
 		if decryptErr != nil {
 			return ingestEnqueueResult{}, errIngestConfigUnavailable
 		}
-		_, canonical, decodeErr := sourceconfig.DecodeLocal(plaintext, s.config.LocalSourceRoots)
+		canonical, decodeErr := sourceconfig.Canonicalize(source.typeName, plaintext, s.config.LocalSourceRoots)
 		if decodeErr != nil || !bytes.Equal(plaintext, canonical) {
 			return ingestEnqueueResult{}, errIngestConfigUnavailable
 		}

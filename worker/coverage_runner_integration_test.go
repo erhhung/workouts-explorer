@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/coverage"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -144,13 +146,18 @@ func newCoverageIntegrationFixture(t testing.TB) *coverageIntegrationFixture {
 	if active != 0 {
 		t.Fatal("scratch app DB already has active coverage jobs or matcher slots; refusing to consume unrelated work/budget")
 	}
+	// Each serialized fixture starts from the default parent policy. Pipeline
+	// cases explicitly configure their own size after constructing this fixture.
+	if err := ConfigureCoverageBatchSize(ctx, f.workerDB, 25); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
 		tx := f.accountTx(cleanup, f.adminDB)
 		defer coverageIntegrationRollback(tx)
 		var fenced uuid.UUID
-		if err := tx.QueryRow(cleanup, `SELECT source_id FROM app.fence_ingest_job($1,'coverage-fixture-ingest',$2)`, f.ingestID, f.ingestLease).Scan(&fenced); err != nil {
+		if err := tx.QueryRow(cleanup, `SELECT source_id FROM app.fence_ingest_job($1,'coverage-fixture-ingest',$2,$3)`, f.ingestID, f.ingestLease, database.SupportedSchemaVersion).Scan(&fenced); err != nil {
 			t.Error("fixture cleanup ingest fence:", err)
 			return
 		}
@@ -259,7 +266,7 @@ func (f *coverageIntegrationFixture) commit(tx pgx.Tx) {
 func (f *coverageIntegrationFixture) fence(tx pgx.Tx) {
 	f.t.Helper()
 	var sourceID uuid.UUID
-	f.scan(tx, `SELECT source_id FROM app.fence_ingest_job($1,'coverage-fixture-ingest',$2)`, []any{f.ingestID, f.ingestLease}, &sourceID)
+	f.scan(tx, `SELECT source_id FROM app.fence_ingest_job($1,'coverage-fixture-ingest',$2,$3)`, []any{f.ingestID, f.ingestLease, database.SupportedSchemaVersion}, &sourceID)
 	if sourceID != f.sourceID {
 		f.t.Fatal("fixture ingest fence returned wrong source")
 	}
@@ -432,16 +439,22 @@ func (f *coverageIntegrationFixture) queue(workout uuid.UUID) coverageIntegratio
 	var revision int64
 	f.scan(tx, `SELECT route_input_revision FROM app.workout_coverage_states WHERE account_id=$1 AND workout_id=$2`, []any{f.accountID, workout}, &revision)
 	f.commit(tx)
-	tx = f.accountTx(f.ctx, f.workerDB)
+	tx = f.accountTx(f.ctx, f.adminDB)
 	defer coverageIntegrationRollback(tx)
 	targets, _ := json.Marshal([]map[string]any{{"jobId": job.childID, "workoutId": workout, "routeRevision": revision, "generations": []coverageTargetGeneration{{f.regionID, f.generation}}}})
 	var count int
 	var reused bool
-	f.scan(tx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update($1,$2,$3,$4,$5,$6,$7,$8,5,$9)`,
+	// These matcher tests intentionally rerun identical targets. Normal enqueue
+	// correctly deduplicates current work; the trusted fixture uses the private
+	// adoption force path without granting it to any runtime role.
+	f.scan(tx, `SELECT job_id,route_count,reused FROM app.enqueue_adopted_coverage_update($1,$2,$3,$4,$5,$6,$7,$8,5,$9)`,
 		[]any{f.accountID, job.parentID, f.regionID, f.generation, revision, string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82), targets}, &job.parentID, &count, &reused)
 	if count < 1 {
 		f.t.Fatal("coverage enqueue returned no routes")
 	}
+	f.scan(tx, `SELECT state.target_job_id FROM app.workout_coverage_states state
+		JOIN app.jobs child ON child.id=state.target_job_id AND child.parent_job_id=$3
+		WHERE state.account_id=$1 AND state.workout_id=$2`, []any{f.accountID, workout, job.parentID}, &job.childID)
 	f.commit(tx)
 	return job
 }
@@ -998,18 +1011,16 @@ func TestCoverageRunnerRunOncePersistRejectsStaleOwnershipIntegration(t *testing
 	runner.metrics = metrics
 	done := f.start(runner)
 	matcher.waitBlocked(f.osmDB, "WITH allowed AS")
-	persist := f.gate(f.adminDB, "app", "coverage_route_job_contexts", "EXCLUSIVE")
-	matcher.release()
-	persist.waitBlocked(f.coverageDB, "app.persist_coverage_route")
-	// Recovery and claim read contexts without row locks; the EXCLUSIVE gate
-	// allows those reads but prevents the old persist's SELECT FOR UPDATE.
+	// Lose and replace the lease while OSM matching is still blocked. Once
+	// persistence starts it can legitimately own parent locks, so recovering
+	// behind an EXCLUSIVE context-table lock creates a fixture-only deadlock.
 	f.recover(job)
 	replacement := f.runner()
 	claim, found, err := replacement.claim(f.ctx)
 	if err != nil || !found || claim.jobID != job.childID {
 		t.Fatalf("replacement claim found=%v id=%s err=%v", found, claim.jobID, err)
 	}
-	persist.release()
+	matcher.release()
 	f.await(done)
 	if f.visible() != old {
 		t.Fatal("stale persistence changed prior coverage")
@@ -1168,4 +1179,139 @@ func TestCoverageRunnerRunOnceCancellationIntegration(t *testing.T) {
 		t.Fatal("cancelled route did not preserve prior applied state")
 	}
 	assertCoverageIntegrationCounter(t, collectCoverageMetrics(t, reader), "coverage.route.outcomes", map[string]string{"outcome": "cancelled", "failure": "none"}, 1)
+}
+
+func TestCoverageRunnerRunOncePersistCancellationAfterEvaluationIntegration(t *testing.T) {
+	f := newCoverageIntegrationFixture(t)
+	f.seedOSM()
+	workout := f.addWorkout(coverageIntegrationRoute(0))
+	f.queue(workout)
+	f.run()
+	old := f.visible()
+	f.updateRoute(workout, coverageIntegrationRoute(1))
+	job := f.queue(workout)
+	matcher := f.gate(f.osmAdminDB, "osm_canonical", "path_segments", "ACCESS EXCLUSIVE")
+	runner := f.runner()
+	// Evaluation must finish with an uncancelled local context. Only the
+	// rejected persistence response can discover committed cancellation.
+	runner.heartbeatInterval = time.Minute
+	metrics, reader := coverageTestMetrics(t)
+	runner.metrics = metrics
+	done := f.start(runner)
+	matcher.waitBlocked(f.osmDB, "WITH allowed AS")
+	tx := f.accountTx(f.ctx, f.adminDB)
+	var requested bool
+	f.scan(tx, `SELECT app.request_coverage_job_cancellation($1,$2)`, []any{job.parentID, uuid.New()}, &requested)
+	f.commit(tx)
+	if !requested {
+		t.Fatal("coverage cancellation request rejected")
+	}
+	matcher.release()
+	f.await(done)
+	f.assertTerminal(job, "cancelled", "")
+	if f.visible() != old {
+		t.Fatal("cancellation rejected by persistence changed prior evidence")
+	}
+	exported := collectCoverageMetrics(t, reader)
+	assertCoverageIntegrationCounter(t, exported, "coverage.stale.rejections", map[string]string{"operation": "persist"}, 1)
+	assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "cancelled"}, 1)
+	assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "failed"}, 0)
+	assertCoverageIntegrationCounter(t, exported, "coverage.control.calls", map[string]string{"operation": "heartbeat"}, 0)
+}
+
+func TestCoverageRejectedCompletionCancellationIntegration(t *testing.T) {
+	for _, operation := range []string{"fail", "supersede"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newCoverageIntegrationFixture(t)
+			f.seedOSM()
+			job := f.queue(f.addWorkout(coverageIntegrationRoute(0)))
+			runner := f.runner()
+			metrics, reader := coverageTestMetrics(t)
+			runner.metrics = metrics
+			claim, found, err := runner.claim(f.ctx)
+			if err != nil || !found || claim.jobID != job.childID {
+				t.Fatalf("claim found=%v error=%v", found, err)
+			}
+			if err := runner.rejectionCause(claim); !errors.Is(err, errLeaseLost) {
+				t.Fatalf("uncancelled ownership probe=%v, want lease-loss classification", err)
+			}
+			tx := f.accountTx(f.ctx, f.adminDB)
+			var requested bool
+			f.scan(tx, `SELECT app.request_coverage_job_cancellation($1,$2)`, []any{job.parentID, uuid.New()}, &requested)
+			f.commit(tx)
+			if !requested {
+				t.Fatal("coverage cancellation request rejected")
+			}
+			switch operation {
+			case "fail":
+				err = runner.failDetached(claim, time.Now(), "coverage-osm-unavailable", "Synthetic reader failure.")
+			case "supersede":
+				err = runner.supersedeDetached(claim, time.Now())
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.assertTerminal(job, "cancelled", "")
+			exported := collectCoverageMetrics(t, reader)
+			assertCoverageIntegrationCounter(t, exported, "coverage.stale.rejections", map[string]string{"operation": operation}, 1)
+			assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "cancelled"}, 1)
+			// Terminal and deleted jobs must never authorize another cancellation.
+			if err := runner.rejectionCause(claim); !errors.Is(err, errLeaseLost) {
+				t.Fatalf("terminal ownership probe=%v, want lease lost", err)
+			}
+			claim.jobID = uuid.New()
+			if err := runner.rejectionCause(claim); !errors.Is(err, errLeaseLost) {
+				t.Fatalf("missing job ownership probe=%v, want lease lost", err)
+			}
+		})
+	}
+}
+
+func TestCoverageRejectedCompletionCannotCancelReplacementLeaseIntegration(t *testing.T) {
+	f := newCoverageIntegrationFixture(t)
+	f.seedOSM()
+	job := f.queue(f.addWorkout(coverageIntegrationRoute(0)))
+	stale := f.runner()
+	claim, found, err := stale.claim(f.ctx)
+	if err != nil || !found || claim.jobID != job.childID {
+		t.Fatalf("old claim found=%v error=%v", found, err)
+	}
+	f.recover(job)
+	current := f.runner()
+	replacement, found, err := current.claim(f.ctx)
+	if err != nil || !found || replacement.jobID != job.childID {
+		t.Fatalf("replacement claim found=%v error=%v", found, err)
+	}
+	tx := f.accountTx(f.ctx, f.adminDB)
+	var requested bool
+	f.scan(tx, `SELECT app.request_coverage_job_cancellation($1,$2)`, []any{job.parentID, uuid.New()}, &requested)
+	f.commit(tx)
+	if !requested {
+		t.Fatal("coverage cancellation request rejected")
+	}
+	generations, err := json.Marshal(claim.targetGenerations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := stale.persist(f.ctx, claim, 1, generations, []byte(`[]`)); outcome != "" || !errors.Is(err, errLeaseLost) {
+		t.Fatalf("stale persistence outcome=%q error=%v, want lease lost", outcome, err)
+	}
+	if err := stale.failDetached(claim, time.Now(), "coverage-osm-unavailable", "Synthetic reader failure."); !errors.Is(err, errLeaseLost) {
+		t.Fatalf("stale completion=%v, want lease lost", err)
+	}
+	if err := stale.supersedeDetached(claim, time.Now()); !errors.Is(err, errLeaseLost) {
+		t.Fatalf("stale supersession=%v, want lease lost", err)
+	}
+	var stillOwned bool
+	tx = f.accountTx(f.ctx, f.adminDB)
+	f.scan(tx, `SELECT status='running' AND worker_id=$2 AND lease_token=$3 AND cancel_requested_at IS NOT NULL
+		FROM app.jobs WHERE id=$1`, []any{job.childID, current.workerID, replacement.leaseID}, &stillOwned)
+	f.commit(tx)
+	if !stillOwned {
+		t.Fatal("stale actor completed another worker's cancelled lease")
+	}
+	if err := current.failDetached(replacement, time.Now(), "coverage-osm-unavailable", "Synthetic reader failure."); err != nil {
+		t.Fatal(err)
+	}
+	f.assertTerminal(job, "cancelled", "")
 }

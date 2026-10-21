@@ -1,6 +1,8 @@
 package coverage
 
 import (
+	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -19,16 +21,42 @@ type state struct {
 // Match decodes observations against caller-supplied candidates. Candidate
 // discovery is intentionally outside this evaluation package.
 func Match(observations []Observation, supplied [][]Candidate, graph Graph, rules Rules) Result {
+	result, _ := MatchContext(context.Background(), observations, supplied, graph, rules)
+	return result
+}
+
+// MatchContext cooperatively stops decoding and repair work on cancellation.
+// Cancellation or exhausted repair tracking returns no partial coverage.
+// Cancellation returns the context's Err, leaving cause classification to callers.
+func MatchContext(ctx context.Context, observations []Observation, supplied [][]Candidate, graph Graph, rules Rules) (Result, error) {
+	return matchContext(ctx, observations, supplied, graph, rules, maxParkingRepairStates, maxParkingRepairStateBytes)
+}
+
+func matchContext(ctx context.Context, observations []Observation, supplied [][]Candidate, graph Graph, rules Rules, parkingStateLimit, parkingStateByteLimit int) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	result := Result{RulesVersion: rules.Version, MinimumTraversalMeters: rules.MinTraversalLengthMeters, Observations: make([]DecodedObservation, len(observations))}
 	for i := range observations {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+		}
 		result.Observations[i] = DecodedObservation{ObservationIndex: i, Status: ObservationUnmatched}
 	}
 	if len(observations) == 0 || rules.Version == "" {
-		return result
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		return result, nil
 	}
-	g := compileGraph(graph)
+	g := compileGraphContext(ctx, graph)
 	candidates := make([][]Candidate, len(observations))
 	for i := range observations {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		if i < len(supplied) {
 			candidates[i] = acceptedCandidates(observations[i], supplied[i], g, rules)
 		}
@@ -39,6 +67,9 @@ func Match(observations []Observation, supplied [][]Candidate, graph Graph, rule
 
 	groupStart := -1
 	for i := range observations {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		if len(candidates[i]) == 0 {
 			if groupStart >= 0 {
 				decodeGroup(groupStart, i, observations, candidates, g, rules, &result)
@@ -60,6 +91,9 @@ func Match(observations []Observation, supplied [][]Candidate, graph Graph, rule
 	if groupStart >= 0 {
 		decodeGroup(groupStart, len(observations), observations, candidates, g, rules, &result)
 	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	repairRawSupportedAccessoryShortcuts(&result, observations, g, 50, 25, 0.5, 10, rules.PositiveLengthEpsilonMeters)
 	bridgePlausibleAccessoryTraversals(&result, observations, g, 25, 32, rules.PositiveLengthEpsilonMeters)
 	bridgePlausibleDrivewayTraversals(&result, observations, g, 40, 32, rules.PositiveLengthEpsilonMeters)
@@ -69,7 +103,7 @@ func Match(observations []Observation, supplied [][]Candidate, graph Graph, rule
 	repairRawSupportedRoadShortcuts(&result, observations, g, 80, 60, 0.85, 10, 20, rules.PositiveLengthEpsilonMeters)
 	bridgeRawSupportedRoadContinuity(&result, observations, g, 80, 60, 32, 0.85, 10, 20, rules.PositiveLengthEpsilonMeters)
 	removeUnsupportedRoadOutAndBacks(&result, observations, g, 100, 15, rules.PositiveLengthEpsilonMeters)
-	cancelTraversalBoundaryBacktracks(&result, rules.PositiveLengthEpsilonMeters)
+	g.cancelTraversalBoundaryBacktracks(&result, rules.PositiveLengthEpsilonMeters)
 	replaceShortExcursionsBetweenSameClass(&result, observations, g, 75, 500, 64, rules.PositiveLengthEpsilonMeters)
 	replaceShortPortionExcursions(&result, g, 30, 250, rules.PositiveLengthEpsilonMeters)
 	replaceBoundaryShortExcursions(&result, g, 30, 250, rules.PositiveLengthEpsilonMeters)
@@ -82,8 +116,11 @@ func Match(observations []Observation, supplied [][]Candidate, graph Graph, rule
 	replaceOverlappingRoadReversalWithPath(&result, observations, g, 150, 100, 60, 15, rules.PositiveLengthEpsilonMeters)
 	repairDisconnectedRoadPortionGaps(&result, observations, g, 40, rules.PositiveLengthEpsilonMeters)
 	repairDisconnectedRoadExcursions(&result, observations, g, 40, 5, rules.PositiveLengthEpsilonMeters)
-	repairRawSupportedParallelParkingRoutes(&result, observations, g, 120, 20, 30, rules.PositiveLengthEpsilonMeters)
-	repairRawSupportedParallelParkingRoutes(&result, observations, g, 120, 20, 30, rules.PositiveLengthEpsilonMeters)
+	for range 2 {
+		if err := repairRawSupportedParallelParkingRoutesWithLimits(&result, observations, g, 120, 20, 30, rules.PositiveLengthEpsilonMeters, parkingStateLimit, parkingStateByteLimit); err != nil {
+			return Result{}, err
+		}
+	}
 	replaceTraversalTailWithRawSupportedSameRoad(&result, observations, g, 150, 10, 15, rules.PositiveLengthEpsilonMeters)
 	extendRawSupportedRoadDeadEnds(&result, observations, g, 150, 60, 15, rules.PositiveLengthEpsilonMeters)
 	extendRawSupportedRoadOutAndBackChains(&result, observations, g, 150, 3, 15, rules.PositiveLengthEpsilonMeters)
@@ -100,17 +137,34 @@ func Match(observations []Observation, supplied [][]Candidate, graph Graph, rule
 	removeUnsupportedSingleDrivewayOutAndBacks(&result, observations, g, 12, 30, 45, 15, rules.PositiveLengthEpsilonMeters)
 	removeUnsupportedIsolatedSingleRoadPortions(&result, observations, g, 20, 45, 15, 128, rules.PositiveLengthEpsilonMeters)
 	removeParkingAislesBeforeSameRoadContinuations(&result, observations, g, 40, 15, rules.PositiveLengthEpsilonMeters)
-	return result
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	return result, nil
 }
 
 func replaceShortUnsupportedRoadTangentsWithRawRoute(result *Result, observations []Observation, graph compiledGraph, maximumSelectedMeters, maximumRouteMeters float64, maximumRoutePortions int, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	roadGraph := graph.onlyContinuityClass("road")
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			for end := start + 2; end < len(traversal.Portions) && end <= start+3; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after, selected := traversal.Portions[end], traversal.Portions[start+1:end]
 				selectedLength := portionsLength(selected)
 				if before.ContinuityClass != "road" || after.ContinuityClass != "road" || selectedLength > maximumSelectedMeters ||
@@ -128,7 +182,7 @@ func replaceShortUnsupportedRoadTangentsWithRawRoute(result *Result, observation
 				beforeSegment, afterSegment := graph.segments[before.SegmentID], graph.segments[after.SegmentID]
 				from := pointAlongSegment(beforeSegment, before.ToMeter, graph.lengths[before.SegmentID])
 				to := pointAlongSegment(afterSegment, after.FromMeter, graph.lengths[after.SegmentID])
-				_, rawDistance, ok := rawBetweenEndpoints(raw, from, to, maximumRawOffsetMeters)
+				_, rawDistance, ok := graph.rawBetweenEndpoints(raw, from, to, maximumRawOffsetMeters)
 				if !ok || alternative.distance > rawDistance*1.25+20 {
 					continue
 				}
@@ -140,7 +194,7 @@ func replaceShortUnsupportedRoadTangentsWithRawRoute(result *Result, observation
 				}
 				replacement = append(replacement, alternative.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 				start = max(-1, start-1)
 				break
 			}
@@ -149,11 +203,19 @@ func replaceShortUnsupportedRoadTangentsWithRawRoute(result *Result, observation
 }
 
 func roadPortionReachesGraphDeadEnd(portion TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	segment, exists := graph.segments[portion.SegmentID]
 	if !exists {
 		return false
 	}
 	for _, id := range graph.outgoing[segment.ToNode] {
+		if graph.canceled(&checks) {
+			return false
+		}
 		continuation := graph.segments[id]
 		if continuation.ContinuityClass == "road" && !samePhysicalSegment(segment, continuation) {
 			return false
@@ -163,13 +225,24 @@ func roadPortionReachesGraphDeadEnd(portion TraversedPortion, graph compiledGrap
 }
 
 func completeRawSupportedConnectedRoadTurns(result *Result, observations []Observation, graph compiledGraph, maximumMissingMeters, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 0; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, after, ok := completedConnectedRoadTurn(traversal.Portions[i], traversal.Portions[i+1], raw, graph, maximumMissingMeters, maximumRawOffsetMeters, epsilon)
 			if ok {
 				traversal.Portions[i], traversal.Portions[i+1] = before, after
@@ -179,14 +252,25 @@ func completeRawSupportedConnectedRoadTurns(result *Result, observations []Obser
 }
 
 func completeRawSupportedBoundaryConnectedRoadTurns(result *Result, observations []Observation, graph compiledGraph, maximumMissingMeters, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		j := i + 1
 		for j < len(result.Traversals) && len(result.Traversals[j].Portions) == 0 {
+			if graph.canceled(&checks) {
+				return
+			}
 			j++
 		}
 		if j == len(result.Traversals) || len(result.Traversals[i].Portions) == 0 ||
 			result.Traversals[j].FirstObservation-result.Traversals[i].LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, result.Traversals[i].LastObservation, result.Traversals[j].FirstObservation) {
+			graph.hasHardSplit(result.Splits, result.Traversals[i].LastObservation, result.Traversals[j].FirstObservation) {
 			continue
 		}
 		first, second := &result.Traversals[i], &result.Traversals[j]
@@ -207,18 +291,26 @@ func completedConnectedRoadTurn(before, after TraversedPortion, raw []Observatio
 		before.ContinuityClass != "road" || after.ContinuityClass != "road" || before.LogicalPathID == "" || after.LogicalPathID == "" ||
 		before.LogicalPathID == after.LogicalPathID || beforeSegment.ToNode != afterSegment.FromNode || beforeMissing <= epsilon || afterMissing <= epsilon ||
 		before.ToMeter-before.FromMeter < 20 || after.ToMeter-after.FromMeter < 20 || beforeMissing+afterMissing > maximumMissingMeters ||
-		!endpointRawSupported(raw, beforeSegment.To, maximumRawOffsetMeters, 1) {
+		!graph.endpointRawSupported(raw, beforeSegment.To, maximumRawOffsetMeters, 1) {
 		return before, after, false
 	}
 	return graph.portion(before.SegmentID, before.FromMeter, graph.lengths[before.SegmentID]), graph.portion(after.SegmentID, 0, after.ToMeter), true
 }
 
 func removeUnsupportedIsolatedSingleRoadPortions(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumDegrees, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 1; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[i]
 		if len(traversal.Portions) != 1 || len(result.Traversals[i-1].Portions) == 0 || len(result.Traversals[i+1].Portions) == 0 ||
 			result.Traversals[i+1].FirstObservation-result.Traversals[i-1].LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, result.Traversals[i-1].LastObservation, result.Traversals[i+1].FirstObservation) {
+			graph.hasHardSplit(result.Splits, result.Traversals[i-1].LastObservation, result.Traversals[i+1].FirstObservation) {
 			continue
 		}
 		before := result.Traversals[i-1].Portions[len(result.Traversals[i-1].Portions)-1]
@@ -231,31 +323,40 @@ func removeUnsupportedIsolatedSingleRoadPortions(result *Result, observations []
 			continue
 		}
 		raw := observations[result.Traversals[i-1].FirstObservation : result.Traversals[i+1].LastObservation+1]
-		if rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) {
+		if graph.rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) {
 			continue
 		}
 		result.Traversals = append(result.Traversals[:i], result.Traversals[i+1:]...)
 		i--
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 1; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, middle, after := traversal.Portions[i-1], traversal.Portions[i], traversal.Portions[i+1]
 			segment, exists := graph.segments[middle.SegmentID]
 			if !exists || segment.TransitionOnly || middle.ContinuityClass != "road" || (before.ContinuityClass != "road" && after.ContinuityClass != "road") ||
 				middle.FromMeter > epsilon || graph.lengths[middle.SegmentID]-middle.ToMeter > epsilon || middle.ToMeter-middle.FromMeter > maximumMeters ||
 				portionsConnected(before, middle, graph, epsilon) || portionsConnected(middle, after, graph, epsilon) ||
-				rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) {
+				graph.rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) {
 				continue
 			}
 			traversal.Portions = append(traversal.Portions[:i], traversal.Portions[i+1:]...)
 			i--
 		}
 		for len(traversal.Portions) >= 2 {
+			if graph.canceled(&checks) {
+				return
+			}
 			last := len(traversal.Portions) - 1
 			if !unsupportedDisconnectedWindowEdgeRoad(traversal.Portions[last], traversal.Portions[last-1], raw, graph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, epsilon) {
 				break
@@ -263,6 +364,9 @@ func removeUnsupportedIsolatedSingleRoadPortions(result *Result, observations []
 			traversal.Portions = traversal.Portions[:last]
 		}
 		for len(traversal.Portions) >= 2 && unsupportedDisconnectedWindowEdgeRoad(traversal.Portions[0], traversal.Portions[1], raw, graph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, epsilon) {
+			if graph.canceled(&checks) {
+				return
+			}
 			traversal.Portions = traversal.Portions[1:]
 		}
 	}
@@ -273,17 +377,28 @@ func unsupportedDisconnectedWindowEdgeRoad(candidate, neighbor TraversedPortion,
 	return exists && !segment.TransitionOnly && candidate.ContinuityClass == "road" && neighbor.ContinuityClass != "" &&
 		candidate.FromMeter <= epsilon && graph.lengths[candidate.SegmentID]-candidate.ToMeter <= epsilon && candidate.ToMeter-candidate.FromMeter <= maximumMeters &&
 		!portionsConnected(candidate, neighbor, graph, epsilon) && !portionsConnected(neighbor, candidate, graph, epsilon) &&
-		!rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters)
+		!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters)
 }
 
 func removeUnsupportedSingleDrivewayOutAndBacks(result *Result, observations []Observation, graph compiledGraph, minimumOneWayMeters, maximumOneWayMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 1; i+2 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, outbound, inbound, after := traversal.Portions[i-1], traversal.Portions[i], traversal.Portions[i+1], traversal.Portions[i+2]
 			outboundSegment, outboundExists := graph.segments[outbound.SegmentID]
 			inboundSegment, inboundExists := graph.segments[inbound.SegmentID]
@@ -293,8 +408,8 @@ func removeUnsupportedSingleDrivewayOutAndBacks(result *Result, observations []O
 				before.ContinuityClass != "road" || after.ContinuityClass != "road" || before.LogicalPathID == "" || before.LogicalPathID != after.LogicalPathID {
 				continue
 			}
-			outboundSupported := rawPolylineSupportsDirectedSegmentWithin(raw, outboundSegment, maximumDegrees, maximumRawOffsetMeters)
-			inboundSupported := rawPolylineSupportsDirectedSegmentWithin(raw, inboundSegment, maximumDegrees, maximumRawOffsetMeters)
+			outboundSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, outboundSegment, maximumDegrees, maximumRawOffsetMeters)
+			inboundSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, inboundSegment, maximumDegrees, maximumRawOffsetMeters)
 			if outboundSupported || inboundSupported {
 				continue
 			}
@@ -305,9 +420,20 @@ func removeUnsupportedSingleDrivewayOutAndBacks(result *Result, observations []O
 }
 
 func repairBoundarySameRoadDetours(result *Result, observations []Observation, graph compiledGraph, maximumDetourMeters, minimumSavings float64, maximumMiddlePortions int, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		j := i + 1
 		for j < len(result.Traversals) && len(result.Traversals[j].Portions) == 0 {
+			if graph.canceled(&checks) {
+				return
+			}
 			j++
 		}
 		if j == len(result.Traversals) {
@@ -315,7 +441,7 @@ func repairBoundarySameRoadDetours(result *Result, observations []Observation, g
 		}
 		first, second := &result.Traversals[i], result.Traversals[j]
 		if len(first.Portions) == 0 || len(second.Portions) < 4 || second.FirstObservation-first.LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -329,6 +455,9 @@ func repairBoundarySameRoadDetours(result *Result, observations []Observation, g
 		raw := observations[first.FirstObservation : second.LastObservation+1]
 		repaired := false
 		for end := 3; end < len(second.Portions) && end <= maximumMiddlePortions; end++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			after := second.Portions[end]
 			afterSegment, afterExists := graph.segments[after.SegmentID]
 			selected := second.Portions[:end]
@@ -341,6 +470,9 @@ func repairBoundarySameRoadDetours(result *Result, observations []Observation, g
 			}
 			connectorIDs := make([]string, 0, 1)
 			for _, id := range graph.outgoing[beforeSegment.ToNode] {
+				if graph.canceled(&checks) {
+					return
+				}
 				segment := graph.segments[id]
 				if !segment.TransitionOnly && segment.ContinuityClass == "road" && segment.ToNode == afterSegment.FromNode &&
 					segment.LogicalPathID == before.LogicalPathID && segment.SourceWayID == beforeSegment.SourceWayID {
@@ -352,13 +484,13 @@ func repairBoundarySameRoadDetours(result *Result, observations []Observation, g
 			}
 			connector := graph.segments[connectorIDs[0]]
 			if connector.LengthMeters+minimumSavings > selectedLength ||
-				(!rawSupportsSegmentByEndpointDistance(raw, connector, maximumRawOffsetMeters, 0.7, 1.5) &&
-					!rawPolylineSupportsDirectedSegmentWithin(raw, connector, 60, maximumRawOffsetMeters)) {
+				(!graph.rawSupportsSegmentByEndpointDistance(raw, connector, maximumRawOffsetMeters, 0.7, 1.5) &&
+					!graph.rawPolylineSupportsDirectedSegmentWithin(raw, connector, 60, maximumRawOffsetMeters)) {
 				continue
 			}
 			first.Portions = append(first.Portions, graph.portion(connector.ID, 0, connector.LengthMeters))
 			first.Portions = append(first.Portions, second.Portions[end:]...)
-			first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+			first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 			first.Observations = append(first.Observations, second.Observations...)
 			first.LastObservation = second.LastObservation
 			first.Cost += second.Cost
@@ -373,13 +505,24 @@ func repairBoundarySameRoadDetours(result *Result, observations []Observation, g
 }
 
 func removeParkingAislesBeforeSameRoadContinuations(result *Result, observations []Observation, graph compiledGraph, minimumParkingMeters, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 0; i+2 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, parking, after := traversal.Portions[i], traversal.Portions[i+1], traversal.Portions[i+2]
 			beforeSegment, beforeExists := graph.segments[before.SegmentID]
 			parkingSegment, parkingExists := graph.segments[parking.SegmentID]
@@ -390,8 +533,8 @@ func removeParkingAislesBeforeSameRoadContinuations(result *Result, observations
 				beforeSegment.SourceWayID == 0 || beforeSegment.SourceWayID != afterSegment.SourceWayID ||
 				graph.lengths[before.SegmentID]-before.ToMeter > epsilon || after.FromMeter > epsilon || parking.FromMeter > epsilon ||
 				beforeSegment.ToNode != afterSegment.FromNode || parkingSegment.FromNode != afterSegment.FromNode || parkingSegment.ToNode == afterSegment.FromNode ||
-				(!rawSupportsSegmentByEndpointDistance(raw, afterSegment, maximumRawOffsetMeters, 0.7, 1.5) &&
-					!rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, maximumRawOffsetMeters)) {
+				(!graph.rawSupportsSegmentByEndpointDistance(raw, afterSegment, maximumRawOffsetMeters, 0.7, 1.5) &&
+					!graph.rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, maximumRawOffsetMeters)) {
 				continue
 			}
 			traversal.Portions = append(traversal.Portions[:i+1], traversal.Portions[i+2:]...)
@@ -401,10 +544,18 @@ func removeParkingAislesBeforeSameRoadContinuations(result *Result, observations
 }
 
 func bridgePlausibleParkingAisleTraversals(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 || second.FirstObservation-first.LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -414,14 +565,14 @@ func bridgePlausibleParkingAisleTraversals(result *Result, observations []Observ
 			continue
 		}
 		connector, ok := parkingAisleBridgeRoute(before, after, graph, observations, second.FirstObservation, maximumRouteMeters, epsilon)
-		rawDistance := observationPolylineDistance(observations, first.LastObservation, second.FirstObservation)
+		rawDistance := graph.observationPolylineDistance(observations, first.LastObservation, second.FirstObservation)
 		if !ok || rawDistance <= epsilon || connector.distance > rawDistance*1.5+20 {
 			i++
 			continue
 		}
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -430,9 +581,20 @@ func bridgePlausibleParkingAisleTraversals(result *Result, observations []Observ
 }
 
 func parkingAisleBridgeRoute(before, after TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int, maximumRouteMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, graph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, graph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			route, ok := graph.routeWithBoundaryClasses(from, to, maximumRouteMeters, epsilon, before.ContinuityClass, after.ContinuityClass)
 			if !ok || route.distance <= epsilon || route.distance >= best.distance || !containsParkingAisleConnector(route.portions, graph) ||
 				!onlyBoundaryAndParkingAislePortions(route.portions, before, after, graph) {
@@ -450,13 +612,24 @@ func parkingAisleBridgeRoute(before, after TraversedPortion, graph compiledGraph
 }
 
 func bridgeDisconnectedRoadPathParkingAisles(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 0; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, after := traversal.Portions[i], traversal.Portions[i+1]
 			if !parkingAisleBoundaryClasses(before.ContinuityClass, after.ContinuityClass) || portionsConnected(before, after, graph, epsilon) {
 				continue
@@ -475,8 +648,16 @@ func bridgeDisconnectedRoadPathParkingAisles(result *Result, observations []Obse
 }
 
 func parkingAislePortions(portions []TraversedPortion, graph compiledGraph) []TraversedPortion {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	result := make([]TraversedPortion, 0, len(portions))
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		if graph.segments[portion.SegmentID].ParkingAisleConnector {
 			result = append(result, portion)
 		}
@@ -485,19 +666,36 @@ func parkingAislePortions(portions []TraversedPortion, graph compiledGraph) []Tr
 }
 
 func extendRawSupportedParkingAisles(result *Result, observations []Observation, graph compiledGraph, maximumMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[max(0, traversal.FirstObservation-64):min(len(observations), traversal.LastObservation+65)]
 		for portionIndex := 0; portionIndex < len(traversal.Portions); portionIndex++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			portion := traversal.Portions[portionIndex]
 			segment := graph.segments[portion.SegmentID]
 			if segment.TransitionOnly || portion.ContinuityClass != "road" || graph.lengths[portion.SegmentID]-portion.ToMeter > epsilon {
@@ -518,15 +716,23 @@ func extendRawSupportedParkingAisles(result *Result, observations []Observation,
 }
 
 func bestRawSupportedOutgoingParkingAisle(node string, observations []Observation, graph compiledGraph, maximumMeters float64, present map[string]bool) (TraversedPortion, bool) {
+	if graph.err() != nil {
+		return TraversedPortion{}, false
+	}
+	var checks uint
+
 	ids := append([]string(nil), graph.outgoing[node]...)
 	sort.Strings(ids)
 	best, bestLength := TraversedPortion{}, 0.0
 	for _, id := range ids {
+		if graph.canceled(&checks) {
+			return TraversedPortion{}, false
+		}
 		segment := graph.segments[id]
 		if !segment.ParkingAisleConnector || segment.LengthMeters > maximumMeters || present[segment.PhysicalID] || parkingAisleShadowedByRoad(segment, graph) {
 			continue
 		}
-		fromMeter, toMeter, ok := parkingAisleRawInterval(observations, segment, parkingAisleRawSupportOffsetMeters)
+		fromMeter, toMeter, ok := graph.parkingAisleRawInterval(observations, segment, parkingAisleRawSupportOffsetMeters)
 		if !ok || fromMeter > math.Max(5, segment.LengthMeters*0.2) || toMeter <= bestLength {
 			continue
 		}
@@ -536,7 +742,15 @@ func bestRawSupportedOutgoingParkingAisle(node string, observations []Observatio
 }
 
 func containsParkingAisleConnector(portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].ParkingAisleConnector {
 			return true
 		}
@@ -545,7 +759,15 @@ func containsParkingAisleConnector(portions []TraversedPortion, graph compiledGr
 }
 
 func onlyBoundaryAndParkingAislePortions(portions []TraversedPortion, before, after TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment := graph.segments[portion.SegmentID]
 		if !segment.ParkingAisleConnector && segment.PhysicalSegmentID != before.PhysicalSegmentID && segment.PhysicalSegmentID != after.PhysicalSegmentID {
 			return false
@@ -555,18 +777,32 @@ func onlyBoundaryAndParkingAislePortions(portions []TraversedPortion, before, af
 }
 
 func removeUnsupportedRoadOutAndBacks(result *Result, observations []Observation, graph compiledGraph, maximumOneWayMeters, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for center := 0; center+1 < len(traversal.Portions); center++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			if !inversePortions(traversal.Portions[center], traversal.Portions[center+1], epsilon) {
 				continue
 			}
 			left, right := center, center+1
 			for left > 0 && right+1 < len(traversal.Portions) && inversePortions(traversal.Portions[left-1], traversal.Portions[right+1], epsilon) {
+				if graph.canceled(&checks) {
+					return
+				}
 				left--
 				right++
 			}
@@ -582,13 +818,24 @@ func removeUnsupportedRoadOutAndBacks(result *Result, observations []Observation
 }
 
 func removeUnsupportedSingleRoadTurnStubs(result *Result, observations []Observation, graph compiledGraph, maximumOneWayMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 1; i+2 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, outbound, inbound, after := traversal.Portions[i-1], traversal.Portions[i], traversal.Portions[i+1], traversal.Portions[i+2]
 			differentRoadTurn := before.LogicalPathID != after.LogicalPathID && (outbound.LogicalPathID == before.LogicalPathID || outbound.LogicalPathID == after.LogicalPathID)
 			serviceDeadEnd := roadPortionEndsAtDeadEnd(outbound, graph)
@@ -608,11 +855,11 @@ func removeUnsupportedSingleRoadTurnStubs(result *Result, observations []Observa
 			if !known || !connected || !outboundExists || !inboundExists || outboundSegment.TransitionOnly || inboundSegment.TransitionOnly {
 				continue
 			}
-			outboundSupported := rawPolylineSupportsDirectedSegmentWithin(raw, outboundSegment, maximumDegrees, maximumRawOffsetMeters) ||
+			outboundSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, outboundSegment, maximumDegrees, maximumRawOffsetMeters) ||
 				(sameRoadThrough && ordinaryDeadEnd && turnaroundRawSupported(outbound, graph, raw, maximumRawOffsetMeters)) ||
-				!deadEnd && rawExtendsPastDirectedEndpoint(raw, outboundSegment, maximumRawOffsetMeters, 5)
-			inboundSupported := rawPolylineSupportsDirectedSegmentWithin(raw, inboundSegment, maximumDegrees, maximumRawOffsetMeters) ||
-				!deadEnd && rawExtendsPastDirectedEndpoint(raw, inboundSegment, maximumRawOffsetMeters, 5)
+				!deadEnd && graph.rawExtendsPastDirectedEndpoint(raw, outboundSegment, maximumRawOffsetMeters, 5)
+			inboundSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, inboundSegment, maximumDegrees, maximumRawOffsetMeters) ||
+				!deadEnd && graph.rawExtendsPastDirectedEndpoint(raw, inboundSegment, maximumRawOffsetMeters, 5)
 			if outboundSupported && inboundSupported {
 				continue
 			}
@@ -623,11 +870,19 @@ func removeUnsupportedSingleRoadTurnStubs(result *Result, observations []Observa
 }
 
 func roadPortionEndsAtDeadEnd(portion TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	segment, exists := graph.segments[portion.SegmentID]
 	if !exists || !segment.RoadConnector {
 		return false
 	}
 	for _, id := range graph.outgoing[segment.ToNode] {
+		if graph.canceled(&checks) {
+			return false
+		}
 		continuation := graph.segments[id]
 		if !continuation.TransitionOnly && continuation.ContinuityClass == "road" && !samePhysicalSegment(segment, continuation) {
 			return false
@@ -637,11 +892,19 @@ func roadPortionEndsAtDeadEnd(portion TraversedPortion, graph compiledGraph) boo
 }
 
 func roadPortionHasNonPhysicalContinuation(portion TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	segment, exists := graph.segments[portion.SegmentID]
 	if !exists {
 		return false
 	}
 	for _, id := range graph.outgoing[segment.ToNode] {
+		if graph.canceled(&checks) {
+			return false
+		}
 		continuation := graph.segments[id]
 		if !continuation.TransitionOnly && continuation.ContinuityClass == "road" && !samePhysicalSegment(segment, continuation) {
 			return true
@@ -651,17 +914,28 @@ func roadPortionHasNonPhysicalContinuation(portion TraversedPortion, graph compi
 }
 
 func removeDisconnectedSingleRoadStubs(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 1; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, middle, after := traversal.Portions[i-1], traversal.Portions[i], traversal.Portions[i+1]
 			segment, exists := graph.segments[middle.SegmentID]
 			leftConnected := portionsConnected(before, middle, graph, epsilon)
 			rightConnected := portionsConnected(middle, after, graph, epsilon)
 			if !exists || before.ContinuityClass != "road" || middle.ContinuityClass != "road" || after.ContinuityClass != "road" ||
 				middle.ToMeter-middle.FromMeter > maximumMeters || !portionsConnected(before, after, graph, epsilon) || leftConnected == rightConnected ||
-				rawPolylineSupportsDirectedSegmentWithin(raw, segment, 60, maximumRawOffsetMeters) || rawExtendsPastDirectedEndpoint(raw, segment, maximumRawOffsetMeters, 5) {
+				graph.rawPolylineSupportsDirectedSegmentWithin(raw, segment, 60, maximumRawOffsetMeters) || graph.rawExtendsPastDirectedEndpoint(raw, segment, maximumRawOffsetMeters, 5) {
 				continue
 			}
 			traversal.Portions = append(traversal.Portions[:i], traversal.Portions[i+1:]...)
@@ -671,11 +945,22 @@ func removeDisconnectedSingleRoadStubs(result *Result, observations []Observatio
 }
 
 func repairDisconnectedRoadPortionGaps(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	roadGraph := graph.onlyContinuityClass("road")
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 0; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, after := traversal.Portions[i], traversal.Portions[i+1]
 			if before.ContinuityClass != "road" || after.ContinuityClass != "road" || portionsConnected(before, after, graph, epsilon) {
 				continue
@@ -695,13 +980,27 @@ func repairDisconnectedRoadPortionGaps(result *Result, observations []Observatio
 }
 
 func repairDisconnectedRoadExcursions(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, minimumSavings, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	roadGraph := graph.onlyContinuityClass("road")
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			for end := start + 2; end < len(traversal.Portions) && end <= start+4; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after, selected := traversal.Portions[end], traversal.Portions[start+1:end]
 				selectedLength := portionsLength(selected)
 				if selectedLength > maximumExcursionMeters || before.ContinuityClass != "road" || after.ContinuityClass != "road" || !allRoadPortions(selected) ||
@@ -715,7 +1014,7 @@ func repairDisconnectedRoadExcursions(result *Result, observations []Observation
 				replacement := append([]TraversedPortion(nil), traversal.Portions[:start+1]...)
 				replacement = append(replacement, alternative.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 				start = max(-1, start-1)
 				break
 			}
@@ -724,10 +1023,18 @@ func repairDisconnectedRoadExcursions(result *Result, observations []Observation
 }
 
 func roadTurnPortionsRawSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumDegrees, maximumRawOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment, exists := graph.segments[portion.SegmentID]
-		if !exists || (!rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
-			!directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters)) {
+		if !exists || (!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
+			!graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters)) {
 			return false
 		}
 	}
@@ -735,11 +1042,19 @@ func roadTurnPortionsRawSupported(portions []TraversedPortion, graph compiledGra
 }
 
 func roadSequenceDisconnected(before TraversedPortion, middle []TraversedPortion, after TraversedPortion, graph compiledGraph, epsilon float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	portions := make([]TraversedPortion, 0, len(middle)+2)
 	portions = append(portions, before)
 	portions = append(portions, middle...)
 	portions = append(portions, after)
 	for i := 0; i+1 < len(portions); i++ {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if !portionsConnected(portions[i], portions[i+1], graph, epsilon) {
 			return true
 		}
@@ -759,16 +1074,33 @@ func portionsConnected(before, after TraversedPortion, graph compiledGraph, epsi
 }
 
 func extendRawSupportedRoadDeadEnds(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 0; i < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			current := traversal.Portions[i]
 			segment := graph.segments[current.SegmentID]
 			if segment.TransitionOnly || current.ContinuityClass != "road" || graph.lengths[current.SegmentID]-current.ToMeter > epsilon {
@@ -789,18 +1121,35 @@ func extendRawSupportedRoadDeadEnds(result *Result, observations []Observation, 
 }
 
 func extendRawSupportedRoadOutAndBackChains(result *Result, observations []Observation, graph compiledGraph, maximumMeters float64, maximumSegments int, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		for i := 0; i < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			current := traversal.Portions[i]
 			currentSegment, exists := graph.segments[current.SegmentID]
 			if !exists || current.ContinuityClass != "road" && !currentSegment.DrivewayConnector || graph.lengths[current.SegmentID]-current.ToMeter > epsilon {
@@ -827,6 +1176,9 @@ func extendRawSupportedRoadOutAndBackChains(result *Result, observations []Obser
 			copy(traversal.Portions[insert+len(addition):], traversal.Portions[insert:len(traversal.Portions)-len(addition)])
 			copy(traversal.Portions[insert:], addition)
 			for _, portion := range addition {
+				if graph.canceled(&checks) {
+					return
+				}
 				present[graph.segments[portion.SegmentID].PhysicalID] = true
 			}
 			i += len(addition)
@@ -835,15 +1187,32 @@ func extendRawSupportedRoadOutAndBackChains(result *Result, observations []Obser
 }
 
 func extendRawSupportedBoundaryRoadOutAndBackChains(result *Result, observations []Observation, graph compiledGraph, maximumMeters float64, maximumSegments int, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for i := 0; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		j := i + 1
 		for j < len(result.Traversals) && len(result.Traversals[j].Portions) == 0 {
+			if graph.canceled(&checks) {
+				return
+			}
 			j++
 		}
 		if j == len(result.Traversals) {
@@ -851,7 +1220,7 @@ func extendRawSupportedBoundaryRoadOutAndBackChains(result *Result, observations
 		}
 		first, second := &result.Traversals[i], &result.Traversals[j]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 || second.FirstObservation-first.LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			continue
 		}
 		current := first.Portions[len(first.Portions)-1]
@@ -869,12 +1238,20 @@ func extendRawSupportedBoundaryRoadOutAndBackChains(result *Result, observations
 		}
 		first.Portions = append(first.Portions, addition...)
 		for _, portion := range addition {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 }
 
 func bestRawSupportedRoadOutAndBackChain(current, next DirectedSegment, observations []Observation, graph compiledGraph, present map[string]bool, extendDriveway bool, maximumMeters float64, maximumSegments int, maximumRawOffsetMeters float64) ([]TraversedPortion, bool) {
+	if graph.err() != nil {
+		return nil, false
+	}
+	var checks uint
+
 	type candidate struct {
 		outbound []string
 		inbound  []string
@@ -883,12 +1260,18 @@ func bestRawSupportedRoadOutAndBackChain(current, next DirectedSegment, observat
 	candidates := make([]candidate, 0)
 	var visit func(string, []string, []string, map[string]bool, float64)
 	visit = func(node string, outbound, inbound []string, used map[string]bool, traveled float64) {
+		if graph.err() != nil {
+			return
+		}
 		if len(outbound) >= maximumSegments {
 			return
 		}
 		ids := append([]string(nil), graph.outgoing[node]...)
 		sort.Strings(ids)
 		for _, id := range ids {
+			if graph.canceled(&checks) {
+				return
+			}
 			segment := graph.segments[id]
 			eligible := !segment.TransitionOnly && segment.ContinuityClass == "road" && segment.LogicalPathID != "" && segment.SourceWayID != 0 && segment.LengthMeters >= 20
 			if extendDriveway {
@@ -913,6 +1296,9 @@ func bestRawSupportedRoadOutAndBackChain(current, next DirectedSegment, observat
 			}
 			newUsed := make(map[string]bool, len(used)+1)
 			for physicalID := range used {
+				if graph.canceled(&checks) {
+					return
+				}
 				newUsed[physicalID] = true
 			}
 			newUsed[segment.PhysicalID] = true
@@ -926,12 +1312,18 @@ func bestRawSupportedRoadOutAndBackChain(current, next DirectedSegment, observat
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].distance > candidates[j].distance })
 	best := candidates[0]
 	for _, other := range candidates[1:] {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		if best.outbound[0] != other.outbound[0] {
 			return nil, false
 		}
 	}
 	result := make([]TraversedPortion, 0, len(best.outbound)+len(best.inbound))
 	for _, id := range append(best.outbound, best.inbound...) {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		segment := graph.segments[id]
 		result = append(result, graph.portion(id, 0, segment.LengthMeters))
 	}
@@ -939,7 +1331,15 @@ func bestRawSupportedRoadOutAndBackChain(current, next DirectedSegment, observat
 }
 
 func reverseDirectedSegmentID(segment DirectedSegment, graph compiledGraph) (string, bool) {
+	if graph.err() != nil {
+		return "", false
+	}
+	var checks uint
+
 	for _, id := range graph.outgoing[segment.ToNode] {
+		if graph.canceled(&checks) {
+			return "", false
+		}
 		candidate := graph.segments[id]
 		if candidate.ToNode == segment.FromNode && candidate.Direction != segment.Direction && samePhysicalSegment(segment, candidate) {
 			return id, true
@@ -949,26 +1349,46 @@ func reverseDirectedSegmentID(segment DirectedSegment, graph compiledGraph) (str
 }
 
 func rawSupportsOutAndBackSegmentChain(observations []Observation, outbound, inbound []string, graph compiledGraph, maximumRawOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	if len(outbound) == 0 || len(outbound) != len(inbound) {
 		return false
 	}
 	points := make([]Point, 0, len(outbound)+len(inbound)+1)
 	points = append(points, graph.segments[outbound[0]].From)
 	for _, id := range outbound {
+		if graph.canceled(&checks) {
+			return false
+		}
 		points = append(points, graph.segments[id].To)
 	}
 	for _, id := range inbound {
+		if graph.canceled(&checks) {
+			return false
+		}
 		points = append(points, graph.segments[id].To)
 	}
 	for start := 0; start < len(observations); start++ {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if observationPointOffset(observations[start], points[0]) > maximumRawOffsetMeters {
 			continue
 		}
 		observationIndex := start
 		supported := true
 		for _, point := range points[1:] {
+			if graph.canceled(&checks) {
+				return false
+			}
 			found := false
 			for observationIndex++; observationIndex < len(observations); observationIndex++ {
+				if graph.canceled(&checks) {
+					return false
+				}
 				if observationPointOffset(observations[observationIndex], point) <= maximumRawOffsetMeters {
 					found = true
 					break
@@ -991,19 +1411,36 @@ func observationPointOffset(observation Observation, point Point) float64 {
 }
 
 func replaceTraversalTailWithRawSupportedSameRoad(result *Result, observations []Observation, graph compiledGraph, maximumSegmentMeters, minimumSavings, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for currentIndex := max(0, len(traversal.Portions)-4); currentIndex+1 < len(traversal.Portions); currentIndex++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			current := traversal.Portions[currentIndex]
 			currentSegment := graph.segments[current.SegmentID]
 			suffix := traversal.Portions[currentIndex+1:]
@@ -1014,10 +1451,13 @@ func replaceTraversalTailWithRawSupportedSameRoad(result *Result, observations [
 			ids := append([]string(nil), graph.outgoing[currentSegment.ToNode]...)
 			sort.Strings(ids)
 			for _, id := range ids {
+				if graph.canceled(&checks) {
+					return
+				}
 				segment := graph.segments[id]
 				if segment.TransitionOnly || segment.ContinuityClass != "road" || segment.LogicalPathID != current.LogicalPathID ||
 					segment.LengthMeters < 20 || segment.LengthMeters > maximumSegmentMeters || present[segment.PhysicalID] ||
-					segment.LengthMeters+minimumSavings > portionsLength(suffix) || !rawSupportsSegmentByEndpointDistance(raw, segment, maximumRawOffsetMeters, 0.7, 1.5) {
+					segment.LengthMeters+minimumSavings > portionsLength(suffix) || !graph.rawSupportsSegmentByEndpointDistance(raw, segment, maximumRawOffsetMeters, 0.7, 1.5) {
 					continue
 				}
 				traversal.Portions = append(traversal.Portions[:currentIndex+1], graph.portion(id, 0, segment.LengthMeters))
@@ -1028,16 +1468,597 @@ func replaceTraversalTailWithRawSupportedSameRoad(result *Result, observations [
 	}
 }
 
-func repairRawSupportedParallelParkingRoutes(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, maximumExtraMeters, maximumRoadOffsetMeters, epsilon float64) {
-	for traversalIndex := range result.Traversals {
-		traversal := &result.Traversals[traversalIndex]
+const (
+	// Also bounds accepted repair work when direction ambiguity forbids certificates.
+	maxParkingRepairStates           = 4096
+	maxParkingRepairStateBytes       = 512 * 1024
+	maxParkingRepairInternedPortions = 16384
+	maxParkingRepairInternBytes      = 8 * 1024 * 1024
+	maxParkingRepairSuffixNodes      = 16384
+	// Comparable key, map/allocator allowance, plus separately charged strings.
+	parkingRepairInternEntryBytes = 384
+	parkingRepairSuffixEntryBytes = 64
+	// One inline push descriptor; its strings already belong to interned portions.
+	parkingRepairPushEntryBytes = 4096
+)
+
+// ParkingRepairLimitError is a processing limit, not a successful partial match
+// or evidence that the route is invalid. It does not authorize an automatic retry.
+type ParkingRepairLimitError struct {
+	// Accepted work is traversal-local and includes repeats; errors discard its result.
+	AcceptedReplacements, ProjectedAcceptedReplacements, MaxAcceptedReplacements int
+	CursorAcceptedReplacements                                                   int
+	ContinuationDirectionsChecked, ContinuationDirectionsDeterministic           bool
+	Field                                                                        string
+	// States counts certificate keys per traversal, not work. Bytes/cursor states are cursor-local.
+	States, StateBytes, MaxStates, MaxStateBytes int
+	TraversalIndex                               int
+	Cursor, CursorStates, ProjectedStates        int
+	AttemptedKeyBytes, ProjectedStateBytes       int
+	// InternBytes conservatively accounts all interning/continuation caches, not measured heap size.
+	InternedPortions, InternBytes                     int
+	MaxInternedPortions, MaxInternBytes               int
+	ProjectedInternedPortions                         int
+	AttemptedInternBytes, ProjectedInternBytes        int
+	SuffixNodes, MaxSuffixNodes, ProjectedSuffixNodes int
+	ContinuationStates                                int
+}
+
+func (err *ParkingRepairLimitError) Error() string {
+	return fmt.Sprintf("parking repair tracking exhausted (%s; traversal %d states %d -> %d/%d; cursor %d states %d; retained key bytes %d + attempted %d = projected %d/%d; intern portions %d -> %d/%d; cache bytes %d + attempted %d = projected %d/%d; suffix nodes %d -> %d/%d; continuations %d; directions checked %t deterministic %t; accepted replacements %d -> %d/%d; cursor accepted %d)",
+		err.Field, err.TraversalIndex, err.States, err.ProjectedStates, err.MaxStates, err.Cursor, err.CursorStates,
+		err.StateBytes, err.AttemptedKeyBytes, err.ProjectedStateBytes, err.MaxStateBytes,
+		err.InternedPortions, err.ProjectedInternedPortions, err.MaxInternedPortions,
+		err.InternBytes, err.AttemptedInternBytes, err.ProjectedInternBytes, err.MaxInternBytes,
+		err.SuffixNodes, err.ProjectedSuffixNodes, err.MaxSuffixNodes, err.ContinuationStates, err.ContinuationDirectionsChecked, err.ContinuationDirectionsDeterministic,
+		err.AcceptedReplacements, err.ProjectedAcceptedReplacements, err.MaxAcceptedReplacements, err.CursorAcceptedReplacements)
+}
+
+func (err *ParkingRepairLimitError) Unwrap() error {
+	// Preserve the existing deterministic-limit classification, but never use
+	// graph node/edge fields: those authorize adaptive window recovery/retries.
+	switch err.Field {
+	case "parking repair accepted replacements":
+		return &OSMEvaluationLimitError{Field: "parking repair accepted replacements", Limit: err.MaxAcceptedReplacements}
+	case "parking repair states":
+		return &OSMEvaluationLimitError{Field: "parking repair states", Limit: err.MaxStates}
+	case "parking repair interned portions":
+		return &OSMEvaluationLimitError{Field: "parking repair interned portions", Limit: err.MaxInternedPortions}
+	case "parking repair intern bytes":
+		return &OSMEvaluationLimitError{Field: "parking repair intern bytes", Limit: err.MaxInternBytes}
+	case "parking repair suffix nodes":
+		return &OSMEvaluationLimitError{Field: "parking repair suffix nodes", Limit: err.MaxSuffixNodes}
+	default:
+		return &OSMEvaluationLimitError{Field: "parking repair state bytes", Limit: err.MaxStateBytes}
+	}
+}
+
+// Normalize float fields only in this copied map key; exact bits distinguish
+// signed zeros and NaN payloads without Go's non-reflexive NaN equality.
+type parkingRepairPortionKey struct {
+	portion TraversedPortion
+	bits    [4]uint64
+}
+
+func parkingRepairPortionIdentity(portion TraversedPortion) parkingRepairPortionKey {
+	key := parkingRepairPortionKey{portion: portion, bits: [4]uint64{
+		math.Float64bits(portion.FromMeter), math.Float64bits(portion.ToMeter),
+		math.Float64bits(portion.SourceFromFraction), math.Float64bits(portion.SourceToFraction),
+	}}
+	key.portion.FromMeter, key.portion.ToMeter, key.portion.SourceFromFraction, key.portion.SourceToFraction = 0, 0, 0, 0
+	return key
+}
+
+type parkingRepairPush struct {
+	before, after                [5]parkingRepairPortionKey
+	last, pushedFirst, tailFirst TraversedPortion
+	cursor                       int
+	valid, pushed, tail          bool
+}
+
+type parkingRepairStates struct {
+	acceptedReplacements, cursorAcceptedReplacements int
+	seen                                             map[string]struct{}
+	traversalIndex                                   int
+	count, bytes, maxCount, maxBytes                 int
+	cursor, cursorStates                             int
+	portions                                         map[parkingRepairPortionKey]uint32
+	internBytes, maxInternCount, maxInternBytes      int
+	suffixes                                         map[parkingRepairSuffixKey]uint32
+	continuations                                    map[uint32]int
+	maxSuffixNodes                                   int
+	checkedDirections, deterministicDirections       bool
+	push                                             parkingRepairPush
+}
+
+type parkingRepairSuffixKey struct {
+	portion, next uint32
+}
+
+func newParkingRepairStates(maxCount, maxBytes int) parkingRepairStates {
+	return parkingRepairStates{maxCount: maxCount, maxBytes: maxBytes,
+		maxInternCount: maxParkingRepairInternedPortions, maxInternBytes: maxParkingRepairInternBytes,
+		maxSuffixNodes: maxParkingRepairSuffixNodes}
+}
+
+func (states *parkingRepairStates) beginCursor(start int) {
+	states.forgetPush()
+	states.seen, states.bytes, states.cursorStates, states.cursor = nil, 0, 0, start
+	states.cursorAcceptedReplacements = 0
+}
+
+func (states *parkingRepairStates) limitError(field string, keyBytes, internBytes int) *ParkingRepairLimitError {
+	projectedPortions := len(states.portions)
+	if internBytes > 0 {
+		projectedPortions++
+	}
+	return &ParkingRepairLimitError{Field: field,
+		AcceptedReplacements: states.acceptedReplacements, ProjectedAcceptedReplacements: states.acceptedReplacements + 1,
+		MaxAcceptedReplacements: states.maxCount, CursorAcceptedReplacements: states.cursorAcceptedReplacements,
+		States: states.count, StateBytes: states.bytes, MaxStates: states.maxCount, MaxStateBytes: states.maxBytes,
+		TraversalIndex: states.traversalIndex,
+		Cursor:         states.cursor, CursorStates: states.cursorStates, ProjectedStates: states.count + 1,
+		AttemptedKeyBytes: keyBytes, ProjectedStateBytes: states.bytes + keyBytes,
+		InternedPortions: len(states.portions), InternBytes: states.internBytes,
+		MaxInternedPortions: states.maxInternCount, MaxInternBytes: states.maxInternBytes,
+		ProjectedInternedPortions: projectedPortions, AttemptedInternBytes: internBytes, ProjectedInternBytes: states.internBytes + internBytes,
+		SuffixNodes: len(states.suffixes), MaxSuffixNodes: states.maxSuffixNodes, ProjectedSuffixNodes: len(states.suffixes), ContinuationStates: len(states.continuations),
+		ContinuationDirectionsChecked: states.checkedDirections, ContinuationDirectionsDeterministic: states.deterministicDirections}
+}
+
+func (states *parkingRepairStates) suffixLimitError(field string, newNode bool) *ParkingRepairLimitError {
+	err := states.limitError(field, 0, parkingRepairSuffixEntryBytes)
+	err.ProjectedInternedPortions = len(states.portions)
+	if newNode {
+		err.ProjectedSuffixNodes++
+	}
+	return err
+}
+
+// The boundary helper chooses the first opposite direction from a map. Certify
+// determinism only when there is at most one such segment in the source graph.
+func parkingRepairDirectionsDeterministic(graph compiledGraph) (bool, error) {
+	type counts struct {
+		total      int
+		directions [3]int
+	}
+	index := func(direction SegmentDirection) int {
+		switch direction {
+		case SegmentForward:
+			return 0
+		case SegmentReverse:
+			return 1
+		case "":
+			return 2
+		default:
+			return -1
+		}
+	}
+	uuids := make(map[uuid.UUID]counts)
+	physical, nilPhysical := make(map[string]counts), make(map[string]counts)
+	var checks uint
+	for _, s := range graph.segments {
+		if graph.canceled(&checks) {
+			return false, graph.err()
+		}
+		d := index(s.Direction)
+		if d < 0 {
+			return false, nil
+		}
+		if s.PhysicalSegmentID != uuid.Nil {
+			c := uuids[s.PhysicalSegmentID]
+			c.total++
+			c.directions[d]++
+			uuids[s.PhysicalSegmentID] = c
+		}
+		if s.PhysicalID != "" {
+			c := physical[s.PhysicalID]
+			c.total++
+			c.directions[d]++
+			physical[s.PhysicalID] = c
+			if s.PhysicalSegmentID == uuid.Nil {
+				c = nilPhysical[s.PhysicalID]
+				c.total++
+				c.directions[d]++
+				nilPhysical[s.PhysicalID] = c
+			}
+		}
+	}
+	for _, s := range graph.segments {
+		if graph.canceled(&checks) {
+			return false, graph.err()
+		}
+		d, opposite := index(s.Direction), 0
+		if s.PhysicalSegmentID != uuid.Nil {
+			c := uuids[s.PhysicalSegmentID]
+			opposite = c.total - c.directions[d]
+			if s.PhysicalID != "" {
+				c = nilPhysical[s.PhysicalID]
+				opposite += c.total - c.directions[d]
+			}
+		} else if s.PhysicalID != "" {
+			c := physical[s.PhysicalID]
+			opposite = c.total - c.directions[d]
+		}
+		if opposite > 1 {
+			return false, nil
+		}
+	}
+	return true, graph.err()
+}
+
+// A sealed prefix cannot change under the full-vector merge: future rewrites
+// retain its boundary's ID/direction/from-meter, the only left-merge inputs.
+// Thus identical ENTIRE unread suffixes have identical future behavior up to
+// cursor translation. Repeating one on an uninterrupted old-policy execution
+// proves a cycle/pump, unlike repeating a physical segment or local window.
+func (states *parkingRepairStates) repeatedContinuation(graph compiledGraph, portions []TraversedPortion, start int, epsilon float64) (bool, error) {
+	deterministic, err := states.directionsDeterministic(graph)
+	if err != nil || !deterministic {
+		return false, err
+	}
+	var checks uint
+	for i := 1; i <= start; i++ {
+		if graph.canceled(&checks) {
+			return false, graph.err()
+		}
+		previous := portions[i-1]
+		if mergeConsecutivePortions(&previous, portions[i], epsilon) {
+			return false, nil
+		}
+	}
+	var root uint32
+	for i := len(portions) - 1; i >= start; i-- {
+		if graph.canceled(&checks) {
+			return false, graph.err()
+		}
+		id, err := states.intern(graph, portions[i], 0)
+		if err != nil {
+			return false, err
+		}
+		key := parkingRepairSuffixKey{portion: id, next: root}
+		if known, exists := states.suffixes[key]; exists {
+			root = known
+			continue
+		}
+		if len(states.suffixes) >= states.maxSuffixNodes {
+			return false, states.suffixLimitError("parking repair suffix nodes", true)
+		}
+		if !states.internFits(parkingRepairSuffixEntryBytes) {
+			return false, states.suffixLimitError("parking repair intern bytes", true)
+		}
+		if states.suffixes == nil {
+			states.suffixes = make(map[parkingRepairSuffixKey]uint32)
+		}
+		root = uint32(len(states.suffixes) + 1)
+		states.suffixes[key] = root
+		states.internBytes += parkingRepairSuffixEntryBytes
+	}
+	if err := graph.err(); err != nil {
+		return false, err
+	}
+	if previous, exists := states.continuations[root]; exists {
+		return start >= previous, nil
+	}
+	if len(states.continuations) >= states.maxCount {
+		return false, states.limitError("parking repair states", 0, 0)
+	}
+	if !states.internFits(parkingRepairSuffixEntryBytes) {
+		return false, states.suffixLimitError("parking repair intern bytes", false)
+	}
+	if states.continuations == nil {
+		states.continuations = make(map[uint32]int)
+	}
+	states.continuations[root] = start
+	states.internBytes += parkingRepairSuffixEntryBytes
+	return false, nil
+}
+
+func (states *parkingRepairStates) directionsDeterministic(graph compiledGraph) (bool, error) {
+	if err := graph.err(); err != nil {
+		return false, err
+	}
+	if !states.checkedDirections {
+		var err error
+		states.deterministicDirections, err = parkingRepairDirectionsDeterministic(graph)
+		if err != nil {
+			return false, err
+		}
+		states.checkedDirections = true
+	}
+	return states.deterministicDirections, nil
+}
+
+func (states *parkingRepairStates) forgetContinuations() {
+	// A skipped old-policy candidate breaks the proof's uninterrupted execution.
+	states.internBytes -= len(states.continuations) * parkingRepairSuffixEntryBytes
+	states.continuations = nil
+	states.forgetPush()
+}
+
+func (states *parkingRepairStates) forgetPush() {
+	if states.push.valid {
+		states.internBytes -= parkingRepairPushEntryBytes
+		states.push = parkingRepairPush{}
+	}
+}
+
+func (states *parkingRepairStates) rememberPush(push parkingRepairPush) {
+	states.forgetPush()
+	if push.valid && parkingRepairPushEntryBytes <= states.maxInternBytes-states.internBytes {
+		states.push = push
+		states.internBytes += parkingRepairPushEntryBytes
+	}
+}
+
+func (states *parkingRepairStates) internFits(bytes int) bool {
+	// Optional push history yields to the existing mandatory caches.
+	if bytes > states.maxInternBytes-states.internBytes {
+		states.forgetPush()
+	}
+	return bytes <= states.maxInternBytes-states.internBytes
+}
+
+// At a fixed cursor the old policy reads only H's five complete portions.
+// Verify S=L+H+X -> L+R+X exactly, with R=N(H[:1]+alternative+H[d:]).
+// A closed head cycle with positive pushes is infinite only if EVERY phase's
+// last portion cannot merge with X0's first or any pushed block's first. Those
+// replay barriers preserve all carried tails even when a merge could rewind.
+func (states *parkingRepairStates) pushCycle(graph compiledGraph, current, replacement, alternative []TraversedPortion, start, end int, epsilon float64) (next parkingRepairPush, cycle bool, err error) {
+	defer func() {
+		if !next.valid {
+			states.forgetPush()
+		}
+	}()
+	deterministic, err := states.directionsDeterministic(graph)
+	if err != nil || !deterministic || start < 0 || start+5 > len(current) || end < start+2 || end > start+4 {
+		return next, false, err
+	}
+	head, tail := current[start:start+5], current[start+5:]
+	local := append([]TraversedPortion{head[0]}, alternative...)
+	local = append(local, head[end-start:]...)
+	local = graph.mergeConsecutiveTraversedPortions(local, epsilon)
+	if err := graph.err(); err != nil {
+		return next, false, err
+	}
+	if len(local) < 5 || len(replacement) != start+len(local)+len(tail) {
+		return next, false, nil
+	}
+	barrier := func(first, second TraversedPortion) bool {
+		return !mergeConsecutivePortions(&first, second, epsilon)
+	}
+	var checks uint
+	for _, span := range [][]TraversedPortion{current[:start], tail} {
+		for i := 1; i < len(span); i++ {
+			if graph.canceled(&checks) {
+				return next, false, graph.err()
+			}
+			if !barrier(span[i-1], span[i]) {
+				return next, false, nil
+			}
+		}
+	}
+	if start > 0 && !barrier(current[start-1], local[0]) {
+		return next, false, nil
+	}
+	for i, portion := range replacement {
+		if graph.canceled(&checks) {
+			return next, false, graph.err()
+		}
+		var expected TraversedPortion
+		switch {
+		case i < start:
+			expected = current[i]
+		case i < start+len(local):
+			expected = local[i-start]
+		default:
+			expected = tail[i-start-len(local)]
+		}
+		if parkingRepairPortionIdentity(portion) != parkingRepairPortionIdentity(expected) {
+			return next, false, nil
+		}
+	}
+	for i := range next.before {
+		next.before[i] = parkingRepairPortionIdentity(head[i])
+		next.after[i] = parkingRepairPortionIdentity(local[i])
+	}
+	next.cursor, next.last = start, local[len(local)-1]
+	if len(local) > 5 {
+		next.pushed, next.pushedFirst = true, local[5]
+	}
+	if len(tail) > 0 {
+		next.tail, next.tailFirst = true, tail[0]
+	}
+	phases := [2]parkingRepairPush{next, {}}
+	phaseCount := 1
+	cycle = next.pushed && next.before == next.after
+	previous := states.push
+	if previous.valid && previous.cursor == start && previous.after == next.before && previous.before == next.after && (previous.pushed || next.pushed) {
+		phases[1], phaseCount, cycle = previous, 2, true
+	}
+	for _, phase := range phases[:phaseCount] {
+		for _, anchors := range phases[:phaseCount] {
+			if anchors.tail && !barrier(phase.last, anchors.tailFirst) || anchors.pushed && !barrier(phase.last, anchors.pushedFirst) {
+				return parkingRepairPush{}, false, nil
+			}
+		}
+	}
+	if err := graph.err(); err != nil {
+		return parkingRepairPush{}, false, err
+	}
+	next.valid = true
+	return next, cycle, nil
+}
+
+func (states *parkingRepairStates) intern(graph compiledGraph, portion TraversedPortion, keyBytes int) (uint32, error) {
+	if err := graph.err(); err != nil {
+		return 0, err
+	}
+	key := parkingRepairPortionIdentity(portion)
+	if id, exists := states.portions[key]; exists {
+		return id, nil
+	}
+	charge := parkingRepairInternEntryBytes
+	for _, value := range [...]string{portion.SegmentID, portion.RegionID, portion.LogicalPathID, portion.LocalityID, string(portion.Direction), portion.ContinuityClass} {
+		charge += len(value)
+	}
+	if len(states.portions) >= states.maxInternCount {
+		return 0, states.limitError("parking repair interned portions", keyBytes, charge)
+	}
+	if !states.internFits(charge) {
+		return 0, states.limitError("parking repair intern bytes", keyBytes, charge)
+	}
+	if states.portions == nil {
+		states.portions = make(map[parkingRepairPortionKey]uint32)
+	}
+	id := uint32(len(states.portions) + 1)
+	states.portions[key] = id
+	states.internBytes += charge
+	return id, nil
+}
+
+func (states *parkingRepairStates) remember(key string) (bool, error) {
+	if _, exists := states.seen[key]; exists {
+		return true, nil
+	}
+	if states.count >= states.maxCount {
+		return false, states.limitError("parking repair states", len(key), 0)
+	}
+	if len(key) > states.maxBytes-states.bytes {
+		return false, states.limitError("parking repair state bytes", len(key), 0)
+	}
+	if states.seen == nil {
+		states.seen = make(map[string]struct{})
+	}
+	states.seen[key] = struct{}{}
+	states.count++
+	states.cursorStates++
+	states.bytes += len(key)
+	return false, nil
+}
+
+// Comparable full-portion interning and exact packed-ID equality are collision
+// safe. IDs persist across cursor resets and are never reused in a traversal.
+func (states *parkingRepairStates) key(graph compiledGraph, portions []TraversedPortion, start int) (string, error) {
+	if err := graph.err(); err != nil {
+		return "", err
+	}
+	// Two bytes per ID is only a bounded allocation hint: ID 16384 needs three.
+	capacity := min(max(0, states.maxBytes), 2*binary.MaxVarintLen64+2*min(len(portions), maxParkingRepairStateBytes/2))
+	key := make([]byte, 0, capacity)
+	appendValue := func(value uint64) error {
+		size := 1
+		for remaining := value >> 7; remaining != 0; remaining >>= 7 {
+			size++
+		}
+		if size > states.maxBytes-len(key) {
+			return states.limitError("parking repair state bytes", len(key)+size, 0)
+		}
+		key = binary.AppendUvarint(key, value)
+		return nil
+	}
+	if err := appendValue(uint64(start)); err != nil {
+		return "", err
+	}
+	if err := appendValue(uint64(len(portions))); err != nil {
+		return "", err
+	}
+	var checks uint
+	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return "", graph.err()
+		}
+		id, err := states.intern(graph, portion, len(key))
+		if err != nil {
+			return "", err
+		}
+		if err := appendValue(uint64(id)); err != nil {
+			return "", err
+		}
+	}
+	if err := graph.err(); err != nil {
+		return "", err
+	}
+	return string(key), nil
+}
+
+func (states *parkingRepairStates) trackReplacement(graph compiledGraph, current, replacement []TraversedPortion, start int) (bool, error) {
+	deterministic, err := states.directionsDeterministic(graph)
+	if err != nil {
+		return false, err
+	}
+	// Repeated states are not a cycle certificate when map-selected boundary
+	// aliases can differ. Preserve those choices and bound actual accepted work.
+	if deterministic {
+		if states.seen == nil {
+			key, err := states.key(graph, current, start)
+			if err != nil {
+				return false, err
+			}
+			if _, err := states.remember(key); err != nil {
+				return false, err
+			}
+		}
+		key, err := states.key(graph, replacement, start)
+		if err != nil {
+			return false, err
+		}
+		cycle, err := states.remember(key)
+		if err != nil || cycle {
+			return cycle, err
+		}
+	}
+	if states.acceptedReplacements >= states.maxCount {
+		err := states.limitError("parking repair accepted replacements", 0, 0)
+		err.ProjectedStates = states.count // No certificate key is attempted here.
+		return false, err
+	}
+	states.acceptedReplacements++
+	states.cursorAcceptedReplacements++
+	return false, nil
+}
+
+func repairRawSupportedParallelParkingRoutes(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, maximumExtraMeters, maximumRoadOffsetMeters, epsilon float64) error {
+	return repairRawSupportedParallelParkingRoutesWithLimits(result, observations, graph, maximumRouteMeters, maximumExtraMeters, maximumRoadOffsetMeters, epsilon, maxParkingRepairStates, maxParkingRepairStateBytes)
+}
+
+func repairRawSupportedParallelParkingRoutesWithLimits(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, maximumExtraMeters, maximumRoadOffsetMeters, epsilon float64, maxStates, maxStateBytes int) error {
+	if err := graph.err(); err != nil {
+		return err
+	}
+	var checks uint
+
+	// Portion replacements allocate new slices. Commit the copied traversal
+	// headers only on success, including when a later traversal hits the limit.
+	traversals := append([]DecodedTraversal(nil), result.Traversals...)
+	for traversalIndex := range traversals {
+		if graph.canceled(&checks) {
+			return graph.err()
+		}
+		traversal := &traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
+		states := newParkingRepairStates(maxStates, maxStateBytes)
+		states.traversalIndex = traversalIndex
+		stateStart := -1
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return graph.err()
+			}
+			if start != stateStart {
+				// The old backtrack plus for increment resumes at the SAME start.
+				// An advanced cursor cannot return here; release its state keys.
+				states.beginCursor(start)
+				stateStart = start
+			}
 			before := traversal.Portions[start]
+			oldContinuation := true
 			for end := start + 2; end < len(traversal.Portions) && end <= start+4; end++ {
+				if graph.canceled(&checks) {
+					return graph.err()
+				}
 				after, selected := traversal.Portions[end], traversal.Portions[start+1:end]
 				selectedLength := portionsLength(selected)
 				if selectedLength > maximumRouteMeters || !roadOrParkingBoundary(before, graph) || !roadOrParkingBoundary(after, graph) || portionsContainParking(selected, graph) {
@@ -1048,25 +2069,82 @@ func repairRawSupportedParallelParkingRoutes(result *Result, observations []Obse
 				if !ok || alternative.distance > selectedLength+maximumExtraMeters || !routeUsesSingleParkingPhysical(before, after, alternative.portions, graph) {
 					continue
 				}
+				if oldContinuation {
+					pump, err := states.repeatedContinuation(graph, traversal.Portions, start, epsilon)
+					if err != nil {
+						return err
+					}
+					if pump {
+						states.forgetContinuations()
+						oldContinuation = false
+						continue
+					}
+				}
 				replacement := append([]TraversedPortion(nil), traversal.Portions[:start+1]...)
 				replacement = append(replacement, alternative.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				replacement = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
+				var push parkingRepairPush
+				if oldContinuation {
+					var pump bool
+					var err error
+					push, pump, err = states.pushCycle(graph, traversal.Portions, replacement, alternative.portions, start, end, epsilon)
+					if err != nil {
+						return err
+					}
+					if pump {
+						states.forgetContinuations()
+						oldContinuation = false
+						continue
+					}
+				}
+				cycle, err := states.trackReplacement(graph, traversal.Portions, replacement, start)
+				if err != nil {
+					return err
+				}
+				if cycle {
+					states.forgetContinuations()
+					oldContinuation = false
+					continue // Reject only this candidate; try the remaining ends.
+				}
+				states.rememberPush(push)
+				traversal.Portions = replacement
 				start = max(-1, start-1)
 				break
 			}
 		}
 	}
+	if err := graph.err(); err != nil {
+		return err
+	}
+	if len(traversals) > 0 {
+		result.Traversals = traversals
+	}
+	return nil
 }
 
 func repairRawSupportedSameRoadExcursions(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, minimumSavings, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			beforeSegment := graph.segments[before.SegmentID]
 			for end := start + 2; end < len(traversal.Portions) && end <= start+6; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after, selected := traversal.Portions[end], traversal.Portions[start+1:end]
 				afterSegment := graph.segments[after.SegmentID]
 				selectedLength := portionsLength(selected)
@@ -1077,7 +2155,13 @@ func repairRawSupportedSameRoadExcursions(result *Result, observations []Observa
 				}
 				best := networkRoute{distance: math.Inf(1)}
 				for _, from := range portionBoundaryCandidates(before, true, graph) {
+					if graph.canceled(&checks) {
+						return
+					}
 					for _, to := range portionBoundaryCandidates(after, false, graph) {
+						if graph.canceled(&checks) {
+							return
+						}
 						route, ok := graph.routeOnLogicalPath(from, to, before.LogicalPathID, maximumExcursionMeters, epsilon)
 						if ok && route.distance < best.distance {
 							best = route
@@ -1092,7 +2176,7 @@ func repairRawSupportedSameRoadExcursions(result *Result, observations []Observa
 				replacement := append([]TraversedPortion(nil), traversal.Portions[:start+1]...)
 				replacement = append(replacement, best.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 				start = max(-1, start-1)
 				break
 			}
@@ -1101,7 +2185,15 @@ func repairRawSupportedSameRoadExcursions(result *Result, observations []Observa
 }
 
 func routeUsesSourceWay(portions []TraversedPortion, graph compiledGraph, sourceWayID int64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].SourceWayID != sourceWayID {
 			return false
 		}
@@ -1110,10 +2202,18 @@ func routeUsesSourceWay(portions []TraversedPortion, graph compiledGraph, source
 }
 
 func sameRoadRouteRawSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumRawOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment := graph.segments[portion.SegmentID]
-		if !rawSupportsSegmentByEndpointDistance(observations, segment, maximumRawOffsetMeters, 0.7, 1.5) &&
-			!rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumRawOffsetMeters) {
+		if !graph.rawSupportsSegmentByEndpointDistance(observations, segment, maximumRawOffsetMeters, 0.7, 1.5) &&
+			!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumRawOffsetMeters) {
 			return false
 		}
 	}
@@ -1121,12 +2221,26 @@ func sameRoadRouteRawSupported(portions []TraversedPortion, graph compiledGraph,
 }
 
 func removeUnsupportedDirectNetworkDetours(result *Result, observations []Observation, graph compiledGraph, maximumMiddlePortions int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			for end := start + 2; end < len(traversal.Portions) && end <= start+maximumMiddlePortions+1; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after, middle := traversal.Portions[end], traversal.Portions[start+1:end]
 				beforeSegment, beforeExists := graph.segments[before.SegmentID]
 				afterSegment, afterExists := graph.segments[after.SegmentID]
@@ -1135,7 +2249,7 @@ func removeUnsupportedDirectNetworkDetours(result *Result, observations []Observ
 				}
 				from := pointAlongSegment(beforeSegment, before.ToMeter, graph.lengths[before.SegmentID])
 				to := pointAlongSegment(afterSegment, after.FromMeter, graph.lengths[after.SegmentID])
-				localRaw, rawDistance, ok := rawBetweenEndpoints(raw, from, to, 15)
+				localRaw, rawDistance, ok := graph.rawBetweenEndpoints(raw, from, to, 15)
 				if !ok || rawDistance > distance(from, to)*1.25+10 || rawSupportedPortionLength(middle, graph, localRaw, 15) > portionsLength(middle)*0.2 {
 					continue
 				}
@@ -1148,9 +2262,17 @@ func removeUnsupportedDirectNetworkDetours(result *Result, observations []Observ
 }
 
 func removeUnsupportedBoundaryNetworkDetours(result *Result, observations []Observation, graph compiledGraph, maximumMiddlePortions, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], &result.Traversals[i+1]
-		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			continue
 		}
 		before := first.Portions[len(first.Portions)-1]
@@ -1160,6 +2282,9 @@ func removeUnsupportedBoundaryNetworkDetours(result *Result, observations []Obse
 		}
 		raw := observations[first.FirstObservation : second.LastObservation+1]
 		for end := 1; end < len(second.Portions) && end <= maximumMiddlePortions; end++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			after := second.Portions[end]
 			afterSegment, afterExists := graph.segments[after.SegmentID]
 			if !afterExists {
@@ -1167,13 +2292,13 @@ func removeUnsupportedBoundaryNetworkDetours(result *Result, observations []Obse
 			}
 			from := pointAlongSegment(beforeSegment, before.ToMeter, graph.lengths[before.SegmentID])
 			to := pointAlongSegment(afterSegment, after.FromMeter, graph.lengths[after.SegmentID])
-			localRaw, rawDistance, ok := rawBetweenEndpoints(raw, from, to, 15)
+			localRaw, rawDistance, ok := graph.rawBetweenEndpoints(raw, from, to, 15)
 			middle := second.Portions[:end]
 			afterLength := after.ToMeter - after.FromMeter
-			afterSupported := rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, 15) || afterLength >= 20 && directedSegmentEndpointsRawSupported(raw, afterSegment, 15)
+			afterSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, 15) || afterLength >= 20 && graph.directedSegmentEndpointsRawSupported(raw, afterSegment, 15)
 			if !afterSupported && afterLength < 20 && end+1 < len(second.Portions) && second.Portions[end+1].LogicalPathID == after.LogicalPathID {
 				nextSegment := graph.segments[second.Portions[end+1].SegmentID]
-				afterSupported = rawPolylineSupportsDirectedSegmentWithin(raw, nextSegment, 60, 15)
+				afterSupported = graph.rawPolylineSupportsDirectedSegmentWithin(raw, nextSegment, 60, 15)
 			}
 			if !ok || end < 3 || rawDistance > 200 || !afterSupported || rawSupportedPortionLength(middle, graph, localRaw, 15) > portionsLength(middle)*0.2 {
 				continue
@@ -1185,13 +2310,27 @@ func removeUnsupportedBoundaryNetworkDetours(result *Result, observations []Obse
 }
 
 func repairIncompleteRoadTurns(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, maximumExtraMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	roadGraph := graph.onlyContinuityClass("road")
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			for end := start + 2; end < len(traversal.Portions) && end <= start+3; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after, selected := traversal.Portions[end], traversal.Portions[start+1:end]
 				if before.ContinuityClass != "road" || after.ContinuityClass != "road" || graph.lengths[before.SegmentID]-before.ToMeter <= epsilon ||
 					!roadSequenceDisconnected(before, selected, after, graph, epsilon) {
@@ -1205,7 +2344,7 @@ func repairIncompleteRoadTurns(result *Result, observations []Observation, graph
 				replacement := append([]TraversedPortion(nil), traversal.Portions[:start+1]...)
 				replacement = append(replacement, alternative.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 				start = max(-1, start-1)
 				break
 			}
@@ -1214,16 +2353,27 @@ func repairIncompleteRoadTurns(result *Result, observations []Observation, graph
 }
 
 func repairBoundaryIncompleteRoadTurns(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters, maximumExtraMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		j := i + 1
 		for j < len(result.Traversals) && len(result.Traversals[j].Portions) == 0 {
+			if graph.canceled(&checks) {
+				return
+			}
 			j++
 		}
 		if j == len(result.Traversals) {
 			break
 		}
 		first, second := &result.Traversals[i], result.Traversals[j]
-		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -1244,6 +2394,9 @@ func repairBoundaryIncompleteRoadTurns(result *Result, observations []Observatio
 		}
 		connectorIDs := make([]string, 0, 1)
 		for _, id := range graph.outgoing[beforeSegment.ToNode] {
+			if graph.canceled(&checks) {
+				return
+			}
 			segment := graph.segments[id]
 			if !segment.TransitionOnly && segment.ContinuityClass == "road" && segment.ToNode == afterSegment.FromNode &&
 				segment.LogicalPathID == before.LogicalPathID && !samePhysicalSegment(segment, stubSegment) && !samePhysicalSegment(segment, afterSegment) {
@@ -1266,7 +2419,7 @@ func repairBoundaryIncompleteRoadTurns(result *Result, observations []Observatio
 		}
 		first.Portions = append(first.Portions, alternative...)
 		first.Portions = append(first.Portions, second.Portions[1:]...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -1275,9 +2428,17 @@ func repairBoundaryIncompleteRoadTurns(result *Result, observations []Observatio
 }
 
 func removeBoundaryDisconnectedSingleRoadStubs(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], &result.Traversals[i+1]
-		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+		if len(first.Portions) == 0 || len(second.Portions) < 2 || second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			continue
 		}
 		before, middle, after := first.Portions[len(first.Portions)-1], second.Portions[0], second.Portions[1]
@@ -1287,7 +2448,7 @@ func removeBoundaryDisconnectedSingleRoadStubs(result *Result, observations []Ob
 			continue
 		}
 		raw := observations[first.FirstObservation : second.LastObservation+1]
-		if rawPolylineSupportsDirectedSegmentWithin(raw, segment, 60, maximumRawOffsetMeters) || rawExtendsPastDirectedEndpoint(raw, segment, maximumRawOffsetMeters, 5) {
+		if graph.rawPolylineSupportsDirectedSegmentWithin(raw, segment, 60, maximumRawOffsetMeters) || graph.rawExtendsPastDirectedEndpoint(raw, segment, maximumRawOffsetMeters, 5) {
 			continue
 		}
 		second.Portions = append([]TraversedPortion(nil), second.Portions[1:]...)
@@ -1295,7 +2456,15 @@ func removeBoundaryDisconnectedSingleRoadStubs(result *Result, observations []Ob
 }
 
 func removeUnsupportedTraversalHeadRoadStubs(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumRawOffsetMeters float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if len(traversal.Portions) < 2 || traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
@@ -1309,22 +2478,33 @@ func removeUnsupportedTraversalHeadRoadStubs(result *Result, observations []Obse
 		}
 		firstStart := pointAlongSegment(firstSegment, first.FromMeter, graph.lengths[first.SegmentID])
 		if first.ContinuityClass != "road" || second.ContinuityClass != "road" || first.ToMeter-first.FromMeter > maximumMeters ||
-			firstSegment.ToNode != secondSegment.FromNode || rawPolylineSupportsDirectedSegmentWithin(raw, firstSegment, 60, maximumRawOffsetMeters) ||
-			rawExtendsPastDirectedEndpoint(raw, firstSegment, maximumRawOffsetMeters, 5) || endpointRawSupported(raw, firstStart, maximumRawOffsetMeters, 1) ||
-			!rawPolylineSupportsDirectedSegmentWithin(raw, secondSegment, 60, maximumRawOffsetMeters) {
+			firstSegment.ToNode != secondSegment.FromNode || graph.rawPolylineSupportsDirectedSegmentWithin(raw, firstSegment, 60, maximumRawOffsetMeters) ||
+			graph.rawExtendsPastDirectedEndpoint(raw, firstSegment, maximumRawOffsetMeters, 5) || graph.endpointRawSupported(raw, firstStart, maximumRawOffsetMeters, 1) ||
+			!graph.rawPolylineSupportsDirectedSegmentWithin(raw, secondSegment, 60, maximumRawOffsetMeters) {
 			continue
 		}
 		traversal.Portions = append([]TraversedPortion(nil), traversal.Portions[1:]...)
 	}
 }
 
-func rawBetweenEndpoints(observations []Observation, from, to Point, maximumOffsetMeters float64) ([]Observation, float64, bool) {
+func (graph compiledGraph) rawBetweenEndpoints(observations []Observation, from, to Point, maximumOffsetMeters float64) ([]Observation, float64, bool) {
+	if graph.err() != nil {
+		return nil, 0, false
+	}
+	var checks uint
+
 	for start := 0; start+1 < len(observations); start++ {
+		if graph.canceled(&checks) {
+			return nil, 0, false
+		}
 		if math.Max(0, distance(observations[start].Point, from)-observations[start].AccuracyMeters) > maximumOffsetMeters {
 			continue
 		}
 		distanceMeters := 0.0
 		for end := start + 1; end < len(observations); end++ {
+			if graph.canceled(&checks) {
+				return nil, 0, false
+			}
 			distanceMeters += distance(observations[end-1].Point, observations[end].Point)
 			if math.Max(0, distance(observations[end].Point, to)-observations[end].AccuracyMeters) <= maximumOffsetMeters {
 				return observations[start : end+1], distanceMeters, true
@@ -1335,22 +2515,33 @@ func rawBetweenEndpoints(observations []Observation, from, to Point, maximumOffs
 }
 
 func removeUnsupportedTraversalHeadDetours(result *Result, observations []Observation, graph compiledGraph, maximumMiddlePortions int) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if len(traversal.Portions) < 4 || traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for end := 3; end < len(traversal.Portions) && end <= maximumMiddlePortions; end++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			after := traversal.Portions[end]
 			afterSegment, exists := graph.segments[after.SegmentID]
 			if !exists {
 				continue
 			}
 			afterLength := after.ToMeter - after.FromMeter
-			afterSupported := rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, 15)
+			afterSupported := graph.rawPolylineSupportsDirectedSegmentWithin(raw, afterSegment, 60, 15)
 			if !afterSupported && afterLength < 20 && end+1 < len(traversal.Portions) && traversal.Portions[end+1].LogicalPathID == after.LogicalPathID {
-				afterSupported = rawPolylineSupportsDirectedSegmentWithin(raw, graph.segments[traversal.Portions[end+1].SegmentID], 60, 15)
+				afterSupported = graph.rawPolylineSupportsDirectedSegmentWithin(raw, graph.segments[traversal.Portions[end+1].SegmentID], 60, 15)
 			}
 			middle := traversal.Portions[:end]
 			if !afterSupported || rawSupportedPortionLength(middle, graph, raw, 15) > portionsLength(middle)*0.2 {
@@ -1363,9 +2554,17 @@ func removeUnsupportedTraversalHeadDetours(result *Result, observations []Observ
 }
 
 func rawSupportedPortionLength(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumOffsetMeters float64) float64 {
+	if graph.err() != nil {
+		return 0
+	}
+	var checks uint
+
 	total := 0.0
 	for _, portion := range portions {
-		if segment, exists := graph.segments[portion.SegmentID]; exists && rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumOffsetMeters) {
+		if graph.canceled(&checks) {
+			return 0
+		}
+		if segment, exists := graph.segments[portion.SegmentID]; exists && graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumOffsetMeters) {
 			total += portion.ToMeter - portion.FromMeter
 		}
 	}
@@ -1373,8 +2572,16 @@ func rawSupportedPortionLength(portions []TraversedPortion, graph compiledGraph,
 }
 
 func routeUsesSingleParkingPhysical(before, after TraversedPortion, portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	physical := make(map[string]bool)
 	for _, portion := range append(append([]TraversedPortion{before}, portions...), after) {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment, exists := graph.segments[portion.SegmentID]
 		if exists && segment.ParkingAisleConnector {
 			physical[segment.PhysicalID] = true
@@ -1384,7 +2591,15 @@ func routeUsesSingleParkingPhysical(before, after TraversedPortion, portions []T
 }
 
 func portionsContainParking(portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].ParkingAisleConnector {
 			return true
 		}
@@ -1398,30 +2613,59 @@ func roadOrParkingBoundary(portion TraversedPortion, graph compiledGraph) bool {
 }
 
 func (graph compiledGraph) withoutPhysicalPortions(excluded []TraversedPortion, boundaryIDs ...string) compiledGraph {
+	if graph.err() != nil {
+		return compiledGraph{ctx: graph.ctx}
+	}
+	var checks uint
+
+	// This is a routing view: metadata remains available, but route endpoints,
+	// boundary candidates and shortest-path expansion all enforce the filter.
+	// No graph-sized copies, compilation or cache survive a pair query.
 	excludedPhysical := make(map[string]bool, len(excluded))
+	if graph.parkingFilter != nil {
+		for physical := range graph.parkingFilter.excludedPhysical {
+			if graph.canceled(&checks) {
+				return compiledGraph{ctx: graph.ctx}
+			}
+			excludedPhysical[physical] = true
+		}
+	}
 	for _, portion := range excluded {
+		if graph.canceled(&checks) {
+			return compiledGraph{ctx: graph.ctx}
+		}
 		excludedPhysical[graph.segments[portion.SegmentID].PhysicalID] = true
 	}
 	boundaries := make(map[string]bool, len(boundaryIDs))
 	for _, id := range boundaryIDs {
-		boundaries[id] = true
-	}
-	filtered := Graph{MaxContinuityConnectorMeters: graph.maxContinuityConnectorMeters, MaxDrivewayConnectorMeters: graph.maxDrivewayConnectorMeters,
-		MaxAccessoryConnectorMeters: graph.maxAccessoryConnectorMeters, MaxParkingAisleConnectorMeters: graph.maxParkingAisleConnectorMeters}
-	for id, segment := range graph.segments {
-		if excludedPhysical[segment.PhysicalID] || segment.TransitionOnly && !segment.ParkingAisleConnector && !boundaries[id] ||
-			segment.ContinuityClass != "road" && !segment.ParkingAisleConnector && !boundaries[id] {
-			continue
+		if graph.canceled(&checks) {
+			return compiledGraph{ctx: graph.ctx}
 		}
-		filtered.Segments = append(filtered.Segments, segment)
+		if graph.allowsSegment(id) {
+			boundaries[id] = true
+		}
 	}
-	return compileGraph(filtered)
+	graph.parkingFilter = &parkingRouteFilter{excludedPhysical: excludedPhysical, boundaryIDs: boundaries}
+	return graph
 }
 
 func roadParkingRoute(before, after TraversedPortion, routeGraph, sourceGraph compiledGraph, observations []Observation, maximumRouteMeters, maximumRoadOffsetMeters, epsilon float64) (networkRoute, bool) {
+	if routeGraph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, routeGraph) {
+		if routeGraph.canceled(&checks) {
+			return networkRoute{}, false
+		}
+
 		for _, to := range portionBoundaryCandidates(after, false, routeGraph) {
+			if routeGraph.canceled(&checks) {
+				return networkRoute{}, false
+			}
+
 			route, ok := routeGraph.routeWithBoundaryClasses(from, to, maximumRouteMeters, epsilon, "road", "road")
 			if !ok || route.distance <= epsilon || route.distance >= best.distance || !roadParkingPortionsRawSupported(route.portions, sourceGraph, observations, maximumRoadOffsetMeters) {
 				continue
@@ -1433,21 +2677,29 @@ func roadParkingRoute(before, after TraversedPortion, routeGraph, sourceGraph co
 }
 
 func roadParkingPortionsRawSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumRoadOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment, exists := graph.segments[portion.SegmentID]
 		if !exists {
 			return false
 		}
 		if segment.ParkingAisleConnector {
-			fromMeter, toMeter, ok := parkingAisleRawInterval(observations, segment, parkingAisleRawSupportOffsetMeters)
+			fromMeter, toMeter, ok := graph.parkingAisleRawInterval(observations, segment, parkingAisleRawSupportOffsetMeters)
 			if !ok || math.Min(portion.ToMeter, toMeter)-math.Max(portion.FromMeter, fromMeter) < math.Max(5, (portion.ToMeter-portion.FromMeter)*0.5) {
 				return false
 			}
 			continue
 		}
 		if segment.TransitionOnly || portion.ContinuityClass != "road" ||
-			!rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumRoadOffsetMeters) &&
-				!directedSegmentEndpointsRawSupported(observations, segment, maximumRoadOffsetMeters) {
+			!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, 60, maximumRoadOffsetMeters) &&
+				!graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRoadOffsetMeters) {
 			return false
 		}
 	}
@@ -1463,10 +2715,18 @@ func slicesContainLogicalPath(portions []TraversedPortion, logicalPathID string)
 	return false
 }
 
-func rawSupportsSegmentByEndpointDistance(observations []Observation, segment DirectedSegment, maximumRawOffsetMeters, minimumRatio, maximumRatio float64) bool {
+func (graph compiledGraph) rawSupportsSegmentByEndpointDistance(observations []Observation, segment DirectedSegment, maximumRawOffsetMeters, minimumRatio, maximumRatio float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	started, traveled := false, 0.0
 	var previous Point
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if started {
 			traveled += distance(previous, observation.Point)
 		}
@@ -1494,25 +2754,39 @@ func nextPortion(portions []TraversedPortion, index int) TraversedPortion {
 }
 
 func bestRawSupportedRoadDeadEnd(node string, current, next TraversedPortion, observations []Observation, graph compiledGraph, present map[string]bool, maximumMeters, maximumDegrees, maximumRawOffsetMeters float64) ([]TraversedPortion, bool) {
+	if graph.err() != nil {
+		return nil, false
+	}
+	var checks uint
+
 	ids := append([]string(nil), graph.outgoing[node]...)
 	sort.Strings(ids)
 	for _, id := range ids {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		segment := graph.segments[id]
 		if segment.TransitionOnly || segment.ContinuityClass != "road" || segment.LengthMeters < 20 || segment.LengthMeters > maximumMeters || present[segment.PhysicalID] ||
 			samePhysicalSegment(segment, graph.segments[current.SegmentID]) || next.SegmentID != "" && samePhysicalSegment(segment, graph.segments[next.SegmentID]) ||
-			!rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
-				!directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters) {
+			!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
+				!graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters) {
 			continue
 		}
 		for _, returnID := range graph.outgoing[segment.ToNode] {
+			if graph.canceled(&checks) {
+				return nil, false
+			}
 			returnSegment := graph.segments[returnID]
 			if returnSegment.ToNode != segment.FromNode || returnSegment.Direction == segment.Direction || !samePhysicalSegment(segment, returnSegment) ||
-				!rawPolylineSupportsDirectedSegmentWithin(observations, returnSegment, maximumDegrees, maximumRawOffsetMeters) &&
-					!directedSegmentEndpointsRawSupported(observations, returnSegment, maximumRawOffsetMeters) {
+				!graph.rawPolylineSupportsDirectedSegmentWithin(observations, returnSegment, maximumDegrees, maximumRawOffsetMeters) &&
+					!graph.directedSegmentEndpointsRawSupported(observations, returnSegment, maximumRawOffsetMeters) {
 				continue
 			}
 			deadEnd := true
 			for _, continuationID := range graph.outgoing[segment.ToNode] {
+				if graph.canceled(&checks) {
+					return nil, false
+				}
 				continuation := graph.segments[continuationID]
 				if !samePhysicalSegment(segment, continuation) && !continuation.TransitionOnly {
 					deadEnd = false
@@ -1527,13 +2801,24 @@ func bestRawSupportedRoadDeadEnd(node string, current, next TraversedPortion, ob
 }
 
 func replaceOverlappingRoadReversalWithPath(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for i := 1; i+2 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, outbound, inbound, after := traversal.Portions[i-1], traversal.Portions[i], traversal.Portions[i+1], traversal.Portions[i+2]
 			outboundSegment, outboundExists := graph.segments[outbound.SegmentID]
 			inboundSegment, inboundExists := graph.segments[inbound.SegmentID]
@@ -1549,17 +2834,25 @@ func replaceOverlappingRoadReversalWithPath(result *Result, observations []Obser
 			replacement := append([]TraversedPortion(nil), traversal.Portions[:i]...)
 			replacement = append(replacement, connector.portions...)
 			replacement = append(replacement, traversal.Portions[i+2:]...)
-			traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+			traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 			i--
 		}
 	}
 }
 
 func replaceBoundaryOverlappingRoadReversalWithPath(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, maximumDegrees, maximumRawOffsetMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) < 3 || len(second.Portions) == 0 || second.FirstObservation-first.LastObservation > maximumObservations ||
-			hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -1583,7 +2876,7 @@ func replaceBoundaryOverlappingRoadReversalWithPath(result *Result, observations
 		}
 		first.Portions = append(first.Portions[:len(first.Portions)-2], connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -1598,10 +2891,21 @@ func physicalPortionOverlapMeters(first, second TraversedPortion, physicalLength
 }
 
 func pathTurnConnector(before, after TraversedPortion, graph compiledGraph, observations []Observation, maximumRouteMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	pathGraph := graph.onlyContinuityClassWithBoundaries("path", before.SegmentID, after.SegmentID)
 	for _, from := range portionBoundaryCandidates(before, true, pathGraph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, pathGraph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			route, ok := pathGraph.routeWithBoundaryClasses(from, to, maximumRouteMeters, epsilon, "road", "path")
 			if !ok || route.distance <= epsilon || route.distance >= best.distance || !pathTurnConnectorSupported(route.portions, before, after, graph, observations, maximumDegrees, maximumRawOffsetMeters) {
 				continue
@@ -1613,11 +2917,22 @@ func pathTurnConnector(before, after TraversedPortion, graph compiledGraph, obse
 }
 
 func (graph compiledGraph) onlyContinuityClassWithBoundaries(continuityClass string, boundaryIDs ...string) compiledGraph {
+	if graph.err() != nil {
+		return compiledGraph{ctx: graph.ctx}
+	}
+	var checks uint
+
 	boundaries := make(map[string]bool, len(boundaryIDs))
 	for _, id := range boundaryIDs {
+		if graph.canceled(&checks) {
+			return compiledGraph{ctx: graph.ctx}
+		}
 		boundaries[id] = true
 		if segment, exists := graph.segments[id]; exists {
 			for oppositeID, opposite := range graph.segments {
+				if graph.canceled(&checks) {
+					return compiledGraph{ctx: graph.ctx}
+				}
 				if samePhysicalSegment(segment, opposite) {
 					boundaries[oppositeID] = true
 				}
@@ -1627,16 +2942,27 @@ func (graph compiledGraph) onlyContinuityClassWithBoundaries(continuityClass str
 	filtered := Graph{MaxContinuityConnectorMeters: graph.maxContinuityConnectorMeters, MaxDrivewayConnectorMeters: graph.maxDrivewayConnectorMeters,
 		MaxAccessoryConnectorMeters: graph.maxAccessoryConnectorMeters, MaxParkingAisleConnectorMeters: graph.maxParkingAisleConnectorMeters}
 	for id, segment := range graph.segments {
-		if segment.ContinuityClass == continuityClass || boundaries[id] {
+		if graph.canceled(&checks) {
+			return compiledGraph{ctx: graph.ctx}
+		}
+		if (graph.parkingFilter == nil || graph.allowsSegment(id)) && (segment.ContinuityClass == continuityClass || boundaries[id]) {
 			filtered.Segments = append(filtered.Segments, segment)
 		}
 	}
-	return compileGraph(filtered)
+	return compileGraphContext(graph.ctx, filtered)
 }
 
 func pathTurnConnectorSupported(portions []TraversedPortion, before, after TraversedPortion, graph compiledGraph, observations []Observation, maximumDegrees, maximumRawOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	supported := false
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment, exists := graph.segments[portion.SegmentID]
 		if !exists {
 			return false
@@ -1647,8 +2973,8 @@ func pathTurnConnectorSupported(portions []TraversedPortion, before, after Trave
 		if portion.ContinuityClass != "path" || portion.LogicalPathID != after.LogicalPathID {
 			return false
 		}
-		edgeSupported := rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) ||
-			directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters)
+		edgeSupported := graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) ||
+			graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters)
 		supported = supported || edgeSupported
 		if portion.ToMeter-portion.FromMeter > 5 && !edgeSupported {
 			return false
@@ -1657,9 +2983,17 @@ func pathTurnConnectorSupported(portions []TraversedPortion, before, after Trave
 	return supported
 }
 
-func directedSegmentEndpointsRawSupported(observations []Observation, segment DirectedSegment, maximumRawOffsetMeters float64) bool {
+func (graph compiledGraph) directedSegmentEndpointsRawSupported(observations []Observation, segment DirectedSegment, maximumRawOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	started := false
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return false
+		}
 		started = started || math.Max(0, distance(observation.Point, segment.From)-observation.AccuracyMeters) <= maximumRawOffsetMeters
 		if started && math.Max(0, distance(observation.Point, segment.To)-observation.AccuracyMeters) <= maximumRawOffsetMeters {
 			return true
@@ -1669,19 +3003,36 @@ func directedSegmentEndpointsRawSupported(observations []Observation, segment Di
 }
 
 func extendRawSupportedDriveways(result *Result, observations []Observation, graph compiledGraph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[max(0, traversal.FirstObservation-32):min(len(observations), traversal.LastObservation+33)]
 		for portionIndex := 0; portionIndex < len(traversal.Portions); portionIndex++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			portion := traversal.Portions[portionIndex]
 			segment := graph.segments[portion.SegmentID]
 			if segment.TransitionOnly || portion.ContinuityClass != "road" || graph.lengths[portion.SegmentID]-portion.ToMeter > epsilon {
@@ -1696,6 +3047,9 @@ func extendRawSupportedDriveways(result *Result, observations []Observation, gra
 			copy(traversal.Portions[insert+len(addition):], traversal.Portions[insert:len(traversal.Portions)-len(addition)])
 			copy(traversal.Portions[insert:], addition)
 			for _, added := range addition {
+				if graph.canceled(&checks) {
+					return
+				}
 				present[graph.segments[added.SegmentID].PhysicalID] = true
 			}
 			portionIndex += len(addition)
@@ -1704,15 +3058,23 @@ func extendRawSupportedDriveways(result *Result, observations []Observation, gra
 }
 
 func bestRawSupportedOutgoingDriveway(current DirectedSegment, observations []Observation, graph compiledGraph, maximumMeters, maximumDegrees, maximumRawOffsetMeters float64, present map[string]bool) ([]TraversedPortion, bool) {
+	if graph.err() != nil {
+		return nil, false
+	}
+	var checks uint
+
 	if addition, ok := rawSupportedDrivewayAtNode(current.ToNode, observations, graph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, present); ok {
 		return addition, true
 	}
 	ids := append([]string(nil), graph.outgoing[current.ToNode]...)
 	sort.Strings(ids)
 	for _, id := range ids {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		segment := graph.segments[id]
 		if segment.TransitionOnly || segment.ContinuityClass != "road" || segment.LengthMeters > 5 || segment.LogicalPathID != current.LogicalPathID ||
-			present[segment.PhysicalID] || !directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters) {
+			present[segment.PhysicalID] || !graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters) {
 			continue
 		}
 		if driveway, ok := rawSupportedDrivewayAtNode(segment.ToNode, observations, graph, maximumMeters, maximumDegrees, maximumRawOffsetMeters, present); ok {
@@ -1723,16 +3085,27 @@ func bestRawSupportedOutgoingDriveway(current DirectedSegment, observations []Ob
 }
 
 func rawSupportedDrivewayAtNode(node string, observations []Observation, graph compiledGraph, maximumMeters, maximumDegrees, maximumRawOffsetMeters float64, present map[string]bool) ([]TraversedPortion, bool) {
+	if graph.err() != nil {
+		return nil, false
+	}
+	var checks uint
+
 	ids := append([]string(nil), graph.outgoing[node]...)
 	sort.Strings(ids)
 	for _, id := range ids {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		segment := graph.segments[id]
 		if !segment.DrivewayConnector || segment.LengthMeters > maximumMeters || present[segment.PhysicalID] ||
-			(!rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
-				!rawExtendsPastDirectedEndpoint(observations, segment, maximumRawOffsetMeters, 5)) {
+			(!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
+				!graph.rawExtendsPastDirectedEndpoint(observations, segment, maximumRawOffsetMeters, 5)) {
 			continue
 		}
 		for _, returnID := range graph.outgoing[segment.ToNode] {
+			if graph.canceled(&checks) {
+				return nil, false
+			}
 			returnSegment := graph.segments[returnID]
 			if returnSegment.ToNode == segment.FromNode && returnSegment.Direction != segment.Direction && samePhysicalSegment(segment, returnSegment) {
 				return []TraversedPortion{graph.portion(id, 0, segment.LengthMeters), graph.portion(returnID, 0, returnSegment.LengthMeters)}, true
@@ -1742,7 +3115,12 @@ func rawSupportedDrivewayAtNode(node string, observations []Observation, graph c
 	return nil, false
 }
 
-func rawExtendsPastDirectedEndpoint(observations []Observation, segment DirectedSegment, maximumOffsetMeters, minimumBeyondMeters float64) bool {
+func (graph compiledGraph) rawExtendsPastDirectedEndpoint(observations []Observation, segment DirectedSegment, maximumOffsetMeters, minimumBeyondMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	dx, dy := segment.To.X-segment.From.X, segment.To.Y-segment.From.Y
 	geometryLength := math.Hypot(dx, dy)
 	if geometryLength <= 0 || segment.LengthMeters <= 0 {
@@ -1750,6 +3128,9 @@ func rawExtendsPastDirectedEndpoint(observations []Observation, segment Directed
 	}
 	started := false
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return false
+		}
 		alongGeometry := ((observation.Point.X-segment.From.X)*dx + (observation.Point.Y-segment.From.Y)*dy) / geometryLength
 		projected := Point{segment.From.X + alongGeometry*dx/geometryLength, segment.From.Y + alongGeometry*dy/geometryLength}
 		if math.Max(0, distance(observation.Point, projected)-observation.AccuracyMeters) > maximumOffsetMeters {
@@ -1765,16 +3146,33 @@ func rawExtendsPastDirectedEndpoint(observations []Observation, segment Directed
 }
 
 func extendRawSupportedDrivewayChains(result *Result, observations []Observation, graph compiledGraph, maximumChainMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		raw := observations[max(0, traversal.FirstObservation-64):min(len(observations), traversal.LastObservation+65)]
 		for i := 0; i+1 < len(traversal.Portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			outbound, inbound := traversal.Portions[i], traversal.Portions[i+1]
 			outboundSegment, outboundExists := graph.segments[outbound.SegmentID]
 			_, inboundExists := graph.segments[inbound.SegmentID]
@@ -1784,15 +3182,21 @@ func extendRawSupportedDrivewayChains(result *Result, observations []Observation
 			ids := append([]string(nil), graph.outgoing[outboundSegment.ToNode]...)
 			sort.Strings(ids)
 			for _, id := range ids {
+				if graph.canceled(&checks) {
+					return
+				}
 				segment := graph.segments[id]
 				if !segment.DrivewayConnector || segment.SourceWayID != outboundSegment.SourceWayID || segment.LengthMeters+outboundSegment.LengthMeters > maximumChainMeters || present[segment.PhysicalID] ||
-					(!rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) && !rawSupportsSegmentByEndpointDistance(raw, segment, maximumRawOffsetMeters, 0.7, 1.5) && !directedSegmentEndpointsRawSupported(raw, segment, maximumRawOffsetMeters)) {
+					(!graph.rawPolylineSupportsDirectedSegmentWithin(raw, segment, maximumDegrees, maximumRawOffsetMeters) && !graph.rawSupportsSegmentByEndpointDistance(raw, segment, maximumRawOffsetMeters, 0.7, 1.5) && !graph.directedSegmentEndpointsRawSupported(raw, segment, maximumRawOffsetMeters)) {
 					continue
 				}
 				for _, returnID := range graph.outgoing[segment.ToNode] {
+					if graph.canceled(&checks) {
+						return
+					}
 					returnSegment := graph.segments[returnID]
 					if !samePhysicalSegment(segment, returnSegment) || returnSegment.ToNode != segment.FromNode ||
-						(!rawPolylineSupportsDirectedSegmentWithin(raw, returnSegment, maximumDegrees, maximumRawOffsetMeters) && !rawSupportsSegmentByEndpointDistance(raw, returnSegment, maximumRawOffsetMeters, 0.7, 1.5) && !directedSegmentEndpointsRawSupported(raw, returnSegment, maximumRawOffsetMeters)) {
+						(!graph.rawPolylineSupportsDirectedSegmentWithin(raw, returnSegment, maximumDegrees, maximumRawOffsetMeters) && !graph.rawSupportsSegmentByEndpointDistance(raw, returnSegment, maximumRawOffsetMeters, 0.7, 1.5) && !graph.directedSegmentEndpointsRawSupported(raw, returnSegment, maximumRawOffsetMeters)) {
 						continue
 					}
 					addition := []TraversedPortion{graph.portion(id, 0, segment.LengthMeters), graph.portion(returnID, 0, returnSegment.LengthMeters)}
@@ -1809,6 +3213,11 @@ func extendRawSupportedDrivewayChains(result *Result, observations []Observation
 }
 
 func turnaroundRawSupported(portion TraversedPortion, graph compiledGraph, observations []Observation, maximumOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	segment, exists := graph.segments[portion.SegmentID]
 	if !exists || segment.LengthMeters <= 0 {
 		return false
@@ -1819,6 +3228,9 @@ func turnaroundRawSupported(portion TraversedPortion, graph compiledGraph, obser
 		Y: segment.From.Y + fraction*(segment.To.Y-segment.From.Y),
 	}
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if math.Max(0, distance(observation.Point, turnaround)-observation.AccuracyMeters) <= maximumOffsetMeters {
 			return true
 		}
@@ -1836,20 +3248,34 @@ func allRoadPortions(portions []TraversedPortion) bool {
 }
 
 func repairRawSupportedRoadShortcuts(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, maximumRatio, minimumSavings, maximumContinuityDetour, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	roadGraph := graph.onlyContinuityClass("road")
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if len(traversal.Portions) < 3 || traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for start := 0; start+2 < len(traversal.Portions); start++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := traversal.Portions[start]
 			if before.ContinuityClass != "road" {
 				continue
 			}
 			excursionLength, hasRoadConnector := 0.0, false
 			for end := start + 2; end < len(traversal.Portions) && end <= start+4; end++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				middle := traversal.Portions[end-1]
 				excursionLength += middle.ToMeter - middle.FromMeter
 				hasRoadConnector = hasRoadConnector || graph.segments[middle.SegmentID].RoadConnector
@@ -1880,7 +3306,7 @@ func repairRawSupportedRoadShortcuts(result *Result, observations []Observation,
 				replacement := append([]TraversedPortion(nil), traversal.Portions[:start+1]...)
 				replacement = append(replacement, alternative.portions...)
 				replacement = append(replacement, traversal.Portions[end:]...)
-				traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+				traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 				end = start + 1
 				excursionLength = 0
 			}
@@ -1889,12 +3315,20 @@ func repairRawSupportedRoadShortcuts(result *Result, observations []Observation,
 }
 
 func physicalPortionOccurrences(portions []TraversedPortion, target TraversedPortion, graph compiledGraph) int {
+	if graph.err() != nil {
+		return 0
+	}
+	var checks uint
+
 	targetSegment, exists := graph.segments[target.SegmentID]
 	if !exists {
 		return 0
 	}
 	count := 0
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return 0
+		}
 		segment, ok := graph.segments[portion.SegmentID]
 		if ok && (samePhysicalSegment(segment, targetSegment) ||
 			(targetSegment.PhysicalSegmentID == uuid.Nil && targetSegment.PhysicalID == "" && portion.SegmentID == target.SegmentID)) {
@@ -1944,8 +3378,8 @@ func roadTurnBoundariesRawSupported(before, after TraversedPortion, graph compil
 	beforeSegment, beforeExists := graph.segments[before.SegmentID]
 	afterSegment, afterExists := graph.segments[after.SegmentID]
 	return beforeExists && afterExists &&
-		rawPolylineSupportsDirectedSegmentWithin(observations, beforeSegment, 45, 15) &&
-		rawPolylineSupportsDirectedSegmentWithin(observations, afterSegment, 45, 15)
+		graph.rawPolylineSupportsDirectedSegmentWithin(observations, beforeSegment, 45, 15) &&
+		graph.rawPolylineSupportsDirectedSegmentWithin(observations, afterSegment, 45, 15)
 }
 
 func roadTurnConnectorRawSupported(route networkRoute, graph compiledGraph, observations []Observation, maximumMeters, epsilon float64) bool {
@@ -1963,7 +3397,7 @@ func roadTurnConnectorRawSupported(route networkRoute, graph compiledGraph, obse
 	}
 	start := pointAlongSegment(firstSegment, first.FromMeter, graph.lengths[first.SegmentID])
 	end := pointAlongSegment(lastSegment, last.ToMeter, graph.lengths[last.SegmentID])
-	return endpointRawSupported(observations, start, maximumMeters, 1) && endpointRawSupported(observations, end, maximumMeters, 1)
+	return graph.endpointRawSupported(observations, start, maximumMeters, 1) && graph.endpointRawSupported(observations, end, maximumMeters, 1)
 }
 
 func pointAlongSegment(segment DirectedSegment, along, length float64) Point {
@@ -1975,14 +3409,22 @@ func pointAlongSegment(segment DirectedSegment, along, length float64) Point {
 }
 
 func bridgeRawSupportedRoadContinuity(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters float64, maximumObservations int, maximumRatio, minimumSavings, maximumContinuityDetour, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	if !resultContainsRoadConnector(result, graph) {
 		return
 	}
 	roadGraph := graph.onlyContinuityClass("road")
 	for i := 0; i+1 < len(result.Traversals); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 ||
-			second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			continue
 		}
 		windowStart, windowEnd := max(0, first.LastObservation-32), min(len(observations), second.FirstObservation+33)
@@ -1990,11 +3432,17 @@ func bridgeRawSupportedRoadContinuity(result *Result, observations []Observation
 		bestBefore, bestAfter, bestImprovement := -1, -1, -math.Inf(1)
 		best := networkRoute{}
 		for beforeIndex := max(0, len(first.Portions)-3); beforeIndex < len(first.Portions); beforeIndex++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := first.Portions[beforeIndex]
 			if before.ContinuityClass != "road" {
 				continue
 			}
 			for afterIndex := 0; afterIndex < min(3, len(second.Portions)); afterIndex++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				after := second.Portions[afterIndex]
 				if after.ContinuityClass != "road" {
 					continue
@@ -2024,7 +3472,7 @@ func bridgeRawSupportedRoadContinuity(result *Result, observations []Observation
 		}
 		first.Portions = append(first.Portions[:bestBefore+1], best.portions...)
 		first.Portions = append(first.Portions, second.Portions[bestAfter:]...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2034,7 +3482,15 @@ func bridgeRawSupportedRoadContinuity(result *Result, observations []Observation
 }
 
 func resultContainsRoadConnector(result *Result, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if containsRoadConnector(traversal.Portions, graph) {
 			return true
 		}
@@ -2043,7 +3499,15 @@ func resultContainsRoadConnector(result *Result, graph compiledGraph) bool {
 }
 
 func containsRoadConnector(portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].RoadConnector {
 			return true
 		}
@@ -2052,9 +3516,20 @@ func containsRoadConnector(portions []TraversedPortion, graph compiledGraph) boo
 }
 
 func roadRoute(before, after TraversedPortion, graph compiledGraph, maximumMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, graph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, graph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			route, ok := graph.route(from, to, maximumMeters, epsilon)
 			if !ok || route.distance <= epsilon || route.distance >= best.distance {
 				continue
@@ -2070,8 +3545,16 @@ func roadPortionsRawSupported(portions []TraversedPortion, graph compiledGraph, 
 }
 
 func roadPortionsRawSupportedWithin(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	supported := false
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment := graph.segments[portion.SegmentID]
 		if portion.ContinuityClass != "road" {
 			return false
@@ -2079,7 +3562,7 @@ func roadPortionsRawSupportedWithin(portions []TraversedPortion, graph compiledG
 		if portion.ToMeter-portion.FromMeter <= 5 {
 			continue
 		}
-		if !rawPolylineSupportsDirectedSegmentWithin(observations, segment, 45, maximumOffsetMeters) {
+		if !graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, 45, maximumOffsetMeters) {
 			return false
 		}
 		supported = true
@@ -2121,13 +3604,27 @@ func portionsLength(portions []TraversedPortion) float64 {
 }
 
 func completeRawSupportedPathEndpoints(result *Result, observations []Observation, graph compiledGraph, maximumTailMeters, maximumNeighborMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	present := make(map[string]bool)
 	for _, traversal := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range traversal.Portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			present[graph.segments[portion.SegmentID].PhysicalID] = true
 		}
 	}
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
@@ -2135,6 +3632,9 @@ func completeRawSupportedPathEndpoints(result *Result, observations []Observatio
 		windowStart, windowEnd := completionRawWindow(*traversal, result.Splits, len(observations), 16)
 		raw := observations[windowStart:windowEnd]
 		for portionIndex := 0; portionIndex < len(traversal.Portions); portionIndex++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			portion := traversal.Portions[portionIndex]
 			segment, exists := graph.segments[portion.SegmentID]
 			if !exists || segment.TransitionOnly || portion.ContinuityClass != "path" {
@@ -2143,13 +3643,13 @@ func completeRawSupportedPathEndpoints(result *Result, observations []Observatio
 			changed := false
 			selectedLength := portion.ToMeter - portion.FromMeter
 			if selectedLength >= 5 && portion.FromMeter > epsilon && portion.FromMeter <= maximumTailMeters &&
-				endpointRawSupported(raw, segment.From, 5, 1) {
+				graph.endpointRawSupported(raw, segment.From, 5, 1) {
 				portion.FromMeter = 0
 				changed = true
 			}
 			remaining := graph.lengths[portion.SegmentID] - portion.ToMeter
 			if selectedLength >= 5 && remaining > epsilon && remaining <= maximumTailMeters &&
-				endpointRawSupported(raw, segment.To, 5, 1) {
+				graph.endpointRawSupported(raw, segment.To, 5, 1) {
 				portion.ToMeter = graph.lengths[portion.SegmentID]
 				changed = true
 			}
@@ -2160,6 +3660,9 @@ func completeRawSupportedPathEndpoints(result *Result, observations []Observatio
 				node    string
 				reached bool
 			}{{segment.FromNode, portion.FromMeter <= epsilon}, {segment.ToNode, graph.lengths[portion.SegmentID]-portion.ToMeter <= epsilon}} {
+				if graph.canceled(&checks) {
+					return
+				}
 				if !endpoint.reached {
 					continue
 				}
@@ -2179,7 +3682,7 @@ func completeRawSupportedPathEndpoints(result *Result, observations []Observatio
 				present[graph.segments[neighbor].PhysicalID] = true
 			}
 		}
-		traversal.Portions = mergeConsecutiveTraversedPortions(traversal.Portions, epsilon)
+		traversal.Portions = graph.mergeConsecutiveTraversedPortions(traversal.Portions, epsilon)
 	}
 }
 
@@ -2199,8 +3702,16 @@ func completionRawWindow(traversal DecodedTraversal, splits []Split, observation
 	return start, end
 }
 
-func endpointRawSupported(observations []Observation, endpoint Point, maximumOffsetMeters, minimumApproachMeters float64) bool {
+func (graph compiledGraph) endpointRawSupported(observations []Observation, endpoint Point, maximumOffsetMeters, minimumApproachMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for i := 1; i < len(observations); i++ {
+		if graph.canceled(&checks) {
+			return false
+		}
 		from, to := observations[i-1].Point, observations[i].Point
 		fromDistance, toDistance := distance(from, endpoint), distance(to, endpoint)
 		fromEffective := math.Max(0, fromDistance-observations[i-1].AccuracyMeters)
@@ -2216,18 +3727,29 @@ func endpointRawSupported(observations []Observation, endpoint Point, maximumOff
 }
 
 func rawSupportedShortPathNeighbor(node, currentPhysicalID string, observations []Observation, graph compiledGraph, maximumMeters float64, present map[string]bool) (string, bool, bool) {
+	if graph.err() != nil {
+		return "", false, false
+	}
+	var checks uint
+
 	ids := make([]string, 0)
 	for id, segment := range graph.segments {
+		if graph.canceled(&checks) {
+			return "", false, false
+		}
 		if segment.FromNode == node || segment.ToNode == node {
 			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if graph.canceled(&checks) {
+			return "", false, false
+		}
 		segment := graph.segments[id]
 		if segment.PhysicalID == currentPhysicalID || present[segment.PhysicalID] || segment.TransitionOnly ||
 			segment.ContinuityClass != "path" || graph.lengths[id] > maximumMeters ||
-			!rawPolylineSupportsDirectedSegmentWithin(observations, segment, drivewayConnectorHeadingDegrees, 5) {
+			!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, drivewayConnectorHeadingDegrees, 5) {
 			continue
 		}
 		return id, segment.ToNode == node, true
@@ -2236,22 +3758,39 @@ func rawSupportedShortPathNeighbor(node, currentPhysicalID string, observations 
 }
 
 func repairRawSupportedAccessoryShortcuts(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumShortcutMeters, maximumRatio, minimumSavings, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		traversal := &result.Traversals[traversalIndex]
 		if len(traversal.Portions) < 3 || traversal.FirstObservation < 0 || traversal.LastObservation >= len(observations) {
 			continue
 		}
 		raw := observations[traversal.FirstObservation : traversal.LastObservation+1]
 		for {
+			if graph.canceled(&checks) {
+				return
+			}
 			bestStart, bestEnd, bestSavings := -1, -1, 0.0
 			best := networkRoute{}
 			for start := 0; start+2 < len(traversal.Portions); start++ {
+				if graph.canceled(&checks) {
+					return
+				}
 				before := traversal.Portions[start]
 				if !accessoryShortcutBoundary(before, graph) {
 					continue
 				}
 				excursionLength, hasRoad := 0.0, false
 				for end := start + 2; end < len(traversal.Portions); end++ {
+					if graph.canceled(&checks) {
+						return
+					}
 					middle := traversal.Portions[end-1]
 					excursionLength += middle.ToMeter - middle.FromMeter
 					middleSegment := graph.segments[middle.SegmentID]
@@ -2279,7 +3818,7 @@ func repairRawSupportedAccessoryShortcuts(result *Result, observations []Observa
 			replacement = append(replacement, traversal.Portions[:bestStart+1]...)
 			replacement = append(replacement, best.portions...)
 			replacement = append(replacement, traversal.Portions[bestEnd:]...)
-			traversal.Portions = mergeConsecutiveTraversedPortions(replacement, epsilon)
+			traversal.Portions = graph.mergeConsecutiveTraversedPortions(replacement, epsilon)
 		}
 	}
 }
@@ -2290,15 +3829,29 @@ func accessoryShortcutBoundary(portion TraversedPortion, graph compiledGraph) bo
 }
 
 func accessoryOnlyRoute(before, after TraversedPortion, graph compiledGraph, maximumMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, graph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, graph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			route, ok := graph.routeWithBoundaryClasses(from, to, maximumMeters, epsilon, "path", "path")
 			if !ok || route.distance <= epsilon || route.distance >= best.distance || !containsAccessoryConnector(route.portions, graph) {
 				continue
 			}
 			accessoryOnly := true
 			for _, portion := range route.portions {
+				if graph.canceled(&checks) {
+					return networkRoute{}, false
+				}
 				if !graph.segments[portion.SegmentID].AccessoryConnector {
 					accessoryOnly = false
 					break
@@ -2313,13 +3866,21 @@ func accessoryOnlyRoute(before, after TraversedPortion, graph compiledGraph, max
 }
 
 func accessoryPortionsRawSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, maximumDegrees float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	supported := false
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment := graph.segments[portion.SegmentID]
 		if !segment.AccessoryConnector {
 			return false
 		}
-		edgeSupported := rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, 5)
+		edgeSupported := graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, 5)
 		supported = supported || edgeSupported
 		if portion.ToMeter-portion.FromMeter > accessoryRawSupportLengthMeters && !edgeSupported {
 			return false
@@ -2329,10 +3890,18 @@ func accessoryPortionsRawSupported(portions []TraversedPortion, graph compiledGr
 }
 
 func bridgePlausibleAccessoryTraversals(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 ||
-			second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -2348,7 +3917,7 @@ func bridgePlausibleAccessoryTraversals(result *Result, observations []Observati
 		}
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2357,9 +3926,20 @@ func bridgePlausibleAccessoryTraversals(result *Result, observations []Observati
 }
 
 func accessoryBridgeRoute(before, after TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int, maximumRouteMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, graph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, graph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			connector, ok := graph.routeWithBoundaryClasses(from, to, maximumRouteMeters, epsilon, before.ContinuityClass, after.ContinuityClass)
 			if !ok || connector.distance <= epsilon || connector.distance > maximumRouteMeters || connector.distance >= best.distance ||
 				!containsAccessoryConnector(connector.portions, graph) || !onlyBoundaryAndAccessoryPortions(connector.portions, before, after, graph) ||
@@ -2373,7 +3953,15 @@ func accessoryBridgeRoute(before, after TraversedPortion, graph compiledGraph, o
 }
 
 func containsAccessoryConnector(portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].AccessoryConnector {
 			return true
 		}
@@ -2382,7 +3970,15 @@ func containsAccessoryConnector(portions []TraversedPortion, graph compiledGraph
 }
 
 func onlyBoundaryAndAccessoryPortions(portions []TraversedPortion, before, after TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		segment := graph.segments[portion.SegmentID]
 		if !segment.AccessoryConnector && segment.PhysicalSegmentID != before.PhysicalSegmentID && segment.PhysicalSegmentID != after.PhysicalSegmentID {
 			return false
@@ -2392,10 +3988,18 @@ func onlyBoundaryAndAccessoryPortions(portions []TraversedPortion, before, after
 }
 
 func bridgePlausibleDrivewayTraversals(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 ||
-			second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -2411,7 +4015,7 @@ func bridgePlausibleDrivewayTraversals(result *Result, observations []Observatio
 		}
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2420,9 +4024,20 @@ func bridgePlausibleDrivewayTraversals(result *Result, observations []Observatio
 }
 
 func drivewayBridgeRoute(before, after TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int, maximumRouteMeters, epsilon float64) (networkRoute, bool) {
+	if graph.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	best := networkRoute{distance: math.Inf(1)}
 	for _, from := range portionBoundaryCandidates(before, true, graph) {
+		if graph.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		for _, to := range portionBoundaryCandidates(after, false, graph) {
+			if graph.canceled(&checks) {
+				return networkRoute{}, false
+			}
 			connector, ok := graph.routeWithBoundaryClasses(from, to, maximumRouteMeters, epsilon, before.ContinuityClass, after.ContinuityClass)
 			if !ok || connector.distance <= epsilon || connector.distance > maximumRouteMeters || connector.distance >= best.distance ||
 				!containsDrivewayConnector(connector.portions, graph) ||
@@ -2437,6 +4052,11 @@ func drivewayBridgeRoute(before, after TraversedPortion, graph compiledGraph, ob
 }
 
 func portionBoundaryCandidates(portion TraversedPortion, atEnd bool, graph compiledGraph) []Candidate {
+	if graph.err() != nil || graph.parkingFilter != nil && !graph.allowsSegment(portion.SegmentID) {
+		return nil
+	}
+	var checks uint
+
 	along := portion.FromMeter
 	if atEnd {
 		along = portion.ToMeter
@@ -2447,7 +4067,11 @@ func portionBoundaryCandidates(portion TraversedPortion, atEnd bool, graph compi
 		return result
 	}
 	for id, opposite := range graph.segments {
-		if id == portion.SegmentID || !samePhysicalSegment(segment, opposite) || opposite.Direction == segment.Direction {
+		if graph.canceled(&checks) {
+			return nil
+		}
+		if id == portion.SegmentID || !samePhysicalSegment(segment, opposite) || opposite.Direction == segment.Direction ||
+			graph.parkingFilter != nil && !graph.allowsSegment(id) {
 			continue
 		}
 		result = append(result, Candidate{SegmentID: id, AlongMeters: graph.lengths[id] - along})
@@ -2457,7 +4081,15 @@ func portionBoundaryCandidates(portion TraversedPortion, atEnd bool, graph compi
 }
 
 func containsDrivewayConnector(portions []TraversedPortion, graph compiledGraph) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].DrivewayConnector {
 			return true
 		}
@@ -2466,10 +4098,18 @@ func containsDrivewayConnector(portions []TraversedPortion, graph compiledGraph)
 }
 
 func replaceShortExcursionsBetweenSameClass(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+2 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, excursion, third := &result.Traversals[i], &result.Traversals[i+1], result.Traversals[i+2]
 		if len(first.Portions) == 0 || len(excursion.Portions) == 0 || len(third.Portions) == 0 ||
-			third.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, third.FirstObservation) {
+			third.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, third.FirstObservation) {
 			i++
 			continue
 		}
@@ -2484,17 +4124,17 @@ func replaceShortExcursionsBetweenSameClass(result *Result, observations []Obser
 			Candidate{SegmentID: before.SegmentID, AlongMeters: before.ToMeter},
 			Candidate{SegmentID: after.SegmentID, AlongMeters: after.FromMeter}, before.ContinuityClass, maximumRouteMeters, epsilon,
 		)
-		rawDistance := observationPolylineDistance(observations, first.LastObservation, third.FirstObservation)
+		rawDistance := graph.observationPolylineDistance(observations, first.LastObservation, third.FirstObservation)
 		if !ok || connector.distance <= epsilon || connector.distance > maximumRouteMeters || rawDistance <= epsilon ||
 			connector.distance < math.Max(0, rawDistance/1.5-20) || connector.distance > rawDistance*1.5+20 ||
 			!singleContinuityClass(connector.portions, before.ContinuityClass) {
 			i++
 			continue
 		}
-		markTraversalRejected(result, i+1)
+		graph.markTraversalRejected(result, i+1)
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, third.Portions...)
-		first.Portions = cancelImmediateBacktracks(first.Portions, epsilon)
+		first.Portions = graph.cancelImmediateBacktracks(first.Portions, epsilon)
 		first.Observations = append(first.Observations, third.Observations...)
 		first.LastObservation = third.LastObservation
 		first.Cost += third.Cost
@@ -2527,9 +4167,20 @@ func singleContinuityClass(portions []TraversedPortion, continuityClass string) 
 }
 
 func bridgeSamePathPortionGaps(result *Result, graph compiledGraph, maximumRouteMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		portions := result.Traversals[traversalIndex].Portions
 		for i := 0; i+1 < len(portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before, after := portions[i], portions[i+1]
 			if before.LogicalPathID == "" || before.LogicalPathID != after.LogicalPathID {
 				continue
@@ -2544,7 +4195,7 @@ func bridgeSamePathPortionGaps(result *Result, graph compiledGraph, maximumRoute
 			replacement := append([]TraversedPortion(nil), portions[:i+1]...)
 			replacement = append(replacement, connector.portions...)
 			replacement = append(replacement, portions[i+1:]...)
-			portions = cancelImmediateBacktracks(replacement, epsilon)
+			portions = graph.cancelImmediateBacktracks(replacement, epsilon)
 			i = 0
 		}
 		result.Traversals[traversalIndex].Portions = portions
@@ -2552,10 +4203,18 @@ func bridgeSamePathPortionGaps(result *Result, graph compiledGraph, maximumRoute
 }
 
 func bridgePlausibleSamePathTraversals(result *Result, observations []Observation, graph compiledGraph, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 ||
-			second.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			second.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -2568,7 +4227,7 @@ func bridgePlausibleSamePathTraversals(result *Result, observations []Observatio
 			Candidate{SegmentID: before.SegmentID, AlongMeters: before.ToMeter},
 			Candidate{SegmentID: after.SegmentID, AlongMeters: after.FromMeter}, before.LogicalPathID, maximumRouteMeters, epsilon,
 		)
-		rawDistance := observationPolylineDistance(observations, first.LastObservation, second.FirstObservation)
+		rawDistance := graph.observationPolylineDistance(observations, first.LastObservation, second.FirstObservation)
 		minimumPlausible := math.Max(0, rawDistance/1.5-20)
 		maximumPlausible := rawDistance*1.5 + 20
 		independentPath := graph.segments[before.SegmentID].IndependentPath && graph.segments[after.SegmentID].IndependentPath
@@ -2580,7 +4239,7 @@ func bridgePlausibleSamePathTraversals(result *Result, observations []Observatio
 		}
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = cancelImmediateBacktracks(first.Portions, epsilon)
+		first.Portions = graph.cancelImmediateBacktracks(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2589,7 +4248,15 @@ func bridgePlausibleSamePathTraversals(result *Result, observations []Observatio
 }
 
 func replaceBoundaryShortExcursions(result *Result, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) < 2 || len(second.Portions) == 0 {
 			i++
@@ -2598,11 +4265,14 @@ func replaceBoundaryShortExcursions(result *Result, graph compiledGraph, maximum
 		after := second.Portions[0]
 		beforeIndex, excursionLength := len(first.Portions)-1, 0.0
 		for beforeIndex >= 0 && first.Portions[beforeIndex].LogicalPathID != after.LogicalPathID {
+			if graph.canceled(&checks) {
+				return
+			}
 			excursionLength += first.Portions[beforeIndex].ToMeter - first.Portions[beforeIndex].FromMeter
 			beforeIndex--
 		}
 		if beforeIndex < 0 || beforeIndex == len(first.Portions)-1 || after.LogicalPathID == "" ||
-			excursionLength > maximumExcursionMeters || hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			excursionLength > maximumExcursionMeters || graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -2618,7 +4288,7 @@ func replaceBoundaryShortExcursions(result *Result, graph compiledGraph, maximum
 		first.Portions = first.Portions[:beforeIndex+1]
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = mergeConsecutiveTraversedPortions(first.Portions, epsilon)
+		first.Portions = graph.mergeConsecutiveTraversedPortions(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2627,15 +4297,29 @@ func replaceBoundaryShortExcursions(result *Result, graph compiledGraph, maximum
 }
 
 func replaceShortPortionExcursions(result *Result, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for traversalIndex := range result.Traversals {
+		if graph.canceled(&checks) {
+			return
+		}
 		portions := result.Traversals[traversalIndex].Portions
 		for i := 0; i+2 < len(portions); i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			before := portions[i]
 			if before.LogicalPathID == "" {
 				continue
 			}
 			j, excursionLength := i+1, 0.0
 			for j < len(portions) && portions[j].LogicalPathID != before.LogicalPathID {
+				if graph.canceled(&checks) {
+					return
+				}
 				excursionLength += portions[j].ToMeter - portions[j].FromMeter
 				j++
 			}
@@ -2654,7 +4338,7 @@ func replaceShortPortionExcursions(result *Result, graph compiledGraph, maximumE
 			replacement := append([]TraversedPortion(nil), portions[:i+1]...)
 			replacement = append(replacement, connector.portions...)
 			replacement = append(replacement, portions[j:]...)
-			portions = cancelImmediateBacktracks(replacement, epsilon)
+			portions = graph.cancelImmediateBacktracks(replacement, epsilon)
 			i = 0
 		}
 		result.Traversals[traversalIndex].Portions = portions
@@ -2662,10 +4346,18 @@ func replaceShortPortionExcursions(result *Result, graph compiledGraph, maximumE
 }
 
 func replaceShortExcursionsBetweenSamePath(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+2 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, excursion, third := &result.Traversals[i], &result.Traversals[i+1], result.Traversals[i+2]
 		if len(first.Portions) == 0 || len(excursion.Portions) == 0 || len(third.Portions) == 0 ||
-			third.FirstObservation-first.LastObservation > maximumObservations || hasHardSplit(result.Splits, first.LastObservation, third.FirstObservation) {
+			third.FirstObservation-first.LastObservation > maximumObservations || graph.hasHardSplit(result.Splits, first.LastObservation, third.FirstObservation) {
 			i++
 			continue
 		}
@@ -2679,16 +4371,16 @@ func replaceShortExcursionsBetweenSamePath(result *Result, observations []Observ
 			Candidate{SegmentID: before.SegmentID, AlongMeters: before.ToMeter},
 			Candidate{SegmentID: after.SegmentID, AlongMeters: after.FromMeter}, before.LogicalPathID, maximumRouteMeters, epsilon,
 		)
-		rawDistance := observationPolylineDistance(observations, first.LastObservation, third.FirstObservation)
+		rawDistance := graph.observationPolylineDistance(observations, first.LastObservation, third.FirstObservation)
 		if !ok || connector.distance <= epsilon || connector.distance > maximumRouteMeters ||
 			!singleLogicalPath(connector.portions, before.LogicalPathID) || rawDistance <= epsilon || connector.distance > rawDistance*1.5+20 {
 			i++
 			continue
 		}
-		markTraversalRejected(result, i+1)
+		graph.markTraversalRejected(result, i+1)
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, third.Portions...)
-		first.Portions = cancelImmediateBacktracks(first.Portions, epsilon)
+		first.Portions = graph.cancelImmediateBacktracks(first.Portions, epsilon)
 		first.Observations = append(first.Observations, third.Observations...)
 		first.LastObservation = third.LastObservation
 		first.Cost += third.Cost
@@ -2704,19 +4396,35 @@ func traversalLength(traversal DecodedTraversal) float64 {
 	return total
 }
 
-func observationPolylineDistance(observations []Observation, first, last int) float64 {
+func (graph compiledGraph) observationPolylineDistance(observations []Observation, first, last int) float64 {
+	if graph.err() != nil {
+		return 0
+	}
+	var checks uint
+
 	if first < 0 || last >= len(observations) || first >= last {
 		return 0
 	}
 	total := 0.0
 	for i := first + 1; i <= last; i++ {
+		if graph.canceled(&checks) {
+			return 0
+		}
 		total += distance(observations[i-1].Point, observations[i].Point)
 	}
 	return total
 }
 
 func bridgeShortSamePathTraversals(result *Result, graph compiledGraph, maximumMeters float64, maximumObservations int, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 || second.FirstObservation-first.LastObservation > maximumObservations {
 			i++
@@ -2724,7 +4432,7 @@ func bridgeShortSamePathTraversals(result *Result, graph compiledGraph, maximumM
 		}
 		before, after := first.Portions[len(first.Portions)-1], second.Portions[0]
 		if before.LogicalPathID == "" || before.LogicalPathID != after.LogicalPathID ||
-			hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
+			graph.hasHardSplit(result.Splits, first.LastObservation, second.FirstObservation) {
 			i++
 			continue
 		}
@@ -2738,7 +4446,7 @@ func bridgeShortSamePathTraversals(result *Result, graph compiledGraph, maximumM
 		}
 		first.Portions = append(first.Portions, connector.portions...)
 		first.Portions = append(first.Portions, second.Portions...)
-		first.Portions = cancelImmediateBacktracks(first.Portions, epsilon)
+		first.Portions = graph.cancelImmediateBacktracks(first.Portions, epsilon)
 		first.Observations = append(first.Observations, second.Observations...)
 		first.LastObservation = second.LastObservation
 		first.Cost += second.Cost
@@ -2755,8 +4463,16 @@ func singleLogicalPath(portions []TraversedPortion, logicalPathID string) bool {
 	return len(portions) > 0
 }
 
-func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
+func (graph compiledGraph) cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := 0; i+1 < len(result.Traversals); {
+		if graph.canceled(&checks) {
+			return
+		}
 		first, second := &result.Traversals[i], &result.Traversals[i+1]
 		if len(first.Portions) == 0 || len(second.Portions) == 0 ||
 			!inversePortions(first.Portions[len(first.Portions)-1], second.Portions[0], epsilon) {
@@ -2766,8 +4482,8 @@ func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
 		first.Portions = first.Portions[:len(first.Portions)-1]
 		second.Portions = second.Portions[1:]
 		if len(first.Portions) == 0 && len(second.Portions) == 0 {
-			markTraversalRejected(result, i)
-			markTraversalRejected(result, i+1)
+			graph.markTraversalRejected(result, i)
+			graph.markTraversalRejected(result, i+1)
 			result.Traversals = append(result.Traversals[:i], result.Traversals[i+2:]...)
 			if i > 0 {
 				i--
@@ -2775,7 +4491,7 @@ func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
 			continue
 		}
 		if len(first.Portions) == 0 {
-			markTraversalRejected(result, i)
+			graph.markTraversalRejected(result, i)
 			result.Traversals = append(result.Traversals[:i], result.Traversals[i+1:]...)
 			if i > 0 {
 				i--
@@ -2783,7 +4499,7 @@ func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
 			continue
 		}
 		if len(second.Portions) == 0 {
-			markTraversalRejected(result, i+1)
+			graph.markTraversalRejected(result, i+1)
 			result.Traversals = append(result.Traversals[:i+1], result.Traversals[i+2:]...)
 			if i > 0 {
 				i--
@@ -2793,8 +4509,16 @@ func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
 	}
 }
 
-func markTraversalRejected(result *Result, index int) {
+func (graph compiledGraph) markTraversalRejected(result *Result, index int) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	for i := range result.Traversals[index].Observations {
+		if graph.canceled(&checks) {
+			return
+		}
 		observation := &result.Traversals[index].Observations[i]
 		observation.Status = ObservationRejected
 		if observation.ObservationIndex >= 0 && observation.ObservationIndex < len(result.Observations) {
@@ -2803,8 +4527,16 @@ func markTraversalRejected(result *Result, index int) {
 	}
 }
 
-func hasHardSplit(splits []Split, after, before int) bool {
+func (graph compiledGraph) hasHardSplit(splits []Split, after, before int) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for _, split := range splits {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if split.BeforeObservation > after && split.BeforeObservation <= before &&
 			(split.Reason == SplitTemporal || split.Reason == SplitSpatial) {
 			return true
@@ -2814,11 +4546,19 @@ func hasHardSplit(splits []Split, after, before int) bool {
 }
 
 func acceptedCandidates(observation Observation, supplied []Candidate, graph compiledGraph, rules Rules) []Candidate {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	accuracy := effectiveAccuracy(observation.AccuracyMeters, rules)
 	radius := math.Min(rules.MaxCandidateDistanceMeters, rules.AccuracyRadiusMultiplier*accuracy)
 	seen := make(map[string]bool)
 	result := make([]Candidate, 0, len(supplied))
 	for _, candidate := range supplied {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		length, ok := graph.lengths[candidate.SegmentID]
 		if !ok || !finite(candidate.DistanceMeters) || candidate.DistanceMeters < 0 ||
 			!finite(candidate.AttributionOffsetMeters) || candidate.AttributionOffsetMeters < 0 || candidateEffectiveDistance(candidate) > radius ||
@@ -2840,18 +4580,29 @@ func acceptedCandidates(observation Observation, supplied []Candidate, graph com
 }
 
 func decodeGroup(start, end int, observations []Observation, candidates [][]Candidate, graph compiledGraph, rules Rules, result *Result) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	chunkStart := start
 	for chunkStart < end {
+		if graph.canceled(&checks) {
+			return
+		}
 		layers := [][]state{initialStates(chunkStart, observations, candidates, graph, rules)}
 		i := chunkStart + 1
 		for ; i < end; i++ {
+			if graph.canceled(&checks) {
+				return
+			}
 			next := transitionStates(i, observations, candidates[i], layers[len(layers)-1], graph, rules)
 			if len(next) == 0 {
 				break
 			}
 			layers = append(layers, next)
 		}
-		finalizeChunk(chunkStart, i, layers, rules, result)
+		graph.finalizeChunk(chunkStart, i, layers, rules, result)
 		if i < end {
 			result.Splits = append(result.Splits, Split{i, SplitNetwork})
 		}
@@ -2860,8 +4611,16 @@ func decodeGroup(start, end int, observations []Observation, candidates [][]Cand
 }
 
 func initialStates(index int, observations []Observation, candidates [][]Candidate, graph compiledGraph, rules Rules) []state {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	states := make([]state, len(candidates[index]))
 	for i, candidate := range candidates[index] {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		key := candidateKey(candidate)
 		states[i] = state{candidate: candidate, cost: emissionCost(index, observations, candidate, graph, rules), pathKey: key, previous: -1}
 	}
@@ -2870,9 +4629,14 @@ func initialStates(index int, observations []Observation, candidates [][]Candida
 
 func transitionStates(index int, observations []Observation, candidates []Candidate, previous []state, graph compiledGraph, rules Rules) []state {
 	result := make([]state, 0, len(candidates))
+	pairs := 0
 	for _, candidate := range candidates {
 		best := state{cost: math.Inf(1)}
 		for previousIndex, prior := range previous {
+			if pairs&127 == 0 && graph.err() != nil {
+				return nil
+			}
+			pairs++
 			route, transitionCost, ok := transition(observations[index-1], observations[index], prior.candidate, candidate, graph, rules)
 			if !ok || !drivewayConnectorsSupported(route.portions, graph, observations, index, drivewayConnectorHeadingDegrees, "", "") {
 				continue
@@ -2899,8 +4663,16 @@ func transitionStates(index int, observations []Observation, candidates []Candid
 }
 
 func parkingAisleEvidence(portions []TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int) ([]TraversedPortion, bool) {
+	if graph.err() != nil {
+		return nil, false
+	}
+	var checks uint
+
 	hasParkingAisle := false
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		hasParkingAisle = hasParkingAisle || graph.segments[portion.SegmentID].ParkingAisleConnector
 	}
 	if !hasParkingAisle {
@@ -2912,6 +4684,9 @@ func parkingAisleEvidence(portions []TraversedPortion, graph compiledGraph, obse
 	windowStart, windowEnd := max(0, transitionIndex-48), min(len(observations), transitionIndex+49)
 	result := append([]TraversedPortion(nil), portions...)
 	for index, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil, false
+		}
 		segment := graph.segments[portion.SegmentID]
 		if !segment.ParkingAisleConnector {
 			continue
@@ -2919,10 +4694,10 @@ func parkingAisleEvidence(portions []TraversedPortion, graph compiledGraph, obse
 		if parkingAisleShadowedByRoad(segment, graph) {
 			return nil, false
 		}
-		fromMeter, toMeter, ok := parkingAisleRawInterval(observations[windowStart:windowEnd], segment, parkingAisleRawSupportOffsetMeters)
+		fromMeter, toMeter, ok := graph.parkingAisleRawInterval(observations[windowStart:windowEnd], segment, parkingAisleRawSupportOffsetMeters)
 		fromMeter, toMeter = math.Max(portion.FromMeter, fromMeter), math.Min(portion.ToMeter, toMeter)
 		required := math.Max(5, (portion.ToMeter-portion.FromMeter)*0.5)
-		shortEndpointSupport := segment.LengthMeters <= 10 && rawExtendsPastDirectedEndpoint(observations[windowStart:windowEnd], segment, parkingAisleRawSupportOffsetMeters, 5)
+		shortEndpointSupport := segment.LengthMeters <= 10 && graph.rawExtendsPastDirectedEndpoint(observations[windowStart:windowEnd], segment, parkingAisleRawSupportOffsetMeters, 5)
 		if (!ok || toMeter-fromMeter < required) && !shortEndpointSupport {
 			return nil, false
 		}
@@ -2939,7 +4714,12 @@ func parkingAisleShadowedByRoad(parking DirectedSegment, graph compiledGraph) bo
 		graph.hasShorterOrdinaryRoadPath(parking.ToNode, parking.FromNode, parking.LengthMeters-1e-6)
 }
 
-func parkingAisleRawInterval(observations []Observation, segment DirectedSegment, maximumOffsetMeters float64) (float64, float64, bool) {
+func (graph compiledGraph) parkingAisleRawInterval(observations []Observation, segment DirectedSegment, maximumOffsetMeters float64) (float64, float64, bool) {
+	if graph.err() != nil {
+		return 0, 0, false
+	}
+	var checks uint
+
 	geometryLength := distance(segment.From, segment.To)
 	if geometryLength <= 0 || segment.LengthMeters <= 0 {
 		return 0, 0, false
@@ -2947,6 +4727,9 @@ func parkingAisleRawInterval(observations []Observation, segment DirectedSegment
 	bestFrom, bestTo, runFrom, runTo, previous := 0.0, 0.0, 0.0, 0.0, 0.0
 	active := false
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return 0, 0, false
+		}
 		along, offset := segmentProjection(observation.Point, segment, geometryLength)
 		if math.Max(0, offset-observation.AccuracyMeters) > maximumOffsetMeters {
 			active = false
@@ -2966,13 +4749,24 @@ func parkingAisleRawInterval(observations []Observation, segment DirectedSegment
 }
 
 func accessoryConnectorsSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int, maximumDegrees float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for i := 0; i < len(portions); {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if !graph.segments[portions[i].SegmentID].AccessoryConnector {
 			i++
 			continue
 		}
 		j, length, crossingOnly := i, 0.0, true
 		for j < len(portions) && graph.segments[portions[j].SegmentID].AccessoryConnector {
+			if graph.canceled(&checks) {
+				return false
+			}
 			segment := graph.segments[portions[j].SegmentID]
 			length += portions[j].ToMeter - portions[j].FromMeter
 			crossingOnly = crossingOnly && segment.ContinuityConnector
@@ -2987,8 +4781,11 @@ func accessoryConnectorsSupported(portions []TraversedPortion, graph compiledGra
 		}
 		windowStart, windowEnd, supported := max(0, transitionIndex-16), min(len(observations), transitionIndex+17), false
 		for k := i; k < j; k++ {
+			if graph.canceled(&checks) {
+				return false
+			}
 			segment := graph.segments[portions[k].SegmentID]
-			edgeSupported := rawPolylineSupportsDirectedSegment(observations[windowStart:windowEnd], segment, maximumDegrees)
+			edgeSupported := graph.rawPolylineSupportsDirectedSegment(observations[windowStart:windowEnd], segment, maximumDegrees)
 			supported = supported || edgeSupported
 			if portions[k].ToMeter-portions[k].FromMeter > accessoryRawSupportLengthMeters && !edgeSupported {
 				return false
@@ -3003,8 +4800,16 @@ func accessoryConnectorsSupported(portions []TraversedPortion, graph compiledGra
 }
 
 func withoutAccessoryConnectors(portions []TraversedPortion, graph compiledGraph) []TraversedPortion {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	result := make([]TraversedPortion, 0, len(portions))
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		if !graph.segments[portion.SegmentID].AccessoryConnector {
 			result = append(result, portion)
 		}
@@ -3012,13 +4817,21 @@ func withoutAccessoryConnectors(portions []TraversedPortion, graph compiledGraph
 	return result
 }
 
-func finalizeChunk(start, end int, layers [][]state, rules Rules, result *Result) {
+func (graph compiledGraph) finalizeChunk(start, end int, layers [][]state, rules Rules, result *Result) {
+	if graph.err() != nil {
+		return
+	}
+	var checks uint
+
 	if len(layers) == 0 || len(layers[len(layers)-1]) == 0 {
 		return
 	}
 	last := layers[len(layers)-1]
 	best, second := 0, math.Inf(1)
 	for i := range last {
+		if graph.canceled(&checks) {
+			return
+		}
 		if last[i].cost < last[best].cost || (last[i].cost == last[best].cost && last[i].pathKey < last[best].pathKey) {
 			second = last[best].cost
 			best = i
@@ -3029,29 +4842,47 @@ func finalizeChunk(start, end int, layers [][]state, rules Rules, result *Result
 	indices := make([]int, len(layers))
 	indices[len(indices)-1] = best
 	for i := len(indices) - 1; i > 0; i-- {
+		if graph.canceled(&checks) {
+			return
+		}
 		indices[i-1] = layers[i][indices[i]].previous
 	}
 	portions := make([]TraversedPortion, 0)
 	for i := 1; i < len(layers); i++ {
+		if graph.canceled(&checks) {
+			return
+		}
 		for _, portion := range layers[i][indices[i]].route.portions {
+			if graph.canceled(&checks) {
+				return
+			}
 			length := portion.ToMeter - portion.FromMeter
 			if length > rules.PositiveLengthEpsilonMeters {
 				portions = append(portions, portion)
 			}
 		}
 	}
-	portions = cancelImmediateBacktracks(portions, rules.PositiveLengthEpsilonMeters)
+	portions = graph.cancelImmediateBacktracks(portions, rules.PositiveLengthEpsilonMeters)
 	totalLength := 0.0
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return
+		}
 		totalLength += portion.ToMeter - portion.FromMeter
 	}
 	meanCost := last[best].cost / float64(len(layers))
 	finalAmbiguous := second-last[best].cost < rules.AmbiguousCostDelta
 	ambiguousCount := 0
 	for i, layer := range layers {
+		if graph.canceled(&checks) {
+			return
+		}
 		chosenCost := layer[indices[i]].cost
 		ambiguous := false
 		for j := range layer {
+			if graph.canceled(&checks) {
+				return
+			}
 			if j != indices[i] && math.Abs(layer[j].cost-chosenCost) < rules.AmbiguousCostDelta {
 				ambiguous = true
 				break
@@ -3067,6 +4898,9 @@ func finalizeChunk(start, end int, layers [][]state, rules Rules, result *Result
 	}
 	decoded := make([]DecodedObservation, len(layers))
 	for i, layer := range layers {
+		if graph.canceled(&checks) {
+			return
+		}
 		candidate := layer[indices[i]].candidate
 		status := ObservationMatched
 		if observationAmbiguous(layer, indices[i], rules) {
@@ -3105,8 +4939,16 @@ func transition(fromObservation, toObservation Observation, from, to Candidate, 
 }
 
 func drivewayConnectorsSupported(portions []TraversedPortion, graph compiledGraph, observations []Observation, transitionIndex int, maximumDegrees float64, beforeClass, afterClass string) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	hasDriveway := false
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if graph.segments[portion.SegmentID].DrivewayConnector {
 			hasDriveway = true
 			break
@@ -3120,12 +4962,18 @@ func drivewayConnectorsSupported(portions []TraversedPortion, graph compiledGrap
 	}
 	windowStart, windowEnd := max(0, transitionIndex-16), min(len(observations), transitionIndex+17)
 	for i := 0; i < len(portions); {
+		if graph.canceled(&checks) {
+			return false
+		}
 		if !graph.segments[portions[i].SegmentID].DrivewayConnector {
 			i++
 			continue
 		}
 		j := i
 		for j < len(portions) && graph.segments[portions[j].SegmentID].DrivewayConnector {
+			if graph.canceled(&checks) {
+				return false
+			}
 			j++
 		}
 		leftClass, rightClass := transitionBoundaryClasses(portions, i, j, beforeClass, afterClass)
@@ -3136,12 +4984,15 @@ func drivewayConnectorsSupported(portions []TraversedPortion, graph compiledGrap
 			roadJoin = j - 1
 		}
 		for k := i; k < j; k++ {
+			if graph.canceled(&checks) {
+				return false
+			}
 			segment := graph.segments[portions[k].SegmentID]
 			length := portions[k].ToMeter - portions[k].FromMeter
 			if k == roadJoin && length <= maxDrivewayRoadJoinMeters {
 				continue
 			}
-			if !rawPolylineSupportsDirectedSegment(observations[windowStart:windowEnd], segment, maximumDegrees) {
+			if !graph.rawPolylineSupportsDirectedSegment(observations[windowStart:windowEnd], segment, maximumDegrees) {
 				return false
 			}
 		}
@@ -3150,11 +5001,16 @@ func drivewayConnectorsSupported(portions []TraversedPortion, graph compiledGrap
 	return true
 }
 
-func rawPolylineSupportsDirectedSegment(observations []Observation, segment DirectedSegment, maximumDegrees float64) bool {
-	return rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, 10)
+func (graph compiledGraph) rawPolylineSupportsDirectedSegment(observations []Observation, segment DirectedSegment, maximumDegrees float64) bool {
+	return graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, 10)
 }
 
-func rawPolylineSupportsDirectedSegmentWithin(observations []Observation, segment DirectedSegment, maximumDegrees, maximumOffsetMeters float64) bool {
+func (graph compiledGraph) rawPolylineSupportsDirectedSegmentWithin(observations []Observation, segment DirectedSegment, maximumDegrees, maximumOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	geometryLength := distance(segment.From, segment.To)
 	if geometryLength <= 0 || segment.LengthMeters <= 0 {
 		return false
@@ -3162,18 +5018,24 @@ func rawPolylineSupportsDirectedSegmentWithin(observations []Observation, segmen
 	startLimit, endLimit := segment.LengthMeters*0.2, segment.LengthMeters*0.8
 	segmentHeading := math.Atan2(segment.To.X-segment.From.X, segment.To.Y-segment.From.Y) * 180 / math.Pi
 	for i := 0; i+1 < len(observations); i++ {
+		if graph.canceled(&checks) {
+			return false
+		}
 		startAlong, startDistance := segmentProjection(observations[i].Point, segment, geometryLength)
 		if startDistance > maximumOffsetMeters || startAlong > startLimit {
 			continue
 		}
 		for j := i + 1; j < len(observations); j++ {
+			if graph.canceled(&checks) {
+				return false
+			}
 			endAlong, endDistance := segmentProjection(observations[j].Point, segment, geometryLength)
 			if endDistance > maximumOffsetMeters || endAlong < endLimit || endAlong-startAlong < segment.LengthMeters*0.6 {
 				continue
 			}
 			rawHeading := math.Atan2(observations[j].Point.X-observations[i].Point.X, observations[j].Point.Y-observations[i].Point.Y) * 180 / math.Pi
 			if angularDifference(rawHeading, segmentHeading) <= maximumDegrees &&
-				rawSpanFollowsDirectedSegment(observations[i:j+1], segment, geometryLength, maximumOffsetMeters) {
+				graph.rawSpanFollowsDirectedSegment(observations[i:j+1], segment, geometryLength, maximumOffsetMeters) {
 				return true
 			}
 		}
@@ -3181,9 +5043,17 @@ func rawPolylineSupportsDirectedSegmentWithin(observations []Observation, segmen
 	return false
 }
 
-func rawSpanFollowsDirectedSegment(observations []Observation, segment DirectedSegment, geometryLength, maximumOffsetMeters float64) bool {
+func (graph compiledGraph) rawSpanFollowsDirectedSegment(observations []Observation, segment DirectedSegment, geometryLength, maximumOffsetMeters float64) bool {
+	if graph.err() != nil {
+		return false
+	}
+	var checks uint
+
 	previousAlong := -math.Inf(1)
 	for _, observation := range observations {
+		if graph.canceled(&checks) {
+			return false
+		}
 		along, offset := segmentProjection(observation.Point, segment, geometryLength)
 		if offset > maximumOffsetMeters || along+2 < previousAlong {
 			return false
@@ -3300,3 +5170,11 @@ func candidateKey(candidate Candidate) string {
 }
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+
+func endpointRawSupported(observations []Observation, endpoint Point, maximumOffsetMeters, minimumApproachMeters float64) bool {
+	return (compiledGraph{}).endpointRawSupported(observations, endpoint, maximumOffsetMeters, minimumApproachMeters)
+}
+
+func cancelTraversalBoundaryBacktracks(result *Result, epsilon float64) {
+	(compiledGraph{}).cancelTraversalBoundaryBacktracks(result, epsilon)
+}

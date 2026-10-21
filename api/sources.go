@@ -82,12 +82,17 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 	if !ok || !requireCSRF(w, r, session, params.XCSRFToken) {
 		return
 	}
-	var union generated.SourceCreate
-	if !decodeJSON(w, r, &union) {
+	// Keep adapter JSON intact so strict decoding sees duplicate, unknown, and null fields.
+	var input struct {
+		DisplayName     string          `json:"displayName"`
+		Type            string          `json:"type"`
+		AutoSyncEnabled bool            `json:"autoSyncEnabled"`
+		Config          json.RawMessage `json:"config"`
+	}
+	if !decodeJSON(w, r, &input) {
 		return
 	}
-	input, err := union.AsHealthAutoExportLocalSourceCreate()
-	if err != nil || input.Type != generated.HealthAutoExportLocalSourceCreateTypeHealthAutoExportLocal {
+	if input.Type != sourceconfig.LocalType && input.Type != sourceconfig.ICloudType {
 		writeFieldError(w, r, "type", "invalid", "source type is invalid")
 		return
 	}
@@ -96,7 +101,7 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 		writeFieldError(w, r, "displayName", "invalid", "display name is invalid")
 		return
 	}
-	local, configJSON, err := sourceconfig.CanonicalizeLocal(sourceconfig.Local{Version: int(input.Config.Version), Path: input.Config.Path}, s.config.LocalSourceRoots)
+	configJSON, err := sourceconfig.Canonicalize(input.Type, input.Config, s.config.LocalSourceRoots)
 	if err != nil {
 		writeFieldError(w, r, "config", "invalid", "source configuration is invalid")
 		return
@@ -116,7 +121,7 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 	var createdAt, updatedAt time.Time
 	if err == nil {
 		defer tx.Rollback(r.Context())
-		err = tx.QueryRow(r.Context(), `INSERT INTO app.sources(id,account_id,display_name,canonical_display_name,type,auto_sync_enabled,status,generation,config_envelope) VALUES($1,$2,$3,$4,$5,$6,'checking-connection',1,$7) RETURNING created_at,updated_at`, sourceID, *session.accountID, display, canonical, sourceconfig.LocalType, input.AutoSyncEnabled, sourceEnvelope).Scan(&createdAt, &updatedAt)
+		err = tx.QueryRow(r.Context(), `INSERT INTO app.sources(id,account_id,display_name,canonical_display_name,type,auto_sync_enabled,status,generation,config_envelope) VALUES($1,$2,$3,$4,$5,$6,'checking-connection',1,$7) RETURNING created_at,updated_at`, sourceID, *session.accountID, display, canonical, input.Type, input.AutoSyncEnabled, sourceEnvelope).Scan(&createdAt, &updatedAt)
 		if err == nil {
 			err = enqueueSourceConnectionCheck(r.Context(), tx, *session.accountID, sourceID, 1, jobID, snapshotEnvelope, requestIDFrom(r.Context()))
 		}
@@ -133,7 +138,12 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 		return
 	}
 	w.Header().Set("Location", "/api/sources/"+compactUUID(sourceID))
-	writeJSON(w, http.StatusCreated, generated.Source{Id: compactUUID(sourceID), DisplayName: display, Type: generated.SourceType(sourceconfig.LocalType), AutoSyncEnabled: input.AutoSyncEnabled, Status: generated.SourceStatusCheckingConnection, Generation: 1, Config: generated.HealthAutoExportLocalConfig{Version: generated.HealthAutoExportLocalConfigVersion(local.Version), Path: local.Path}, CreatedAt: createdAt, UpdatedAt: updatedAt})
+	response, err := s.sourceResponse(*session.accountID, sourceRecord{id: sourceID, displayName: display, typeName: input.Type, autoSyncEnabled: input.AutoSyncEnabled, status: "checking-connection", generation: 1, configEnvelope: sourceEnvelope, createdAt: createdAt, updatedAt: updatedAt})
+	if err != nil {
+		writeSourceUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (s *Server) GetSource(w http.ResponseWriter, r *http.Request, sourceID generated.SourceID) {
@@ -173,7 +183,11 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "source ID is invalid")
 		return
 	}
-	var patch generated.SourcePatch
+	var patch struct {
+		DisplayName     *string         `json:"displayName"`
+		AutoSyncEnabled *bool           `json:"autoSyncEnabled"`
+		Config          json.RawMessage `json:"config"`
+	}
 	if !decodeJSON(w, r, &patch) {
 		return
 	}
@@ -213,14 +227,22 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 		writeSourceUnavailable(w, r)
 		return
 	}
-	_, currentJSON, err := sourceconfig.DecodeLocal(plaintext, s.config.LocalSourceRoots)
+	currentJSON, err := sourceconfig.Canonicalize(record.typeName, plaintext, s.config.LocalSourceRoots)
 	if err != nil {
 		writeSourceUnavailable(w, r)
 		return
 	}
 	configJSON := currentJSON
 	if patch.Config != nil {
-		_, configJSON, err = sourceconfig.CanonicalizeLocal(sourceconfig.Local{Version: int(patch.Config.Version), Path: patch.Config.Path}, s.config.LocalSourceRoots)
+		if record.typeName == sourceconfig.ICloudType {
+			var current sourceconfig.ICloud
+			current, _, err = sourceconfig.DecodeICloud(currentJSON)
+			if err == nil {
+				_, configJSON, err = sourceconfig.MergeICloud(current, patch.Config)
+			}
+		} else {
+			configJSON, err = sourceconfig.Canonicalize(record.typeName, patch.Config, s.config.LocalSourceRoots)
+		}
 		if err != nil {
 			writeFieldError(w, r, "config", "invalid", "source configuration is invalid")
 			return
@@ -338,18 +360,37 @@ func scanSource(row sourceScanner) (sourceRecord, error) {
 }
 
 func (s *Server) sourceResponse(accountID uuid.UUID, record sourceRecord) (generated.Source, error) {
-	if record.typeName != sourceconfig.LocalType {
-		return generated.Source{}, errors.New("unsupported source type")
-	}
 	plaintext, err := s.sourceKeys.Decrypt(sourcecrypto.Context{Purpose: sourcecrypto.SourceConfig, AccountID: accountID, RecordID: record.id}, record.configEnvelope)
 	if err != nil {
 		return generated.Source{}, err
 	}
-	local, _, err := sourceconfig.DecodeLocal(plaintext, s.config.LocalSourceRoots)
-	if err != nil {
-		return generated.Source{}, err
+	var public generated.SourcePublicConfig
+	switch record.typeName {
+	case sourceconfig.LocalType:
+		local, _, decodeErr := sourceconfig.DecodeLocal(plaintext, s.config.LocalSourceRoots)
+		if decodeErr != nil {
+			return generated.Source{}, decodeErr
+		}
+		public = generated.SourcePublicConfig{Version: generated.SourcePublicConfigVersion(local.Version), Path: local.Path}
+	case sourceconfig.ICloudType:
+		icloud, _, decodeErr := sourceconfig.DecodeICloud(plaintext)
+		if decodeErr != nil {
+			return generated.Source{}, decodeErr
+		}
+		public = generated.SourcePublicConfig{Version: generated.SourcePublicConfigVersion(icloud.Version), Path: icloud.Path}
+		if icloud.ClientID != "" {
+			public.ClientId = &icloud.ClientID
+		}
+	default:
+		return generated.Source{}, errors.New("unsupported source type")
 	}
-	return generated.Source{Id: compactUUID(record.id), DisplayName: record.displayName, Type: generated.SourceType(record.typeName), AutoSyncEnabled: record.autoSyncEnabled, Status: generated.SourceStatus(record.status), Generation: record.generation, Config: generated.HealthAutoExportLocalConfig{Version: generated.HealthAutoExportLocalConfigVersion(local.Version), Path: local.Path}, StatusCode: record.statusCode, StatusSummary: record.statusSummary, CheckedAt: record.checkedAt, CreatedAt: record.createdAt, UpdatedAt: record.updatedAt}, nil
+	response := generated.Source{Id: compactUUID(record.id), DisplayName: record.displayName, Type: generated.SourceType(record.typeName), AutoSyncEnabled: record.autoSyncEnabled, Status: generated.SourceStatus(record.status), Generation: record.generation, Config: public, StatusCode: record.statusCode, StatusSummary: record.statusSummary, CheckedAt: record.checkedAt, CreatedAt: record.createdAt, UpdatedAt: record.updatedAt}
+	if record.typeName == sourceconfig.ICloudType {
+		err = response.FromHealthAutoExportICloudSourcePublic(generated.HealthAutoExportICloudSourcePublic{Config: public})
+	} else {
+		err = response.FromHealthAutoExportLocalSourcePublic(generated.HealthAutoExportLocalSourcePublic{Config: generated.HealthAutoExportLocalConfig{Version: generated.HealthAutoExportLocalConfigVersion(public.Version), Path: public.Path}})
+	}
+	return response, err
 }
 
 func enqueueSourceConnectionCheck(ctx context.Context, tx pgx.Tx, accountID, sourceID uuid.UUID, generation int64, jobID uuid.UUID, envelope []byte, requestID string) error {

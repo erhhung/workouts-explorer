@@ -3,13 +3,15 @@ package migrations
 import (
 	"fmt"
 	"iter"
+	"regexp"
 	stdstrings "strings"
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
+	"github.com/erhhung/workouts-explorer/internal/testutil/migrationfixture"
 )
 
-var strings = struct {
+var sqlStrings = struct {
 	Contains  func(string, string) bool
 	Count     func(string, string) int
 	HasPrefix func(string, string) bool
@@ -41,6 +43,14 @@ var migrationFiles = []string{
 	"015_coverage_route_jobs.sql", "016_durable_route_coverage.sql", "017_coverage_reconciliation.sql",
 	"018_park_attribution.sql", "019_coverage_explorer_reads.sql",
 	"020_facility_coverage_identity.sql",
+	"021_icloud_sources.sql",
+	"022_legacy_coverage_bootstrap.sql",
+	"023_coordinated_coverage_readers.sql",
+	"024_provider_workout_identity.sql",
+	"025_owner_aware_source_inventory.sql",
+	"026_adopted_workout_coverage.sql",
+	"027_coverage_recovery_baseline.sql",
+	"028_ingest_coverage_pipeline.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {
@@ -50,12 +60,137 @@ func TestMigrationFilesAreSequential(t *testing.T) {
 	}
 	actual := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+		if !entry.IsDir() && sqlStrings.HasSuffix(entry.Name(), ".sql") {
 			actual = append(actual, entry.Name())
 		}
 	}
-	if strings.Join(actual, "\n") != strings.Join(migrationFiles, "\n") {
-		t.Fatalf("migration files are not the expected sequential set:\n%s", strings.Join(actual, "\n"))
+	if sqlStrings.Join(actual, "\n") != sqlStrings.Join(migrationFiles, "\n") {
+		t.Fatalf("migration files are not the expected sequential set:\n%s", sqlStrings.Join(actual, "\n"))
+	}
+}
+
+func TestCanonicalCoveragePhasesAreOrderedStaticSQL(t *testing.T) {
+	source, err := Files.ReadFile(migrationfixture.CanonicalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := -1
+	for _, phase := range []string{migrationfixture.RouteCounts, migrationfixture.AutoRetries,
+		migrationfixture.RuntimeCapability, migrationfixture.DiagnosticLimits,
+		migrationfixture.RetryPresentation, migrationfixture.CanonicalMetadata} {
+		body, err := migrationfixture.PhaseSQL(Files, phase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := stdstrings.Index(string(source), "-- coverage-contract:"+phase+":begin\n")
+		if index <= previous || len(body) == 0 {
+			t.Fatalf("canonical phase %s is empty or out of order", phase)
+		}
+		previous = index
+		if phase != migrationfixture.CanonicalMetadata && sqlStrings.Contains(string(body), "UPDATE app.schema_metadata") {
+			t.Fatalf("feature checkpoint %s changes schema metadata", phase)
+		}
+	}
+	for _, forbidden := range []string{"initial_version", "WithAllowMissing", "coverage-baseline:begin", "Code generated"} {
+		if stdstrings.Contains(string(source), forbidden) {
+			t.Fatalf("canonical SQL retains dispatch machinery %q", forbidden)
+		}
+	}
+	metadata, err := migrationfixture.PhaseSQL(Files, migrationfixture.CanonicalMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sqlStrings.Contains(string(metadata), "schema_version = 27") || !sqlStrings.Contains(string(metadata), "migration_baseline = 27") {
+		t.Fatal("canonical metadata must establish only version/marker27")
+	}
+}
+
+func TestCoverageRecoveryBaselineRetainsFeatureContracts(t *testing.T) {
+	source, err := Files.ReadFile("027_coverage_recovery_baseline.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"workouts_created_with_route", "workouts_updated_with_route", "has_route",
+		"record_ingest_progress", "refresh_ingest_route_counts",
+		"coverage_retry_roots", "coverage_retry_attempts", "coverage_retry_failure_enrollment",
+		"retry_next_coverage_update", "coverage_auto_retry_parent_eligible",
+		"read_ingest_candidate_actions", "capability.runtime_version",
+		"capability.backend_pid = pg_backend_pid()", "capability.transaction_id = txid_current()",
+		"original_point_count BETWEEN 0 AND 50000", "sampled_point_count BETWEEN 0 AND 12000",
+		"read_coverage_retry_eligibility", "read_job_history", "already_current", "superseded",
+		"migration_baseline", "minimum_runtime_version = 26",
+	} {
+		if !sqlStrings.Contains(string(source), required) {
+			t.Errorf("active coverage baseline lacks %q", required)
+		}
+	}
+}
+
+func TestICloudMigrationContract(t *testing.T) {
+	source, err := Files.ReadFile("021_icloud_sources.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := stdstrings.Split(string(source), "-- +goose Down")
+	for _, required := range []string{
+		"health-auto-export-icloud", "ADD COLUMN observed_identity text", "^v2:rclone:[0-9a-f]{64}$",
+		"schema_version = 21, minimum_runtime_version = 21", "GRANT UPDATE(generation) ON app.sources TO workouts_security_owner",
+		"CREATE FUNCTION app.valid_source_config_envelope", "CREATE FUNCTION app.lock_source_job_for_credentials",
+		"CREATE FUNCTION app.read_typed_job_source_snapshot", "CREATE FUNCTION app.refresh_source_credentials",
+		"CREATE FUNCTION app.finish_connection_check_with_refresh", "CREATE FUNCTION app.fail_source_connection",
+	} {
+		if !sqlStrings.Contains(parts[0], required) {
+			t.Errorf("iCloud migration is missing %q", required)
+		}
+	}
+	typed := functionBody(t, parts[0], "CREATE FUNCTION app.read_typed_job_source_snapshot")
+	if !sqlStrings.Contains(typed, "app.read_job_config_snapshot") || sqlStrings.Contains(typed, "job_source_contexts") {
+		t.Fatal("typed snapshot must use the existing lease fence and immutable source type")
+	}
+	fence := functionBody(t, parts[0], "CREATE FUNCTION app.lock_source_job_for_credentials")
+	previous := -1
+	for _, lock := range []string{"FROM app.accounts account", "FROM app.sources source", "FROM app.jobs parent", "FROM app.jobs job\n      JOIN app.job_config_snapshots"} {
+		index := stdstrings.Index(fence, lock)
+		if index <= previous {
+			t.Fatalf("credential fence lock order is missing or inverted at %q", lock)
+		}
+		previous = index
+	}
+	for _, forbidden := range []string{
+		"UPDATE app.job_config_snapshots", "UPDATE app.job_source_contexts", "GRANT UPDATE ON app.sources TO workouts_worker",
+		"DROP FUNCTION app.read_job_config_snapshot", "DROP FUNCTION app.complete_source_connection_check",
+	} {
+		if sqlStrings.Contains(parts[0], forbidden) {
+			t.Errorf("iCloud migration contains forbidden behavior %q", forbidden)
+		}
+	}
+	if !sqlStrings.Contains(parts[1], "forward-only") || !sqlStrings.Contains(parts[1], "ERRCODE = '55000'") {
+		t.Fatal("iCloud migration must reject unsafe downgrade")
+	}
+	refresh := functionBody(t, parts[0], "CREATE FUNCTION app.refresh_source_credentials")
+	if !sqlStrings.Contains(refresh, "fence.job_kind NOT IN ('manual_ingest_source','scheduled_ingest_source')") {
+		t.Fatal("standalone refresh must reject connection-check jobs")
+	}
+	for _, declaration := range []string{
+		"CREATE OR REPLACE FUNCTION app.claim_next_worker_job",
+		"CREATE FUNCTION app.claim_due_sync_account",
+	} {
+		body := functionBody(t, parts[0], declaration)
+		if !sqlStrings.Contains(body, "runtime_version >= 21 AND runtime_version >= metadata.minimum_runtime_version") {
+			t.Errorf("%s does not fence obsolete runtime claims", declaration)
+		}
+	}
+	for _, declaration := range []string{
+		"CREATE OR REPLACE FUNCTION app.read_leased_sync_sources",
+		"CREATE FUNCTION app.enqueue_leased_scheduled_ingest",
+		"CREATE FUNCTION app.finish_sync_account",
+	} {
+		body := functionBody(t, parts[0], declaration)
+		if !sqlStrings.Contains(body, "schedule.lease_runtime_version >= 21") ||
+			!sqlStrings.Contains(body, "SELECT minimum_runtime_version FROM app.schema_metadata WHERE singleton") {
+			t.Errorf("%s permits an obsolete scheduler lease", declaration)
+		}
 	}
 }
 
@@ -73,7 +208,7 @@ func TestMigrationFailsClosedOnRolesAndPrivileges(t *testing.T) {
 		"REVOKE CREATE ON SCHEMA public FROM PUBLIC",
 		"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM PUBLIC",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("migration is missing security foundation %q", required)
 		}
 	}
@@ -86,10 +221,22 @@ func TestProceduralStatementsAreProtectedFromGooseSplitting(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(source)
-		proceduralStatements := strings.Count(text, "CREATE FUNCTION ") + strings.Count(text, "CREATE OR REPLACE FUNCTION ") +
-			strings.Count(text, "CREATE PROCEDURE ") + strings.Count(text, "CREATE OR REPLACE PROCEDURE ") + strings.Count(text, "\nDO $")
-		starts := strings.Count(text, "-- +goose StatementBegin")
-		ends := strings.Count(text, "-- +goose StatementEnd")
+		if name == "027_coverage_recovery_baseline.sql" {
+			parts := stdstrings.Split(text, "-- +goose Down")
+			if len(parts) != 2 {
+				t.Fatal("canonical SQL must have one Up/Down boundary")
+			}
+			for _, part := range parts {
+				if stdstrings.Count(part, "-- +goose StatementBegin") != 1 || stdstrings.Count(part, "-- +goose StatementEnd") != 1 {
+					t.Fatal("canonical SQL must protect each direction as one Goose statement")
+				}
+			}
+			continue
+		}
+		// Quoted definitions used by migration rewrites are not new statements.
+		proceduralStatements := len(regexp.MustCompile(`(?m)^\s*(?:CREATE(?: OR REPLACE)? (?:FUNCTION|PROCEDURE) |DO \$)`).FindAllStringIndex(text, -1))
+		starts := sqlStrings.Count(text, "-- +goose StatementBegin")
+		ends := sqlStrings.Count(text, "-- +goose StatementEnd")
 		if starts != proceduralStatements || ends != proceduralStatements {
 			t.Fatalf("%s: procedural statements = %d, StatementBegin = %d, StatementEnd = %d", name, proceduralStatements, starts, ends)
 		}
@@ -112,16 +259,16 @@ func TestMartinTileContractMigration(t *testing.T) {
 		"GRANT CREATE ON SCHEMA app TO workouts_security_owner", "REVOKE CREATE ON SCHEMA app FROM workouts_security_owner",
 		"schema_version=14,minimum_runtime_version=14", "schema_version=13,minimum_runtime_version=12",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("Martin tile migration is missing %q", required)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
 	for _, forbidden := range []string{
 		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,json) TO workouts_api",
 		"GRANT SELECT ON app.workout_routes TO workouts_tiles",
 	} {
-		if strings.Contains(up, forbidden) {
+		if sqlStrings.Contains(up, forbidden) {
 			t.Fatalf("Martin tile migration contains unsafe contract %q", forbidden)
 		}
 	}
@@ -144,7 +291,7 @@ func TestMartinTilePrefilterAndPrivateScopeContract(t *testing.T) {
 			"workout.deletion_requested_at IS NULL AND route.route IS NOT NULL",
 			"route.route && ST_Transform(bounds, 4326)",
 		} {
-			if !strings.Contains(branch, required) {
+			if !sqlStrings.Contains(branch, required) {
 				t.Errorf("tile branch is missing %q", required)
 			}
 		}
@@ -160,14 +307,14 @@ func TestMartinTilePrefilterAndPrivateScopeContract(t *testing.T) {
 		"ST_StartPoint(component.geom)", "ST_Length(component.geom) = 0",
 		"component.geom && ST_Transform(bounds, 4326)", "RETURN COALESCE(tile, ''::bytea)",
 	} {
-		if !strings.Contains(body, required) {
+		if !sqlStrings.Contains(body, required) {
 			t.Errorf("Martin tile function is missing %q", required)
 		}
 	}
 	if stdstrings.Count(parts[1], "AND route.route && ST_Transform(bounds, 4326)") != 1 {
 		t.Fatal("014 Down must retain the original schema-13 marker branch")
 	}
-	if strings.Contains(body, "MATERIALIZED") {
+	if sqlStrings.Contains(body, "MATERIALIZED") {
 		t.Fatal("raw tile prefilter must not introduce a materialized CTE")
 	}
 }
@@ -190,7 +337,7 @@ func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION app.persist_coverage_diagnostic", "schema_version=13,minimum_runtime_version=12",
 		"coverage_diagnostics_enabled boolean NOT NULL DEFAULT false",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("diagnostic migration is missing %q", required)
 		}
 	}
@@ -198,7 +345,7 @@ func TestCoverageMatcherDiagnosticsMigrationContract(t *testing.T) {
 		"GRANT INSERT ON app.coverage_diagnostic", "GRANT UPDATE ON app.coverage_diagnostic",
 		"advance_account_data_generation", "state.route_input_revision=target_revision", "state.route_input_sha256=target_digest",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Errorf("diagnostic migration contains forbidden behavior %q", forbidden)
 		}
 	}
@@ -235,16 +382,16 @@ func TestCoverageRouteJobsMigrationContract(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION app.current_account_id(),app.heartbeat_job",
 		"schema_version=15,minimum_runtime_version=14", "cannot downgrade while coverage jobs exist",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("coverage route jobs migration is missing %q", required)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
-	if strings.Contains(up, "GRANT SELECT ON app.jobs TO workouts_coverage_worker") {
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
+	if sqlStrings.Contains(up, "GRANT SELECT ON app.jobs TO workouts_coverage_worker") {
 		t.Fatal("coverage worker must not receive broad job reads")
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
-	if !strings.Contains(down, "REVOKE SELECT (id,account_id,kind,status,cancel_requested_at,worker_id,lease_token,lease_expires_at,created_at,attempt,retry_of_job_id) ON app.jobs FROM workouts_coverage_worker") {
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
+	if !sqlStrings.Contains(down, "REVOKE SELECT (id,account_id,kind,status,cancel_requested_at,worker_id,lease_token,lease_expires_at,created_at,attempt,retry_of_job_id) ON app.jobs FROM workouts_coverage_worker") {
 		t.Fatal("coverage route jobs Down must revoke every column-level job read grant")
 	}
 }
@@ -264,7 +411,7 @@ func TestDurableRouteCoverageMigrationContract(t *testing.T) {
 		"coverage match is outside the target generation vector", "first_route_order",
 		"REVOKE ALL ON FUNCTION", "schema_version=16,minimum_runtime_version=15",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("durable route coverage migration is missing %q", required)
 		}
 	}
@@ -294,7 +441,7 @@ func TestCoverageReconciliationMigrationContract(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION app.coverage_mvt",
 		"schema_version=17,minimum_runtime_version=16",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("coverage reconciliation migration is missing %q", required)
 		}
 	}
@@ -316,15 +463,15 @@ func TestParkAttributionMigrationContract(t *testing.T) {
 		"local-park-attributed unnamed segments exclusively", "regional park as display context in migration 019",
 		"schema_version=18,minimum_runtime_version=17",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("park attribution migration is missing %q", required)
 		}
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
 	for _, explorerObject := range []string{
 		"map_selection_coverage_entities", "map_selection_coverage_entity_detail", "focused_workout_id",
 	} {
-		if strings.Contains(down, explorerObject) {
+		if sqlStrings.Contains(down, explorerObject) {
 			t.Errorf("park attribution Down references later explorer object %q", explorerObject)
 		}
 	}
@@ -358,21 +505,21 @@ func TestCoverageExplorerReadsMigrationContract(t *testing.T) {
 		"coverage.applied_route_input_revision IS NOT NULL",
 		"schema_version=19,minimum_runtime_version=18", "schema_version=18,minimum_runtime_version=17",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Errorf("coverage explorer migration is missing %q", required)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
-	if strings.Contains(up, "GRANT EXECUTE ON FUNCTION app.coverage_mvt(integer,integer,integer,json) TO workouts_api") {
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
+	if sqlStrings.Contains(up, "GRANT EXECUTE ON FUNCTION app.coverage_mvt(integer,integer,integer,json) TO workouts_api") {
 		t.Fatal("coverage tile function is executable by the API role")
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
-	restore := strings.Index(down, "EXECUTE saved_definition")
-	dropExplorer := strings.Index(down, "DROP FUNCTION app.map_selection_coverage_entity_detail")
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
+	restore := sqlStrings.Index(down, "EXECUTE saved_definition")
+	dropExplorer := sqlStrings.Index(down, "DROP FUNCTION app.map_selection_coverage_entity_detail")
 	if restore < 0 || dropExplorer < 0 || restore > dropExplorer {
 		t.Fatal("coverage explorer Down does not restore migration-017 coverage_mvt before removing explorer functions")
 	}
-	if strings.Contains(down, "DROP FUNCTION app.coverage_mvt") {
+	if sqlStrings.Contains(down, "DROP FUNCTION app.coverage_mvt") {
 		t.Fatal("coverage explorer Down removes migration-017 coverage_mvt")
 	}
 }
@@ -382,7 +529,7 @@ func TestFacilityCoverageIdentityMigrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up := strings.Split(string(source), "-- +goose Down")[0]
+	up := sqlStrings.Split(string(source), "-- +goose Down")[0]
 	for _, declaration := range []string{"CREATE OR REPLACE FUNCTION app.coverage_mvt", "CREATE OR REPLACE FUNCTION app.map_selection_coverage_focus"} {
 		body := functionBody(t, up, declaration)
 		for _, required := range []string{
@@ -396,11 +543,11 @@ func TestFacilityCoverageIdentityMigrationContract(t *testing.T) {
 			"segment.tags->>'amenity' IS DISTINCT FROM 'parking'",
 			"path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park') OR NOT (segment.tags ? 'workouts:park_id')",
 		} {
-			if !strings.Contains(body, required) {
+			if !sqlStrings.Contains(body, required) {
 				t.Errorf("%s is missing %q", declaration, required)
 			}
 		}
-		if strings.Contains(body, "GROUP BY match.logical_path_id") || strings.Contains(body, "GROUP BY checked.logical_path_id") {
+		if sqlStrings.Contains(body, "GROUP BY match.logical_path_id") || sqlStrings.Contains(body, "GROUP BY checked.logical_path_id") {
 			t.Errorf("%s still groups by raw path identity", declaration)
 		}
 	}
@@ -418,7 +565,7 @@ func TestFacilityCoverageIdentityMigrationContract(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION app.map_selection_coverage_entity_detail(uuid, uuid, uuid, bigint, text, uuid) TO workouts_api",
 		"schema_version = 20, minimum_runtime_version = 18",
 	} {
-		if !strings.Contains(up, required) {
+		if !sqlStrings.Contains(up, required) {
 			t.Errorf("education identity migration is missing %q", required)
 		}
 	}
@@ -427,15 +574,15 @@ func TestFacilityCoverageIdentityMigrationContract(t *testing.T) {
 		"COALESCE(NULLIF(segment.tags->>'workouts:education_id', '')::uuid, match.logical_path_id) = metadata.entity_id",
 		"path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park') OR NOT (segment.tags ? 'workouts:park_id')",
 	} {
-		if !strings.Contains(detail, required) {
+		if !sqlStrings.Contains(detail, required) {
 			t.Errorf("education detail is missing %q", required)
 		}
 	}
-	if strings.Contains(detail, "match.logical_path_id = metadata.entity_id OR") || strings.Contains(detail, "metadata.name IS NOT NULL OR") {
+	if sqlStrings.Contains(detail, "match.logical_path_id = metadata.entity_id OR") || sqlStrings.Contains(detail, "metadata.name IS NOT NULL OR") {
 		t.Fatal("detail geometry uses raw identity or aggregated name for segment eligibility")
 	}
-	down := strings.Split(string(source), "-- +goose Down")[1]
-	if !strings.Contains(down, "EXECUTE saved_definition") || !strings.Contains(down, "schema_version = 19, minimum_runtime_version = 18") {
+	down := sqlStrings.Split(string(source), "-- +goose Down")[1]
+	if !sqlStrings.Contains(down, "EXECUTE saved_definition") || !sqlStrings.Contains(down, "schema_version = 19, minimum_runtime_version = 18") {
 		t.Fatal("education identity Down does not restore 019 functions and metadata")
 	}
 }
@@ -457,12 +604,12 @@ func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
 		"desired_osm_generation", "TO workouts_worker", "GRANT SELECT ON app.workout_coverage_states,app.workout_coverage_regions TO workouts_api",
 		"schema_version=15,minimum_runtime_version=14", "schema_version=14,minimum_runtime_version=14",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("coverage readiness migration is missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{"GRANT INSERT ON app.workout_coverage", "GRANT UPDATE ON app.workout_coverage", "TO workouts_api,workouts_worker"} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("coverage readiness migration contains unsafe grant %q", forbidden)
 		}
 	}
@@ -489,17 +636,17 @@ func TestWorkoutTimezoneMigrationContract(t *testing.T) {
 		"DROP POLICY workout_timezone_capabilities_owner_policy", "DROP TABLE app.timezone_migration_function_backup",
 		"schema_version=12,minimum_runtime_version=11", "schema_version=11,minimum_runtime_version=8",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("workout timezone migration is missing %q", required)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
 	applyTimezone := functionBody(t, up, "CREATE FUNCTION app.apply_workout_timezone")
-	if strings.Contains(applyTimezone, "app.ingest_write_capabilities") ||
-		!strings.Contains(applyTimezone, "app.workout_timezone_write_capabilities") {
+	if sqlStrings.Contains(applyTimezone, "app.ingest_write_capabilities") ||
+		!sqlStrings.Contains(applyTimezone, "app.workout_timezone_write_capabilities") {
 		t.Fatal("timezone writer does not use its dedicated transaction capability")
 	}
-	if strings.Contains(text, "schema_version=13") || strings.Contains(text, "minimum_runtime_version=12") {
+	if sqlStrings.Contains(text, "schema_version=13") || sqlStrings.Contains(text, "minimum_runtime_version=12") {
 		t.Fatal("folded timezone migration still advertises schema 13")
 	}
 }
@@ -516,7 +663,7 @@ func TestWorkoutSplitPaceMigrationContract(t *testing.T) {
 		"capability.transaction_id=txid_current()", "GRANT EXECUTE ON FUNCTION app.replace_workout_split_summary",
 		"schema_version=11,minimum_runtime_version=8", "schema_version=10,minimum_runtime_version=8",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("workout split pace migration is missing %q", required)
 		}
 	}
@@ -533,7 +680,7 @@ func TestOwnerFileFailureLogMigrationContract(t *testing.T) {
 		"job.lease_token=current_lease_token", "'source-file-failed'", "GRANT EXECUTE ON FUNCTION app.record_source_file_failure_log",
 		"ALTER FUNCTION app.record_source_file_failure_log", "DROP FUNCTION app.record_source_file_failure_log",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("owner file failure log migration is missing %q", required)
 		}
 	}
@@ -560,14 +707,14 @@ func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
 		"OWNER TO workouts_security_owner", "schema_version=10,minimum_runtime_version=8",
 		"schema_version=9,minimum_runtime_version=8", "geometry(LineString,4326)",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("segmented route migration is missing %q", required)
 		}
 	}
-	if strings.Contains(text, "GRANT EXECUTE ON FUNCTION app.build_segmented_workout_route") {
+	if sqlStrings.Contains(text, "GRANT EXECUTE ON FUNCTION app.build_segmented_workout_route") {
 		t.Fatal("segmented route helper must not be directly executable by application roles")
 	}
-	if stdstrings.Count(compactSQL(strings.Split(text, "-- +goose Down")[0]), compactSQL("ST_AsMVT(tile_rows,'routes',4096,'geometry')")) != 1 {
+	if stdstrings.Count(compactSQL(sqlStrings.Split(text, "-- +goose Down")[0]), compactSQL("ST_AsMVT(tile_rows,'routes',4096,'geometry')")) != 1 {
 		t.Fatal("route lines and zero-length markers must share one authorized MVT layer")
 	}
 }
@@ -597,7 +744,7 @@ func TestRawRouteMapMigrationContainsSecurityBoundaries(t *testing.T) {
 		"schema_version=9,minimum_runtime_version=8", "schema_version=8,minimum_runtime_version=8",
 		"PostGIS may be shared by later schemas and is intentionally not dropped",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("raw route map migration is missing %q", required)
 		}
 	}
@@ -606,17 +753,17 @@ func TestRawRouteMapMigrationContainsSecurityBoundaries(t *testing.T) {
 		"GRANT SELECT ON app.map_selections TO workouts_tiles", "GRANT UPDATE ON app.map_selections TO workouts_api",
 		"GRANT EXECUTE ON FUNCTION app.raw_route_mvt(integer,integer,integer,uuid,uuid,uuid,bigint) TO workouts_api",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("raw route map migration contains unsafe contract %q", forbidden)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
 	replace := functionBody(t, up, "CREATE OR REPLACE FUNCTION app.replace_workout_route_summary")
-	if !strings.Contains(replace, "new_route geometry") || !strings.Contains(replace, "route=EXCLUDED.route") {
+	if !sqlStrings.Contains(replace, "new_route geometry") || !sqlStrings.Contains(replace, "route=EXCLUDED.route") {
 		t.Fatal("route summary replacement does not preserve its signature while rebuilding geometry")
 	}
 	tile := functionBody(t, up, "CREATE FUNCTION app.raw_route_mvt")
-	if !strings.Contains(tile, "route.route && ST_Transform(bounds,4326)") || !strings.Contains(tile, "workout.deletion_requested_at IS NULL") {
+	if !sqlStrings.Contains(tile, "route.route && ST_Transform(bounds,4326)") || !sqlStrings.Contains(tile, "workout.deletion_requested_at IS NULL") {
 		t.Fatal("raw route tile function lacks indexed spatial or logical-deletion filtering")
 	}
 }
@@ -652,7 +799,7 @@ func TestDurableWorkoutDeletionMigrationContainsSecurityBoundaries(t *testing.T)
 		"workout deletion tombstones are persistent", "cannot downgrade while workout deletion jobs or targets exist",
 		"schema_version=8,minimum_runtime_version=8", "schema_version=7,minimum_runtime_version=6",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("durable workout deletion migration is missing %q", required)
 		}
 	}
@@ -661,48 +808,48 @@ func TestDurableWorkoutDeletionMigrationContainsSecurityBoundaries(t *testing.T)
 		"GRANT DELETE ON app.workout_import_events TO workouts_worker", "GRANT SELECT ON app.workout_deletion_capabilities TO workouts_worker",
 		"GRANT SELECT ON app.workout_deletion_targets TO workouts_api",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("durable workout deletion migration contains unsafe privilege %q", forbidden)
 		}
 	}
-	claim := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.claim_next_workout_deletion")
-	if sourceLock, workoutLock := strings.Index(claim, "FROM app.sources source"), strings.Index(claim, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
+	claim := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.claim_next_workout_deletion")
+	if sourceLock, workoutLock := sqlStrings.Index(claim, "FROM app.sources source"), sqlStrings.Index(claim, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
 		t.Fatal("deletion claim does not lock source before workout")
 	}
-	purge := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.purge_workout_deletion")
-	if events, workout := strings.Index(purge, "DELETE FROM app.workout_import_events"), strings.Index(purge, "DELETE FROM app.workouts"); events < 0 || workout < 0 || events >= workout {
+	purge := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.purge_workout_deletion")
+	if events, workout := sqlStrings.Index(purge, "DELETE FROM app.workout_import_events"), sqlStrings.Index(purge, "DELETE FROM app.workouts"); events < 0 || workout < 0 || events >= workout {
 		t.Fatal("purge does not remove import events before the workout")
 	}
-	if !strings.Contains(claim, "EXISTS (") || strings.Contains(claim, "target.state='pending'") {
+	if !sqlStrings.Contains(claim, "EXISTS (") || sqlStrings.Contains(claim, "target.state='pending'") {
 		t.Fatal("deletion claim cannot recover a completed purge after a worker crash")
 	}
-	claimSource := strings.Index(claim, "SELECT source.id FROM app.sources source")
-	claimWorkout := strings.Index(claim, "SELECT workout.id FROM app.workouts workout")
-	claimTarget := strings.Index(claim, "SELECT target.id FROM app.workout_deletion_targets target")
+	claimSource := sqlStrings.Index(claim, "SELECT source.id FROM app.sources source")
+	claimWorkout := sqlStrings.Index(claim, "SELECT workout.id FROM app.workouts workout")
+	claimTarget := sqlStrings.Index(claim, "SELECT target.id FROM app.workout_deletion_targets target")
 	if claimSource < 0 || claimWorkout < 0 || claimTarget < 0 || claimSource >= claimWorkout || claimWorkout >= claimTarget ||
-		!strings.Contains(claim, "ORDER BY source.id") || !strings.Contains(claim, "ORDER BY workout.id") ||
-		!strings.Contains(claim, "ORDER BY target.id") {
+		!sqlStrings.Contains(claim, "ORDER BY source.id") || !sqlStrings.Contains(claim, "ORDER BY workout.id") ||
+		!sqlStrings.Contains(claim, "ORDER BY target.id") {
 		t.Fatal("deletion claim does not deterministically lock all sources, workouts, then targets")
 	}
-	rangeEnqueue := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.enqueue_workout_range_deletion")
-	if sourceLock, workoutLock := strings.Index(rangeEnqueue, "FROM app.sources source"), strings.Index(rangeEnqueue, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
+	rangeEnqueue := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.enqueue_workout_range_deletion")
+	if sourceLock, workoutLock := sqlStrings.Index(rangeEnqueue, "FROM app.sources source"), sqlStrings.Index(rangeEnqueue, "FROM app.workouts workout"); sourceLock < 0 || workoutLock < 0 || sourceLock >= workoutLock {
 		t.Fatal("range enqueue does not lock sources before workouts")
 	}
-	fence := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.fence_workout_deletion")
-	fenceSource := strings.Index(fence, "FROM app.sources source")
-	fenceWorkout := strings.Index(fence, "FROM app.workouts workout")
-	fenceTarget := strings.Index(fence, "PERFORM 1 FROM app.workout_deletion_targets target")
-	fenceJob := strings.Index(fence, "FROM app.jobs job")
+	fence := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.fence_workout_deletion")
+	fenceSource := sqlStrings.Index(fence, "FROM app.sources source")
+	fenceWorkout := sqlStrings.Index(fence, "FROM app.workouts workout")
+	fenceTarget := sqlStrings.Index(fence, "PERFORM 1 FROM app.workout_deletion_targets target")
+	fenceJob := sqlStrings.Index(fence, "FROM app.jobs job")
 	if fenceSource < 0 || fenceWorkout < 0 || fenceTarget < 0 || fenceJob < 0 ||
 		fenceSource >= fenceWorkout || fenceWorkout >= fenceTarget || fenceTarget >= fenceJob {
 		t.Fatal("deletion fence does not lock sources, workouts, targets, then job")
 	}
-	retry := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.retry_workout_deletion")
-	if targetLock, jobLock := strings.Index(retry, "FROM app.workout_deletion_targets target"), strings.Index(retry, "FROM app.jobs job"); targetLock < 0 || jobLock < 0 || targetLock >= jobLock || !strings.Contains(retry, "target.state='pending'") {
+	retry := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.retry_workout_deletion")
+	if targetLock, jobLock := sqlStrings.Index(retry, "FROM app.workout_deletion_targets target"), sqlStrings.Index(retry, "FROM app.jobs job"); targetLock < 0 || jobLock < 0 || targetLock >= jobLock || !sqlStrings.Contains(retry, "target.state='pending'") {
 		t.Fatal("deletion retry does not lock the exact pending targets before the prior job")
 	}
-	cleanup := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.clear_workout_deletion_capability")
-	if !strings.Contains(cleanup, "capability.target_id=NEW.target_id") {
+	cleanup := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.clear_workout_deletion_capability")
+	if !sqlStrings.Contains(cleanup, "capability.target_id=NEW.target_id") {
 		t.Fatal("deletion capability cleanup removes more than its exact target")
 	}
 }
@@ -750,17 +897,17 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"power(2::numeric", "Source configuration could not be read.",
 		"GRANT UPDATE(state) ON app.accounts TO workouts_security_owner",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("durable data sync migration is missing %q", required)
 		}
 	}
-	configurePolicy := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.configure_auto_sync_policy")
-	if strings.Contains(configurePolicy, "lease_expires_at") {
+	configurePolicy := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.configure_auto_sync_policy")
+	if sqlStrings.Contains(configurePolicy, "lease_expires_at") {
 		t.Fatal("policy configuration still rejects updates while scheduler leases are active")
 	}
 	for _, declaration := range []string{"CREATE FUNCTION app.read_owned_job_files", "CREATE FUNCTION app.read_owned_job_logs"} {
-		body := functionBody(t, strings.Split(text, "-- +goose Down")[0], declaration)
-		if strings.Contains(body, "FROM app.jobs WHERE id=") || !strings.Contains(body, "FROM app.jobs owned_job WHERE owned_job.id=") {
+		body := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], declaration)
+		if sqlStrings.Contains(body, "FROM app.jobs WHERE id=") || !sqlStrings.Contains(body, "FROM app.jobs owned_job WHERE owned_job.id=") {
 			t.Fatalf("%s has an output-column/ownership-query ambiguity", declaration)
 		}
 	}
@@ -770,11 +917,11 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"GRANT SELECT ON app.ingest_file_slots TO workouts_worker", "GRANT INSERT ON app.ingest_file_slots TO workouts_worker",
 		"GRANT SELECT ON app.job_progress TO workouts_worker",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("durable data sync migration contains unsafe grant %q", forbidden)
 		}
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
 	for _, declaration := range []string{"CREATE FUNCTION app.record_ingest_progress", "CREATE FUNCTION app.record_job_event", "CREATE FUNCTION app.record_job_log"} {
 		body := compactSQL(functionBody(t, up, declaration))
 		sourceLock := stdstrings.Index(body, compactSQL("FROM app.sources source"))
@@ -801,9 +948,9 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		t.Fatal("legacy snapshot compatibility trigger does not lock source, parent, then child")
 	}
 	acquire := functionBody(t, up, "CREATE FUNCTION app.acquire_ingest_file_slot")
-	cleanupStart := strings.Index(acquire, "DELETE FROM app.ingest_file_slots")
-	if cleanupStart < 0 || strings.Contains(acquire[cleanupStart:], "lease_expires_at") ||
-		strings.Contains(acquire[cleanupStart:], "cancel_requested_at") {
+	cleanupStart := sqlStrings.Index(acquire, "DELETE FROM app.ingest_file_slots")
+	if cleanupStart < 0 || sqlStrings.Contains(acquire[cleanupStart:], "lease_expires_at") ||
+		sqlStrings.Contains(acquire[cleanupStart:], "cancel_requested_at") {
 		t.Fatal("slot stale cleanup treats expiry or cancellation as abandoned ownership")
 	}
 	claimSchedule := functionBody(t, up, "CREATE FUNCTION app.claim_due_sync_account")
@@ -815,35 +962,35 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"WHERE schedule.lease_expires_at<clock_timestamp()",
 		"RETURNING schedule.account_id,schedule.lease_token,schedule.next_run_at",
 	} {
-		if !strings.Contains(claimSchedule, required) {
+		if !sqlStrings.Contains(claimSchedule, required) {
 			t.Fatalf("scheduler claim does not qualify an output-column collision: missing %q", required)
 		}
 	}
 	readSchedule := functionBody(t, up, "CREATE FUNCTION app.read_leased_sync_sources")
-	if !strings.Contains(readSchedule, "account.state='active'") {
+	if !sqlStrings.Contains(readSchedule, "account.state='active'") {
 		t.Fatal("scheduler source reads do not require an active account")
 	}
 	enqueueSchedule := functionBody(t, up, "CREATE FUNCTION app.enqueue_leased_scheduled_ingest")
-	if !strings.Contains(enqueueSchedule, "parent_id uuid,input_coalescing_key bytea,children jsonb") ||
-		strings.Contains(enqueueSchedule, "parent_id uuid,coalescing_key bytea,children jsonb") ||
-		strings.Contains(enqueueSchedule, "enqueue_leased_scheduled_ingest.coalescing_key") {
+	if !sqlStrings.Contains(enqueueSchedule, "parent_id uuid,input_coalescing_key bytea,children jsonb") ||
+		sqlStrings.Contains(enqueueSchedule, "parent_id uuid,coalescing_key bytea,children jsonb") ||
+		sqlStrings.Contains(enqueueSchedule, "enqueue_leased_scheduled_ingest.coalescing_key") {
 		t.Fatal("scheduled enqueue retains an ambiguous coalescing key parameter")
 	}
-	if !strings.Contains(enqueueSchedule, "FROM app.accounts account WHERE account.id=target_account_id AND account.state='active' FOR UPDATE") {
+	if !sqlStrings.Contains(enqueueSchedule, "FROM app.accounts account WHERE account.id=target_account_id AND account.state='active' FOR UPDATE") {
 		t.Fatal("scheduled enqueue does not recheck active account state under lock")
 	}
-	if strings.Contains(up, "jobs_account_cleanup_fk") {
+	if sqlStrings.Contains(up, "jobs_account_cleanup_fk") {
 		t.Fatal("migration 6 still couples account deletion to job cleanup")
 	}
 	for _, compatibilityRevoke := range []string{
 		"REVOKE SELECT ON app.source_files FROM workouts_api",
 		"REVOKE EXECUTE ON FUNCTION app.request_job_cancellation(uuid,uuid) FROM workouts_api",
 	} {
-		if strings.Contains(up, compatibilityRevoke) {
+		if sqlStrings.Contains(up, compatibilityRevoke) {
 			t.Fatalf("migration 6 breaks schema-5 API readiness with %q", compatibilityRevoke)
 		}
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
 	for _, required := range []string{
 		"REVOKE UPDATE(state) ON app.accounts FROM workouts_security_owner",
 		"DROP FUNCTION app.claim_next_worker_job(text,uuid,interval,integer)",
@@ -854,7 +1001,7 @@ func TestDurableDataSyncMigrationContainsSecurityBoundaries(t *testing.T) {
 		"DROP FUNCTION app.create_legacy_ingest_read_models()",
 		"parameters=parameters-'legacySchema6'-'mode'-'startDate'-'endDate'",
 	} {
-		if !strings.Contains(down, required) {
+		if !sqlStrings.Contains(down, required) {
 			t.Fatalf("migration 6 down does not restore schema-5 claim contract %q", required)
 		}
 	}
@@ -875,7 +1022,7 @@ func TestWorkoutRouteSummaryMigrationContainsSecurityBoundaries(t *testing.T) {
 		"OWNER TO workouts_security_owner", "schema_version=7", "minimum_runtime_version=6",
 		"SELECT app.assert_no_active_manual_ingest();", "SELECT app.assert_no_active_scheduled_ingest();",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("workout route summary migration is missing %q", required)
 		}
 	}
@@ -883,7 +1030,7 @@ func TestWorkoutRouteSummaryMigrationContainsSecurityBoundaries(t *testing.T) {
 		"GRANT INSERT ON app.workout_routes TO workouts_worker", "GRANT UPDATE ON app.workout_routes TO workouts_worker",
 		"GRANT DELETE ON app.workout_routes TO workouts_worker", "GRANT SELECT ON app.ingest_write_capabilities TO workouts_worker",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("workout route summary migration contains unsafe privilege %q", forbidden)
 		}
 	}
@@ -928,11 +1075,11 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 		"UPDATE app.schema_metadata SET schema_version = 4",
 		"DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid)",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("worker log context migration is missing %q", required)
 		}
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
 	for _, required := range []string{
 		"include_manual_ingest AND job.kind = 'manual_ingest_source'",
 		"AND job.kind = 'manual_ingest_source'",
@@ -940,7 +1087,7 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 		"DROP FUNCTION app.assert_no_active_scheduled_ingest()",
 		"DROP FUNCTION app.read_worker_job_log_context(uuid,text,uuid)",
 	} {
-		if !strings.Contains(down, required) {
+		if !sqlStrings.Contains(down, required) {
 			t.Fatalf("merged migration 00005 down does not restore schema 4 contract %q", required)
 		}
 	}
@@ -950,7 +1097,7 @@ func TestWorkerJobLogContextMigrationContainsSecurityBoundaries(t *testing.T) {
 		"GRANT SELECT ON app.administrators TO workouts_worker",
 		"GRANT SELECT ON app.sources TO workouts_worker",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("worker log context migration contains unsafe grant %q", forbidden)
 		}
 	}
@@ -963,7 +1110,7 @@ func TestPolymorphicTriggersBranchBeforeRecordFieldAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(source)
-		if strings.Contains(text, "CASE WHEN TG_TABLE_NAME") || strings.Contains(text, "CASE WHEN TG_OP") {
+		if sqlStrings.Contains(text, "CASE WHEN TG_TABLE_NAME") || sqlStrings.Contains(text, "CASE WHEN TG_OP") {
 			t.Fatalf("%s contains polymorphic CASE record field access", name)
 		}
 	}
@@ -972,10 +1119,10 @@ func TestPolymorphicTriggersBranchBeforeRecordFieldAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := functionBody(t, string(source), "CREATE FUNCTION app.enforce_job_snapshot_consistency")
-	jobsBranch := strings.Index(body, "IF TG_TABLE_NAME = 'jobs' THEN")
-	jobsAccess := strings.Index(body, "target_job_id := NEW.id")
-	snapshotsBranch := strings.Index(body, "ELSIF TG_TABLE_NAME = 'job_config_snapshots' THEN")
-	snapshotsAccess := strings.Index(body, "target_job_id := NEW.job_id")
+	jobsBranch := sqlStrings.Index(body, "IF TG_TABLE_NAME = 'jobs' THEN")
+	jobsAccess := sqlStrings.Index(body, "target_job_id := NEW.id")
+	snapshotsBranch := sqlStrings.Index(body, "ELSIF TG_TABLE_NAME = 'job_config_snapshots' THEN")
+	snapshotsAccess := sqlStrings.Index(body, "target_job_id := NEW.job_id")
 	if jobsBranch < 0 || jobsAccess < 0 || snapshotsBranch < 0 || snapshotsAccess < 0 ||
 		jobsBranch >= jobsAccess || jobsAccess >= snapshotsBranch || snapshotsBranch >= snapshotsAccess {
 		t.Fatal("snapshot consistency trigger does not branch on table before NEW field access")
@@ -1039,7 +1186,7 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 		"LOCK TABLE app.jobs, app.job_config_snapshots IN SHARE ROW EXCLUSIVE MODE",
 		"UPDATE app.schema_metadata SET schema_version = 4",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("normalized workout migration is missing %q", required)
 		}
 	}
@@ -1054,50 +1201,50 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 		"GRANT INSERT ON app.ingest_write_capabilities TO workouts_worker",
 		"GRANT EXECUTE ON FUNCTION app.claim_next_worker_job_internal",
 	} {
-		if strings.Contains(text, forbidden) {
+		if sqlStrings.Contains(text, forbidden) {
 			t.Fatalf("normalized workout migration contains unsafe privilege %q", forbidden)
 		}
 	}
-	if strings.Count(text, "CREATE FUNCTION app.claim_next_source_connection_check") != 2 {
+	if sqlStrings.Count(text, "CREATE FUNCTION app.claim_next_source_connection_check") != 2 {
 		t.Fatal("migration 4 does not preserve and restore the migration-3 claim function")
 	}
 	typeKeyBound := fmt.Sprintf("octet_length(type_key) BETWEEN 1 AND %d", healthautoexport.MaxTypeKeyBytes)
-	if !strings.Contains(text, typeKeyBound) {
+	if !sqlStrings.Contains(text, typeKeyBound) {
 		t.Fatalf("workout type key bound does not match parser MaxTypeKeyBytes: want %q", typeKeyBound)
 	}
 	for _, table := range []string{"source_files", "workout_types", "workouts", "workout_aggregates", "workout_route_points", "workout_import_events"} {
-		if !strings.Contains(text, "CREATE TRIGGER "+table+"_capability_before_write") {
+		if !sqlStrings.Contains(text, "CREATE TRIGGER "+table+"_capability_before_write") {
 			t.Fatalf("ingest table %s is missing its capability trigger", table)
 		}
 	}
-	fence := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.fence_ingest_job")
-	sourceLock := strings.Index(fence, "FROM app.sources source")
-	parentLock := strings.Index(fence, "PERFORM 1 FROM app.jobs parent")
+	fence := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.fence_ingest_job")
+	sourceLock := sqlStrings.Index(fence, "FROM app.sources source")
+	parentLock := sqlStrings.Index(fence, "PERFORM 1 FROM app.jobs parent")
 	childLock := -1
 	if parentLock >= 0 {
-		if relative := strings.Index(fence[parentLock:], "PERFORM 1 FROM app.jobs job"); relative >= 0 {
+		if relative := sqlStrings.Index(fence[parentLock:], "PERFORM 1 FROM app.jobs job"); relative >= 0 {
 			childLock = parentLock + relative
 		}
 	}
 	if sourceLock < 0 || parentLock < 0 || childLock < 0 || sourceLock >= parentLock || parentLock >= childLock {
 		t.Fatal("ingest fence does not acquire source, parent, then child locks")
 	}
-	claim := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.claim_next_worker_job_internal")
-	claimSource := strings.Index(claim, "FROM app.sources source")
-	claimParent := strings.Index(claim, "FROM app.jobs parent")
-	claimChild := strings.Index(claim, "SELECT job.status INTO candidate_status")
+	claim := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.claim_next_worker_job_internal")
+	claimSource := sqlStrings.Index(claim, "FROM app.sources source")
+	claimParent := sqlStrings.Index(claim, "FROM app.jobs parent")
+	claimChild := sqlStrings.Index(claim, "SELECT job.status INTO candidate_status")
 	if claimSource < 0 || claimParent < 0 || claimChild < 0 || claimSource >= claimParent || claimParent >= claimChild {
 		t.Fatal("worker claim does not acquire source, parent, then child locks")
 	}
-	down := strings.Split(text, "-- +goose Down")[1]
-	if strings.Index(down, "SELECT app.assert_no_active_manual_ingest();") > strings.Index(down, "UPDATE app.schema_metadata") {
+	down := sqlStrings.Split(text, "-- +goose Down")[1]
+	if sqlStrings.Index(down, "SELECT app.assert_no_active_manual_ingest();") > sqlStrings.Index(down, "UPDATE app.schema_metadata") {
 		t.Fatal("migration 4 down guard runs after downgrade starts")
 	}
-	cleanup := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.clear_ingest_write_capability")
-	cleanupSource := strings.Index(cleanup, "FROM app.sources source")
-	cleanupParent := strings.Index(cleanup, "FROM app.jobs parent")
-	cleanupChild := strings.Index(cleanup, "PERFORM 1 FROM app.jobs job")
-	cleanupDelete := strings.Index(cleanup, "DELETE FROM app.ingest_write_capabilities")
+	cleanup := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE FUNCTION app.clear_ingest_write_capability")
+	cleanupSource := sqlStrings.Index(cleanup, "FROM app.sources source")
+	cleanupParent := sqlStrings.Index(cleanup, "FROM app.jobs parent")
+	cleanupChild := sqlStrings.Index(cleanup, "PERFORM 1 FROM app.jobs job")
+	cleanupDelete := sqlStrings.Index(cleanup, "DELETE FROM app.ingest_write_capabilities")
 	for _, required := range []string{
 		"snapshot.source_id = NEW.source_id",
 		"source.deleted_at IS NULL",
@@ -1106,7 +1253,7 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 		"job.worker_id = NEW.worker_id",
 		"job.lease_token = NEW.lease_token",
 	} {
-		if !strings.Contains(cleanup, required) {
+		if !sqlStrings.Contains(cleanup, required) {
 			t.Fatalf("deferred capability cleanup is missing %q", required)
 		}
 	}
@@ -1114,8 +1261,8 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 		cleanupSource >= cleanupParent || cleanupParent >= cleanupChild || cleanupChild >= cleanupDelete {
 		t.Fatal("deferred capability cleanup does not validate source, parent, child before deleting capability")
 	}
-	if strings.Contains(cleanup, "lease_expires_at >= clock_timestamp()") ||
-		!strings.Contains(cleanup, "recovery and") || !strings.Contains(cleanup, "cannot change ownership before commit") {
+	if sqlStrings.Contains(cleanup, "lease_expires_at >= clock_timestamp()") ||
+		!sqlStrings.Contains(cleanup, "recovery and") || !sqlStrings.Contains(cleanup, "cannot change ownership before commit") {
 		t.Fatal("deferred cleanup incorrectly expires a row-lock-fenced transaction or lacks its recovery rationale")
 	}
 	for _, transition := range []struct {
@@ -1125,24 +1272,24 @@ func TestNormalizedWorkoutMigrationContainsPersistenceBoundaries(t *testing.T) {
 		{"CREATE OR REPLACE FUNCTION app.finish_job", "PERFORM 1 FROM app.jobs job"},
 		{"CREATE OR REPLACE FUNCTION app.recover_expired_job", "SELECT job.cancel_requested_at IS NOT NULL"},
 	} {
-		body := functionBody(t, strings.Split(text, "-- +goose Down")[0], transition.declaration)
-		source := strings.Index(body, "PERFORM 1 FROM app.sources source")
-		parent := strings.Index(body, "PERFORM 1 FROM app.jobs parent")
-		child := strings.Index(body, transition.childLock)
+		body := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], transition.declaration)
+		source := sqlStrings.Index(body, "PERFORM 1 FROM app.sources source")
+		parent := sqlStrings.Index(body, "PERFORM 1 FROM app.jobs parent")
+		child := sqlStrings.Index(body, transition.childLock)
 		if source < 0 || parent < 0 || child < 0 || source >= parent || parent >= child {
 			t.Fatalf("%s does not lock source, parent, then child", transition.declaration)
 		}
 	}
-	cancellation := functionBody(t, strings.Split(text, "-- +goose Down")[0], "CREATE OR REPLACE FUNCTION app.request_job_cancellation")
-	parentSources := strings.Index(cancellation, "FOR source_to_lock IN")
-	cancelParentLock := strings.Index(cancellation, "SELECT job.kind, job.status INTO target_kind, target_status FROM app.jobs job")
-	childrenLock := strings.Index(cancellation, "FOR child_to_lock IN")
+	cancellation := functionBody(t, sqlStrings.Split(text, "-- +goose Down")[0], "CREATE OR REPLACE FUNCTION app.request_job_cancellation")
+	parentSources := sqlStrings.Index(cancellation, "FOR source_to_lock IN")
+	cancelParentLock := sqlStrings.Index(cancellation, "SELECT job.kind, job.status INTO target_kind, target_status FROM app.jobs job")
+	childrenLock := sqlStrings.Index(cancellation, "FOR child_to_lock IN")
 	if parentSources < 0 || cancelParentLock < 0 || childrenLock < 0 || parentSources >= cancelParentLock || cancelParentLock >= childrenLock {
 		t.Fatal("parent cancellation does not lock child sources, parent, then children")
 	}
-	if strings.Count(text, "CREATE OR REPLACE FUNCTION app.finish_job") != 2 ||
-		strings.Count(text, "CREATE OR REPLACE FUNCTION app.recover_expired_job") != 2 ||
-		strings.Count(text, "CREATE OR REPLACE FUNCTION app.request_job_cancellation") != 2 {
+	if sqlStrings.Count(text, "CREATE OR REPLACE FUNCTION app.finish_job") != 2 ||
+		sqlStrings.Count(text, "CREATE OR REPLACE FUNCTION app.recover_expired_job") != 2 ||
+		sqlStrings.Count(text, "CREATE OR REPLACE FUNCTION app.request_job_cancellation") != 2 {
 		t.Fatal("migration 4 does not replace and restore all ordered transition functions")
 	}
 }
@@ -1182,38 +1329,38 @@ func TestSourceSnapshotMigrationContainsSecurityBoundaries(t *testing.T) {
 		"GRANT SELECT (job_id,account_id,source_id,source_generation) ON app.job_config_snapshots TO workouts_api",
 		"UPDATE app.schema_metadata SET schema_version = 3",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("source snapshot migration is missing %q", required)
 		}
 	}
-	if strings.Contains(text, "GRANT SELECT ON app.job_config_snapshots TO workouts_worker") {
+	if sqlStrings.Contains(text, "GRANT SELECT ON app.job_config_snapshots TO workouts_worker") {
 		t.Fatal("worker has an unfenced snapshot table read grant")
 	}
-	if strings.Contains(text, "GRANT EXECUTE ON FUNCTION app.delete_source(uuid,uuid) TO workouts_worker") ||
-		strings.Contains(text, "GRANT EXECUTE ON FUNCTION app.delete_source(uuid,uuid) TO PUBLIC") {
+	if sqlStrings.Contains(text, "GRANT EXECUTE ON FUNCTION app.delete_source(uuid,uuid) TO workouts_worker") ||
+		sqlStrings.Contains(text, "GRANT EXECUTE ON FUNCTION app.delete_source(uuid,uuid) TO PUBLIC") {
 		t.Fatal("source deletion is executable outside the API role")
 	}
-	for line := range strings.SplitSeq(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "GRANT UPDATE (") && strings.Contains(line, "deleted_at") &&
-			strings.Contains(line, "workouts_api") {
+	for line := range sqlStrings.SplitSeq(text, "\n") {
+		if sqlStrings.HasPrefix(sqlStrings.TrimSpace(line), "GRANT UPDATE (") && sqlStrings.Contains(line, "deleted_at") &&
+			sqlStrings.Contains(line, "workouts_api") {
 			t.Fatal("API retains direct source tombstone privilege")
 		}
 	}
 	const safeSnapshotSelect = "GRANT SELECT (job_id,account_id,source_id,source_generation) ON app.job_config_snapshots TO workouts_api;"
-	for line := range strings.SplitSeq(text, "\n") {
-		if strings.Contains(line, "GRANT SELECT") && strings.Contains(line, "app.job_config_snapshots") &&
-			strings.Contains(line, "TO workouts_api") && strings.TrimSpace(line) != safeSnapshotSelect {
+	for line := range sqlStrings.SplitSeq(text, "\n") {
+		if sqlStrings.Contains(line, "GRANT SELECT") && sqlStrings.Contains(line, "app.job_config_snapshots") &&
+			sqlStrings.Contains(line, "TO workouts_api") && sqlStrings.TrimSpace(line) != safeSnapshotSelect {
 			t.Fatalf("unsafe snapshot SELECT grant %q", line)
 		}
 	}
-	if strings.Contains(text, "lower(display_name)") {
+	if sqlStrings.Contains(text, "lower(display_name)") {
 		t.Fatal("database still derives source display-name canonicalization")
 	}
 	for _, privilege := range []string{
 		"GRANT INSERT (id,account_id,display_name,canonical_display_name,type",
 		"GRANT UPDATE (display_name,canonical_display_name,auto_sync_enabled",
 	} {
-		if !strings.Contains(text, privilege) {
+		if !sqlStrings.Contains(text, privilege) {
 			t.Fatalf("source grant is missing canonical display-name privilege %q", privilege)
 		}
 	}
@@ -1228,49 +1375,49 @@ func TestSourceSnapshotMigrationContainsSecurityBoundaries(t *testing.T) {
 	if apiUpdateStart < 0 || apiUpdateEnd < 0 || stdstrings.Contains(compactText[apiUpdateStart:apiUpdateEnd], "deleted_at") {
 		t.Fatal("API source update grant includes direct tombstone access")
 	}
-	readStart := strings.Index(text, "CREATE FUNCTION app.read_job_config_snapshot")
+	readStart := sqlStrings.Index(text, "CREATE FUNCTION app.read_job_config_snapshot")
 	if readStart < 0 {
 		t.Fatal("could not locate fenced snapshot read function")
 	}
-	readEnd := strings.Index(text[readStart:], "-- +goose StatementEnd")
+	readEnd := sqlStrings.Index(text[readStart:], "-- +goose StatementEnd")
 	if readEnd < 0 {
 		t.Fatal("could not locate fenced snapshot read function")
 	}
-	if strings.Contains(text[readStart:readStart+readEnd], "app.sources") {
+	if sqlStrings.Contains(text[readStart:readStart+readEnd], "app.sources") {
 		t.Fatal("fenced read incorrectly depends on mutable source lifecycle state")
 	}
-	if !strings.Contains(text, "IF target_status = 'queued' THEN\n            DELETE FROM app.job_config_snapshots") {
+	if !sqlStrings.Contains(text, "IF target_status = 'queued' THEN\n            DELETE FROM app.job_config_snapshots") {
 		t.Fatal("queued cancellation does not delete its snapshot separately from running cancellation intent")
 	}
-	if strings.Count(text, "CREATE OR REPLACE FUNCTION app.heartbeat_job") != 2 {
+	if sqlStrings.Count(text, "CREATE OR REPLACE FUNCTION app.heartbeat_job") != 2 {
 		t.Fatal("migration does not replace heartbeat on upgrade and restore it on downgrade")
 	}
-	up := strings.Split(text, "-- +goose Down")[0]
+	up := sqlStrings.Split(text, "-- +goose Down")[0]
 	heartbeat := functionBody(t, up, "CREATE OR REPLACE FUNCTION app.heartbeat_job")
-	if !strings.Contains(heartbeat, "lease_expires_at >= clock_timestamp()") {
+	if !sqlStrings.Contains(heartbeat, "lease_expires_at >= clock_timestamp()") {
 		t.Fatal("migration 3 heartbeat does not reject an expired matching lease")
 	}
 	finish := functionBody(t, up, "CREATE OR REPLACE FUNCTION app.finish_job")
-	if !strings.Contains(finish, "lease_expires_at >= clock_timestamp() FOR UPDATE") {
+	if !sqlStrings.Contains(finish, "lease_expires_at >= clock_timestamp() FOR UPDATE") {
 		t.Fatal("migration 3 direct finish does not lock an unexpired matching lease")
 	}
 	completion := functionBody(t, up, "CREATE FUNCTION app.complete_source_connection_check")
-	sourceLock := strings.Index(completion, "FROM app.sources source")
-	jobLock := strings.Index(completion, "FROM app.jobs job")
+	sourceLock := sqlStrings.Index(completion, "FROM app.sources source")
+	jobLock := sqlStrings.Index(completion, "FROM app.jobs job")
 	if sourceLock < 0 || jobLock < 0 || sourceLock >= jobLock {
 		t.Fatal("source completion does not acquire source then job locks")
 	}
 	for _, fence := range []string{"source.deleted_at", "source_generation_value = snapshot_generation", "job.cancel_requested_at", "job.lease_expires_at >= clock_timestamp()"} {
-		if !strings.Contains(completion, fence) {
+		if !sqlStrings.Contains(completion, fence) {
 			t.Fatalf("source completion is missing fence %q", fence)
 		}
 	}
 	deletion := functionBody(t, up, "CREATE FUNCTION app.delete_source")
-	deletionSource := strings.Index(deletion, "FROM app.sources source")
-	deletionParent := strings.Index(deletion, "PERFORM 1 FROM app.jobs parent")
-	deletionChild := strings.Index(deletion, "PERFORM 1 FROM app.jobs job")
-	deletionCancel := strings.Index(deletion, "PERFORM app.request_job_cancellation")
-	deletionTombstone := strings.Index(deletion, "UPDATE app.sources source SET")
+	deletionSource := sqlStrings.Index(deletion, "FROM app.sources source")
+	deletionParent := sqlStrings.Index(deletion, "PERFORM 1 FROM app.jobs parent")
+	deletionChild := sqlStrings.Index(deletion, "PERFORM 1 FROM app.jobs job")
+	deletionCancel := sqlStrings.Index(deletion, "PERFORM app.request_job_cancellation")
+	deletionTombstone := sqlStrings.Index(deletion, "UPDATE app.sources source SET")
 	if deletionSource < 0 || deletionParent < 0 || deletionChild < 0 || deletionCancel < 0 || deletionTombstone < 0 ||
 		deletionSource >= deletionParent || deletionParent >= deletionChild || deletionChild >= deletionCancel || deletionCancel >= deletionTombstone {
 		t.Fatal("source deletion does not lock source, parents, children before cancellation and tombstone")
@@ -1279,11 +1426,23 @@ func TestSourceSnapshotMigrationContainsSecurityBoundaries(t *testing.T) {
 
 func functionBody(t *testing.T, migration, declaration string) string {
 	t.Helper()
-	start := strings.Index(migration, declaration)
+	start := sqlStrings.Index(migration, declaration)
 	if start < 0 {
 		t.Fatalf("could not locate %q", declaration)
 	}
-	end := strings.Index(migration[start:], "-- +goose StatementEnd")
+	end := sqlStrings.Index(migration[start:], "-- +goose StatementEnd")
+	if end < 0 {
+		// Semantic phases contain ordinary static function definitions, without
+		// per-function Goose wrappers. Bound those by their own dollar quote.
+		tail := migration[start:]
+		quote := regexp.MustCompile(`(?i)\bAS\s+(\$[a-z0-9_]*\$)`).FindStringSubmatchIndex(tail)
+		if quote != nil {
+			tag := tail[quote[2]:quote[3]]
+			if close := stdstrings.Index(tail[quote[1]:], tag); close >= 0 {
+				end = quote[1] + close + len(tag) + 1
+			}
+		}
+	}
 	if end < 0 {
 		t.Fatalf("could not locate end of %q", declaration)
 	}
@@ -1312,7 +1471,7 @@ func TestAccountLifecycleMigrationContainsSecurityBoundaries(t *testing.T) {
 		"CHECK (expires_at = issued_at + interval '7 days')",
 		"CHECK (expires_at = issued_at + interval '30 minutes')",
 	} {
-		if !strings.Contains(text, required) {
+		if !sqlStrings.Contains(text, required) {
 			t.Fatalf("account lifecycle migration is missing %q", required)
 		}
 	}
@@ -1323,7 +1482,7 @@ func TestAccountLifecycleMigrationContainsSecurityBoundaries(t *testing.T) {
 	if grant < 0 || owner <= grant || revoke <= owner {
 		t.Fatal("security-owner CREATE authority is not temporary around ownership transfer")
 	}
-	if strings.Contains(text, "GRANT SELECT, INSERT, UPDATE ON app.authentication_principals") {
+	if sqlStrings.Contains(text, "GRANT SELECT, INSERT, UPDATE ON app.authentication_principals") {
 		t.Fatal("API retains broad principal table privileges")
 	}
 }

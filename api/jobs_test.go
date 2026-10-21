@@ -1,13 +1,50 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func TestCoverageRetryConflictsAreSafeAndTyped(t *testing.T) {
+	for _, test := range []struct{ code, message, reason string }{
+		{"55000", "coverage retry requires a terminal parent", "not-terminal"},
+		{"55000", "only the latest coverage attempt may be retried", "not-latest"},
+		{"55000", "coverage retry target is busy; retry the latest attempt", "busy"},
+		{"54001", "coverage retry limit reached", "retry-limit"},
+		{"55000", "private-sql-canary /secret/path", "unavailable"},
+		{"54001", "private-sql-canary /secret/path", "unavailable"},
+		{"54001", "coverage retry requires a terminal parent", "unavailable"},
+		{"55000", "coverage retry limit reached", "unavailable"},
+		{"55000", "only the latest coverage attempt may be retried private-sql-canary", "unavailable"},
+	} {
+		reason := coverageRetryErrorReason(&pgconn.PgError{Code: test.code, Message: test.message})
+		if reason != test.reason {
+			t.Fatalf("%q mapped to %q, want %q", test.message, reason, test.reason)
+		}
+		response := httptest.NewRecorder()
+		writeCoverageRetryConflict(response, httptest.NewRequest(http.MethodPost, "/api/jobs/test/retry", nil), reason)
+		var problem generated.Problem
+		if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/problem+json" ||
+			problem.Type != "https://workouts-explorer.invalid/problems/coverage-retry/"+test.reason ||
+			strings.Contains(response.Body.String(), "private-sql-canary") {
+			t.Fatalf("unsafe conflict: %s", response.Body.String())
+		}
+	}
+}
+
 func TestCoverageParentPresentationStatus(t *testing.T) {
+	if generated.JobStatus("superseded").Valid() || !generated.JobDisplayStatusSuperseded.Valid() {
+		t.Fatal("superseded must remain display-only, not an execution status")
+	}
 	for _, test := range []struct {
 		status  string
 		running int
@@ -27,6 +64,7 @@ func TestJobRequestsAreValidatedByActualRouter(t *testing.T) {
 		want                            int
 	}{
 		{http.MethodGet, "/api/jobs", "", "", http.StatusUnauthorized},
+		{http.MethodGet, "/api/jobs?status=superseded", "", "", http.StatusUnauthorized},
 		{http.MethodGet, "/api/jobs?page=0", "", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/jobs?pageSize=101", "", "", http.StatusBadRequest},
 		{http.MethodGet, "/api/jobs?status=invented", "", "", http.StatusBadRequest},
@@ -74,10 +112,29 @@ func TestRetryParametersAndFailureRedaction(t *testing.T) {
 
 func TestCoverageFailureRedaction(t *testing.T) {
 	for _, value := range []string{"coverage-route-invalid", "coverage-route-read-failed", "coverage-route-timeout",
-		"coverage-route-too-large", "coverage-osm-unavailable", "coverage-persist-failed"} {
+		"coverage-route-too-large", "coverage-osm-unavailable", "coverage-persist-failed", "coverage-transient-failed"} {
 		code, summary := safeJobFailure(&value)
 		if code == nil || *code != value || summary == nil || *summary == "" {
 			t.Fatalf("coverage failure %q mapped to %v/%v", value, code, summary)
+		}
+	}
+	for value, want := range map[string]string{
+		"coverage-osm-unavailable":  "Coverage map data could not be processed.",
+		"coverage-transient-failed": "Coverage processing was interrupted by a transient database failure.",
+	} {
+		_, summary := safeJobFailure(&value)
+		if summary == nil || *summary != want {
+			t.Fatalf("coverage failure %q summary=%v want=%q", value, summary, want)
+		}
+	}
+}
+
+func TestICloudFailureReauthenticationGuidance(t *testing.T) {
+	for _, value := range []string{"source-auth-expired", "source-auth-failed", "source-adp-approval-required"} {
+		code, summary := safeJobFailure(&value)
+		if code == nil || *code != value || summary == nil || !strings.Contains(*summary, "externally") ||
+			!strings.Contains(*summary, "update this source's credentials") {
+			t.Fatalf("iCloud failure %q did not provide safe recovery guidance", value)
 		}
 	}
 }

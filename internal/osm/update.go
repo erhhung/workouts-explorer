@@ -45,6 +45,7 @@ type UpdateStore interface {
 	Fail(context.Context, Generation, string) error
 	DropBuildSchema(context.Context, string) error
 	ProcessStorageGC(context.Context) error
+	RefreshStatistics(context.Context) error
 }
 
 type UpdatePipeline interface {
@@ -387,9 +388,13 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		return Generation{}, fmt.Errorf("acquire exclusive OSM updater ownership: %w", err)
 	}
 	defer unlockUpdater()
-	// Retry cleanup left by an earlier successful promotion before reserving new work.
+	// Replay maintenance even without a new source or a resumable build. Promotion
+	// is the durable boundary; a crash must not permanently skip active statistics.
 	if err := u.Store.ProcessStorageGC(ctx); err != nil {
 		return Generation{}, fmt.Errorf("process pending OSM storage GC: %w", err)
+	}
+	if err := u.Store.RefreshStatistics(ctx); err != nil {
+		return Generation{}, fmt.Errorf("refresh active OSM statistics (retryable): %w", err)
 	}
 	completed := map[string]bool{}
 	checkpointStore, resumable := u.Store.(StageCheckpointStore)
@@ -614,6 +619,9 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 	promoted = true
 	if err := u.Store.ProcessStorageGC(ctx); err != nil {
 		return generation, fmt.Errorf("generation %d promoted; storage GC remains retryable: %w", generation.ID, err)
+	}
+	if err := u.Store.RefreshStatistics(ctx); err != nil {
+		return generation, fmt.Errorf("generation %d promoted; statistics refresh remains retryable: %w", generation.ID, err)
 	}
 	u.logCompletionBanner("OSM update generation %d completed in %s", generation.ID, u.now().Sub(updateStarted).Round(time.Second))
 	return generation, nil

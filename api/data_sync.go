@@ -44,7 +44,7 @@ func (s *Server) GetDataSync(w http.ResponseWriter, r *http.Request) {
 		writeDataSyncUnavailable(w, r)
 		return
 	}
-	rows, err := tx.Query(r.Context(), `SELECT source.id,source.display_name,source.type,source.status,source.auto_sync_enabled,source.checked_at,
+	rows, err := tx.Query(r.Context(), `SELECT source.id,source.display_name,source.type,source.status,source.status_code,source.status_summary,source.auto_sync_enabled,source.checked_at,
 		state.last_sync_started_at,state.last_sync_succeeded_at,state.last_new_export_discovered_at,state.last_new_export_date,state.stale_since
 		FROM app.sources source LEFT JOIN app.source_sync_state state ON state.account_id=source.account_id AND state.source_id=source.id
 		ORDER BY source.id`)
@@ -56,7 +56,7 @@ func (s *Server) GetDataSync(w http.ResponseWriter, r *http.Request) {
 		var source generated.DataSyncSource
 		var id uuid.UUID
 		var exportDate, staleSince *time.Time
-		if err = rows.Scan(&id, &source.DisplayName, &source.Type, &source.Status, &source.AutoSyncEnabled, &source.CheckedAt,
+		if err = rows.Scan(&id, &source.DisplayName, &source.Type, &source.Status, &source.StatusCode, &source.StatusSummary, &source.AutoSyncEnabled, &source.CheckedAt,
 			&source.Freshness.LastSyncStartedAt, &source.Freshness.LastSyncSucceededAt,
 			&source.Freshness.LastNewExportDiscoveredAt, &exportDate, &staleSince); err != nil {
 			rows.Close()
@@ -113,7 +113,8 @@ func readDataSyncJob(ctx context.Context, tx pgx.Tx, active bool) (*generated.Jo
 	}
 	row := tx.QueryRow(ctx, `SELECT j.id,j.kind,j.status,j.progress_current,COALESCE(j.progress_total,0),j.started_at,j.terminal_at,j.created_at,j.updated_at,
 		COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
-		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0)
+		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
+		p.workouts_created_with_route,p.workouts_updated_with_route
 		FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
 		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest') AND `+statusClause+`
 		ORDER BY j.created_at DESC,j.id DESC LIMIT 1`)
@@ -123,7 +124,8 @@ func readDataSyncJob(ctx context.Context, tx pgx.Tx, active bool) (*generated.Jo
 	if err := row.Scan(&id, &kind, &item.Status, &item.Progress.Current, &item.Progress.Total, &item.StartedAt, &item.TerminalAt,
 		&item.CreatedAt, &item.UpdatedAt, &item.Progress.FilesDiscovered, &item.Progress.FilesSkipped, &item.Progress.FilesSucceeded,
 		&item.Progress.FilesFailed, &item.Progress.WorkoutsCreated, &item.Progress.WorkoutsUpdated,
-		&item.Progress.WorkoutsUnchanged, &item.Progress.WorkoutsRejected); err != nil {
+		&item.Progress.WorkoutsUnchanged, &item.Progress.WorkoutsRejected,
+		&item.Progress.WorkoutsCreatedWithRoute, &item.Progress.WorkoutsUpdatedWithRoute); err != nil {
 		return nil, err
 	}
 	item.Id, item.Trigger = compactUUID(id), jobTrigger(kind)

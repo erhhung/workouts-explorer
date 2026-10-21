@@ -100,9 +100,10 @@ private keys, and run the digest-pinned Contrib 0.156.0 image.
 
 ### Private DNS And Reachability
 
-The xdev CoreDNS custom server in `deploy/dev/otel-dns.yaml` listens
-on port **1053** and forwards only `observability.svc.cluster.local` to homelab
-DNS **`10.43.0.10`**. The live audit confirms both `workouts-otel.server` and
+The xdev CoreDNS custom servers in `deploy/dev/otel-dns.yaml` listen
+on port **1053** and forward `observability.svc.cluster.local` and the exact
+`postgresql-postgresql-headless.postgresql.svc.cluster.local` zone to homelab
+DNS **`10.43.0.10`**. The earlier telemetry audit confirmed both `workouts-otel.server` and
 `fourteeners.local.server`, the main CoreDNS custom-server import, and the
 `NodeHosts` entry with six records. Existing fourteeners resolution works. No
 prior snapshot establishes byte-for-byte restoration of those entries.
@@ -114,7 +115,7 @@ confirm the private gRPC path; no public status route or API proxy is involved.
 The inspected gateway certificate expires **10/12/2026 5:34:21 AM PDT**; this
 handshake snapshot does not certify future rotation or uninterrupted delivery.
 
-For an operator-approved DNS update, merge just this key into the existing
+For an operator-approved DNS update, merge these keys into the existing
 ConfigMap; this documentation does not run the command:
 
 ```sh
@@ -124,6 +125,23 @@ kubectl --context=xdev patch cm coredns-custom -n kube-system --type=merge --pat
 Do **not** server-side apply this partial ConfigMap: field ownership/removal can
 drop unrelated custom DNS keys. The earlier apply removed other entries, which
 were restored; inspect the full ConfigMap before and after any merge patch.
+
+The 10/13/2026 OSM reader update merged only `postgresql-osm.server`, preserving
+all existing custom entries byte-for-byte. From the running Coverage pod, the
+headless hostname resolves all three ready backend addresses and all three TCP
+ports are reachable. The private application database's
+`postgresql.postgresql.svc.cluster.local` resolution remains unchanged. Do not
+forward the broader `postgresql.svc.cluster.local` zone, which would intercept
+that virtual-cluster database.
+
+A separate read-only diagnostic client verified direct authentication,
+hostname-validated TLS, strict rejection of the primary, acceptance of both
+standbys, and read-only repeatable-read connection affinity. That client used
+EndpointSlice discovery; it does not certify in-pod TLS/authentication. The
+backends did not request client certificates, so this evidence is **not mTLS
+validation** and makes no backend authentication-policy change. Reader URL
+provisioning, activation and rollout remain pending; see
+[OSM read replicas](osm-read-replicas.md).
 
 Gateway metric processors are memory limiter, filter, Kubernetes attributes and
 batch. Prometheus exporter expiration is ten minutes. The existing filter targets

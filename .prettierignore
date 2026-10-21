@@ -1,13 +1,13 @@
+**/.git/
 # Generated output, dependencies, and test artifacts.
 **/node_modules/
-**/dist/
 **/coverage/
 **/test-results/
 **/playwright-report/
-**/.git/
 **/generated/
 **/vendor/
 ui/public/
+**/dist/
 ui/vite.config.js
 ui/vite.config.d.ts
 **/*.min.js
@@ -16,6 +16,8 @@ ui/vite.config.d.ts
 # Acceptance evidence and exported data are byte-sensitive, not source code.
 /deploy/acceptance/results/
 /deploy/acceptance/fixtures/
+/deploy/internal/
+/docs/internal/
 **/exports/
 
 # Only JS/JSX/CJS/MJS, TS/TSX, and CSS source belongs to this formatter.

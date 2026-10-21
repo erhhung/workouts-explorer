@@ -162,12 +162,12 @@ func (s *Scheduler) enqueue(ctx context.Context, accountID, token uuid.UUID) (*u
 		source := &sources[index]
 		child := scheduledChild{SourceID: source.id, Generation: source.generation, ChildID: uuid.Must(uuid.NewV7())}
 		plaintext, err := s.keys.Decrypt(sourcecrypto.Context{Purpose: sourcecrypto.SourceConfig, AccountID: accountID, RecordID: source.id}, source.envelope)
-		if err != nil || source.typeName != sourceconfig.LocalType {
+		if err != nil {
 			child.FailureCode = "source-config-invalid"
 			children = append(children, child)
 			continue
 		}
-		_, canonical, err := sourceconfig.DecodeLocal(plaintext, s.localRoots)
+		canonical, err := sourceconfig.Canonicalize(source.typeName, plaintext, s.localRoots)
 		if err != nil || !bytes.Equal(plaintext, canonical) {
 			child.FailureCode = "source-config-invalid"
 			children = append(children, child)

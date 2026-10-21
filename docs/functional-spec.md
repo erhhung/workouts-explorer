@@ -194,12 +194,61 @@ As a data owner, I want to configure source adapters through Swagger or REST so 
    `health-auto-export-icloud`; Milestone 3 introduces local/NFS and Milestone 8
    adds iCloud to the discriminated API union.
 3. OpenAPI selects and validates the correct config schema from `type`.
-4. Creation or update encrypts the complete adapter config, sets `checking-connection`, and enqueues a high-priority connection check.
+4. Creation or a canonical config change encrypts the complete adapter config, sets `checking-connection`, and enqueues a high-priority connection check. Metadata-only or identical-config updates do not enqueue another check.
 5. A successful check sets `connected`.
 6. A failed check sets `connection-failed` and creates an error notification.
 7. A failed source cannot be selected for ingest until its config passes a later check.
 8. Partial updates retain omitted settings and write-only secrets.
-9. Required secret values cannot be cleared with `null`.
+9. Required secret values cannot be cleared with `null` or an empty string.
+10. iCloud setup is external and owner-operated; the product never imports a host rclone config automatically or asks for 2FA in-app. Source-management UI remains outside the MVP.
+
+### iCloud Contract (M8 Owner Review)
+
+`health-auto-export-icloud` accepts only a typed, closed version-1 configuration:
+required `version`, `path`, `appleId`, `password`, `cookies` and `trustToken`, with
+optional non-secret `clientId`. Apple ID and all credentials are write-only;
+responses return only `version`, `path` and optional `clientId`, with no masked
+secret placeholders. Password is rclone-obscured, not encrypted by obscuring;
+cookies are the complete ready-session string, not selected cookie names.
+The worker fixes native backend/service to `iclouddrive`/`drive`.
+`description`, `_auth_session`, remote aliases and arbitrary flags are unsupported.
+
+PATCH retains omitted credentials and rejects null/empty required values.
+`clientId` alone permits an empty string to restore native identity. Non-secret
+canonical config changes also require a new asynchronous check. Native 1.75.2
+requires a trust token; the application additionally requires cookies from
+completed external authentication. Exact limits and private owner setup are in
+[iCloud Source Setup](icloud-source-setup.md).
+
+The source implementation is deployed, and owner-operated ingest and available-map
+Coverage recovery are verified. M8 owner acceptance remains separate and pending.
+The [initial recorded results](implementation-plan.md#verification-results-10122026)
+retain their original synthetic/disposable-database scope; later release evidence
+belongs in [Development Progress](development-progress.md). The schema-28 pipeline
+is live in `dev-20261020`, Helm revision 29, with schema/Goose/minimum runtime 28 and
+`migration_baseline=27`; repaired-contract postdeployment verification passed. Deployment
+does not close M8 owner acceptance or certify multi-user capacity.
+
+The approved active sequence remains **001-028**, with **no active 029**. New 028
+folds the generation-lock fix, strict eligible cohorts and mixed-failure automatic
+policy into the pipeline. Source `SupportedSchemaVersion`, schema and minimum
+runtime are **28**, marker **27**. Generation locking, exact eligible cohorts,
+mixed-failure automatic retry, exact parking repair and the UI follow-up are
+**deployed**. Equal numeric versions do not establish compatibility.
+Native Goose does not replay applied 028. Old-contract 28 requires a new private
+guarded offline repair, explicit approval and protected actual-backup rehearsal
+under the actual migration role with new source/catalog proof. Pause all old
+API/ingest/Coverage runtimes, and tiles if affected by DDL constraints. Old
+apply-10/defer-6 ABIs are absent: old runtime-28 readiness fails; new readiness
+requires private builders. No rolling reuse of old images is supported. Preserve
+ledger 0-28 IDs/timestamps without DML/rewrite, data, roots/budgets, sources and
+credentials. Retain backups/artifacts; rollback requires the old database contract
+and images, not images alone. The approved exact actual-profile repair passed
+protected actual-backup rehearsal and live transactional application under the
+real non-superuser migration login. New readiness and original-tuple/ledger
+preservation passed. Available-map yearly recovery now has independent closure;
+owner acceptance and capacity certification remain separate. See
+[migration recovery](database-migrations.md) and [current progress](development-progress.md).
 
 ### Validation
 
@@ -236,6 +285,8 @@ As a data owner, I want to delete an obsolete source without losing workouts alr
 5. Other source children in a parent ingest may continue.
 6. Imported workouts remain visible with sanitized historical source provenance.
 7. A minimal internal tombstone preserves referential integrity.
+8. Deletion is a soft tombstone (`deleted_at`), not a NULL workout source. With the adoption contract requiring 26, only the live-to-deleted transition increments the account's workout ownership epoch; retained provider-backed workouts become eligible for another source to adopt.
+9. Deletion does not immediately sync another source. Adoption waits for the next auto-sync or a new manual job; an already frozen ingest manifest is not reopened.
 
 ### Validation
 
@@ -262,7 +313,7 @@ As a data owner, I want new workout exports imported automatically without daily
 
 1. At the configured cadence, each account creates an ingest parent for all connected sources where `autoSyncEnabled` is true.
 2. Each selected source runs as a child job.
-3. Incremental discovery processes only new or changed files.
+3. Incremental discovery processes new or changed files and, with the contract requiring 26, previously ownership-blocked files whose captured epoch is stale.
 4. A day without an export is a successful no-data result.
 5. A source becomes stale after the configured number of calendar days without a newly discovered export, default three.
 6. Staleness is a warning that may also mean the user did not work out; it is not an ingest-job failure.
@@ -270,6 +321,9 @@ As a data owner, I want new workout exports imported automatically without daily
 8. Dismissing an unresolved stale warning follows reminder behavior.
 9. Scheduled success remains silent.
 10. Partial or complete failure creates a warning or error notification.
+11. The operator cadence defaults to `AUTO_SYNC_INTERVAL=24h` and may be set to `12h`; UI polling does not change sync cadence.
+12. iCloud performs one application metadata discovery per sync. A successful object with unchanged remote ID, size and modification time skips without download unless its ownership-blocked epoch is stale. Same-metadata content overwrites remain undetectable absent forced reprocessing; native operations may make additional listings/HTTP requests.
+13. Successful checksums remain valid for all-blocked and mixed files. Any `skipped_live_owner` event marks the file with the epoch captured before ownership decisions. Same-epoch sync skips it; the next fresh incremental job after source deletion rereads it even with identical metadata/bytes. Adoption and cookie/auth generation changes do not advance this epoch.
 
 ### Validation
 
@@ -281,6 +335,7 @@ As a data owner, I want new workout exports imported automatically without daily
 - One failed source does not block other source children.
 - Authentication expiry reports a source error and does not leak rclone output or credentials.
 - Worker interruption leaves a retryable job and recoverable file state.
+- Known expired trust, failed authentication or explicit missing PCS approval during iCloud ingest sets `connection-failed`, notifies the owner and blocks later ingest. Transient upstream ingest errors fail the job but leave a connected source connected; transient explicit-check failures still follow the failed-check contract. Reauthentication is external, followed by a private owner PATCH and successful check.
 
 ### Acceptance criteria
 
@@ -301,7 +356,7 @@ As a data owner, I want to synchronize selected sources and historical periods o
 3. Auto-sync sources are checked by default; the user may change the selection.
 4. New data only is the default mode.
 5. Specific date range requires inclusive start and end dates.
-6. New-data mode discovers only new or changed files.
+6. New-data mode discovers new or changed files and stale ownership-blocked files under the contract requiring 26.
 7. Bounded mode deliberately reprocesses every matching file, including previously processed checksums.
 8. The request creates one parent job and one child per selected source.
 9. Exact equivalent active work returns the existing job.
@@ -321,7 +376,7 @@ As a data owner, I want to synchronize selected sources and historical periods o
 
 ### Acceptance criteria
 
-- Given no dates, when Manual Sync is submitted, then only new or changed files are processed.
+- Given no dates, when a new Manual Sync is submitted, then new, changed or stale ownership-blocked files are processed; an equivalent active job retains its frozen manifest.
 - Given an explicit range, when Manual Sync is submitted, then every matching file is reprocessed.
 - Given an equivalent active request, when submitted again, then the existing parent job ID is returned.
 
@@ -335,22 +390,25 @@ As an operator, I want ingest to use bounded temporary storage so that historica
 
 1. Discovery records candidate metadata without downloading all files.
 2. Each available processing slot handles one file through download, parse, commit, and cleanup.
-3. Remote files are staged under a user- and job-scoped temporary directory.
-4. A slot deletes its staged file on success, failure, or cancellation before claiming another.
+3. Remote files/configs are staged in a private random job directory beneath `WORKER_STAGING_ROOT/private`, scoped to that job/source and never shared across independent worker processes.
+4. A slot removes its staged file on success, failure, or cancellation before claiming another. A local attempt's private-directory cleanup failure blocks its terminal writes and that worker's new claims/readiness until cleanup is confirmed; retries are bounded.
 5. Worker startup removes abandoned staging files.
 6. File concurrency is limited per account, per worker, and globally.
 7. Defaults are two files per account, two per worker, and four globally.
 8. Connection checks and deletion jobs bypass ingest-file concurrency.
+9. Same-job candidate actions and metadata are frozen for recovery. Terminal file checkpoints never reopen; restored committed events/counters do not count adoptions or live-owner skips twice.
 
 ### Validation
 
 - Filenames cannot escape the staging directory.
 - Source files larger than an operator limit are rejected safely if such a limit is configured.
+- iCloud has hard bounds: 64 MiB per file, 100000 discovery entries, 10000 eligible exports, 32 MiB metadata stdout, 60-second metadata operations and five-minute downloads including metadata checks. Only flat dated HealthAutoExport JSON files are eligible.
 - Invalid JSON fails the file without committing a partial file result.
 
 ### Failure cases
 
-- Cleanup failure is recorded in diagnostics and telemetry.
+- Cleanup failure is recorded safely and leaves recoverable work. The gate/startup scavenging is worker/pod-local, not distributed cross-pod cleanup or a lost-volume guarantee. Bounded retries cannot guarantee deletion under permission, read-only filesystem or hardware faults; eventual pod-volume disposal is a recovery boundary, not a physical-erasure promise.
+- Encryption/credential-refresh persistence failure cannot falsely succeed or discard a recoverable job snapshot. Refreshed cookies use a generation/lease fence; obsolete refreshes are harmless and do not mutate job snapshots.
 - A pod interruption leaves the file eligible for startup cleanup and job recovery.
 - One malformed workout does not expose raw payload data in logs.
 
@@ -358,6 +416,94 @@ As an operator, I want ingest to use bounded temporary storage so that historica
 
 - Given a range containing thousands of files, when ingest runs, then no worker stages the whole range at once.
 - Given three source children for one account, when all have files, then no more than two files for that account process concurrently by default.
+
+## Feature: Pipeline Committed Routes To Coverage
+
+### Behavior
+
+The following is the **folded-028 contract deployed in `dev-20261020`**.
+
+1. With schema/runtime **28**, source workers hand off durable committed work after
+   file and transport cleanup releases the file slot, while later files may still
+   ingest. A file remains atomic; matching does not run inside its transaction.
+   The runner downloads/processes files serially within a source job and performs
+   cleanup before and after the file pipeline.
+2. `worker.coverageBatchSize` / `WORKER_COVERAGE_BATCH_SIZE` sets threshold **B**,
+   default **25**, valid **1-1000**. During active ingest, each normal parent requires
+   **exactly B new eligible matching targets**, globally across regions within the
+   ingest-root/source-sibling scope. Normal and adopted obligations share the
+   cohort. Missing maps, current/live/unchanged authoritative failed or cancelled
+   targets, non-GPS imports and deduplicated obligations do not count. No-GPS
+   adoption is acknowledged without a matching job.
+3. Private durable prepared metadata saves B and root/source-sibling scope across
+   files/crashes. There is **no placeholder Coverage parent** while underfull;
+   full parent and B children seal atomically. SQL counts all children, including
+   terminal/superseded ones, against saved capacity. Configuration changes do not
+   resize saved cohorts. Readiness precedes enqueue: unavailable normal work
+   acknowledges without any matching job, but does not shrink an active-ingest
+   cohort. Mixed regions are explicitly allowed; optional `coverage.regionIds`
+   reports the actual child-region union, including retries. Existing `regionId`/
+   `targetGeneration` are representative anchors, never complete matching scope.
+   Per-route generation vectors, claim fencing and admission are unchanged.
+4. Retry parents contain only the preceding attempt's eligible failed/cancelled
+   routes, preserve their chain and inherited capacity, and never accept fresh
+   routes to fill spare capacity. An unchanged normal import cannot reset a failed
+   target's retry budget; a distinct adoption event alone supplies force-refresh
+   authority for otherwise identical input.
+5. Interruption, source failure or ingest cancellation does not erase committed
+   derived-work obligations. A final partial cohort seals **only after the visible
+   ingest root and all source siblings are terminal and due preparation is
+   exhausted**, via leased account-reconciliation recovery, never active EOF.
+   Failed/cancelled roots can legitimately retain committed-data obligations
+   without reopening ingest. Active underfull cohorts remain protected; normal
+   metadata updates/deduplication cannot revive cancelled route targets and retain
+   their cancellation footprint. Coverage jobs have their own cancellation lifecycle.
+6. Preparation keeps bounded metadata and one route's coordinates at a time, not
+   unbounded payloads/metadata in memory. ROI uses one efficient query per route,
+   not per point. A trusted fingerprint of **all catalog regions, configuration,
+   boundaries and active heads** must match in the same Repeatable Read ROI lookup
+   snapshot and before seal. Mismatch invalidates preparation for fresh ROI; it
+   never blesses old readiness by substituting a new generation vector. Separate
+   APP/OSM databases do not provide a cross-database latest-state atomicity claim.
+
+### Failure Cases
+
+- Readiness snapshots cover the full canonical raw input, including zero through
+  250,000 points, without truncation. Matching still allows only 50,000 original
+  points: overflow is a typed permanent Coverage processing failure, not a failed
+  source import. Stored raw routes remain available.
+- Only verified typed transient readiness errors durably defer the affected
+  obligation for one hour. Permanent, cancelled or unknown error branches surface
+  safely rather than being disguised as transient success; every joined error
+  branch must qualify for deferral.
+- Missing maps acknowledge normal readiness without a matching job; adoption
+  retains a deferred refresh. Later map promotion uses ordinary reconciliation.
+- Matching policy remains `coverage-production-v1`, with unchanged 500m CPU,
+  256 MiB memory, two lanes, admission 2/2/2 and one slot per reader. Batching does
+  not certify capacity or increase concurrency, retry or execution budgets.
+  The folded lock fix likewise preserves 6/10/15-minute timeout steps and the
+  default one additional automatic retry; it adds no worker transaction retry.
+
+### Acceptance Criteria
+
+- A synthetic committed file with 63 eligible new routes at B=25 seals 25/25
+  during active ingest; 13 seal only through account recovery after the visible
+  root/all source siblings are terminal and due preparation is exhausted. File
+  commits remain atomic.
+- A three-route retry from a 25-route parent remains a three-route chained retry;
+  a fresh 25-route batch uses a normal root, never that retry's spare capacity.
+- Recovery and concurrent enqueue preserve receipt idempotency, parent caps,
+  ownership/lease/content fences and retry budgets. Ingest completion still does
+  not certify Coverage completion.
+- When readiness excludes candidates, unavailable receipts have no matching jobs;
+  prepared eligible targets wait across files/crashes for B, including mixed
+  regions. No smaller active-ingest normal parent or placeholder is created.
+  A small retry cohort remains separate, not topped up with new inputs to reach B.
+- With folded 028, concurrent ingest and Coverage retain atomic file/checkpoint,
+  evidence/progress and map-generation commits. A failed deferred generation
+  update rolls back the corresponding transaction rather than reporting partial
+  success. Earlier isolated verification is not a fresh final-contract test,
+  live rollout or capacity receipt.
 
 ## Feature: Normalize And Upsert Workouts
 
@@ -367,19 +513,28 @@ As a data owner, I want repeatable imports that preserve provider meaning withou
 
 ### Behavior
 
-1. Source plus provider workout ID identifies an existing workout when available.
-2. A fallback fingerprint is used only when the provider ID is absent.
+The user-approved identity/adoption rules **require schema and runtime 26**,
+including migrations 024-026. See
+[Development Progress](development-progress.md) for live-version evidence. These
+criteria are not a deployment, live-cloud smoke or acceptance receipt.
+
+1. Account plus provider namespace plus opaque provider workout ID identifies a workout globally within that account. Local and iCloud Health Auto Export transports share the `health-auto-export` namespace.
+2. A fallback fingerprint is used only when the provider ID is absent; it remains conservative and source-local, without automatic cross-source adoption.
 3. Provider workout names map to normalized workout-type records. App-facing names use Outdoor Run, Outdoor Walk, Outdoor Cycle, Indoor Run, Indoor Walk and Indoor Cycle for the corresponding qualified aliases. Unknown and unqualified names remain unchanged. Display normalization does not change provider-derived type keys, content hashes, fallback identities or deletion suppression.
 4. Provider aggregate values take precedence over incomplete sample sums.
 5. Provider duration and original timestamp offsets are preserved.
-6. Changed content updates the existing workout transactionally.
+6. For the same mapped source, unchanged content records a match without replacing raw data; changed content updates the same UUID transactionally.
 7. Changed routes rebuild dependent coverage, elevation, timezone, and aggregate data.
-8. Import events record created, updated, or matched_unchanged.
-9. Overlapping workouts from distinct recording sources remain distinct.
+8. Private import events distinguish `created`, `updated`, `matched_unchanged`, `adopted` and `skipped_live_owner`. Aggregate progress counts `adopted` as Updated and `skipped_live_owner` as Unchanged, not as proof of identical incoming content.
+9. Distinct provider identities remain distinct even when times/routes overlap. A matching identity owned by another live source is skipped without duplicate creation, payload update or ownership theft. Live means not deleted, regardless of auto-sync or connection status.
+10. Exactly one matching provider-backed workout owned by a deleted source is adopted under the same UUID. Incoming payload is authoritative, including replacement of changed header, aggregates and route data; previous source/file/job import provenance remains historical and unchanged. Source type stays immutable in the API, and switching sources needs no workout-history wipe.
+11. Every successful adoption durably requests Coverage in the same file transaction, including unchanged content/route. Post-commit ingest repair or leased reconciliation consumes the outbox; content and route hashes remain genuine, not manipulated to force rematching. Missing map data defers matching; no-route/deleted workouts need no match.
+12. Pending/completed workout-deletion tombstones suppress resurrection through replacement sources. Source deletion alone retains workouts and permits eligible adoption; it is not workout deletion.
 
 ### Validation
 
-- Provider IDs are unique within one source.
+- Provider-backed identities are unique by account, `health-auto-export` namespace and opaque provider ID, across local/iCloud sources.
+- Legacy duplicate identities make migration fail closed; ambiguous identity resolution never silently merges UUIDs or picks a winner.
 - Metric units must be known or retained with a normalization warning.
 - Missing optional route or metric data does not invalidate an otherwise valid workout.
 
@@ -387,11 +542,16 @@ As a data owner, I want repeatable imports that preserve provider meaning withou
 
 - An invalid workout is reported without corrupting previously committed workouts.
 - Suspicious units or quality values create adapter warnings rather than silent reinterpretation.
+- Identity conflicts fail without leaking provider IDs or partially committing a file. No date/GPS similarity fallback authorizes adoption.
 
 ### Acceptance criteria
 
-- Given the same unchanged workout in a bounded reimport, when ingest finishes, then no duplicate is created and matched_unchanged provenance is appended.
-- Given changed route content for the same provider ID, when reingested, then the existing workout and derived map data are updated.
+- Given the same unchanged workout in a bounded reimport through its mapped source, when ingest finishes, then no duplicate is created and matched_unchanged provenance is appended.
+- Given changed route content for the same provider ID through its mapped source, when reingested, then the existing workout and derived map data are updated.
+- Given the same provider identity owned by another non-deleted source, even disabled or disconnected, when imported, then no duplicate/update/adoption occurs and `skipped_live_owner` is recorded.
+- Given a single deleted-source owner, when another source imports that identity, then the UUID and history survive, incoming content becomes authoritative and `adopted` plus a durable Coverage request commit together even if bytes are unchanged.
+- Given an unchanged file blocked by Local A while Cloud B syncs, when A is deleted, then the epoch advances and the next fresh B sync rereads/adopts; a later B sync skips unchanged metadata. See the [worked example](icloud-source-setup.md#worked-source-switch-example).
+- Given a pending/completed workout deletion or ambiguous identity, when a replacement source imports it, then it cannot resurrect or silently merge the workout.
 
 ## Feature: Retain And Export Route Data
 
@@ -482,6 +642,8 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 8. Mobile shows date/timezone, workout type, and duration, with tap-to-expand details.
 9. Elevation fields are available for all routes and shown by default for configured types such as Hiking.
 10. Pagination keeps the current table mounted at full opacity while the next page loads, reserves its measured height so a short final page does not collapse the document, swaps rows in place, and restores the captured document scroll position.
+11. The Workouts card pairs the total workout count with an equally prominent, right-aligned count labeled With routes. The labels By workout type and With routes share the footer row. These counts remain counts in averages mode; measured distance without GPS does not imply a route.
+12. The Distance card and its type breakdown include every workout type with a valid measured distance, independently of GPS or activity name. Distance averages divide measured distance by the number of workouts with that measurement, globally and per type. Explicit measured zero counts; missing or unsupported-unit measurements do not become zero or enter the denominator. Other aggregate denominators are unchanged.
 
 ### Validation
 
@@ -499,6 +661,8 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 - Given workouts of several types, when an aggregate is hovered, then its type breakdown is shown.
 - Given a mobile viewport, when a row is tapped, then additional workout details expand inline.
 - Given equal primary sort values, then stable UUID tie-breaking prevents records moving between pages.
+- Given route-less workouts with measured distance, when totals or averages are displayed, then their types appear in the Distance breakdown. Workouts without measured distance remain excluded even if they have GPS routes.
+- Given a workout deletion, when the optimistic update hides it, then total, routed and measured-distance counts update independently and roll back together if enqueueing fails.
 
 ## Feature: Review Workout Details
 
@@ -633,6 +797,11 @@ they are not held back by direction-marker readiness.
 
 - A map selection belongs to one session and account.
 - Foreign, expired, or invalid selections are rejected.
+- With new folded 028, selected data and generation use one Repeatable Read snapshot
+  without a generation-row lock. A concurrent commit may make even a newly
+  returned selection stale; existing current-generation validation rejects it
+  instead of authorizing old selected data with a new generation. Focused-workout
+  membership and account ownership constraints remain enforced.
 - Tile requests cannot provide arbitrary account IDs.
 - Base-map configuration rejects duplicate family IDs, missing theme variants, an unknown fallback or mapped family, unsafe URLs, and invalid attribution.
 - Optional focus must belong to the created selection. Deleted, foreign, nonrouted or out-of-range focus returns not found, not temporary unavailability. Reauthentication into an unavailable focused route clears that focus and loads the current range with bounded recovery, preserving explicit checked-route scope and user preferences.
@@ -694,7 +863,50 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 25. Ingested workouts and raw routes become available without waiting for asynchronous coverage matching. Production Coverage uses current durable results, identifies checked routes omitted as pending, failed, or unavailable, and refreshes after a committed coverage generation rather than running the matcher from a tile or statistics request.
 25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. These row indicators identify omitted checked workouts; a separate omission summary is not required. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable no-result workouts alone do not keep polling active. Once every checked workout has a current or stale applied result, ten-second processing polling stops. While applied results are displayed, background generation checks continue at the public polling interval clamped to 10-60 seconds (normally 30 seconds), so committed replacements renew private capabilities even when readiness labels are unchanged. Both checks pause in hidden tabs and stop outside production Coverage mode. Unchanged capabilities are discarded without replacing map sources or resetting focus/camera state.
 26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
-27. Coverage processing creates one account/region parent run with one child per eligible workout route. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful.
+27. Coverage processing creates bounded account-owned parent runs with one child per eligible workout route. New ingest cohorts may mix regions, with per-route vectors authoritative. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful. See [committed-route pipelining](#feature-pipeline-committed-routes-to-coverage).
+
+### Matching Bounds And Diagnostic Parity
+
+- Production Coverage and diagnostics share the same matching implementation and
+  matching limits: at most **50,000 original GPS points** supplied to the matcher
+  and **12,000 sampled GPS points per route** after sampling. The 12,000 limit is
+  inclusive and is not a limit on stored raw-route points or imported workouts.
+- Passing the sampled-point check does not guarantee completion: the route must
+  also satisfy graph, evidence and execution bounds. An oversized matching input
+  is rejected rather than silently truncated; the original stored route remains
+  available.
+- Matching normally uses overlapping 128-point windows. Typed graph-node or
+  graph-edge exhaustion retries the same position with a 64-point window, then
+  a 32-point window. Accepted windows overlap by one point without double-counting
+  observations. Failure at the minimum window remains a processing-limit failure.
+- Adaptive recovery retains the 2,048-node and 4,096-edge graph bounds, the same
+  snapshot/deadline, and the existing connectivity/continuity rules. It neither
+  discards arbitrary nodes nor fabricates coverage across gaps. Failed attempts
+  publish no partial results. Other processing limits are specified in the
+  [shared architectural contract](architecture.md#shared-matching-contract).
+- For identical input, OSM generations and effective matching parameters,
+  diagnostics and production must make equivalent matching decisions and produce
+  equivalent covered geometry, accounting for production's per-segment dissolution.
+  Explicit diagnostic what-if parameters do not attest the unchanged production
+  policy.
+- Diagnostic request admission and HTTP deadlines remain operational safeguards,
+  not alternative matching rules. A diagnostic request that expires before
+  completion is inconclusive; it must not claim production matching would fail.
+  Raising a point limit does not implicitly raise resource, concurrency or timeout
+  budgets.
+- Parking repair retains the established raw-support predicates, acceptance
+  margins and candidate order. It may reject a certified cycling/growing
+  continuation only when exact state/suffix equality and deterministic boundary
+  choices establish nontermination. It must not replace that guard with a new
+  preference for keeping already-supported middles. Ambiguous continuations keep
+  the original choices and fail explicitly if bounded repair work is exhausted.
+- A parking-repair state-byte bound can fail even below both point ceilings.
+  `ParkingRepairLimitError` is a permanent processing limit; a generic stored
+  `coverage-route-too-large` code does not identify which bound failed. A generic
+  lifecycle `failed` log is consistent with that stored code, not contradictory
+  evidence. Read-only core probes do not create jobs, persist diagnostics or prove
+  successful production persistence. Dataset-specific probes belong only in
+  private operator evidence; limits and matcher policy are unchanged.
 
 ### Validation
 
@@ -730,6 +942,28 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Given coverage diagnostics is enabled and one route is selected, when Coverage is selected, then only that route's diagnostic evidence and review controls appear.
 - Given ingest commits routed workouts while coverage capacity is occupied, when Routes opens, then the new raw routes are available and Coverage identifies them as pending.
 - Given rematching fails after prior coverage exists, when Coverage renders, then the prior valid result remains available and the failed update is identified.
+- Given a route produces exactly 12,000 sampled points within the other bounds,
+  both production and diagnostics pass the sampled-point check; 12,001 sampled
+  points fail that check in both paths without truncation.
+- Given more than 50,000 original points are supplied to matching, both paths
+  reject the oversized input rather than matching a truncated prefix.
+- Given a 128-point window exceeds a recoverable graph bound, successful 64- or
+  32-point subdivision preserves observation accounting, route order/time and map
+  provenance; failed larger attempts add no duplicate evidence.
+- Given subdivision cannot satisfy the graph bound at the minimum window, the
+  route fails explicitly without committing incomplete replacement Coverage.
+- Given identical input, target generations and effective parameters, completed
+  diagnostic evidence dissolves to the same covered geometry as production.
+- Given the diagnostic HTTP budget expires first, the user receives an
+  inconclusive diagnostic outcome rather than a production-matching verdict.
+- Given an established parking repair terminates within the bookkeeping bounds,
+  cycle prevention preserves its choices and result, including valid replacement
+  of an already-supported middle.
+- Given a deterministic parking repair recreates its exact continuation without
+  consuming new input, the cycling/pumping candidate is rejected and later
+  alternatives remain available; no fabricated partial Coverage is committed.
+- Given boundary selection is ambiguous, recurrence alone cannot reject a
+  candidate; cancellation or repair-work exhaustion remains an explicit error.
 
 ## Feature: Delete Workout Data
 
@@ -784,6 +1018,11 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 8. A coverage Run detail shows routes total, processed, succeeded, failed, cancelled, and superseded, plus each authorized workout route's status, attempt, duration, and safe failure category. Persisted parent lifecycle remains monotonic internally. For the user-facing Task history and detail status, an unfinished Coverage parent is plain yellow `Running` only while it has a running child and plain light-blue `Queued` while it waits for the matcher; polling keeps this scheduler presentation current. No separate Matcher column is shown, and run-detail parent and route badges remain one-word badges. It never shows route coordinates.
 9. Coverage retries form one linear parent chain. Run detail identifies the current attempt and provides ordinal navigation across First, Second, and every subsequent retry through the latest attempt.
 10. Retrying a failed or partially successful coverage parent includes only eligible failed or cancelled routes from its immediately preceding attempt. Successful and superseded routes do not rerun, and a non-latest parent cannot fork the retry chain.
+11. A failed or partially completed Coverage parent displays green **Superseded** when every historically unsuccessful route has proven current Coverage. This is a derived display status, not a rewrite of that attempt's stored execution status, results or timestamps. Individual routes still show the Failed or Canceled badges recorded by that attempt.
+12. Coverage Run detail exposes advisory current retry eligibility and a safe explanation. When nothing remains eligible, Retry is disabled with a reason; fully resolved history explicitly says no action is needed. Current-Coverage links lead to the owned runs providing the route results, separately from retry-ancestry links.
+13. A route has one authoritative current target, but may appear in several historical jobs/chains after genuine input, map-generation or matching-policy changes. Supersession does not authorize fabricated retry links or deletion of history. Incomplete, failed, foreign or unproven replacement work does not qualify for green Superseded presentation.
+14. History status filtering uses the displayed status before counting and pagination. The Superseded filter selects resolved historical parents; Failed and Partially completed filters exclude them. Coverage detail and history, including empty filtered pages, continue refreshing when independent work can change terminal-parent eligibility/display state or totals.
+15. Run-detail Files, Events and Logs pagination retains current rows and controls while a requested page loads. Full pages reserve the measured list height; only a loaded final partial page releases it. Cached page changes anchor the controls immediately even during background refetch. Deliberate scrolling overrides automatic anchoring. A failed request retains the displayed page and disables navigation until Try again succeeds, rather than skipping a page. Closing the disclosure or selecting another run cancels pending scroll restoration and isolates its page data.
 
 ### Validation
 
@@ -792,6 +1031,22 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
   retried where supported; only the latest job in a retry lineage may create the
   next attempt.
 - Log access follows job ownership.
+- GET retry eligibility is advisory. POST retains account/parent locking,
+  latest-attempt and ordinal checks, and current-target revalidation. A transient
+  busy conflict is not permanent ineligibility. A blocking conflict stays blocked
+  until successful fresh metadata resolves it, even if the first refresh fails.
+- New folded-028 automation requires **at least one timeout/verified-transient
+  eligible FAILED child**, then carries **all authoritative FAILED siblings** with
+  valid descriptors, including permanent, unknown and null-code failures, into
+  the next chained attempt. It never reruns successes or revives cancellations.
+  An all-permanent/unknown parent stops automatically. Latest-only authority
+  remains required for all failed descriptors; no transient-only successor may
+  strand permanent siblings behind a non-latest parent. The additional automatic
+  count defaults to **1**, range **0-20**, shared durably per root; manual retry
+  does not reset it. A failed automatic second attempt cannot create an automatic
+  third with that budget already consumed. Normal unchanged failed-target scans
+  cannot bypass the budget by creating fresh roots. This mixed policy is
+  **deployed in `dev-20261020`**; historical release receipts retain their old policy.
 
 ### Failure cases
 
@@ -805,6 +1060,17 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 - Given a failed or partially successful coverage parent is retried, when its failed routes remain eligible, then only those routes rerun using current matcher input and targets.
 - Given a coverage parent has been selectively retried more than once, when any attempt's Run detail opens, then First, Second, and all later attempt ordinals navigate the same linear chain and identify the current and latest attempts.
 - Given an earlier coverage attempt already has a retry, when retry is requested from that non-latest attempt, then no fork is created.
+- Given a Failed or Partially completed Coverage parent has all unsuccessful
+  routes resolved by current owned Coverage, history and its parent badge show
+  green Superseded, Retry is disabled, and its original failed route badges remain.
+- Given even one unsuccessful route lacks proof of current Coverage, the parent
+  does not show Superseded; any current eligible failed targets remain retryable.
+- Given independent newer runs resolve an older failed parent's routes, Run detail
+  links those runs as current Coverage without inventing a linear retry relationship.
+- Given 25 resolved failed histories, filtering Superseded returns all 25 with
+  correct page totals while filtering Failed returns none; stored statuses remain failed.
+- Given an already-current retry conflict followed by a failed detail refresh,
+  cached eligible metadata does not re-enable Retry or expose private error text.
 - Given a user ingest job, when an admin requests its logs, then access is denied.
 
 ## Feature: Receive And Dismiss Notifications

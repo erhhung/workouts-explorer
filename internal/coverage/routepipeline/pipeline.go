@@ -16,6 +16,7 @@ import (
 )
 
 const WindowSize = 128
+const OriginalPointLimit = 50000
 
 type Snapshot interface {
 	Candidates(context.Context, []osm.MatcherObservation, int) ([]osm.MatcherCandidate, error)
@@ -33,8 +34,8 @@ type Limits struct {
 	UnavailableRegions int
 }
 
-func DiagnosticLimits() Limits {
-	return Limits{SampledPoints: 10000, Portions: 10000, Segments: 4096, Generations: 256, UnavailableRegions: 64}
+func DefaultLimits() Limits {
+	return Limits{SampledPoints: 12000, Portions: 10000, Segments: 4096, Generations: 256, UnavailableRegions: 64}
 }
 
 type Config struct {
@@ -105,7 +106,13 @@ type matchedPortion struct {
 }
 
 func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.GeographicObservation, cfg Config) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	points := coverage.SampleGeographicObservations(observations, cfg.Sampling, cfg.Rules)
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if len(points) > cfg.Limits.SampledPoints {
 		return Result{}, &LimitError{Field: "sampled points", Limit: cfg.Limits.SampledPoints}
 	}
@@ -123,12 +130,16 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	var windowStarts []int
 	windowOrdinal := 0
 	for start := 0; start < len(points); {
-		windowStarts = append(windowStarts, start)
-		end := min(start+WindowSize, len(points))
-		matched, stats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], cfg.Rules, options)
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		matched, stats, end, err := matchAdaptiveWindow(ctx, snapshot, points, cfg.Rules, options, WindowSize, func(size int) (int, int) {
+			return start, min(start+size, len(points))
+		})
 		if err != nil {
 			return Result{}, err
 		}
+		windowStarts = append(windowStarts, start)
 		result.addStats(stats, matched.Splits)
 		skip := 0
 		if start > 0 {
@@ -179,6 +190,11 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	refIndexes := make(map[osm.MatcherPortionRef]int, len(portions))
 	portionRefs := make([]int, len(portions))
 	for i, item := range portions {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+		}
 		segments[item.portion.PhysicalSegmentID] = struct{}{}
 		ref := osm.MatcherPortionRef{SegmentID: item.portion.PhysicalSegmentID, RegionID: item.portion.RegionID,
 			GenerationID: item.portion.GenerationID, Direction: osm.MatcherDirection(item.portion.Direction),
@@ -196,6 +212,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	}
 	clipped := make([]osm.MatcherClippedPortion, len(uniqueRefs))
 	for start := 0; start < len(uniqueRefs); start += cfg.Limits.Segments {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		end := min(start+cfg.Limits.Segments, len(uniqueRefs))
 		batch, err := snapshot.ClipPortions(ctx, uniqueRefs[start:end])
 		if err != nil {
@@ -212,6 +231,11 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	usedGenerations := make(map[string]struct{})
 	clear(segments)
 	for i, item := range portions {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+		}
 		clip := clipped[portionRefs[i]]
 		if !ValidClip(clip) {
 			result.Stats.InvalidClips++
@@ -255,6 +279,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 		}
 	}
 	result.Counts.Portions, result.Counts.UniqueSegments = len(result.Evidence), len(segments)
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	return result, nil
 }
 
@@ -324,6 +351,11 @@ func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value
 func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windowStarts []int, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]matchedPortion, supplementalStats, error) {
 	stats := supplementalStats{}
 	for i := 0; i+1 < len(portions); i++ {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, stats, err
+			}
+		}
 		before, after := portions[i], portions[i+1]
 		if before.window == after.window || after.window < 0 || after.window >= len(windowStarts) ||
 			before.portion.ContinuityClass != "road" || after.portion.ContinuityClass != "road" ||
@@ -332,31 +364,29 @@ func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapsho
 			!directedPortionEndIsClipped(before.portion) || !directedPortionStartIsClipped(after.portion) {
 			continue
 		}
-		start := max(0, windowStarts[after.window]-WindowSize/2)
-		end := min(len(points), start+WindowSize)
-		start = max(0, end-WindowSize)
-		rematched, matchStats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], rules, options)
+		rematched, matchStats, _, err := matchAdaptiveWindow(ctx, snapshot, points, rules, options, WindowSize,
+			seamWindowBounds(len(points), windowStarts[after.window], 1, 2))
 		if err != nil {
 			return nil, stats, err
 		}
 		stats.add(matchStats)
-		var flat []coverage.TraversedPortion
+	turnRematch:
 		for _, traversal := range rematched.Traversals {
-			flat = append(flat, traversal.Portions...)
-		}
-		for j := 0; j+1 < len(flat); j++ {
-			newBefore, newAfter := flat[j], flat[j+1]
-			if newBefore.PhysicalSegmentID != before.portion.PhysicalSegmentID || newBefore.Direction != before.portion.Direction ||
-				newAfter.PhysicalSegmentID != after.portion.PhysicalSegmentID || newAfter.Direction != after.portion.Direction ||
-				newBefore.SourceFromFraction > before.portion.SourceFromFraction+1e-6 || newBefore.SourceToFraction < before.portion.SourceToFraction-1e-6 ||
-				newAfter.SourceFromFraction > after.portion.SourceFromFraction+1e-6 || newAfter.SourceToFraction < after.portion.SourceToFraction-1e-6 {
-				continue
-			}
-			added := (newBefore.ToMeter - newBefore.FromMeter) + (newAfter.ToMeter - newAfter.FromMeter) -
-				(before.portion.ToMeter - before.portion.FromMeter) - (after.portion.ToMeter - after.portion.FromMeter)
-			if added > 1e-6 && added <= 35 {
-				portions[i].portion, portions[i+1].portion = newBefore, newAfter
-				break
+			flat := traversal.Portions
+			for j := 0; j+1 < len(flat); j++ {
+				newBefore, newAfter := flat[j], flat[j+1]
+				if newBefore.PhysicalSegmentID != before.portion.PhysicalSegmentID || newBefore.Direction != before.portion.Direction ||
+					newAfter.PhysicalSegmentID != after.portion.PhysicalSegmentID || newAfter.Direction != after.portion.Direction ||
+					newBefore.SourceFromFraction > before.portion.SourceFromFraction+1e-6 || newBefore.SourceToFraction < before.portion.SourceToFraction-1e-6 ||
+					newAfter.SourceFromFraction > after.portion.SourceFromFraction+1e-6 || newAfter.SourceToFraction < after.portion.SourceToFraction-1e-6 {
+					continue
+				}
+				added := (newBefore.ToMeter - newBefore.FromMeter) + (newAfter.ToMeter - newAfter.FromMeter) -
+					(before.portion.ToMeter - before.portion.FromMeter) - (after.portion.ToMeter - after.portion.FromMeter)
+				if added > 1e-6 && added <= 35 {
+					portions[i].portion, portions[i+1].portion = newBefore, newAfter
+					break turnRematch
+				}
 			}
 		}
 	}
@@ -366,10 +396,20 @@ func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapsho
 func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windowStarts []int, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]matchedPortion, supplementalStats, error) {
 	stats := supplementalStats{}
 	present := make(map[uuid.UUID]bool)
-	for _, item := range portions {
+	for i, item := range portions {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, stats, err
+			}
+		}
 		present[item.portion.PhysicalSegmentID] = true
 	}
 	for i := 1; i+1 < len(portions); i++ {
+		if (i-1)&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, stats, err
+			}
+		}
 		before, selected, after := portions[i-1], portions[i], portions[i+1]
 		if before.window != selected.window || selected.window == after.window || after.window < 0 || after.window >= len(windowStarts) ||
 			before.portion.ContinuityClass != "road" || selected.portion.ContinuityClass != "road" || after.portion.ContinuityClass != "road" ||
@@ -380,33 +420,30 @@ func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, poin
 			continue
 		}
 		const supplementalWindowSize = 192
-		start := max(0, windowStarts[after.window]-128)
-		end := min(len(points), start+supplementalWindowSize)
-		start = max(0, end-supplementalWindowSize)
-		rematched, matchStats, err := coverage.MatchOSM(ctx, snapshot, points[start:end], rules, options)
+		rematched, matchStats, _, err := matchAdaptiveWindow(ctx, snapshot, points, rules, options, supplementalWindowSize,
+			seamWindowBounds(len(points), windowStarts[after.window], 2, 3))
 		if err != nil {
 			return nil, stats, err
 		}
 		stats.add(matchStats)
-		var flat []coverage.TraversedPortion
-		for _, traversal := range rematched.Traversals {
-			flat = append(flat, traversal.Portions...)
-		}
 		replaced := false
-		for left := 0; left < len(flat) && !replaced; left++ {
-			if flat[left].PhysicalSegmentID != before.portion.PhysicalSegmentID || flat[left].Direction != before.portion.Direction {
-				continue
-			}
-			for right := left + 3; right < len(flat) && right <= left+6; right++ {
-				if flat[right].PhysicalSegmentID != after.portion.PhysicalSegmentID || flat[right].Direction != after.portion.Direction {
+		for _, traversal := range rematched.Traversals {
+			flat := traversal.Portions
+			for left := 0; left < len(flat) && !replaced; left++ {
+				if flat[left].PhysicalSegmentID != before.portion.PhysicalSegmentID || flat[left].Direction != before.portion.Direction {
 					continue
 				}
-				var replacement []matchedPortion
-				portions, replacement = replaceCrossWindowTangent(portions, i, flat[left+1:right], flat[right], before, selected, after, present)
-				if len(replacement) > 0 {
-					i += len(replacement) - 1
-					replaced = true
-					break
+				for right := left + 3; right < len(flat) && right <= left+6; right++ {
+					if flat[right].PhysicalSegmentID != after.portion.PhysicalSegmentID || flat[right].Direction != after.portion.Direction {
+						continue
+					}
+					var replacement []matchedPortion
+					portions, replacement = replaceCrossWindowTangent(portions, i, flat[left+1:right], flat[right], before, selected, after, present)
+					if len(replacement) > 0 {
+						i += len(replacement) - 1
+						replaced = true
+						break
+					}
 				}
 			}
 		}

@@ -10,19 +10,24 @@ import (
 	"math"
 	"time"
 
-	"github.com/erhhung/workouts-explorer/internal/coverage"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 type coverageRoutePoint struct {
-	Sequence                                                            int
-	Timestamp                                                           *time.Time
-	Latitude, Longitude                                                 float64
-	Altitude, Speed, Course                                             *float64
-	HorizontalAccuracy, VerticalAccuracy, SpeedAccuracy, CourseAccuracy *float64
+	Sequence           int        `json:"sequence"`
+	Timestamp          *time.Time `json:"recorded_at"`
+	Latitude           float64    `json:"latitude"`
+	Longitude          float64    `json:"longitude"`
+	Altitude           *float64   `json:"altitude"`
+	Speed              *float64   `json:"speed"`
+	Course             *float64   `json:"course"`
+	HorizontalAccuracy *float64   `json:"horizontal_accuracy"`
+	VerticalAccuracy   *float64   `json:"vertical_accuracy"`
+	SpeedAccuracy      *float64   `json:"speed_accuracy"`
+	CourseAccuracy     *float64   `json:"course_accuracy"`
 }
 
 func coveragePoints(points []healthautoexport.RoutePoint) []coverageRoutePoint {
@@ -78,56 +83,6 @@ func writeTime(digest hash.Hash, value *time.Time) {
 	_, _ = digest.Write([]byte(text))
 }
 
-func (r *Runner) updateCoverageReadiness(ctx context.Context, tx pgx.Tx, job claimedJob, workoutID uuid.UUID, points []coverageRoutePoint) error {
-	digest := canonicalRouteInputSHA256(points)
-	var revision int64
-	var changed bool
-	if err := tx.QueryRow(ctx, `SELECT route_input_revision,digest_changed FROM app.initialize_workout_coverage($1,$2,$3,$4,$5,$6)`,
-		job.accountID, workoutID, digest[:], job.id, r.workerID, job.lease).Scan(&revision, &changed); err != nil {
-		return fmt.Errorf("initialize workout coverage: %w", err)
-	}
-	if r.osmDB == nil {
-		return nil
-	}
-	coordinates := make([]osm.RouteCoordinate, len(points))
-	for i, point := range points {
-		coordinates[i] = osm.RouteCoordinate{Longitude: point.Longitude, Latitude: point.Latitude}
-	}
-	readiness, err := osm.ResolveRouteRegions(ctx, r.osmDB, coordinates)
-	if err != nil {
-		return err
-	}
-	readiness = routeReadinessForAutoAddPolicy(readiness, r.osmAutoAddRegions)
-	regions, err := json.Marshal(readiness.Regions)
-	if err != nil {
-		return fmt.Errorf("encode workout coverage regions: %w", err)
-	}
-	var persisted bool
-	if err := tx.QueryRow(ctx, `SELECT app.set_workout_coverage_readiness($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		job.accountID, workoutID, revision, readiness.State, nullableReadinessReason(readiness.Reason), regions, job.id, r.workerID, job.lease).Scan(&persisted); err != nil {
-		return fmt.Errorf("persist workout coverage readiness: %w", err)
-	}
-	if readiness.State == "map_data_ready" && len(readiness.Regions) > 0 && (changed || persisted) {
-		routeTargets, err := json.Marshal([]map[string]any{{
-			"jobId": uuid.New(), "workoutId": workoutID, "routeRevision": revision, "generations": readiness.Regions,
-		}})
-		if err != nil {
-			return fmt.Errorf("encode coverage job target: %w", err)
-		}
-		var parentID uuid.UUID
-		var routeCount int
-		var reused bool
-		if err := tx.QueryRow(ctx, `SELECT job_id,route_count,reused FROM app.enqueue_coverage_update(
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, job.accountID, uuid.New(), readiness.Regions[0].RegionID,
-			readiness.Regions[0].Generation, revision, string(coverage.ExperimentalRulesV1),
-			string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82),
-			r.coverageMinTraversalMeters, routeTargets).Scan(&parentID, &routeCount, &reused); err != nil {
-			return fmt.Errorf("enqueue coverage route: %w", err)
-		}
-	}
-	return nil
-}
-
 func routeReadinessForAutoAddPolicy(readiness osm.RouteRegionReadiness, autoAddRegions bool) osm.RouteRegionReadiness {
 	if readiness.State == "pending" && !autoAddRegions {
 		return osm.RouteRegionReadiness{State: "unavailable", Reason: "no_provider_region", Regions: []osm.RegionGeneration{}}
@@ -146,16 +101,25 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 	if r.osmDB == nil {
 		return nil
 	}
-	listTx, err := beginAccount(ctx, r.db, job.accountID)
-	if err != nil {
+	if err := r.drainIngestCoverage(ctx, job, false); err != nil {
 		return err
 	}
-	defer listTx.Rollback(ctx)
 	activeGenerations, err := osm.ActiveRegionGenerations(ctx, r.osmDB)
 	if err != nil {
-		return err
+		return database.RedactOSMConnectionError(err)
 	}
-	rows, err := listTx.Query(ctx, `SELECT route.workout_id,state.readiness_state,
+	var cursor *uuid.UUID
+	for {
+		workoutIDs, next, err := func() ([]uuid.UUID, *uuid.UUID, error) {
+			listTx, err := beginAccount(ctx, r.db, job.accountID)
+			if err != nil {
+				return nil, nil, err
+			}
+			defer listTx.Rollback(ctx)
+			rows, err := listTx.Query(ctx, `WITH pending_adoptions AS MATERIALIZED (
+		SELECT workout_id FROM app.read_pending_adopted_workout_coverage_refreshes($1,$2,$3,$4)
+		UNION SELECT workout_id FROM app.read_pending_ingest_coverage_workouts($1,$2,$3,$4)
+	) SELECT route.workout_id,state.readiness_state,
 		COALESCE(jsonb_object_agg(region.region_id,region.desired_osm_generation)
 			FILTER (WHERE region.region_id IS NOT NULL),'{}'::jsonb)
 		FROM app.workout_routes route
@@ -163,73 +127,83 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 		LEFT JOIN app.workout_coverage_states state ON state.account_id=route.account_id AND state.workout_id=route.workout_id
 		LEFT JOIN app.workout_coverage_regions region ON region.account_id=route.account_id AND region.workout_id=route.workout_id
 		WHERE route.account_id=$1 AND workout.deletion_requested_at IS NULL
-		GROUP BY route.workout_id,state.readiness_state ORDER BY route.workout_id`, job.accountID)
-	if err != nil {
-		return err
-	}
-	var workoutIDs []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		var state *string
-		var encodedRegions []byte
-		if err := rows.Scan(&id, &state, &encodedRegions); err != nil {
+		AND workout.source_id=app.read_ingest_coverage_source_id($1,$2,$3,$4)
+		AND ($5::uuid IS NULL OR route.workout_id>$5)
+		AND NOT EXISTS (SELECT 1 FROM pending_adoptions pending
+			WHERE pending.workout_id=route.workout_id)
+		GROUP BY route.workout_id,state.readiness_state ORDER BY route.workout_id LIMIT 25`, job.accountID, job.id, r.workerID, job.lease, cursor)
+			if err != nil {
+				return nil, nil, err
+			}
+			var workoutIDs []uuid.UUID
+			var next *uuid.UUID
+			for rows.Next() {
+				var id uuid.UUID
+				var state *string
+				var encodedRegions []byte
+				if err := rows.Scan(&id, &state, &encodedRegions); err != nil {
+					rows.Close()
+					return nil, nil, err
+				}
+				next = &id
+				regions := make(map[string]int64)
+				if err := json.Unmarshal(encodedRegions, &regions); err != nil {
+					rows.Close()
+					return nil, nil, fmt.Errorf("decode workout coverage regions: %w", err)
+				}
+				if state != nil && *state == "map_data_ready" && coverageGenerationsCurrent(regions, activeGenerations) {
+					continue
+				}
+				workoutIDs = append(workoutIDs, id)
+			}
 			rows.Close()
-			return err
-		}
-		regions := make(map[string]int64)
-		if err := json.Unmarshal(encodedRegions, &regions); err != nil {
-			rows.Close()
-			return fmt.Errorf("decode workout coverage regions: %w", err)
-		}
-		if state != nil && *state == "map_data_ready" && coverageGenerationsCurrent(regions, activeGenerations) {
-			continue
-		}
-		workoutIDs = append(workoutIDs, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := listTx.Commit(ctx); err != nil {
-		return err
-	}
-	for _, workoutID := range workoutIDs {
-		tx, err := beginAccount(ctx, r.db, job.accountID)
+			if err := rows.Err(); err != nil {
+				return nil, nil, err
+			}
+			return workoutIDs, next, listTx.Commit(ctx)
+		}()
 		if err != nil {
-			return err
+			return coverageHandoffError(err)
 		}
-		pointRows, err := tx.Query(ctx, `SELECT sequence,recorded_at,latitude,longitude,altitude,speed,course,
-			horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy FROM app.workout_route_points
-			WHERE account_id=$1 AND workout_id=$2 ORDER BY sequence`, job.accountID, workoutID)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return err
+		if next == nil {
+			return nil
 		}
-		var points []coverageRoutePoint
-		for pointRows.Next() {
-			var point coverageRoutePoint
-			if err := pointRows.Scan(&point.Sequence, &point.Timestamp, &point.Latitude, &point.Longitude,
-				&point.Altitude, &point.Speed, &point.Course, &point.HorizontalAccuracy, &point.VerticalAccuracy, &point.SpeedAccuracy, &point.CourseAccuracy); err != nil {
-				pointRows.Close()
-				_ = tx.Rollback(ctx)
+		for _, workoutID := range workoutIDs {
+			if err := r.repairWorkoutCoverageReadiness(ctx, job, workoutID); err != nil {
 				return err
 			}
-			points = append(points, point)
 		}
-		pointRows.Close()
-		if err := pointRows.Err(); err != nil {
-			_ = tx.Rollback(ctx)
+		if err := r.drainIngestCoverage(ctx, job, false); err != nil {
 			return err
 		}
-		if err := r.updateCoverageReadiness(ctx, tx, job, workoutID, points); err != nil {
-			_ = tx.Rollback(ctx)
-			return err
+		cursor = next
+	}
+}
+
+func (r *Runner) repairWorkoutCoverageReadiness(ctx context.Context, job claimedJob, workoutID uuid.UUID) error {
+	for retries := 0; ; retries++ {
+		err := func() error {
+			tx, _, err := r.beginIngestWrite(ctx, job)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(ctx)
+			// Recording is fenced, metadata-only, and cannot create a Coverage parent.
+			// Common intake takes the fresh full route snapshot after this commit.
+			var recorded bool
+			if err := tx.QueryRow(ctx, `SELECT app.record_ingest_coverage_repair($1,$2,$3,$4,$5,$6)`,
+				job.accountID, job.id, r.workerID, job.lease, workoutID, database.SupportedSchemaVersion).Scan(&recorded); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}()
+		if err == nil {
+			return nil
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return err
+		if retryErr := waitCoverageHandoffRetry(ctx, err, retries); retryErr != nil {
+			return coverageHandoffError(retryErr)
 		}
 	}
-	return nil
 }
 
 func coverageGenerationsCurrent(regions, active map[string]int64) bool {

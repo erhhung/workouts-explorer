@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -110,10 +111,10 @@ func TestRawRouteTilePrefilterSemantics(t *testing.T) {
 	if len(expected["routes"]) != 3 {
 		t.Fatalf("expected fixture has %d features, want line and two point markers", len(expected["routes"]))
 	}
-	t.Run("schema 20", func(t *testing.T) {
+	t.Run("supported schema", func(t *testing.T) {
 		var version, minimum int
-		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != 20 || minimum != 18 {
-			t.Fatalf("metadata=%d/%d, want 20/18 err=%v", version, minimum, err)
+		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != database.SupportedSchemaVersion || minimum != 28 {
+			t.Fatalf("metadata=%d/%d, want %d/28 err=%v", version, minimum, database.SupportedSchemaVersion, err)
 		}
 		var boundaries bool
 		if err := tx.QueryRow(db.ctx, `SELECT pg_get_userbyid(p.proowner)='workouts_security_owner'

@@ -602,9 +602,13 @@ function WorkoutActions({
 }
 
 function provenanceKindLabel(kind: WorkoutProvenance["items"][number]["kind"]) {
-  if (kind === "created") return "Imported";
-  if (kind === "updated") return "Updated";
-  return "Matched unchanged";
+  return {
+    created: "Imported",
+    updated: "Updated",
+    matched_unchanged: "Matched unchanged",
+    adopted: "Adopted",
+    skipped_live_owner: "Skipped: owned by another source",
+  }[kind];
 }
 
 function provenanceTime(value: string, preferences: Preferences) {
@@ -644,10 +648,17 @@ function subtractWorkoutTotals(totals: SummaryTotals, workout: Workout): Summary
     total && item && total.unit === item.unit
       ? { ...total, value: subtractExact(total.value, item.value) }
       : total;
+  const count = Math.max(0, totals.count - 1);
+  const distanceCount = Math.max(
+    0,
+    totals.distanceCount - (workout.distance?.unit === "km" ? 1 : 0),
+  );
   return {
-    count: Math.max(0, totals.count - 1),
+    count,
     duration: subtractExact(totals.duration, workout.duration),
-    distance: subtractMetric(totals.distance, workout.distance),
+    distance:
+      distanceCount > 0 || count === 0 ? subtractMetric(totals.distance, workout.distance) : null,
+    distanceCount,
     energy: subtractMetric(totals.energy, workout.calories),
     routeCount: Math.max(0, totals.routeCount - (workout.routeAvailable ? 1 : 0)),
     routedDistance: workout.routeAvailable
@@ -676,6 +687,7 @@ function emptyWorkoutSummary(summary: WorkoutSummary): WorkoutSummary {
       count: 0,
       duration: "0",
       distance: zeroMetric(summary.totals.distance),
+      distanceCount: 0,
       energy: zeroMetric(summary.totals.energy),
       routeCount: 0,
       routedDistance: zeroMetric(summary.totals.routedDistance),
@@ -733,12 +745,14 @@ function workoutBreakdown(summary: WorkoutSummary): AggregateBreakdown[] {
 function AggregateCard({
   label,
   value,
+  routeCount,
   breakdown,
   averages,
   onToggleMode,
 }: {
   label: string;
   value: ReactNode;
+  routeCount?: number;
   breakdown: AggregateBreakdown[];
   averages: boolean;
   onToggleMode: () => void;
@@ -773,7 +787,9 @@ function AggregateCard({
     [],
   );
   return (
-    <article className={`aggregate-card${visible ? " is-visible" : ""}`}>
+    <article
+      className={`aggregate-card${routeCount !== undefined ? " aggregate-card-with-routes" : ""}${visible ? " is-visible" : ""}`}
+    >
       <button
         type="button"
         aria-expanded={visible}
@@ -807,7 +823,17 @@ function AggregateCard({
       >
         <span>{label}</span>
         <strong>{value}</strong>
+        {routeCount !== undefined && (
+          <strong className="aggregate-routed-count" aria-describedby={`${panelId}-routes`}>
+            {decimal(String(routeCount), 0)}
+          </strong>
+        )}
         <small>By workout type</small>
+        {routeCount !== undefined && (
+          <small className="aggregate-routed-label" id={`${panelId}-routes`}>
+            With routes
+          </small>
+        )}
       </button>
       {hint && (
         <span className="aggregate-mode-hint" role="tooltip" style={{ left: hint.x, top: hint.y }}>
@@ -1548,20 +1574,19 @@ export function Summary({
     ),
   }));
   const distanceTypes = workoutTypes.filter(
-    (entry) => entry.totals.routeCount > 0 && entry.totals.routedDistance,
+    (entry) => entry.totals.distanceCount > 0 && entry.totals.distance,
   );
   const distanceBreakdown = descending(
     distanceTypes,
     (entry) =>
-      Number(averages ? entry.totals.routedDistance?.value : entry.totals.distance?.value) /
-        (averages ? entry.totals.routeCount : 1) || 0,
+      Number(entry.totals.distance?.value) / (averages ? entry.totals.distanceCount : 1) || 0,
     (entry) => entry.type.displayName,
   ).map((entry) => ({
     id: entry.type.id,
     label: entry.type.displayName,
     value: metric(
       averages
-        ? averageMetric(entry.totals.routedDistance, entry.totals.routeCount)
+        ? averageMetric(entry.totals.distance, entry.totals.distanceCount)
         : entry.totals.distance,
       "distance",
       preferences.units,
@@ -1590,7 +1615,7 @@ export function Summary({
   const displayedDistance =
     summary &&
     (averages
-      ? averageMetric(summary.totals.routedDistance, summary.totals.routeCount)
+      ? averageMetric(summary.totals.distance, summary.totals.distanceCount)
       : summary.totals.distance);
   const displayedEnergy =
     summary &&
@@ -1598,7 +1623,9 @@ export function Summary({
   const toggleAggregateMode = () => setAverages((current) => !current);
   return (
     <main className="summary-page" style={{ "--summary-inset": "var(--space-5)" } as CSSProperties}>
-      <div className="summary-contours" aria-hidden="true" />
+      <div className="summary-atmosphere" aria-hidden="true">
+        <div className="summary-contours" />
+      </div>
       <header className="summary-heading">
         <DropdownMenu.Root>
           <DropdownMenu.Trigger className="range-trigger" aria-label="Select date range">
@@ -1929,6 +1956,7 @@ export function Summary({
             <AggregateCard
               label="Workouts"
               value={decimal(String(summary.totals.count), 0)}
+              routeCount={summary.totals.routeCount}
               breakdown={workoutBreakdown(summary)}
               averages={averages}
               onToggleMode={toggleAggregateMode}

@@ -19,6 +19,25 @@ import (
 
 const minimalExport = `{"data":{"workouts":[{"id":"provider-1","name":"Walk","start":"2026-01-02 03:04:05 +0000","end":"2026-01-02 03:05:05 +0000","duration":60}]}}`
 
+func TestIngestRouteCountFileOutcomes(t *testing.T) {
+	results := newIngestResults()
+	results.applyFileOutcome("synthetic.json", fileOutcome{succeeded: true, workouts: persistedFileResult{
+		created: 516, createdWithRoute: 491, updated: 33, updatedWithRoute: 31, unchanged: 20,
+	}})
+	if *results.workoutsCreatedWithRoute != 491 || *results.workoutsUpdatedWithRoute != 31 || results.WorkoutsIngested != 549 {
+		t.Fatalf("route counts=%+v", results)
+	}
+	results.applyFileOutcome("unchanged.json", fileOutcome{succeeded: true, workouts: persistedFileResult{unchanged: 40}})
+	if *results.workoutsCreatedWithRoute != 491 || *results.workoutsUpdatedWithRoute != 31 {
+		t.Fatal("unchanged records incremented route counts")
+	}
+	results.workoutsCreatedWithRoute = nil
+	results.applyFileOutcome("later.json", fileOutcome{succeeded: true, workouts: persistedFileResult{created: 1, createdWithRoute: 1}})
+	if results.workoutsCreatedWithRoute != nil {
+		t.Fatal("new imports fabricated a total for unresolved historical route snapshots")
+	}
+}
+
 func TestDeriveRouteSummary(t *testing.T) {
 	altitude := func(value float64) *float64 { return &value }
 	points := []healthautoexport.RoutePoint{

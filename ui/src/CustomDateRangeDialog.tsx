@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { type DateRangePreference } from "./api";
+import { completeDateRangeOnBlur } from "./dateRange";
 
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 
@@ -93,15 +94,7 @@ export function CustomDateRangeDialog({
                   required
                   aria-invalid={error?.fields.includes("start") || undefined}
                   aria-describedby={error?.fields.includes("start") ? `${id}-error` : undefined}
-                  onBlur={(event) => {
-                    const endDate = event.currentTarget.form?.elements.namedItem("endDate");
-                    if (
-                      event.currentTarget.value &&
-                      endDate instanceof HTMLInputElement &&
-                      !endDate.value
-                    )
-                      endDate.value = event.currentTarget.value;
-                  }}
+                  onBlur={completeDateRangeOnBlur}
                 />
               </div>
               <div className="field">

@@ -78,8 +78,9 @@ Git internals. Public UI assets, including generated favicons and SVG sprites,
 are not formatter inputs. TypeScript-emitted Vite artifacts are excluded and
 remain forbidden by `make check-ui-artifacts`.
 
-Acceptance `results/`, `fixtures/`, and exported data are not source formatting
-targets. Never reformat the profile manifest, captured evidence, exported JSON,
+Acceptance `results/`, `fixtures/`, exported data, private documents under
+`docs/internal/`, and private deployment state under `deploy/internal/` are not
+source formatting targets. Never reformat the profile manifest, captured evidence, exported JSON,
 schema files, images, or binary assets: profile bindings and evidence checks
 depend on raw-byte hashes. Executable fixture helper modules outside those
 data directories are source and do receive formatting.

@@ -13,6 +13,36 @@ marked planned, optional or deferred. Capacity targets are design requirements,
 not proof of multi-user load acceptance. Dated operational measurements belong in
 the focused acceptance and telemetry guides rather than this component overview.
 
+The provider-identity/source-adoption foundation requires minimum runtime 26
+(migrations 024-026). The approved active sequence remains **001-028**, with **no
+active 029**. Ordinary static 027 advances 26 to 27 without a legacy dispatcher or
+archive replay; 001-027 remain unchanged. New 028 folds deferred-generation locking,
+strict eligible cohorts and mixed-failure automatic retry into the pipeline.
+Source `SupportedSchemaVersion`, schema and minimum runtime remain **28**, marker
+**27**. The folded contract, exact parking repair and UI follow-up are **deployed
+in `dev-20261020`, Helm revision 29**, schema/Goose/minimum runtime 28, marker 27.
+
+The [migration design](database-migrations.md) defines read-only history validation,
+native upgrades and recovery. Canonical 27 applies new 028; native Goose does not
+replay an already-applied 028. Old-contract 28 therefore needs a new private,
+guarded offline repair with explicit operator approval, protected actual-backup
+restore rehearsal using the actual migration role and new-source/catalog proof.
+Pause all old API/ingest/Coverage runtimes, and tiles if affected by DDL constraints.
+Old apply-10/defer-6 ABIs are intentionally absent: old runtime-28 readiness fails,
+new runtime-28 readiness requires private builders. Numeric version 28 is not a
+feature/compatibility fence; rolling reuse of old images is not supported.
+Preserve ledger 0-28 IDs/timestamps without DML/rewrite and all data, retry roots/
+budgets, sources and credentials. Retain backups/artifacts; incompatible-image
+rollback requires the full old database restore plus matching old OCI images.
+The approved exact actual-profile repair passed protected actual-backup rehearsal
+and production application under the real non-superuser migration login. All old
+tuple fields and ledger IDs/timestamps were preserved before runtime startup;
+new structural readiness passed. Generic SQL normalization is not an admission
+rule. Chart semantic changes remain frozen; all release-manifest chart files and
+runtime resource/admission limits are unchanged.
+[Development Progress](development-progress.md) owns operational evidence; this
+contract is not owner iCloud acceptance or final yearly recovery closure.
+
 ## Components
 
 ### Owned components
@@ -38,11 +68,11 @@ commands in short-lived Jobs; it is not the general job runner.
 |---|---|
 | Application PostgreSQL/PostGIS | Accounts, sessions, sources, jobs, workouts, private routes, copied segments, attribution, rollups, notifications |
 | Shared `osm` PostgreSQL/PostGIS | Selective hierarchy, municipal boundaries, and derived paths from configured named extracts on the production PostgreSQL server; contains no private account data |
-| OSM read replica | Optional matching reads without adding load to OSM import/refresh primary |
+| OSM read replicas | Optional strict standby-only OSM reads via all-node headless DNS; off by default, independently gated from writer Jobs and capacity increases |
 | Martin (`workouts-explorer-tiles`) | Generates dense private route and coverage vector tiles from the application database |
 | Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
 | NFS archive | Immediately usable source archive for Health Auto Export JSON |
-| Rclone/iCloud Drive (planned) | Preferred remote source transport when upstream ADP support permits; current worker execution supports local/NFS |
+| Rclone/iCloud Drive | M8 native 1.75.2 job-scoped transport implemented and deployed; owner ingest/recovery verified, milestone acceptance separate; local/NFS remains the fallback |
 | SMTP server | Sends invitations and password resets using iCloud SMTP initially |
 | OTel gateway and UI/tiles sidecars | Gateway receives Go metrics/traces and sidecar metrics; Contrib 0.156.0 sidecars collect native nginx/Martin and separate collector self-telemetry |
 | Prometheus, Thanos Ruler, Pyrra and Alertmanager | Collect/store metrics, generate and evaluate app SLO rules, and route alerts; shared provisioning is infrastructure-owned |
@@ -64,7 +94,7 @@ API --enqueue durable jobs--> Application PostgreSQL
                                   v
                                Worker
                               /   |   \
-                         NFS/local  |  shared `osm` PostgreSQL/PostGIS
+                     NFS/local/iCloud | shared `osm` PostgreSQL/PostGIS
                                     |
                                     +--> copied matched segments and rollups
 
@@ -159,6 +189,8 @@ future designs, not current schema objects.
 | `sources` | Current account-owned source, display name, immutable type, auto-sync flag, health status, encrypted current config |
 | `sources.deleted_at` | Tombstoned source identity retained for provenance; configuration is cleared and CRUD excludes deleted rows |
 | `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state |
+| `source_objects` | Source-local successful object inventory, retained checksum and optional ownership-blocked epoch |
+| `accounts.workout_ownership_epoch` | Account-wide invalidation epoch advanced only by a source's live-to-deleted transition |
 | `jobs` | Parent/child hierarchy, type, priority, status, progress, retry/cancel links, safe parameters |
 | `job_config_snapshots` | Encrypted source configuration copied for one job and cleared at terminal state |
 | `job_events` | Structured progress and safe diagnostic events |
@@ -174,12 +206,55 @@ The source row stores only the current configuration. Updating it does not retai
 | `workouts` | Source, provider ID, type, timestamps, duration, normalized aggregates, indoor state, lifecycle |
 | `workout_route_points` | Provider sequence, timestamp, 3D position, speed, course, four accuracy fields, quality flags |
 | `workout_routes` | Derived line geometry, bounds, point count, completeness, elevation summary |
-| `workout_import_events` | Chronological created, updated, and matched_unchanged provenance |
-| `workout_deletion_targets` | Immutable workout IDs captured by an asynchronous deletion request |
+| `workout_import_events` | Chronological created, updated, matched_unchanged, adopted and skipped_live_owner provenance |
+| `workout_deletion_targets` | Immutable deletion targets and identity tombstones preventing reimport resurrection |
+| `adopted_workout_coverage_refreshes` | Durable source-switch Coverage obligation, recorded with adoption and consumed after commit |
 
-The primary deduplication identity is source plus provider workout ID. A provider-specific fingerprint is a fallback only when no stable ID exists.
+#### Provider identity and source adoption (requires 26)
 
-Changed source content updates the current workout transactionally and rebuilds only affected derived data. Deletion first hides a workout, then physically removes its current record and detailed import events after derived cleanup. A later bounded reimport creates a new application workout ID for the same provider ID. Ingest and deletion for the same workout are serialized so deletion-pending records cannot be updated concurrently.
+Provider-backed identity is globally unique within an account by `(account_id,
+provider_namespace, provider_id)`. Both `health-auto-export-local` and
+`health-auto-export-icloud` map to `health-auto-export`; transports are not
+different providers. Provider IDs are opaque, not inferred from dates or routes.
+`app.resolve_ingest_workout_identity` resolves identity under the versioned
+`app.fence_ingest_job` transaction/worker/lease capability before writes:
+
+- Same mapped source: unchanged normalized content records `matched_unchanged`
+  without replacing raw data; changed content updates the existing UUID and
+  affected derived data.
+- Another live source: record `skipped_live_owner` without duplicating, stealing
+  or updating the workout. Live means `deleted_at IS NULL`, even if disabled,
+  disconnected, checking or connection-failed.
+- Exactly one match owned by a deleted source: adopt the same UUID, set its current
+  source/file to the incoming source, and treat the incoming payload as
+  authoritative. Changed content replaces header, aggregates and route points;
+  identical content need not rewrite raw data. Append `adopted` while retaining
+  earlier source/file/job provenance unchanged.
+- Conflicting migration identities or ambiguous resolution fail closed, without
+  choosing a winner, silently merging UUIDs or exposing provider IDs in errors.
+- ID-less fallback fingerprints remain conservative and source-local, with no
+  automatic cross-source adoption or fuzzy date/GPS matching.
+
+A deleted source is a retained soft tombstone, not a NULL `workouts.source_id`.
+Source type remains immutable through the API; switching transport uses another
+source and eligible adoption, not source conversion or a workout-history wipe.
+Workout deletion first hides the row, then removes current data and detailed
+events after derived cleanup. Pending and completed deletion identity tombstones
+suppress resurrection, including provider-backed imports through replacement
+sources; fallback suppression remains source-local. Ingest and deletion are
+serialized so deletion-pending records cannot be adopted or updated.
+
+Every successful adoption records `app.record_adopted_workout_coverage_refresh`
+in the same file transaction as ownership, authoritative content, import event,
+successful checksum and inventory. This durable outbox is consumed only after
+commit by ingest repair or leased Coverage reconciliation, outside ingest's
+source/workout lock order. Routed workouts request new Coverage even when their
+content and route digest are unchanged; hashes are never fabricated to force
+work. Event-fenced consumption cannot consume a newer adoption, and missing map
+data retains a deferred obligation rather than falsely reporting a match.
+No-route/deleted workouts need no match. See the
+[job contract](job-state-machine.md#ingest-ownership-and-file-recovery-requires-26)
+and [source-switch example](icloud-source-setup.md#worked-source-switch-example).
 
 ### Time
 
@@ -233,6 +308,29 @@ Daily rollups support named periods and arbitrary explicit ranges without mainta
 
 Selections containing all workouts in a date range use daily rollups. Arbitrary workout subsets query the underlying unique workout/path attribution joined to the selected workout IDs, because an account/day rollup cannot preserve subset membership. Tile functions choose the rollup or attribution path from the authorized map selection and join selected segment-match evidence to avoid rendering unvisited portions of a logical path. First/latest visit fields always come from all-time date-only extrema.
 
+#### Deferred Generation (Folded 028, Undeployed)
+
+The account generation is an invalidation counter, not a long-file mutex. In new
+028, the four existing header, route-summary, type-update and Coverage-current
+generation triggers retain their names, events, UPDATE OF columns and WHEN scope,
+but become `DEFERRABLE INITIALLY DEFERRED` constraint triggers. Account seeding
+remains immediate. Each qualifying row event increments the counter; GPS points
+are not individual generation events. Coverage invalidation remains migration
+017's changed-current-finish rule, not all Coverage-state changes.
+
+Normal production transactions defer these increments to commit. PostgreSQL can
+flush them early with `SET CONSTRAINTS ... IMMEDIATE`, but production does not.
+Data and generation become visible atomically, and a deferred-trigger failure
+rolls back file checkpoints or Coverage evidence/state/progress with the data.
+Commit tails still serialize on the counter; this removes long-file contention,
+not every possible wait, and does not certify capacity.
+
+The ingest fence retains a nonlocking generation-row existence check and missing
+row `55000`, removing only its explicit generation `FOR UPDATE NOWAIT`. Identity
+advisory locks, source/job and account/workout KEY SHARE locks, lease, ownership
+epoch and runtime-capability checks are unchanged. No worker transaction retry,
+deadline increase or matching-policy change compensates for contention.
+
 ### Notifications and announcements
 
 | Entity | Purpose |
@@ -285,22 +383,25 @@ Defaults are configurable operator limits:
 Global coordination is stored in PostgreSQL so additional workers cannot exceed the global limit.
 
 Each slot owns one file through discovery selection, optional download, parse, transaction, and cleanup before claiming another file.
+The source-job runner downloads/processes files serially with cleanup before and
+after the file pipeline; slot ceilings do not imply parallel downloads within a job.
 
 ### Coverage processing concurrency
 
-Coverage is asynchronous derived work and never extends the critical path of an
-ingest. The ingest transaction records the route-input digest and revision,
-resolves public-map readiness, raises the desired account/region coverage
-watermark, and enqueues or coalesces a `coverage_update`. Workouts and raw routes
-remain available immediately while Coverage identifies pending processing.
+Coverage is asynchronous derived work: ingestion never waits for matching to
+finish. In schema 28, the file transaction records durable normal/adopted handoff
+origins; readiness and enqueue happen after commit and file cleanup. This bounded
+handoff can take time on the source worker but does not hold the file transaction
+or slot. Workouts and raw routes remain available while Coverage is pending.
 
-A `coverage_update` is an unclaimed account/region parent with one
+A `coverage_update` is a bounded, unclaimed account-owned parent, which may mix
+regions under new ingest cohort construction, with one
 `coverage_update_route` child per eligible stale workout revision. A dedicated
 coverage-worker deployment claims only route children. The general worker retains
 independent capacity for source checks, deletion, and ingest; low queue priority
 alone is insufficient because a running job cannot be preempted. Every child is an
 independent route checkpoint, and claim ordering is fair across active
-account/region parents so one large account cannot monopolize capacity.
+parents so one large account cannot monopolize capacity.
 
 One route match uses one bounded, read-only OSM snapshot. No application write
 transaction remains open during candidate lookup or decoding. A short fenced
@@ -310,6 +411,81 @@ logical-path attributions, and affected rollups. Stale work cannot commit. Prior
 valid coverage remains visible until its replacement commits, and a newer desired
 OSM generation or route-work revision produces a successor after the current
 target terminates. A failed route child does not stop its siblings.
+
+#### Committed-Route Handoff (Requires 28)
+
+The old pipeline is live in `dev-20261018`, Helm revision 28, schema/minimum 28,
+marker 27. The following **new folded-028 contract is undeployed**. Historical
+deployment verification does not attest this behavior; see
+[Development Progress](development-progress.md).
+`worker.coverageBatchSize` /
+`WORKER_COVERAGE_BATCH_SIZE` defaults to 25 and accepts 1-1000. After transport and
+file-slot cleanup, the source worker prepares normal and adopted obligations.
+During active ingest, **B newly eligible matching targets** are required globally
+across regions within the ingest-root/source-sibling scope. Missing-map,
+already-current/live, unchanged authoritative failed/cancelled targets and
+deduplicated obligations do not count. The private durable builder saves B and
+root/sibling scope across files/crashes, with bounded metadata and no placeholder
+Coverage parent. It atomically seals the full B children and parent. With 63
+eligible routes at B=25, active ingest may seal 25/25; the remaining 13 wait for
+terminal-root account recovery, not source EOF.
+
+Mixed regions are explicitly allowed. Optional `coverage.regionIds` is the actual
+child-region union, including retries. Existing `regionId`/`targetGeneration`
+are representative anchors, not complete matching scope. Each route retains its
+complete generation vector and existing claim/admission checks; no region grouping
+may shrink an active-ingest normal cohort.
+
+`ingest_coverage_handoffs` retains import origins and acknowledgement/job links;
+`adopted_coverage_handoff_receipts` retains source-job provenance independently
+of the ephemeral adoption force queue. Metadata-only batch reads retain no route
+buffers. Each protected STABLE route snapshot supplies content, ownership epoch,
+the full canonical digest and compact coordinates for just one route at a time.
+APP transactions close before OSM resolution. ROI readiness resolves one route at
+a time with one efficient route query, not per-point queries. A trusted fingerprint
+of **all catalog regions, configuration, boundaries and active heads** must match
+in the same Repeatable Read snapshot as ROI lookup and again before seal. A
+mismatch invalidates prepared readiness and requires fresh ROI; changing only the
+saved generation vector cannot bless an old result. Separate APP/OSM transactions
+do not establish cross-database latest-state atomicity.
+A short atomic prepare/seal/defer transaction
+revalidates lease/runtime, account/source/event, ownership epoch, content and full
+route digest. Account-first, ordered parent/child NOWAIT locks precede workout/state
+locks; contention retries reread snapshots rather than applying stale readiness.
+
+Hashing/readiness covers the raw parser domain **0-250,000 points**, including a
+real empty-input digest, never a truncated prefix. Ordinary future-generation
+reconciliation uses the same full-input compact snapshot. Matching keeps the
+**50,000-original-point** ceiling; overflow raises a typed permanent Coverage
+failure, not an ingest failure. No-GPS adoption retires its obligation without
+creating a matching job. Only metadata/CAS/readiness survives across route reads;
+there is no B-times-route-coordinate workset or new resource allowance.
+
+SQL retains saved builder B as `parent_batch_size` when sealing and counts **all**
+children, including terminal/superseded rows. Later configuration affects new
+builders, not saved cohorts; no underfull Coverage parent is filled incrementally.
+Retry parents inherit capacity but contain only eligible unsuccessful predecessors,
+never fresh top-up work. For example, three failures of a 25-route root produce a
+three-child retry while a fresh 25-route batch uses a normal root. Normal imports
+preserve identical-current/live/failed/cancelled target guards and consumed retry
+budgets; only a distinct proven adoption event authorizes force refresh.
+
+Leased account reconciliation recovers committed obligations from succeeded,
+failed or cancelled roots; crashed claims first follow normal lease recovery.
+A final partial cohort seals **only after the visible ingest root and all source
+siblings are terminal and due preparation is exhausted**, never active EOF.
+Active underfull cohorts remain protected. Failed/cancelled roots can legitimately
+owe derived work for committed data without reopening ingest. Normal metadata
+updates/deduplication do not resurrect cancelled matching targets; cancellation
+footprints remain authoritative. Cancelling ingestion does not retract
+committed derived-work obligations or cancel separate Coverage jobs. Verified typed
+transient readiness failures persist a one-hour deferral without acknowledgement;
+permanent/unknown/cancelled leaves surface safely. Classification checks every
+joined/wrapped branch with a 256-node bound, not a convenient incidental deadline.
+Normal missing-map handoffs acknowledge readiness without a child; adopted missing
+maps retain the force obligation. Policy remains `coverage-production-v1`, 500m /
+256 MiB, two lanes, admission 2/2/2 and one per reader; no multi-user capacity
+certification follows from pipeline tests.
 
 PostgreSQL coordinates matcher admission across all replicas. Operator-configurable
 limits include global, per-account, and optional per-region slots; the conservative
@@ -331,6 +507,10 @@ Dedicated least-privilege OSM reader credentials for Coverage and API diagnostic
 remain a pre-production requirement in Milestone 12. xdev currently permits
 the explicit development exception of sharing the updater's OSM credential; a separate pool
 or read-only transaction is not equivalent to a read-only database login.
+The global reader flag controls strict standby-role validation only; component
+selectors choose the Secret keys independently. Neither setting provisions or
+proves least-privilege login permissions.
+See [OSM read replicas](osm-read-replicas.md) for selection and rollout boundaries.
 
 The application credential is the dedicated `workouts_coverage_worker` login.
 It can claim, heartbeat, read through fenced functions, persist/fail/supersede a
@@ -350,6 +530,35 @@ eligible failed or cancelled route children. Parent and corresponding route-chil
 lineage reuse the Data Sync retry root and ordinals, allowing Run detail to
 navigate First, Second, and every later attempt through the latest without
 rerunning successful or superseded routes.
+
+New folded-028 automation requires at least one authoritative timeout/verified-
+transient failed child, then carries **all authoritative failed siblings** with
+valid descriptors into the latest-only chained successor, including permanent,
+unknown and null-code failures. Successes never rerun and cancellations are not
+automatically revived. All-permanent/unknown parents stop. The default one
+additional attempt (range 0-20) is durable per root across descendants/restarts;
+manual retry never resets it, and normal failed-target scans cannot create fresh
+roots to bypass it. This new mixed policy is undeployed, not a reinterpretation
+of historical retry receipts.
+
+Coverage execution state and owner-facing display state are separate contracts.
+For a stored failed/partially successful parent whose unsuccessful routes all
+have proven current Coverage, the API supplies `displayStatus = superseded` and
+the UI renders a green Superseded parent/history label. Children retain their
+recorded outcomes. A read-only, active-account-scoped API helper reuses the
+private retry-target predicate and proves current results through the present
+authoritative child/context; it returns safe eligibility counts and bounded
+current-parent links, not new retry edges. These links can span independent
+chains and changed input/generations without fabricating retry ancestry.
+
+The owner-history helper applies derived status before affected filters, totals
+and pagination; unrelated statuses and unfiltered pages avoid full-history proof
+scans. Missing/foreign/incomplete proof cannot turn a failure green. GET metadata
+is advisory, and POST retains constructor locking and revalidation. The UI polls
+terminal Coverage projections and history totals, including empty filtered pages,
+and retains authoritative retry blocks across failed refreshes. See the
+[job presentation contract](job-state-machine.md#current-retry-eligibility-and-superseded-presentation).
+
 Implemented event metrics include first-claim queue age, matcher/admission/attempt
 duration, committed terminal outcomes, control/lease results, retries and
 stale-result rejection, alongside shared pool and API/tile metrics. Slot occupancy,
@@ -368,12 +577,160 @@ advance after each route; expired leases resume at the last committed cursor.
 Event-driven scans are supplemented by a daily full-account scan so provider
 boundary changes or retained-event gaps cannot strand historical routes.
 
+Migration 022 includes routed workouts lacking coverage state in reconciliation
+instead of silently completing a scan that excludes them. A read-only revision-0/
+NULL-digest sentinel lets unchanged Go code compute the canonical SHA-256; fenced
+SQL verifies current points before initializing revision 1. NOWAIT lower-level
+locks and pre/post-write clock-based lease checks protect concurrent ingest.
+Both point readers return at most 50,001 points so Go rejects overflow beyond
+50,000 rather than hashing or matching a truncated prefix. Campaign wakeup keeps
+live leases/cursors intact, and completion of an older revision does not delay
+newer desired work. See the [legacy-route repair runbook](coverage-legacy-route-repair.md)
+for the narrowly scoped schema-20 compatibility procedure and selective retry.
+
+#### Shared Matching Contract
+
+Production Coverage and API diagnostics use one shared matcher and limit policy,
+implemented by `routepipeline.OriginalPointLimit` and
+`routepipeline.DefaultLimits()`. Storage validation and API response schemas must
+agree with these limits; diagnostics must not retain a smaller matching ceiling.
+
+| Bound | Limit | Scope |
+|---|---:|---|
+| Original GPS points supplied to matching | 50,000 | One route, before sampling |
+| Sampled GPS points | **12,000** | One route, after sampling |
+| Graph nodes | 2,048 | One matching window |
+| Graph edges | 4,096 | One matching window |
+| Evidence portions, including dissolved preparation portions | 10,000 | One route |
+| Unique matched segments | 4,096 | One route |
+| OSM generation entries | 256 | One route |
+| Reported unavailable regions | 64 | One route |
+
+Bounds are inclusive. An original/sampled-point overflow is an explicit
+processing failure, never permission to hash or match a truncated prefix. These
+are matching bounds, not raw-ingest retention limits; ingestion and raw-route
+availability remain independent of derived Coverage success.
+
+The normal observation window contains 128 points. Only typed graph-node/edge
+exhaustion invokes bounded retries at the same start with 64, then 32 points.
+The next accepted window starts at the preceding accepted end minus one, and
+normal size 128 is tried again. Record starts/ordinals and observations/evidence
+only for accepted windows. Supplemental turn/tangent rematches also use bounded
+fallback while retaining their continuity and supporting-traversal checks.
+
+Every attempt reuses the same snapshot, admitted capacity and deadline; graph
+node/edge and expansion-layer bounds remain unchanged. No arbitrary node pruning,
+deadline renewal or implicit parallelism is permitted. Cancellation, database
+errors, other processing bounds and exhausted minimum-size windows propagate as
+errors, not silently successful partial matching. No APP transaction spans these
+OSM matching attempts.
+
+For the same raw input, OSM snapshot, movement mode, sampling, matching rules and
+road geometry, both adapters must produce equivalent matching evidence; production
+then dissolves that evidence into durable per-segment geometry. A diagnostic with
+deliberate what-if parameters is not an attestation of a different production
+configuration. The synchronous diagnostic HTTP deadline is an independent
+operational limit: expiration is inconclusive, not a production-matching failure.
+Point/window-policy changes do not authorize larger CPU, memory, concurrency or
+execution-time budgets. See the
+[functional acceptance contract](functional-spec.md#matching-bounds-and-diagnostic-parity)
+and [matcher evaluation design](coverage-matcher-evaluation.md#shared-matching-limits-and-window-recovery).
+
+#### Matching Performance And Termination
+
+Parking repair preserves its established acceptance predicates and ordering.
+Bounded exact state tracking rejects only certified nonterminating continuation:
+full-state recurrence at the same cursor or an equal unread suffix behind a
+merge-sealed prefix. Both certificates require deterministic opposite-boundary
+selection and uninterrupted execution. Rejection continues to later candidates.
+Ambiguous graphs retain the original unsorted choices, with an accepted-work
+bound rather than an inferred cycle. Exhaustion/cancellation returns an error,
+not successful partial replacement.
+
+Exact portion interning avoids retaining repeated graph metadata in every state
+key. Repair tracking is local and bounded at 4,096 accepted replacements/states
+per traversal, 512 KiB active-cursor key payload, 16,384 interned portions/suffix
+nodes and an 8 MiB charged cache budget. Temporary encoder/map overhead is
+additional; these are not a hard process-memory measurement. Filtered routing
+views share immutable metadata/adjacency and apply exclusions consistently to
+endpoint fast paths, expansion, class/logical filters and connector searches.
+
+Parking state-byte exhaustion is a typed `ParkingRepairLimitError` even when
+both point counts are below their ceilings. A generic stored
+`coverage-route-too-large` code alone cannot identify the exhausted bound;
+generic lifecycle `failed` Job Logs do not contradict it. A read-only core probe
+is not an actual job, persisted diagnostic or APP persistence proof. Dataset
+inputs/counters belong only in private operator evidence; the matcher policy and
+semantic limits remain unchanged.
+
+Candidate reads may batch spatial discovery into one geography superset and
+cache segment geography for exact per-observation tests. Materialization is
+bounded to 8,192 eligible segments plus an overflow sentinel. Overflow selects
+the original per-observation query within the same statement/snapshot, never a
+truncated prefix. Zipped provenance scopes, global way/segment precedence,
+spheroidal distances, tie ordering and per-observation max+1 reporting remain
+unchanged. The row bound does not bound all index scan work or bytes; wide and
+discontinuous batches can retain baseline cost plus the preliminary search.
+No canonical data, indexes, statistics or server settings are changed by this
+read-path optimization.
+
+#### Matcher Snapshots And Reader Policy
+
 Production matcher snapshots are restricted to the route child's complete target
 generation vector for candidate and graph expansion. The repeatable-read OSM
-snapshot remains open through the short application persistence transaction, so a
-conflicting region promotion waits for the accepted result to commit. If a target
-generation is already inactive when the snapshot begins, the child is superseded
-rather than failed and reconciliation schedules the current target.
+snapshot remains open through the short application persistence transaction. On
+the primary, a conflicting region promotion waits for that snapshot's locks; a
+standby snapshot does not lock the remote primary and can encounter replay
+conflicts. In normal mode, an inactive target supersedes the child rather than
+failing it. Replica-only mode distinguishes missing/lower heads from a genuinely
+newer active head: lag waits for catch-up, while a newer head supersedes once no
+target is missing/behind. Reconciliation then schedules the current target.
+
+The reader policy is implemented but defaults to `osm.useReadReplicasOnly: false`.
+General-worker, Coverage-worker and enabled API-diagnostic OSM pools always use
+`worker.osmDatabaseSecret`, `coverageWorker.osmDatabaseSecret` and
+`api.coverageDiagnostics.databaseSecret`, respectively, as complete `{name, key}`
+references. All three default to name `workouts-explorer-database` and key
+`osmReaderDatabaseUrl` for either boolean value. Each is independent of its
+application-database Secret and the other readers, even when defaults share a
+name. Existing shared Secrets can retain application, reader and writer keys;
+a dedicated reader role can instead use a separate Secret with the existing
+component reader TLS selector. True enforces standby-only reads; false uses
+normal driver behavior with that same URL and can reach the primary through an
+operator-selected all-node URL if its session attributes permit it. The boolean
+never selects a Secret or
+overrides an endpoint. Former component key-only properties are removed and
+rejected by the closed schema without migration aliases; historical cleanup is
+documented in the [operator migration guide](osm-read-replicas.md#existing-values-and-minimal-example).
+
+OSM migration/timezone-import hooks instead select
+`osm.writerDatabaseSecret: {name: workouts-explorer-database, key: osmDatabaseUrl}`
+and `osm.writerDatabaseTLSSecret: workouts-explorer-database-tls`. These writer
+settings are independent of the general worker's reader and application-database
+selectors. The writer URL must select a role authorized for OSM migrations/imports;
+the runtime readers must not be used for writer work. Secret member names are
+URL aliases, not database roles. Operator Jobs keep `OSM_DATABASE_SECRET`,
+`OSM_DATABASE_KEY` and `OSM_DATABASE_TLS_SECRET` with the same writer defaults;
+their environment selectors are independent of Helm and never inferred by
+parsing private values. Auto-add must remain false under strict policy. The
+feature adds no schema migration or concurrency increase. Existing values need
+explicit component-override review and removed-key cleanup with a complete fresh
+file, not `--reuse-values`; see the linked operator guide.
+
+New physical connections resolve/copy/shuffle the complete headless A/AAAA set,
+retain the original verified TLS hostname and URL fallback order, and require
+`pg_is_in_recovery()` at connect and checkout. Promoted pooled connections are
+rejected; held transactions cannot move backends or prevent mid-transaction
+promotion. A read-only session default adds defense in depth, not a failover lock.
+Coverage preflights a reader before claiming, then uses five-second snapshot
+attempts/two-second polls with renewing heartbeats. The match budget starts only
+after a valid target snapshot, but admission remains held during catch-up, so a
+few lag waiters can block all matcher slots. Pool distribution is per new
+connection, not balanced per job. At the 10/13/2026 (`America/Los_Angeles`)
+checkpoint, live headless DNS/TCP and a separate direct-backend TLS/authentication
+client are verified in the linked telemetry guide. They do not certify in-pod
+TLS/authentication or mTLS; reader activation/rollout remain pending, and scoped
+fixture passes do not establish concurrent capacity.
 
 OSM importer version 3 retains bounded named local, state, and national-park polygons only
 inside the generation build schema. The current derivation version 20 attaches stable park
@@ -436,11 +793,14 @@ visible in Coverage tiles.
 6. Retry uses current validated source parameters.
 7. Stale-job maintenance clears snapshots left by abnormal termination after reaching a terminal state.
 
-The planned rclone adapter must write refreshed mutable credentials back only
-with a compare-and-swap on the source generation captured by the job. If the
-source was updated or deleted, refreshed values from the older snapshot must be
-discarded rather than overwriting current credentials. Current local/NFS ingest
-does not refresh remote credentials.
+The M8 rclone adapter writes only validated refreshed cookies back with a
+source-generation and job/worker/lease-fenced compare-and-swap. Competing refreshes
+are first-writer-wins; source update/deletion, cancellation or lease loss discards
+obsolete writes without failing the job solely for a stale refresh. Snapshots
+remain immutable. Connection-check completion atomically publishes refreshed
+cookies and `connected`, so its own generation increment cannot strand a source
+in `checking-connection`. Refresh encryption/persistence failures retain recoverable work
+rather than falsely terminalizing it. Local/NFS ingest does not refresh credentials.
 
 PostgreSQL WAL and infrastructure backups may retain older encrypted values according to operator retention. Logical clearing does not promise immediate physical erasure from backups.
 
@@ -449,13 +809,42 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 ### Discovery and staging
 
 1. The adapter enumerates metadata matching incremental or explicit-range rules.
-2. Incremental sync selects only new or changed source objects.
+2. Incremental sync selects new or changed objects and ownership-blocked objects whose captured epoch is stale (requires 26).
 3. Bounded Manual Sync selects all matching objects, even previously processed ones.
-4. Planned remote adapters stage at most one file per worker slot beneath the configured `WORKER_STAGING_ROOT`, default `/var/lib/workouts/staging`; the old `/tmp/<user-id>/<job-id>/` layout is not the current contract.
-5. Planned remote downloads use a non-final filename and are atomically promoted when complete.
+4. The M8 remote transport stages at most one file per slot in a random job directory with `0700` access under `WORKER_STAGING_ROOT/private`, with mode-0600 files; the outer root defaults to `/var/lib/workouts/staging`. The old `/tmp/<user-id>/<job-id>/` layout is not the contract.
+5. Remote downloads use a non-final filename and are atomically promoted after bounded download and pre/post metadata validation.
 6. Local/NFS adapters may read directly when staging is unnecessary.
 7. File processing writes transactional workout results and source-file state.
 8. Cleanup removes the staged file before the slot claims another.
+
+iCloud incremental discovery uses remote ID, size and modification time, not a
+remote content hash. A same-metadata content overwrite is undetectable; bounded
+Manual Sync forces matching dates to reprocess. One application discovery per
+sync does not imply one native listing or HTTP request: backend stat/download
+can list internally. Flat discovery is bounded to 100000 entries, 10000 eligible
+exports and 32 MiB stdout; files are capped at 64 MiB, metadata operations at
+60 seconds and downloads including checks at five minutes. Native retries are
+bounded. Auto-sync defaults to 24 hours and may be configured to 12 hours;
+Data Sync UI polling is a separate interval.
+
+With migration 025, `app.record_successful_source_object` retains the real
+successful checksum even if any workout in a file was skipped for a live owner.
+It records `ownership_blocked_epoch` from the ingest fence captured before
+ownership decisions, never from a later epoch read. This applies to both
+all-blocked and mixed files. Unchanged metadata plus a successful checksum skips
+without reread/download when the blocker is absent or its epoch is current.
+Only a committed source live-to-deleted transition increments the account epoch;
+adoption, cookie refresh and auth/config generation changes do not.
+
+On the next **fresh** incremental job, `app.read_ingest_candidate_actions`
+reselects stale blocked files despite identical metadata and bytes, allowing a
+deleted owner's workout to be adopted. If blockers remain, success records the
+new captured epoch. Same-job manifest actions stay frozen, completed file
+checkpoints never reopen, and recovery restores committed counters/events without
+double counting. Source deletion does not enqueue an immediate sync: the next
+auto-sync or a new manual job is needed. Bounded Manual Sync already forces
+eligible files to reprocess. Successful bytes are not invalidated or deleted to
+implement ownership retry.
 
 ### Parsing and normalization
 
@@ -475,7 +864,7 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 - Encode zero-length multi-line components as route-attributed point features alongside line features; MapLibre renders them as route-colored circles with the same selection and hover semantics.
 - Derive bounds and elevation statistics.
 - Resolve or update workout timezone.
-- Record required OSM path-data readiness for route envelopes and enqueue or coalesce an account/region coverage parent plus route children without delaying ingest completion.
+- Record durable route-work obligations with the file, then resolve OSM readiness and enqueue bounded compatible Coverage parents after commit and file cleanup; source completion does not wait for matching.
 - In the dedicated coverage worker, generate bounded nearby segment candidates and Viterbi-decode sequence-aware connected traversals using distance, quality, topology, timing, and reliable heading evidence.
 - Atomically dissolve decoded spans into one unique workout/physical-segment match geometry, upsert unique workout/logical-path attribution, rebuild affected logical-path daily and all-time rollups, and advance the account data generation used by private tile URLs.
 
@@ -509,6 +898,17 @@ The API owns the public private-tile route. A browser never calls Martin directl
 
 Tile URLs include an account data generation so a redraw after ingest or deletion does not reuse stale private data.
 
+With new folded 028, `app.lock_account_data_generation()` retains its historic name and
+ABI but performs a nonlocking MVCC read in the API's existing Repeatable Read
+transaction. Selected data and generation must come from that **same snapshot**.
+A concurrent writer can commit before selection creation returns, making the new
+capability already stale. Existing current-generation validation rejects it;
+the API must not bless old selected data with a newly read generation. Removing
+the generation-first lock eliminates its account/workout FK cycle, including the
+deferred focused-membership FK, without weakening those constraints. This helper's
+ABI does not make old runtime-28 images compatible with the new cohort contract;
+the new behavior remains undeployed.
+
 ### Public map and OSM data
 
 - Public runtime configuration defines an ordered, extensible set of base-map style families. Each family has a stable ID, user-facing label, light and dark MapLibre style URLs, structured attribution, and the provider resource origins required by browser policy.
@@ -540,23 +940,52 @@ Tile URLs include an account data generation so a redraw after ingest or deletio
 - Map's Space-key isolation follows the [three-mode layer visibility contract](functional-spec.md#space-key-layer-visibility). Hidden layers fade out and back in over 400ms without source teardown; directional markers use that transition only in diagnostic Coverage, with zero-duration opacity changes in Routes mode.
 - Before a route's first match commits, the application stores a canonical route-input digest and monotonic revision plus map-data readiness. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; readiness records region generation provenance, not successful matching or a covered-path claim. Separate processing and result states distinguish queued/running/failed work from durable current/stale results.
 - Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
-- Coverage updates are account-owned and single-flight by account/region. Desired and applied OSM-generation watermarks guarantee that a promotion racing an active coverage job produces a successor rather than losing rematch work.
+- Coverage updates are account-owned bounded parents; new ingest cohorts may mix regions, with per-route generation vectors authoritative and retry parents isolated from fresh work. Desired and applied OSM-generation watermarks ensure a promotion racing active work produces a successor rather than losing rematch work.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
 - Manual OSM refresh replaces or updates regional data and reconciles copied matched segments.
 
 ### Rclone
 
-This is the planned Milestone 8 adapter contract, not an implemented subprocess
-or cookie-refresh lifecycle. The current worker checks and ingests local/NFS
-sources.
+Milestone 8 source implementation is deployed and owner ingest/available-map
+Coverage recovery are verified; explicit milestone acceptance remains pending.
+The [initial verification](implementation-plan.md#verification-results-10122026)
+retains its synthetic/disposable scope. The implemented schema-28 pipeline is
+live in `dev-20261018`, Helm revision 28, schema/minimum runtime 28, marker 27.
+See [iCloud setup](icloud-source-setup.md)
+for private owner setup and [Development Progress](development-progress.md) for
+actual live-version evidence and verification boundaries.
 
-- The user runs rclone's external interactive 2FA setup.
-- Source CRUD accepts only whitelisted fields needed for the iCloud adapter.
-- Rclone's reversibly obscured password is re-encrypted by the application.
-- The worker persists updated cookies into current encrypted source configuration.
-- Cookie persistence requires the current source generation to match the job snapshot generation.
-- Expired trust tokens set connection-failed and require external reconnection plus source update.
-- The active upstream ADP issue makes NFS/local ingest the immediate MVP path.
+- Native rclone 1.75.2 runs once per bounded operation with a job-private profile,
+  not as a daemon/RC service. Packaging checks pinned amd64/arm64 release archive
+  SHA-256 values. External interactive setup supplies a ready session.
+- The closed version-1 `health-auto-export-icloud` config requires `path`,
+  write-only `appleId`, rclone-obscured `password`, full `cookies` string and
+  `trustToken`; non-secret `clientId` is optional. Public config contains only
+  `version`, `path` and optional `clientId`, never Apple ID or masked secrets.
+- PATCH retains omitted secrets, rejects null/empty required values, and rechecks
+  canonical config changes, including non-secret path/client identity changes.
+  Native `type=iclouddrive` and `service=drive` are fixed. Host remote aliases,
+  `description`, `_auth_session` and arbitrary flags are unsupported.
+- Reversible password obscuring is not encryption. The application encrypts the
+  complete config and independently encrypts immutable job snapshots under ADR 0007.
+- Native credentials reside only in the private mode-0600 profile, never argv.
+  The process has no interactive stdin, strips inherited `RCLONE*` variables,
+  uses private HOME/XDG/cache/temp paths, and has bounded output, timeouts and
+  process-group cancellation. Native endpoint files/config backups are cleaned too.
+- Known expired trust, authentication failure or explicit missing PCS/device
+  approval during ingest sets a fenced `connection-failed` status and notification
+  that blocks future ingest. Transient upstream failure fails ingest without
+  disconnecting a connected source or diagnosing auth from an HTTP status alone.
+  Explicit checks retain their existing failed-check status contract, including
+  transient check failures.
+- ADP/Apple approval and periodic external reauthentication remain upstream
+  constraints. The application never reads/uploads host `rclone.conf` automatically
+  and does not provide source CRUD UI or in-app 2FA. Local/NFS remains the fallback.
+
+Provider-backed local/iCloud imports share the
+[account-wide identity/adoption contract](#provider-identity-and-source-adoption-requires-26).
+Only ID-less fallback identity remains source-local. Changing transports does not
+purge history, merge ambiguous records or bypass a live owner.
 
 ### SMTP
 
@@ -638,6 +1067,34 @@ Helm `version` and `appVersion` follow `VERSION` for the coordinated release.
 - CI validates clean creation and supported upgrade paths.
 - Destructive migrations require an operator backup note.
 
+M8 introduced immutable forward migration `021_icloud_sources.sql`, which requires
+minimum runtime 21 and fences runtime-20 worker claims and pre-upgrade scheduler
+leases from new source work. Forward-only `022_legacy_coverage_bootstrap.sql`
+introduced schema 22/minimum runtime 21; migration 023 introduced coordinated
+Coverage readers. Adoption **requires minimum runtime 26**:
+`024_provider_workout_identity.sql`, `025_owner_aware_source_inventory.sql`
+and `026_adopted_workout_coverage.sql` jointly require minimum runtime 26.
+Intermediate schema 24/25 is not an independently usable rollout target. Only
+source deletion advances the ownership epoch; adoption does not.
+The active sequence continues with ordinary
+`027_coverage_recovery_baseline.sql` and forward
+`028_ingest_coverage_pipeline.sql`. Runtime readiness requires marker 27 as well
+as the complete role/function contract; pipeline minimum runtime is 28. Normal
+upgrades never rewrite the ledger. Validation, upgrades, recovery and rollback
+are defined in [Application Database Migrations](database-migrations.md).
+[Development Progress](development-progress.md) owns live-version evidence.
+
+Historical repair evidence follows, not a current deployment claim.
+The 10/13/2026 deployed compatibility repair replaced only its marked five-function
+block, preserving owners/ACLs and schema/Goose version 20/minimum runtime 18,
+without M8 source DDL or an application build. The full future migration provides
+the durable repair after restore/upgrade. Historical schema-20 M7 and schema-21
+M8 receipts remain unchanged. The authorized repair and normal failed-only retries
+are now verified with all affected routes current and no remaining failed/queued
+repair work; account identifiers and counts remain private. Those historical
+schema-20/21/22 receipts do not verify migrations 024-026, coordinated runtime-26
+images, source adoption rollout or live-cloud acceptance.
+
 ### Runtime configuration
 
 Secret references supply API/worker environment variables and mounted keyring,
@@ -654,6 +1111,7 @@ Appropriate settings include:
 - Base-map style families and variants, structured attribution, provider resource origins, workout-type family defaults, fallback family, fit padding, and presentation defaults
 - Elevation-visible workout types
 - Worker polling and UI polling interval
+- Global OSM reader-only boolean policy, independent per-component reader name/key references and separate writer name/key/TLS selectors, without changing matcher capacity
 
 Timezone inference order, deletion semantics, attribution uniqueness, and cleanup guarantees are coded rules rather than configuration.
 
@@ -846,8 +1304,10 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 ### Worker boundary
 
 - Worker has source and OSM permissions the API does not need.
-- Current local/NFS source configuration is decrypted in process memory. The planned rclone adapter may additionally require a private job-scoped config file for its subprocess.
-- Planned rclone config files must use mode `0600`, contain only one source, live in the job staging directory, and be removed on success, failure, cancellation, and worker-startup scavenging.
+- Source configuration is decrypted in process memory; the M8 native subprocess additionally requires one private job-scoped config file with one profile.
+- Rclone configs/staged files use mode `0600` in job directories with `0700` access permissions (setgid may be inherited). The worker-owned `WORKER_STAGING_ROOT/private` child accommodates a UID-0/fsGroup-writable emptyDir outer mount. Linux `openat2` and `/proc/self/fd` pin no-symlink filesystem access.
+- Staging is per pod, never shared with independent worker processes. Cleanup includes config backups, endpoint caches and partial exports; a local attempt's failed cleanup blocks its terminal writes and that worker's new claims/readiness until confirmed. The gate/scavenging is pod-local, not a distributed cross-pod or lost-volume guarantee. Bounded retries cannot repair read-only storage, permissions or hardware and do not promise physical erasure.
+- Actual Alpine/non-root checks verified a UID/GID `0:65532`, mode-`2770` bind root and a worker-owned `65532:65532`, mode-`2700` private child (inherited setgid plus `0700` access). Synthetic constructor/version cleanup passed. This does not verify full worker startup, arm64 execution, read-only-root-filesystem/seccomp behavior or production deployment.
 - Temporary files use private permissions and job-scoped paths.
 - Rclone subprocess arguments and logs must not contain plaintext secrets.
 
@@ -875,3 +1335,59 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 - Additional adapters and provider-normalization rules
 - OIDC identity linking and account migration
 - Sharing grants, temporal/geofence filters, comparison authorization, and overlap rendering
+
+## Exact Parking Continuation Addendum
+
+The 10/19/2026 source-only matcher follow-up extends
+[Matching Performance And Termination](#matching-performance-and-termination).
+The new production change is confined to `internal/coverage/matcher.go` and is
+**undeployed**. It retains `coverage-production-v1`; implementation labels V1/V2
+do not denote policy versions. No SQL version or migration rewrite is involved.
+Active source remains 001-028, supported/schema/minimum runtime 28, marker 27.
+Live remains `dev-20261018`, Helm revision 28, on the old contract; new folded-028
+locking/cohort/retry behavior remains undeployed as described in Context.
+
+Exact state keys use canonical unsigned varints for cursor, portion count and
+ordered interned IDs. Interning compares every portion field and all float bits,
+including signed zero and NaN payloads. Keys own their strings; neither portion
+identity nor key equality relies on a collision-prone digest. Compact encoding
+reduces payload, but cannot itself stop a growing same-cursor rewrite.
+
+The additional certificate handles deterministic same-cursor head cycles of period
+one or two with positive insertion. It requires unique opposite-direction choices
+throughout the full source graph, not just the local route. Old unsorted choices,
+acceptance predicates, margins and first-accepted-candidate ordering stay intact.
+For a full vector `L + H + X`, the five-portion head `H` must undergo exact local
+normalization to `R`, and the actual complete replacement must equal `L + R + X`.
+The entire old prefix and tail are checked, with all metadata and float bits;
+matching only a head or boundary anchor cannot certify growth.
+
+The prefix and tail must already be normalized. The prefix/local boundary and
+**all** replay boundaries between each phase and every carried tail/inserted block
+must be sealed under the actual merge predicate, including rewind and NaN
+semantics. Exact five-portion head closure plus positive insertion in at least one
+phase then proves a nonterminating continuation. History is valid only across
+uninterrupted old-policy execution at that cursor and clears after skips or cursor
+advance. Reject only the closing candidate and continue to later ends. Failed
+proof obligations, ambiguous directions and periods above two fall back to existing
+certificates and work guards; this is not complete nontermination detection.
+
+The unchanged bounds are 512 KiB active-cursor key payload, 4,096 states and
+accepted replacements per traversal, 16,384 interned portions, 16,384 suffix nodes
+and an 8 MiB charged cache. A single optional descriptor has a measured build size
+of 2,624 bytes and a conservative 4,096-byte charge within that budget. It retains
+fixed head identities/anchors, not whole growing vectors; admission may decline
+or history may be evicted for mandatory cache entries. Mandatory state is not
+discarded to fit. Encoder/map overhead remains additional, not certified process
+memory. Context checks and complete-only atomic publication remain required.
+
+Termination certificates preserve terminating old-policy results rather than
+introducing a new route-acceptance policy. The recorded golden/oracle checks are
+finite evidence, not universal equivalence within arbitrary runtime budgets.
+Independent property-reference agreement tests certification, not an if-and-only-if
+semantic termination oracle. Processing-limit failures remain typed diagnostic
+guards, not proof of excessive route mileage. See
+[the evaluation checkpoint](coverage-matcher-evaluation.md#exact-parking-repair-follow-up-10192026)
+for synthetic measurements and verification scope; user-owned operational evidence
+stays private. The final combined worker rerun and protected actual-backup rehearsal
+remain pending; a staged private repair bundle is not deployment authorization.

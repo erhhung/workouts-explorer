@@ -20,15 +20,16 @@ import (
 const coverageProductionContractV1 = "coverage-production-v1"
 
 type CoverageReconciler struct {
-	db, osmDB         *pgxpool.Pool
-	logger            *slog.Logger
-	workerID          string
-	pollInterval      time.Duration
-	scanInterval      time.Duration
-	leaseDuration     time.Duration
-	pageSize          int
-	minimumTraversal  float64
-	osmAutoAddRegions bool
+	db, osmDB           *pgxpool.Pool
+	logger              *slog.Logger
+	workerID            string
+	pollInterval        time.Duration
+	scanInterval        time.Duration
+	leaseDuration       time.Duration
+	pageSize            int
+	minimumTraversal    float64
+	osmAutoAddRegions   bool
+	useReadReplicasOnly bool
 }
 
 type reconciliationClaim struct {
@@ -49,6 +50,7 @@ type CoverageReconcilerOptions struct {
 	PageSize                                  int
 	MinimumTraversalMeters                    float64
 	OSMAutoAddRegions                         bool
+	UseReadReplicasOnly                       bool
 }
 
 func NewCoverageReconciler(db, osmDB *pgxpool.Pool, logger *slog.Logger, options CoverageReconcilerOptions) *CoverageReconciler {
@@ -71,6 +73,7 @@ func NewCoverageReconciler(db, osmDB *pgxpool.Pool, logger *slog.Logger, options
 		result.minimumTraversal = options.MinimumTraversalMeters
 	}
 	result.osmAutoAddRegions = options.OSMAutoAddRegions
+	result.useReadReplicasOnly = options.UseReadReplicasOnly
 	return result
 }
 
@@ -119,7 +122,7 @@ func (r *CoverageReconciler) RunOnce(ctx context.Context) (bool, error) {
 func (r *CoverageReconciler) syncRegionCatalog(ctx context.Context) error {
 	regions, err := osm.ConfiguredRegions(ctx, r.osmDB)
 	if err != nil {
-		return err
+		return database.RedactOSMConnectionError(err)
 	}
 	payload, err := json.Marshal(regions)
 	if err != nil {
@@ -135,7 +138,7 @@ func (r *CoverageReconciler) syncRegionCatalog(ctx context.Context) error {
 func (r *CoverageReconciler) observe(ctx context.Context) error {
 	eventID, err := osm.PromotionEventHead(ctx, r.osmDB)
 	if err != nil {
-		return err
+		return database.RedactOSMConnectionError(err)
 	}
 	var revision int64
 	var changed bool
@@ -162,6 +165,14 @@ func (r *CoverageReconciler) claim(ctx context.Context) (reconciliationClaim, bo
 }
 
 func (r *CoverageReconciler) process(ctx context.Context, claim reconciliationClaim) error {
+	// Prepared-only accounts still owe durable work even when the ordinary
+	// route scan is empty. Never use a finished source job's former lease here.
+	if err := replayIngestCoverage(ctx, r.db, r.osmDB, claim.accountID, uuid.Nil, r.workerID, claim.leaseID, &claim.revision,
+		r.pageSize, true, coverageReplayOptions{minimumTraversal: r.minimumTraversal, autoAdd: r.osmAutoAddRegions,
+			replicasOnly: r.useReadReplicasOnly, requestTimeout: r.leaseDuration / 2,
+			renew: func(ctx context.Context) error { return r.heartbeat(ctx, claim) }}); err != nil {
+		return err
+	}
 	cursor := claim.cursor
 	for {
 		if err := r.heartbeat(ctx, claim); err != nil {
@@ -172,13 +183,22 @@ func (r *CoverageReconciler) process(ctx context.Context, claim reconciliationCl
 			return err
 		}
 		if len(routes) == 0 {
+			if err := replayIngestCoverage(ctx, r.db, r.osmDB, claim.accountID, uuid.Nil, r.workerID, claim.leaseID, &claim.revision,
+				r.pageSize, true, coverageReplayOptions{minimumTraversal: r.minimumTraversal, autoAdd: r.osmAutoAddRegions,
+					replicasOnly: r.useReadReplicasOnly, requestTimeout: r.leaseDuration / 2,
+					renew: func(ctx context.Context) error { return r.heartbeat(ctx, claim) }}); err != nil {
+				return err
+			}
 			return r.advance(ctx, claim, cursor, true)
 		}
 		for _, route := range routes {
 			if err := r.heartbeat(ctx, claim); err != nil {
 				return err
 			}
-			if err := r.reconcileRoute(ctx, claim, route); err != nil {
+			routeCtx, cancel := context.WithTimeout(ctx, r.leaseDuration/2)
+			err := r.reconcileRoute(routeCtx, claim, route)
+			cancel()
+			if err != nil {
 				return err
 			}
 			cursor = &route.workoutID
@@ -217,31 +237,36 @@ func (r *CoverageReconciler) readRoutes(ctx context.Context, claim reconciliatio
 }
 
 func (r *CoverageReconciler) reconcileRoute(ctx context.Context, claim reconciliationClaim, route reconciliationRoute) error {
-	points, err := r.readRoutePoints(ctx, claim, route)
+	coordinates, digest, err := r.readRouteSnapshot(ctx, claim, route)
 	if err != nil {
 		return err
 	}
-	if len(points) == 0 || len(points) > coverageOriginalPointLimit {
+	if len(coordinates) == 0 {
 		return errors.New("reconciliation route point count is invalid")
 	}
-	digest := canonicalRouteInputSHA256(points)
-	if !bytes.Equal(digest[:], route.digest) {
-		newRevision, err := r.repairRouteDigest(ctx, claim, route, digest[:])
+	if !bytes.Equal(digest, route.digest) {
+		newRevision, err := r.repairRouteDigest(ctx, claim, route, digest)
 		if err != nil {
 			return err
 		}
 		if newRevision == 0 {
 			return nil
 		}
-		route.revision, route.digest = newRevision, append([]byte(nil), digest[:]...)
+		route.revision, route.digest = newRevision, digest
 	}
-	coordinates := make([]osm.RouteCoordinate, len(points))
-	for i, point := range points {
-		coordinates[i] = osm.RouteCoordinate{Longitude: point.Longitude, Latitude: point.Latitude}
+	var readiness osm.RouteRegionReadiness
+	if r.useReadReplicasOnly {
+		// Another reconciler may have observed a newer promotion since our claim.
+		var minimumEventID int64
+		if err := r.db.QueryRow(ctx, `SELECT last_osm_event_id FROM app.coverage_reconciliation_observation()`).Scan(&minimumEventID); err != nil {
+			return fmt.Errorf("read coverage reconciliation observation: %w", err)
+		}
+		readiness, err = osm.ResolveRouteRegionsAtPromotion(ctx, r.osmDB, coordinates, minimumEventID)
+	} else {
+		readiness, err = osm.ResolveRouteRegions(ctx, r.osmDB, coordinates)
 	}
-	readiness, err := osm.ResolveRouteRegions(ctx, r.osmDB, coordinates)
 	if err != nil {
-		return err
+		return database.RedactOSMConnectionError(err)
 	}
 	readiness = routeReadinessForAutoAddPolicy(readiness, r.osmAutoAddRegions)
 	regions, err := json.Marshal(readiness.Regions)
@@ -267,32 +292,29 @@ func (r *CoverageReconciler) reconcileRoute(ctx context.Context, claim reconcili
 	return tx.Commit(ctx)
 }
 
-func (r *CoverageReconciler) readRoutePoints(ctx context.Context, claim reconciliationClaim, route reconciliationRoute) ([]coverageRoutePoint, error) {
+func (r *CoverageReconciler) readRouteSnapshot(ctx context.Context, claim reconciliationClaim, route reconciliationRoute) ([]osm.RouteCoordinate, []byte, error) {
 	tx, err := beginAccount(ctx, r.db, claim.accountID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT * FROM app.read_coverage_reconciliation_route($1,$2,$3,$4,$5,$6,$7)`,
-		claim.accountID, claim.revision, r.workerID, claim.leaseID, route.workoutID, route.revision, route.digest)
-	if err != nil {
-		return nil, err
+	var content, digest, encoded []byte
+	var epoch int64
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT content_sha256,ownership_epoch,route_input_sha256,point_count,coordinates
+		FROM app.read_coverage_reconciliation_snapshot($1,$2,$3,$4,$5,$6,$7)`,
+		claim.accountID, claim.revision, r.workerID, claim.leaseID, route.workoutID, route.revision, route.digest).
+		Scan(&content, &epoch, &digest, &count, &encoded); err != nil {
+		return nil, nil, err
 	}
-	defer rows.Close()
-	var points []coverageRoutePoint
-	for rows.Next() {
-		var point coverageRoutePoint
-		if err := rows.Scan(&point.Sequence, &point.Timestamp, &point.Latitude, &point.Longitude, &point.Altitude,
-			&point.Speed, &point.Course, &point.HorizontalAccuracy, &point.VerticalAccuracy,
-			&point.SpeedAccuracy, &point.CourseAccuracy); err != nil {
-			return nil, err
-		}
-		points = append(points, point)
+	if len(content) != 32 || len(digest) != 32 || epoch < 0 {
+		return nil, nil, errors.New("invalid reconciliation route snapshot")
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, err
 	}
-	return points, tx.Commit(ctx)
+	coordinates, err := decodeCoverageCoordinates(encoded, count)
+	return coordinates, digest, err
 }
 
 func (r *CoverageReconciler) repairRouteDigest(ctx context.Context, claim reconciliationClaim, route reconciliationRoute, digest []byte) (int64, error) {
@@ -316,6 +338,8 @@ func (r *CoverageReconciler) repairRouteDigest(ctx context.Context, claim reconc
 }
 
 func (r *CoverageReconciler) heartbeat(ctx context.Context, claim reconciliationClaim) error {
+	ctx, cancel := context.WithTimeout(ctx, r.leaseDuration/2)
+	defer cancel()
 	var alive bool
 	if err := r.db.QueryRow(ctx, `SELECT app.heartbeat_coverage_reconciliation($1,$2,$3,$4,$5)`,
 		claim.accountID, claim.revision, r.workerID, claim.leaseID, r.leaseDuration).Scan(&alive); err != nil {

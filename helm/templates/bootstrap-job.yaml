@@ -48,7 +48,7 @@ spec:
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: BOOTSTRAP_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.bootstrap.databaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "api.bootstrap.databaseSecret.name is required" .Values.api.bootstrap.databaseSecret.name }}, key: {{ required "api.bootstrap.databaseSecret.key is required" .Values.api.bootstrap.databaseSecret.key }}}}
             - name: BOOTSTRAP_USERNAME
               valueFrom: {secretKeyRef: {name: {{ .Values.api.bootstrap.secretName }}, key: {{ .Values.api.bootstrap.usernameKey }}}}
             - name: BOOTSTRAP_EMAIL

@@ -15,6 +15,7 @@ const coverageMeterName = "github.com/erhhung/workouts-explorer/worker/coverage"
 type coverageMetrics struct {
 	queueAge, matcherDuration, routeDuration, admissionWait metric.Float64Histogram
 	outcomes, controls, retries, stale                      metric.Int64Counter
+	inflight                                                metric.Int64UpDownCounter
 }
 
 func newCoverageMetrics(meter metric.Meter) coverageMetrics {
@@ -33,7 +34,13 @@ func newCoverageMetrics(meter metric.Meter) coverageMetrics {
 		}
 		return instrument
 	}
+	inflight, err := meter.Int64UpDownCounter("coverage.route.inflight",
+		metric.WithDescription("Local claimed route attempts, including admission and cleanup."), metric.WithUnit("{route}"))
+	if err != nil {
+		otel.Handle(err)
+	}
 	return coverageMetrics{
+		inflight:        inflight,
 		queueAge:        histogram("coverage.queue.age", "Job creation to first claim; excludes recoveries."),
 		matcherDuration: histogram("coverage.matcher.duration", "Evaluate call duration, excluding snapshot setup, preparation and persistence."),
 		routeDuration:   histogram("coverage.route.duration", "Postclaim attempt duration, including admission and cleanup."),
@@ -80,6 +87,8 @@ func (m coverageMetrics) terminal(ctx context.Context, outcome, code string) {
 			category = "persist"
 		case "coverage-osm-unavailable":
 			category = "osm"
+		case "coverage-transient-failed":
+			category = "transient"
 		default:
 			category = "other"
 		}

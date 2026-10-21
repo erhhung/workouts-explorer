@@ -45,7 +45,18 @@ expand an entire selection, queue behind Martin's connection pool and exceed the
 API's five-second forwarding deadline. Session/account/generation validation,
 function ownership, ACLs and MVT contents remain unchanged. The fix was folded
 into the JSON tile-contract migration by explicit development-only approval;
-there is no separate migration 021. Latest schema remains 20, minimum runtime 18.
+there was no separate tile migration 021. At that consolidation checkpoint the
+latest schema was 20, minimum runtime 18; dated tile measurements retain that
+historical context.
+
+M8 decisions accepted on 10/11/2026 introduce the distinct immutable forward
+migration `021_icloud_sources.sql`, with current schema/minimum runtime 21. This
+adds iCloud source/credential and worker/scheduler fencing contracts, not another
+tile fix or a reversal of the tile consolidation. M8 implementation and synthetic
+verification are ready for owner review as of 10/12/2026; see the
+[scoped results](../implementation-plan.md#verification-results-10122026).
+Owner acceptance remains pending, with no live-cloud or production validation
+claim and no change to historical tile measurements.
 
 The browser coalesces current private-tile 502/503/504 failures into at most two
 source reloads, delayed one and two seconds. Recovery uses `setTiles` in place,

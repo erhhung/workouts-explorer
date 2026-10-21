@@ -370,13 +370,13 @@ paths:
     get:
       operationId: listJobs
       description: >-
-        Lists paginated owner-visible top-level sync and workout-deletion tasks. Optional `page`, `pageSize`, `operation`, and `status` filters constrain the result; internal source checks and per-source child jobs are excluded.
+        Lists paginated owner-visible latest top-level sync, coverage and workout-deletion attempts. Status filtering uses the public display projection before counting and pagination; execution statuses are unchanged. Optional `page`, `pageSize`, `operation`, and `status` filters constrain the result; internal source checks and per-source child jobs are excluded.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
-        - {name: status, in: query, schema: {$ref: '#/components/schemas/JobStatus'}}
+        - {name: status, in: query, description: Filters the projected display status before counting and pagination. Superseded coverage parents are excluded from failed and partially_succeeded filters without changing their execution status., schema: {$ref: '#/components/schemas/JobDisplayStatus'}}
         - {name: operation, in: query, schema: {type: string, enum: [manual_sync, automated_sync, workout_deletion, coverage_update]}}
       responses:
         '200': {description: Top-level task history, content: {application/json: {schema: {$ref: '#/components/schemas/JobList'}}}}
@@ -425,7 +425,8 @@ paths:
     post:
       operationId: createJobRetry
       description: >-
-        Creates a linked retry for eligible owned failed or cancelled ingest/deletion work without requeuing the original job. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
+        Creates a linked retry for eligible owned failed, partially succeeded or cancelled ingest/deletion/coverage work without requeuing the original job. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
+        Coverage eligibility on job detail is advisory; this operation rechecks exact targets under locks. Coverage conflicts use problem type URLs prefixed with `https://workouts-explorer.invalid/problems/coverage-retry/` and one of `already-current`, `no-eligible-routes`, `not-terminal`, `not-latest`, `retry-limit`, `busy`, or `unavailable`. Busy does not revoke eligibility; refresh before trying again. Problem details are static safe text.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -781,7 +782,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/WorkoutID'}]
     post:
       operationId: createCoverageDiagnosticRun
-      description: Owner-only experimental matcher diagnostic. The required body is an empty object; cookie authentication also requires `X-CSRF-Token`.
+      description: Owner-only experimental matcher diagnostic using production matching limits (50000 original points and 12000 sampled points). Matching parity requires identical input, OSM snapshot and effective rules including road geometry; diagnostic what-if configuration can differ. A timeout is inconclusive, not a production matching failure. The required body is an empty object; cookie authentication also requires `X-CSRF-Token`.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -1181,10 +1182,12 @@ components:
     SourceCreate:
       oneOf:
         - {$ref: '#/components/schemas/HealthAutoExportLocalSourceCreate'}
+        - {$ref: '#/components/schemas/HealthAutoExportICloudSourceCreate'}
       discriminator:
         propertyName: type
         mapping:
           health-auto-export-local: '#/components/schemas/HealthAutoExportLocalSourceCreate'
+          health-auto-export-icloud: '#/components/schemas/HealthAutoExportICloudSourceCreate'
     HealthAutoExportLocalSourceCreate:
       type: object
       additionalProperties: false
@@ -1194,6 +1197,53 @@ components:
         type: {type: string, enum: [health-auto-export-local]}
         autoSyncEnabled: {type: boolean}
         config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+    HealthAutoExportICloudConfig:
+      type: object
+      additionalProperties: false
+      required: [version, path, appleId, password, cookies, trustToken]
+      properties:
+        version: {type: integer, enum: [1]}
+        path: {type: string, minLength: 1, maxLength: 4096, description: 'Relative POSIX export directory; only direct children are ingested.'}
+        appleId: {type: string, minLength: 1, maxLength: 320, writeOnly: true}
+        password: {type: string, minLength: 1, maxLength: 4096, writeOnly: true, description: 'Rclone-obscured password; still a secret.'}
+        cookies: {type: string, minLength: 1, maxLength: 32768, writeOnly: true, description: 'Complete externally authenticated cookie string.'}
+        trustToken: {type: string, minLength: 1, maxLength: 4096, writeOnly: true}
+        clientId: {type: string, maxLength: 128, pattern: '^$|^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$', description: 'Omit or use empty string for the native client identity.'}
+    HealthAutoExportICloudSourceCreate:
+      type: object
+      additionalProperties: false
+      required: [displayName, type, autoSyncEnabled, config]
+      properties:
+        displayName: {type: string, minLength: 1, maxLength: 200}
+        type: {type: string, enum: [health-auto-export-icloud]}
+        autoSyncEnabled: {type: boolean}
+        config: {$ref: '#/components/schemas/HealthAutoExportICloudConfig'}
+    HealthAutoExportICloudConfigPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: 'Partial configuration merged with the encrypted current config; omitted credentials are preserved. Required credentials cannot be null or empty.'
+      properties:
+        version: {type: integer, enum: [1]}
+        path: {type: string, minLength: 1, maxLength: 4096}
+        appleId: {type: string, minLength: 1, maxLength: 320, writeOnly: true}
+        password: {type: string, minLength: 1, maxLength: 4096, writeOnly: true}
+        cookies: {type: string, minLength: 1, maxLength: 32768, writeOnly: true}
+        trustToken: {type: string, minLength: 1, maxLength: 4096, writeOnly: true}
+        clientId: {type: string, maxLength: 128, pattern: '^$|^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$'}
+    SourceConfigPatch:
+      anyOf:
+        - {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+        - {$ref: '#/components/schemas/HealthAutoExportICloudConfigPatch'}
+    SourcePublicConfig:
+      type: object
+      additionalProperties: false
+      required: [version, path]
+      description: 'Allowlisted public fields only. clientId is optional and only used for iCloud sources. Credentials and Apple ID are never serialized.'
+      properties:
+        version: {type: integer, enum: [1]}
+        path: {type: string, minLength: 1, maxLength: 4096}
+        clientId: {type: string, maxLength: 128, pattern: '^$|^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$'}
     SourcePatch:
       type: object
       additionalProperties: false
@@ -1201,24 +1251,44 @@ components:
       properties:
         displayName: {type: string, minLength: 1, maxLength: 200}
         autoSyncEnabled: {type: boolean}
-        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+        config: {$ref: '#/components/schemas/SourceConfigPatch'}
     Source:
       type: object
       additionalProperties: false
       required: [id, displayName, type, autoSyncEnabled, status, generation, config, createdAt, updatedAt]
+      oneOf:
+        - {$ref: '#/components/schemas/HealthAutoExportLocalSourcePublic'}
+        - {$ref: '#/components/schemas/HealthAutoExportICloudSourcePublic'}
+      discriminator:
+        propertyName: type
+        mapping:
+          health-auto-export-local: '#/components/schemas/HealthAutoExportLocalSourcePublic'
+          health-auto-export-icloud: '#/components/schemas/HealthAutoExportICloudSourcePublic'
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         displayName: {type: string}
-        type: {type: string, enum: [health-auto-export-local]}
+        type: {type: string, enum: [health-auto-export-local, health-auto-export-icloud]}
         autoSyncEnabled: {type: boolean}
         status: {type: string, enum: [checking-connection, connected, connection-failed], x-enum-varnames: [CheckingConnection, Connected, ConnectionFailed]}
         generation: {type: integer, format: int64, minimum: 1}
-        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+        config: {$ref: '#/components/schemas/SourcePublicConfig'}
         statusCode: {type: string, maxLength: 64}
         statusSummary: {type: string, maxLength: 512}
         checkedAt: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
+    HealthAutoExportLocalSourcePublic:
+      type: object
+      required: [type, config]
+      properties:
+        type: {type: string, enum: [health-auto-export-local]}
+        config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
+    HealthAutoExportICloudSourcePublic:
+      type: object
+      required: [type, config]
+      properties:
+        type: {type: string, enum: [health-auto-export-icloud]}
+        config: {$ref: '#/components/schemas/SourcePublicConfig'}
     SourceList:
       type: object
       additionalProperties: false
@@ -1244,6 +1314,10 @@ components:
     JobStatus:
       type: string
       enum: [queued, running, succeeded, partially_succeeded, failed, cancelled]
+    JobDisplayStatus:
+      type: string
+      description: Presentation only, never a persisted execution transition. Superseded applies only to top-level failed or partially succeeded coverage attempts whose retry eligibility reason is already_current; route attempts keep their execution status.
+      enum: [queued, running, succeeded, partially_succeeded, failed, cancelled, superseded]
     JobTrigger:
       type: string
       enum: [manual, scheduled, system]
@@ -1260,6 +1334,8 @@ components:
         filesFailed: {type: integer, format: int64, minimum: 0}
         workoutsCreated: {type: integer, format: int64, minimum: 0}
         workoutsUpdated: {type: integer, format: int64, minimum: 0}
+        workoutsCreatedWithRoute: {type: integer, format: int64, minimum: 0, description: "Created import events with a nonempty route. Omitted when historical snapshots are unknown."}
+        workoutsUpdatedWithRoute: {type: integer, format: int64, minimum: 0, description: "Updated or adopted import events with a nonempty route. Omitted when historical snapshots are unknown."}
         workoutsUnchanged: {type: integer, format: int64, minimum: 0}
         workoutsRejected: {type: integer, format: int64, minimum: 0}
     JobSourceContext:
@@ -1343,8 +1419,22 @@ components:
       additionalProperties: false
       required: [regionId, targetOsmGeneration, targetWorkRevision, rulesVersion, samplingVersion, pathPolicyVersion]
       properties:
-        regionId: {type: string, minLength: 1, maxLength: 129}
-        targetOsmGeneration: {type: integer, format: int64, minimum: 1}
+        regionId:
+          type: string
+          minLength: 1
+          maxLength: 129
+          description: Representative parent anchor, not the complete region scope. Use regionIds for scope.
+        regionIds:
+          type: array
+          readOnly: true
+          uniqueItems: true
+          description: Sorted unique region IDs from all child target generation vectors, regardless of status or result, including retry parents.
+          items: {type: string, minLength: 1, maxLength: 129}
+        targetOsmGeneration:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Representative anchor generation. Each child's targetGenerations vector is authoritative.
         targetWorkRevision: {type: integer, format: int64, minimum: 1}
         rulesVersion: {type: string, minLength: 1, maxLength: 128}
         samplingVersion: {type: string, minLength: 1, maxLength: 128}
@@ -1382,6 +1472,7 @@ components:
         operation: {type: string, enum: [data_sync, workout_deletion, coverage_update]}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
+        displayStatus: {$ref: '#/components/schemas/JobDisplayStatus'}
         progress: {$ref: '#/components/schemas/JobProgress'}
         routeStats: {$ref: '#/components/schemas/CoverageRouteStats'}
         createdAt: {type: string, format: date-time}
@@ -1398,6 +1489,7 @@ components:
         parentJobId: {$ref: '#/components/schemas/CompactUUID'}
         trigger: {$ref: '#/components/schemas/JobTrigger'}
         status: {$ref: '#/components/schemas/JobStatus'}
+        displayStatus: {$ref: '#/components/schemas/JobDisplayStatus'}
         attempt: {type: integer, minimum: 0}
         progress: {$ref: '#/components/schemas/JobProgress'}
         source: {$ref: '#/components/schemas/JobSourceContext'}
@@ -1405,7 +1497,7 @@ components:
         coverageRoute: {$ref: '#/components/schemas/CoverageRouteContext'}
         routeStats: {$ref: '#/components/schemas/CoverageRouteStats'}
         children: {type: array, items: {$ref: '#/components/schemas/JobDetail'}}
-        results: {type: object, additionalProperties: false, properties: {filesSucceeded: {type: integer, format: int64, minimum: 0}, filesFailed: {type: integer, format: int64, minimum: 0}, workoutsCreated: {type: integer, format: int64, minimum: 0}, workoutsUpdated: {type: integer, format: int64, minimum: 0}, workoutsUnchanged: {type: integer, format: int64, minimum: 0}, workoutsRejected: {type: integer, format: int64, minimum: 0}}}
+        results: {type: object, additionalProperties: false, properties: {filesSucceeded: {type: integer, format: int64, minimum: 0}, filesFailed: {type: integer, format: int64, minimum: 0}, workoutsCreated: {type: integer, format: int64, minimum: 0}, workoutsUpdated: {type: integer, format: int64, minimum: 0}, workoutsCreatedWithRoute: {type: integer, format: int64, minimum: 0}, workoutsUpdatedWithRoute: {type: integer, format: int64, minimum: 0}, workoutsUnchanged: {type: integer, format: int64, minimum: 0}, workoutsRejected: {type: integer, format: int64, minimum: 0}}}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
         startedAt: {type: string, format: date-time}
@@ -1417,9 +1509,31 @@ components:
         retryOfJobId: {$ref: '#/components/schemas/CompactUUID'}
         retryRootJobId: {$ref: '#/components/schemas/CompactUUID'}
         retryOrdinal: {type: integer, minimum: 1}
+        retryEligibility: {$ref: '#/components/schemas/CoverageRetryEligibility'}
         latestRetryJobId: {$ref: '#/components/schemas/CompactUUID'}
         latestRetryOrdinal: {type: integer, minimum: 1}
         retriedByJobIds: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/CompactUUID'}}
+    CoverageRetryEligibility:
+      type: object
+      additionalProperties: false
+      description: Advisory current retry eligibility, present only on top-level coverage update details. POST rechecks authority and may conflict after this snapshot.
+      required: [canRetry, reason, eligibleRouteCount, unsuccessfulRouteCount, currentRouteCount, currentCoverageJobIds]
+      properties:
+        canRetry: {type: boolean}
+        reason: {type: string, enum: [eligible, not_terminal, not_latest, retry_limit, already_current, no_eligible_routes]}
+        eligibleRouteCount: {type: integer, format: int64, minimum: 0}
+        unsuccessfulRouteCount: {type: integer, format: int64, minimum: 0}
+        currentRouteCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Historical failed or cancelled routes whose workouts have proven authoritative current coverage, including newer input, generations or matcher contracts. Requires a succeeded current route child and matching current child/parent contexts and applied state; missing proof never counts as current.
+        currentCoverageJobIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/CompactUUID'}
+          description: Distinct owned coverage parents providing the same proven per-route current successes counted by currentRouteCount, newest creation time then ID first. Only the current route child must have succeeded; its parent may still be running or partially succeeded because of other routes. Advisory supersession links, not retryOfJobId or retriedByJobIds ancestry; may cover newer input, generations or matcher contracts in separate parents, including when other routes remain retryable. Empty when no current coverage can be proven.
     JobList:
       type: object
       additionalProperties: false
@@ -1540,6 +1654,8 @@ components:
         displayName: {type: string, maxLength: 200}
         type: {type: string, maxLength: 64}
         status: {type: string, enum: [checking-connection, connected, connection-failed]}
+        statusCode: {type: string, maxLength: 64}
+        statusSummary: {type: string, maxLength: 512}
         autoSyncEnabled: {type: boolean}
         checkedAt: {type: string, format: date-time}
         freshness: {$ref: '#/components/schemas/SourceFreshness'}
@@ -1754,7 +1870,7 @@ components:
       required: [id, kind, jobId, sourceId, sourceName, sourceType, sourceFile, warnings, importedAt]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
-        kind: {type: string, enum: [created, updated, matched_unchanged]}
+        kind: {type: string, enum: [created, updated, matched_unchanged, adopted, skipped_live_owner]}
         jobId: {$ref: '#/components/schemas/CompactUUID'}
         sourceId: {$ref: '#/components/schemas/CompactUUID'}
         sourceName: {type: string, minLength: 1, maxLength: 200}
@@ -1918,8 +2034,8 @@ components:
       additionalProperties: false
       required: [originalPoints, sampledPoints, matchedPoints, ambiguousPoints, unmatchedPoints, rejectedPoints, traversals, portions, uniqueSegments, durationMilliseconds]
       properties:
-        originalPoints: {type: integer, minimum: 0, maximum: 25000}
-        sampledPoints: {type: integer, minimum: 0, maximum: 10000}
+        originalPoints: {type: integer, minimum: 0, maximum: 50000}
+        sampledPoints: {type: integer, minimum: 0, maximum: 12000}
         matchedPoints: {type: integer, minimum: 0}
         ambiguousPoints: {type: integer, minimum: 0}
         unmatchedPoints: {type: integer, minimum: 0}
@@ -2083,14 +2199,29 @@ components:
     SummaryTotals:
       type: object
       additionalProperties: false
-      required: [count, duration, distance, energy, routeCount, routedDistance]
+      required: [count, duration, distance, distanceCount, energy, routeCount, routedDistance]
       properties:
         count: {type: integer, format: int64, minimum: 0}
         duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
-        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        distance:
+          allOf: [{$ref: '#/components/schemas/ExactMetric'}]
+          nullable: true
+          description: Exact sum of measured kilometer distances across all workout types, with or without a GPS route. Null when nonempty totals have no kilometer measurements; zero for empty overall totals.
+        distanceCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of workouts with a non-null kilometer distance measurement, including positive and measured zero distances, regardless of GPS route availability. Missing measurements and other units are excluded. Divide distance by distanceCount for the average per measured workout, not by count or routeCount.
         energy: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
-        routeCount: {type: integer, format: int64, minimum: 0}
-        routedDistance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        routeCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of workouts with a GPS route summary, including those without a kilometer distance measurement. Not the denominator for measured-distance averages.
+        routedDistance:
+          allOf: [{$ref: '#/components/schemas/ExactMetric'}]
+          nullable: true
+          description: Exact sum of measured kilometer distances only for workouts with a GPS route summary. Null when none are measured; zero for empty overall totals. Retained with unchanged GPS-specific semantics.
     WorkoutTypeSummary:
       type: object
       additionalProperties: false

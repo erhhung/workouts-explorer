@@ -4358,6 +4358,39 @@ describe("MapPage", () => {
     );
   });
 
+  test.each([
+    ["2023-04-01", "2022-03-01", "2023-04-01"],
+    ["2022-02-15", "2022-03-01", "2022-03-01"],
+    ["2022-03-01", "2022-03-01", "2022-03-01"],
+    ["2023-04-01", "", "2023-04-01"],
+    ["", "2022-03-01", "2022-03-01"],
+    ["", "", ""],
+  ])("completes the Map range only on start blur: %s / %s -> %s", async (start, end, expected) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(selection));
+    render(
+      <MapPage
+        config={config}
+        preferences={preferences}
+        csrfToken="csrf-map"
+        dateRange="2022-02-01/2022-03-01"
+        onDateRangeSelected={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Select date range" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
+    const startDate = await screen.findByLabelText("Start date");
+    const endDate = screen.getByLabelText("End date");
+    fireEvent.change(endDate, { target: { value: end } });
+    await user.click(startDate);
+    fireEvent.change(startDate, { target: { value: start } });
+    expect(startDate).toHaveFocus();
+    expect(endDate).toHaveValue(end);
+    await user.tab();
+    expect(endDate).toHaveFocus();
+    expect(endDate).toHaveValue(expected);
+  });
+
   test("formats an explicit date range consistently in the trigger", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(selection));
     render(

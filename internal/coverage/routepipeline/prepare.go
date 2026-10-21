@@ -35,11 +35,17 @@ type sourceInterval struct {
 	firstTraversedAt time.Time
 }
 
-func ProductionLimits() Limits { return DiagnosticLimits() }
-
 func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fallbackTime time.Time) ([]PreparedMatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	groups := make(map[segmentKey][]sourceInterval)
-	for _, evidence := range result.Evidence {
+	for i, evidence := range result.Evidence {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		key := segmentKey{id: evidence.Portion.PhysicalSegmentID, region: evidence.Portion.RegionID, generation: evidence.Portion.GenerationID}
 		groups[key] = append(groups[key], sourceInterval{from: evidence.Portion.SourceFromFraction,
 			to: evidence.Portion.SourceToFraction, routeOrder: evidence.RouteOrder, firstTraversedAt: evidence.FirstTraversedAt})
@@ -49,6 +55,11 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 	}
 	keys := make([]segmentKey, 0, len(groups))
 	for key := range groups {
+		if len(keys)&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
@@ -66,9 +77,17 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 	firstTimes := make([]time.Time, len(keys))
 	firstOrders := make([]int, len(keys))
 	for i, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		intervals := groups[key]
 		earliestOrder := int(^uint(0) >> 1)
-		for _, interval := range intervals {
+		for j, interval := range intervals {
+			if j&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			if interval.routeOrder < earliestOrder {
 				earliestOrder = interval.routeOrder
 				firstTimes[i] = interval.firstTraversedAt
@@ -81,7 +100,12 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 			return intervals[i].to < intervals[j].to
 		})
 		merged := intervals[:0]
-		for _, interval := range intervals {
+		for j, interval := range intervals {
+			if j&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			if len(merged) == 0 || interval.from > merged[len(merged)-1].to+1e-9 {
 				merged = append(merged, interval)
 				continue
@@ -95,17 +119,25 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 		}
 		firstOrders[i] = earliestOrder
 		intervalCounts[i] = len(merged)
-		for _, interval := range merged {
+		for j, interval := range merged {
+			if j&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			refs = append(refs, osm.MatcherPortionRef{SegmentID: key.id, RegionID: key.region, GenerationID: key.generation,
 				Direction: osm.MatcherForward, SourceFromFraction: interval.from, SourceToFraction: interval.to})
 		}
 	}
-	if len(refs) > DiagnosticLimits().Portions {
-		return nil, &LimitError{Field: "dissolved portions", Limit: DiagnosticLimits().Portions}
+	if len(refs) > DefaultLimits().Portions {
+		return nil, &LimitError{Field: "dissolved portions", Limit: DefaultLimits().Portions}
 	}
 	clips := make([]osm.MatcherClippedPortion, 0, len(refs))
-	for start := 0; start < len(refs); start += DiagnosticLimits().Segments {
-		end := min(start+DiagnosticLimits().Segments, len(refs))
+	for start := 0; start < len(refs); start += DefaultLimits().Segments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		end := min(start+DefaultLimits().Segments, len(refs))
 		batch, err := snapshot.ClipPortions(ctx, refs[start:end])
 		if err != nil {
 			return nil, err
@@ -114,6 +146,11 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 			return nil, errors.New("OSM dissolved clip response is incomplete")
 		}
 		for i, clip := range batch {
+			if i&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			ref := refs[start+i]
 			if clip.Ordinal != i || clip.SegmentID != ref.SegmentID || clip.RegionID != ref.RegionID || clip.GenerationID != ref.GenerationID {
 				return nil, errors.New("OSM dissolved clip response is invalid")
@@ -123,6 +160,11 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 	}
 	copyRefs := make([]osm.MatcherSegmentRef, len(keys))
 	for i, key := range keys {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		copyRefs[i] = osm.MatcherSegmentRef{SegmentID: key.id, RegionID: key.region, GenerationID: key.generation}
 	}
 	segmentCopies, err := snapshot.CopySegments(ctx, copyRefs)
@@ -133,6 +175,11 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 		return nil, errors.New("OSM segment copy response is incomplete")
 	}
 	for i, item := range segmentCopies {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		key := keys[i]
 		if item.Ordinal != i || item.SegmentID != key.id || item.RegionID != key.region || item.GenerationID != key.generation {
 			return nil, errors.New("OSM segment copy response is invalid")
@@ -141,9 +188,17 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 	prepared := make([]PreparedMatch, len(keys))
 	clipIndex := 0
 	for i := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		coordinates := make([][][]float64, 0, intervalCounts[i])
 		coveredMeters := 0.0
 		for range intervalCounts[i] {
+			if clipIndex&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			var line struct {
 				Type        string      `json:"type"`
 				Coordinates [][]float64 `json:"coordinates"`
@@ -164,6 +219,9 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 		}
 		prepared[i] = PreparedMatch{Segment: segmentCopies[i], CoveredGeoJSON: geometry,
 			CoveredMeters: coveredMeters, FirstTraversedAt: firstTimes[i], FirstRouteOrder: firstOrders[i]}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return prepared, nil
 }

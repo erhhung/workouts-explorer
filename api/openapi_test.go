@@ -42,6 +42,12 @@ func TestOpenAPIContract(t *testing.T) {
 	if csrf.MinLength != 0 || csrf.MaxLength != nil {
 		t.Fatal("OpenAPI CSRF constraints would preempt transport-aware authorization")
 	}
+	summaryTotals := document.Components.Schemas["SummaryTotals"].Value
+	distanceCount := summaryTotals.Properties["distanceCount"].Value
+	if !slices.Contains(summaryTotals.Required, "distanceCount") || !distanceCount.Type.Includes("integer") ||
+		distanceCount.Format != "int64" || distanceCount.Min == nil || *distanceCount.Min != 0 || distanceCount.Nullable {
+		t.Fatal("summary distanceCount must be a required non-null nonnegative int64")
+	}
 	for _, name := range []string{"BrowserSession", "TokenSession"} {
 		schema := document.Components.Schemas[name].Value
 		if len(schema.AllOf) != 0 || schema.Type == nil || !schema.Type.Includes("object") {

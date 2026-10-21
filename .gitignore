@@ -8,7 +8,11 @@ ui/vite.config.js
 ui/vite.config.d.ts
 ui/*.tsbuildinfo
 helm/*.local.yaml
+deploy/internal/
 deploy/acceptance/fixtures/
 *.out
 *.log
 NOTES
+slack-sessions.json
+/.slack-event.json
+/slack-prompt.md

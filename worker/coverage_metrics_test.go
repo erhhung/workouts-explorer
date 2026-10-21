@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestCoverageMetricsExport(t *testing.T) {
 		m.terminal(ctx, outcome, "")
 	}
 	for _, code := range []string{"coverage-route-timeout", "coverage-route-too-large", "coverage-route-invalid",
-		"coverage-route-read-failed", "coverage-persist-failed", "coverage-osm-unavailable", "private-error-marker"} {
+		"coverage-route-read-failed", "coverage-persist-failed", "coverage-osm-unavailable", "coverage-transient-failed", "private-error-marker"} {
 		m.terminal(ctx, "failed", code)
 	}
 	m.terminal(ctx, "private-outcome-marker", "")
@@ -97,7 +98,7 @@ func TestCoverageMetricsExport(t *testing.T) {
 		"coverage.route.outcomes": {
 			"applied/none": 1, "no_evidence/none": 1, "superseded/none": 1, "cancelled/none": 1,
 			"failed/timeout": 1, "failed/limit": 1, "failed/invalid": 1, "failed/route_read": 1,
-			"failed/persist": 1, "failed/osm": 1, "failed/other": 1,
+			"failed/persist": 1, "failed/osm": 1, "failed/transient": 1, "failed/other": 1,
 		},
 		"coverage.control.calls": {
 			"heartbeat/renewed": 1, "heartbeat/lost": 1, "heartbeat/timeout": 1, "heartbeat/cancelled": 1,
@@ -150,6 +151,39 @@ func TestCoverageQueueAgeClampsClockSkew(t *testing.T) {
 	if point := histogram.DataPoints[0]; point.Count != 1 || point.Sum != 0 {
 		t.Fatalf("negative queue age was not clamped: %#v", point)
 	}
+}
+
+func TestCoverageInflightAggregatesConcurrentAttempts(t *testing.T) {
+	m, reader := coverageTestMetrics(t)
+	ctx := context.Background()
+	entered := make(chan struct{}, 2)
+	cleanup := make(chan struct{})
+	var attempts sync.WaitGroup
+	for range 2 {
+		attempts.Go(func() {
+			m.inflight.Add(ctx, 1)
+			entered <- struct{}{}
+			<-cleanup
+			m.inflight.Add(ctx, -1)
+		})
+	}
+	<-entered
+	<-entered
+	assert := func(want int64) {
+		t.Helper()
+		instrument := collectCoverageMetrics(t, reader)["coverage.route.inflight"]
+		sum, ok := instrument.Data.(metricdata.Sum[int64])
+		if !ok || sum.IsMonotonic || instrument.Unit != "{route}" || len(sum.DataPoints) != 1 {
+			t.Fatalf("unexpected inflight instrument: %#v", instrument)
+		}
+		if point := sum.DataPoints[0]; point.Value != want || point.Attributes.Len() != 0 {
+			t.Fatalf("inflight=%#v, want unlabelled aggregate %d", point, want)
+		}
+	}
+	assert(2)
+	close(cleanup)
+	attempts.Wait()
+	assert(0)
 }
 
 func TestCoverageHeartbeatControlTimeoutCancelsWithoutDurableOutcome(t *testing.T) {

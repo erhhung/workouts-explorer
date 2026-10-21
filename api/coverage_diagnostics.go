@@ -15,6 +15,7 @@ import (
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/erhhung/workouts-explorer/internal/coverage"
+	"github.com/erhhung/workouts-explorer/internal/coverage/readerplacement"
 	"github.com/erhhung/workouts-explorer/internal/coverage/routepipeline"
 	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/osm"
@@ -23,7 +24,8 @@ import (
 )
 
 const (
-	diagnosticOriginalPointLimit = 25000
+	diagnosticSlotDuration      = 2 * time.Minute
+	diagnosticHeartbeatInterval = 20 * time.Second
 )
 
 type coverageDiagnosticSnapshot interface {
@@ -36,10 +38,12 @@ type coverageDiagnosticSnapshot interface {
 }
 
 type coverageDiagnosticService struct {
-	enabled                bool
-	timeout                time.Duration
-	gate                   chan struct{}
-	ownerID                string
+	enabled bool
+	timeout time.Duration
+	gate    chan struct{}
+	ownerID string
+	reader  *readerplacement.Manager
+	// begin is an injected snapshot factory for tests without reader placement.
 	begin                  func(context.Context) (coverageDiagnosticSnapshot, error)
 	minimumTraversalMeters float64
 	roadGeometry           coverage.RoadGeometryRules
@@ -58,30 +62,34 @@ func newCoverageDiagnosticService(ctx context.Context, cfg config.CoverageDiagno
 	if !cfg.Enabled {
 		return service, nil
 	}
-	pool, err := database.OpenWithMaxConns(ctx, cfg.OSMDatabaseURL, "workouts-api-coverage-diagnostics", int32(cfg.Concurrency))
+	pool, err := database.OpenOSMReader(ctx, cfg.OSMDatabaseURL, "workouts-api-coverage-diagnostics", int32(cfg.Concurrency), cfg.UseReadReplicasOnly)
 	if err != nil {
 		return nil, fmt.Errorf("open coverage diagnostics OSM database pool: %w", err)
 	}
+	service.reader, err = readerplacement.New(pool, cfg.UseReadReplicasOnly, cfg.Concurrency)
+	if err != nil {
+		pool.Close()
+		return nil, errors.New("initialize coverage diagnostics OSM reader placement")
+	}
 	go func() {
 		<-ctx.Done()
+		service.reader.Close()
 		pool.Close()
 	}()
 	service.gate = make(chan struct{}, cfg.Concurrency)
-	service.begin = func(ctx context.Context) (coverageDiagnosticSnapshot, error) {
-		return osm.BeginMatcherSnapshot(ctx, pool)
-	}
 	return service, nil
 }
 
 type diagnosticWorkout struct {
-	id            uuid.UUID
-	revision      int64
-	digest        []byte
-	typeKey       string
-	providerLabel string
-	points        []coverage.GeographicObservation
-	mode          coverage.MovementMode
-	regionIDs     []string
+	id                uuid.UUID
+	revision          int64
+	digest            []byte
+	typeKey           string
+	providerLabel     string
+	points            []coverage.GeographicObservation
+	mode              coverage.MovementMode
+	regionIDs         []string
+	targetGenerations []osm.MatcherGeneration
 }
 
 type diagnosticEvidence struct {
@@ -129,13 +137,20 @@ func (s *Server) CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Requ
 	started := time.Now()
 	workout, status := s.loadDiagnosticWorkout(ctx, *session.accountID, id)
 	if status != 0 {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
 		writeDiagnosticProblem(w, r, status)
+		return
+	}
+	if s.diagnostics.reader != nil && len(workout.targetGenerations) == 0 {
+		writeDiagnosticProblem(w, r, http.StatusConflict)
 		return
 	}
 	slotID, requestID := uuid.New(), uuid.New()
 	acquired, err := s.acquireDiagnosticMatcherSlot(ctx, *session.accountID, workout.regionIDs, slotID, requestID)
 	if err != nil {
-		writeDiagnosticProblem(w, r, http.StatusServiceUnavailable)
+		writeDiagnosticProblem(w, r, diagnosticErrorStatus(ctx, err))
 		return
 	}
 	if !acquired {
@@ -143,8 +158,18 @@ func (s *Server) CreateCoverageDiagnosticRun(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, http.StatusTooManyRequests, "Too Many Requests", "coverage diagnostic capacity is busy")
 		return
 	}
-	defer s.releaseDiagnosticMatcherSlot(*session.accountID, slotID, requestID)
-	result, err := s.evaluateCoverageDiagnostic(ctx, workout, started)
+	stopHeartbeat := s.keepDiagnosticMatcherSlot(ctx, *session.accountID, slotID, requestID, cancel)
+	releaseSlot := false
+	defer func() {
+		stopHeartbeat()
+		if releaseSlot {
+			s.releaseDiagnosticMatcherSlot(*session.accountID, slotID, requestID)
+		}
+	}()
+	result, err := s.evaluateCoverageDiagnostic(ctx, workout, started, *session.accountID, slotID, requestID)
+	// Unconfirmed physical cleanup keeps both reader assignment and admission
+	// reserved until lease expiry; the manager can retry closing its connection.
+	releaseSlot = !errors.Is(err, readerplacement.ErrCleanupUnconfirmed)
 	if err != nil {
 		status := diagnosticErrorStatus(ctx, err)
 		slog.Warn("coverage diagnostic failed", "stage", "evaluate", "status", status)
@@ -186,10 +211,83 @@ func (s *Server) acquireDiagnosticMatcherSlot(ctx context.Context, accountID uui
 	defer tx.Rollback(ctx)
 	var acquired bool
 	if err := tx.QueryRow(ctx, `SELECT app.acquire_diagnostic_matcher_slot($1,$2,$3,$4,$5,$6)`, accountID,
-		s.diagnostics.ownerID, slotID, requestID, regions, s.diagnostics.timeout).Scan(&acquired); err != nil {
+		s.diagnostics.ownerID, slotID, requestID, regions, diagnosticSlotDuration).Scan(&acquired); err != nil {
 		return false, err
 	}
 	return acquired, tx.Commit(ctx)
+}
+
+func (s *Server) assignDiagnosticMatcherReader(ctx context.Context, accountID, slotID, requestID uuid.UUID, clusterKey string, keys []string) (string, error) {
+	tx, err := s.accountTransaction(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var chosen *string
+	if err := tx.QueryRow(ctx, `SELECT app.assign_matcher_reader($1,$2,$3,$4,$5)`, slotID,
+		s.diagnostics.ownerID, requestID, clusterKey, keys).Scan(&chosen); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if chosen == nil {
+		return "", nil
+	}
+	return *chosen, nil
+}
+
+func (s *Server) clearDiagnosticMatcherReader(ctx context.Context, accountID, slotID, requestID uuid.UUID) error {
+	tx, err := s.accountTransaction(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var cleared bool
+	if err := tx.QueryRow(ctx, `SELECT app.clear_matcher_reader($1,$2,$3)`, slotID,
+		s.diagnostics.ownerID, requestID).Scan(&cleared); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Server) keepDiagnosticMatcherSlot(ctx context.Context, accountID, slotID, requestID uuid.UUID, cancelRequest context.CancelFunc) func() {
+	// CPU evaluation and physical snapshot cleanup can outlive the request budget.
+	heartbeatCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(diagnosticHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				attemptCtx, cancel := context.WithTimeout(heartbeatCtx, 2*time.Second)
+				renewed, err := s.heartbeatDiagnosticMatcherSlot(attemptCtx, accountID, slotID, requestID)
+				cancel()
+				if err != nil || !renewed {
+					cancelRequest()
+				}
+			}
+		}
+	}()
+	return func() { stop(); <-done }
+}
+
+func (s *Server) heartbeatDiagnosticMatcherSlot(ctx context.Context, accountID, slotID, requestID uuid.UUID) (bool, error) {
+	tx, err := s.accountTransaction(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var renewed bool
+	if err := tx.QueryRow(ctx, `SELECT app.heartbeat_diagnostic_matcher_slot($1,$2,$3,$4)`, slotID,
+		s.diagnostics.ownerID, requestID, diagnosticSlotDuration).Scan(&renewed); err != nil {
+		return false, err
+	}
+	return renewed, tx.Commit(ctx)
 }
 
 func (s *Server) releaseDiagnosticMatcherSlot(accountID, slotID, requestID uuid.UUID) {
@@ -236,12 +334,29 @@ func (s *Server) loadDiagnosticWorkout(ctx context.Context, accountID, workoutID
 	if revision == nil || len(digest) != 32 || pointCount == nil || *pointCount < 1 {
 		return diagnosticWorkout{}, http.StatusConflict
 	}
-	if *pointCount > diagnosticOriginalPointLimit {
+	if *pointCount > routepipeline.OriginalPointLimit {
 		return diagnosticWorkout{}, http.StatusRequestEntityTooLarge
 	}
 	result.revision, result.digest = *revision, append([]byte(nil), digest...)
+	regionRows, err := tx.Query(ctx, `SELECT region_id,desired_osm_generation FROM app.workout_coverage_regions
+		WHERE account_id=$1 AND workout_id=$2 ORDER BY region_id`, accountID, workoutID)
+	if err != nil {
+		return diagnosticWorkout{}, http.StatusServiceUnavailable
+	}
+	for regionRows.Next() {
+		var target osm.MatcherGeneration
+		if err := regionRows.Scan(&target.RegionID, &target.GenerationID); err != nil {
+			regionRows.Close()
+			return diagnosticWorkout{}, http.StatusServiceUnavailable
+		}
+		result.targetGenerations = append(result.targetGenerations, target)
+	}
+	regionRows.Close()
+	if regionRows.Err() != nil {
+		return diagnosticWorkout{}, http.StatusServiceUnavailable
+	}
 	rows, err := tx.Query(ctx, `SELECT sequence,longitude,latitude,recorded_at,COALESCE(horizontal_accuracy,0),course,course_accuracy
-		FROM app.workout_route_points WHERE account_id=$1 AND workout_id=$2 ORDER BY sequence LIMIT $3`, accountID, workoutID, diagnosticOriginalPointLimit+1)
+		FROM app.workout_route_points WHERE account_id=$1 AND workout_id=$2 ORDER BY sequence LIMIT $3`, accountID, workoutID, routepipeline.OriginalPointLimit+1)
 	if err != nil {
 		return diagnosticWorkout{}, http.StatusServiceUnavailable
 	}
@@ -274,9 +389,24 @@ func diagnosticMovementMode(typeKey, providerLabel string) coverage.MovementMode
 	return routepipeline.MovementMode(typeKey, providerLabel)
 }
 
-func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnosticWorkout, started time.Time) (diagnosticResult, error) {
+func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnosticWorkout, started time.Time, accountID, slotID, requestID uuid.UUID) (result diagnosticResult, err error) {
 	rules := coverage.ExperimentalRules().WithMinimumTraversalMeters(s.diagnostics.minimumTraversalMeters)
-	snapshot, err := s.diagnostics.begin(ctx)
+	var snapshot coverageDiagnosticSnapshot
+	if s.diagnostics.reader != nil {
+		if len(workout.targetGenerations) == 0 {
+			return diagnosticResult{}, osm.ErrMatcherReplicaNotReady
+		}
+		snapshot, err = s.diagnostics.reader.Begin(ctx, workout.targetGenerations,
+			func(ctx context.Context, clusterKey string, keys []string) (string, error) {
+				return s.assignDiagnosticMatcherReader(ctx, accountID, slotID, requestID, clusterKey, keys)
+			}, func(ctx context.Context) error {
+				return s.clearDiagnosticMatcherReader(ctx, accountID, slotID, requestID)
+			})
+	} else if s.diagnostics.begin != nil {
+		snapshot, err = s.diagnostics.begin(ctx)
+	} else {
+		err = errors.New("coverage diagnostic reader is unavailable")
+	}
 	if err != nil {
 		return diagnosticResult{}, err
 	}
@@ -284,11 +414,16 @@ func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnos
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		_ = snapshot.Close(closeCtx)
+		confirmation, ok := snapshot.(interface{ PhysicalConnectionClosed() bool })
+		if ok && !confirmation.PhysicalConnectionClosed() || !ok && s.diagnostics.reader != nil {
+			result = diagnosticResult{}
+			err = errors.Join(err, readerplacement.ErrCleanupUnconfirmed)
+		}
 	}()
-	result := diagnosticResult{runID: uuid.Must(uuid.NewV7()), workout: workout, minimumTraversalMeters: rules.MinTraversalLengthMeters}
+	result = diagnosticResult{runID: uuid.Must(uuid.NewV7()), workout: workout, minimumTraversalMeters: rules.MinTraversalLengthMeters}
 	evaluated, err := routepipeline.Evaluate(ctx, snapshot, workout.points, routepipeline.Config{
 		Rules: rules, Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: s.diagnostics.roadGeometry,
-		MovementMode: workout.mode, Limits: routepipeline.DiagnosticLimits(),
+		MovementMode: workout.mode, Limits: routepipeline.DefaultLimits(),
 	})
 	if err != nil {
 		return diagnosticResult{}, err
@@ -323,17 +458,16 @@ func validDiagnosticClip(clip osm.MatcherClippedPortion) bool {
 }
 
 func diagnosticErrorStatus(ctx context.Context, err error) int {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return http.StatusGatewayTimeout
-	}
 	var limit *routepipeline.LimitError
-	if errors.As(err, &limit) {
-		return http.StatusRequestEntityTooLarge
-	}
+	var evaluationLimit *coverage.OSMEvaluationLimitError
 	var bounds *osm.MatcherBoundsError
 	var overflow *osm.MatcherOverflowError
-	if errors.As(err, &bounds) || errors.As(err, &overflow) {
+	// A positive processing-limit cause remains permanent even if its budget expires.
+	if errors.As(err, &limit) || errors.As(err, &evaluationLimit) || errors.As(err, &bounds) || errors.As(err, &overflow) {
 		return http.StatusRequestEntityTooLarge
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout
 	}
 	return http.StatusServiceUnavailable
 }
@@ -347,9 +481,9 @@ func writeDiagnosticProblem(w http.ResponseWriter, r *http.Request, status int) 
 	case http.StatusRequestEntityTooLarge:
 		writeProblem(w, r, status, "Content Too Large", "workout or diagnostic evidence exceeds the allowed bound")
 	case http.StatusGatewayTimeout:
-		writeProblem(w, r, status, "Gateway Timeout", "coverage diagnostic timed out")
+		writeProblem(w, r, status, "Gateway Timeout", "coverage diagnostic timed out; result is inconclusive and does not indicate a production matching failure")
 	default:
-		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "coverage diagnostic is temporarily unavailable")
+		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "coverage diagnostic could not be completed")
 	}
 }
 
@@ -417,8 +551,9 @@ func diagnosticResponse(result diagnosticResult) generated.CoverageDiagnosticRun
 		RulesVersion: generated.CoverageExperimentalV1, SamplingVersion: generated.CoverageSamplingExperimentalV1,
 		PathPolicyVersion: generated.CoveragePathPolicyExperimentalV82, MovementMode: generated.CoverageDiagnosticRunMovementMode(result.workout.mode),
 		MinimumTraversalMeters: result.minimumTraversalMeters, Counts: result.counts, CreatedAt: result.createdAt,
-		Overlay: generated.CoverageDiagnosticEvidenceCollection{Type: generated.CoverageDiagnosticEvidenceCollectionTypeFeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},
-		Labels:  generated.CoverageDiagnosticLabels{Segments: []generated.CoverageDiagnosticSegmentLabel{}}, UnavailableRegions: []generated.CoverageDiagnosticUnavailableRegion{},
+		Generations: make([]generated.CoverageDiagnosticGeneration, 0, len(result.generations)),
+		Overlay:     generated.CoverageDiagnosticEvidenceCollection{Type: generated.CoverageDiagnosticEvidenceCollectionTypeFeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},
+		Labels:      generated.CoverageDiagnosticLabels{Segments: []generated.CoverageDiagnosticSegmentLabel{}}, UnavailableRegions: []generated.CoverageDiagnosticUnavailableRegion{},
 	}
 	response.Outcome = generated.CoverageDiagnosticRunOutcomeEvaluated
 	if len(result.evidence) == 0 {

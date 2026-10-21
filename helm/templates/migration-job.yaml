@@ -31,4 +31,4 @@ spec:
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: MIGRATION_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.migrationDatabaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "api.migration.databaseSecret.name is required" .Values.api.migration.databaseSecret.name }}, key: {{ required "api.migration.databaseSecret.key is required" .Values.api.migration.databaseSecret.key }}}}

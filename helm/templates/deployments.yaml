@@ -92,10 +92,10 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ .Values.api.databaseSecret.key }}}}
             - name: RATE_LIMIT_KEY
               valueFrom: {secretKeyRef: {name: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}, key: {{ .Values.api.securitySecret.rateLimitKey }}}}
+            - {name: OSM_USE_READ_REPLICAS_ONLY, value: {{ .Values.osm.useReadReplicasOnly | quote }}}
             {{- if .Values.api.coverageDiagnostics.enabled }}
-            # Temporary shared OSM credential; replace after issuing a dedicated reader client certificate.
             - name: API_OSM_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "api.databaseSecret.name is required" .Values.api.databaseSecret.name }}, key: {{ required "api.coverageDiagnostics.osmDatabaseKey is required" .Values.api.coverageDiagnostics.osmDatabaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "api.coverageDiagnostics.databaseSecret.name is required" .Values.api.coverageDiagnostics.databaseSecret.name }}, key: {{ required "api.coverageDiagnostics.databaseSecret.key is required" .Values.api.coverageDiagnostics.databaseSecret.key }}}}
             {{- end }}
             - {name: SSL_CERT_FILE, value: /var/run/secrets/workouts-trust/ca.crt}
           ports: [{name: http, containerPort: 8080}]
@@ -173,6 +173,8 @@ spec:
               value: {{ printf "service.namespace=%s,service.instance.id=$(POD_UID),deployment.environment.name=%s" .Values.otel.serviceNamespace .Values.otel.environment | quote }}
             - {name: SSL_CERT_FILE, value: /tls/prod-db/ca.crt}
             - {name: COVERAGE_WORKER_POLL_INTERVAL, value: {{ .Values.coverageWorker.pollInterval | quote }}}
+            - {name: COVERAGE_WORKER_JOB_CONCURRENCY, value: {{ .Values.coverageWorker.jobConcurrency | quote }}}
+            - {name: COVERAGE_WORKER_AUTO_RETRY_COUNT, value: {{ .Values.coverageWorker.autoRetryCount | quote }}}
             - {name: COVERAGE_WORKER_ADMISSION_INTERVAL, value: {{ .Values.coverageWorker.admissionInterval | quote }}}
             - {name: COVERAGE_WORKER_LEASE_DURATION, value: {{ .Values.coverageWorker.leaseDuration | quote }}}
             - {name: COVERAGE_WORKER_HEARTBEAT_INTERVAL, value: {{ .Values.coverageWorker.heartbeatInterval | quote }}}
@@ -182,10 +184,11 @@ spec:
             - {name: COVERAGE_RECONCILIATION_PAGE_SIZE, value: {{ .Values.coverageWorker.reconciliationPageSize | quote }}}
             - {name: COVERAGE_MIN_TRAVERSAL_METERS, value: {{ .Values.worker.coverageMinTraversalMeters | quote }}}
             - {name: OSM_AUTO_ADD_REGIONS, value: {{ .Values.osm.autoAddRegions | quote }}}
+            - {name: OSM_USE_READ_REPLICAS_ONLY, value: {{ .Values.osm.useReadReplicasOnly | quote }}}
             - name: COVERAGE_WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.databaseSecret.key is required" .Values.coverageWorker.databaseSecret.key }}}}
             - name: COVERAGE_WORKER_OSM_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.databaseSecret.name is required" .Values.coverageWorker.databaseSecret.name }}, key: {{ required "coverageWorker.osmDatabaseKey is required" .Values.coverageWorker.osmDatabaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "coverageWorker.osmDatabaseSecret.name is required" .Values.coverageWorker.osmDatabaseSecret.name }}, key: {{ required "coverageWorker.osmDatabaseSecret.key is required" .Values.coverageWorker.osmDatabaseSecret.key }}}}
           ports: [{name: health, containerPort: 8082}]
           livenessProbe: {httpGet: {path: /health/live, port: health}, failureThreshold: 6, timeoutSeconds: 5}
           readinessProbe: {httpGet: {path: /health/ready, port: health}, failureThreshold: 6, timeoutSeconds: 5}
@@ -239,6 +242,7 @@ spec:
             - {name: SOURCE_KEYRING_FILE, value: /var/run/secrets/workouts-source/keyring.json}
             - {name: LOCAL_SOURCE_ROOTS, value: {{ join "," .Values.sources.localRoots | quote }}}
             - {name: WORKER_FILE_CONCURRENCY, value: {{ .Values.worker.fileConcurrency | quote }}}
+            - {name: WORKER_COVERAGE_BATCH_SIZE, value: {{ .Values.worker.coverageBatchSize | quote }}}
             - {name: ACCOUNT_FILE_CONCURRENCY, value: {{ .Values.worker.accountFileConcurrency | quote }}}
             - {name: GLOBAL_FILE_CONCURRENCY, value: {{ .Values.worker.globalFileConcurrency | quote }}}
             - {name: AUTO_SYNC_INTERVAL, value: {{ .Values.worker.autoSyncInterval | quote }}}
@@ -248,13 +252,14 @@ spec:
             - {name: COVERAGE_MIN_TRAVERSAL_METERS, value: {{ .Values.worker.coverageMinTraversalMeters | quote }}}
             - {name: WORKER_STAGING_ROOT, value: {{ .Values.worker.staging.root | quote }}}
             - {name: OSM_AUTO_ADD_REGIONS, value: {{ .Values.osm.autoAddRegions | quote }}}
+            - {name: OSM_USE_READ_REPLICAS_ONLY, value: {{ .Values.osm.useReadReplicasOnly | quote }}}
             - {name: OSM_MAX_AUTO_DOWNLOAD_BYTES, value: {{ .Values.osm.maxAutoDownloadBytes | float64 | printf "%.0f" | quote }}}
             - {name: OSM_DATA_PROVIDERS_JSON, value: {{ mustToJson .Values.osm.dataProviders | quote }}}
             - {name: OSM_REGIONS_JSON, value: {{ mustToJson .Values.osm.regions | quote }}}
             - name: WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
             - name: OSM_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ required "worker.osmDatabaseKey is required" .Values.worker.osmDatabaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "worker.osmDatabaseSecret.name is required" .Values.worker.osmDatabaseSecret.name }}, key: {{ required "worker.osmDatabaseSecret.key is required" .Values.worker.osmDatabaseSecret.key }}}}
           ports: [{name: health, containerPort: 8081}]
           livenessProbe: {httpGet: {path: /health/live, port: health}, failureThreshold: 6, timeoutSeconds: 5}
           readinessProbe: {httpGet: {path: /health/ready, port: health}, failureThreshold: 6, timeoutSeconds: 5}

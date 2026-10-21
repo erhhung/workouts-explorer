@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -91,7 +92,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := workerapp.ScavengeStaging(cfg.StagingRoot); err != nil {
+	// Kubernetes owns the emptyDir mount; create a worker-owned private child.
+	stagingRoot := filepath.Join(cfg.StagingRoot, "private")
+	if err := workerapp.ScavengeStaging(stagingRoot); err != nil {
 		return errors.New("prepare worker staging")
 	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
@@ -100,7 +103,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
-	osmDB, err := database.Open(workerCtx, cfg.OSMDatabaseURL, "workouts-worker-osm")
+	osmDB, err := database.OpenOSMReader(workerCtx, cfg.OSMDatabaseURL, "workouts-worker-osm", 0, cfg.OSM.UseReadReplicasOnly)
 	if err != nil {
 		return err
 	}
@@ -111,20 +114,32 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err := workerapp.ConfigureAutoSyncPolicy(workerCtx, db, cfg.AutoSyncInterval, cfg.AutoSyncStaleDays); err != nil {
 		return err
 	}
-	server := &http.Server{
-		Addr:              cfg.ListenAddress,
-		Handler:           workerapp.NewHandler(db, osmDB, logger),
-		ReadHeaderTimeout: config.ReadHeaderTimeout(),
-		ReadTimeout:       config.ReadTimeout(),
-		WriteTimeout:      config.WriteTimeout(),
-		IdleTimeout:       config.IdleTimeout(),
+	if err := workerapp.ConfigureCoverageBatchSize(workerCtx, db, cfg.CoverageBatchSize); err != nil {
+		return err
 	}
 	runner := workerapp.NewRunnerWithOptions(db, logger, keys, cfg.LocalSourceRoots, workerapp.RunnerOptions{
 		FileConcurrency:            cfg.FileConcurrency,
 		OSMDatabase:                osmDB,
 		OSMAutoAddRegions:          cfg.OSM.AutoAddRegions,
 		CoverageMinTraversalMeters: cfg.CoverageMinTraversalMeters,
+		CoverageBatchSize:          cfg.CoverageBatchSize,
+		StagingRoot:                stagingRoot,
 	})
+	healthHandler := workerapp.NewHandler(db, osmDB, logger)
+	server := &http.Server{
+		Addr: cfg.ListenAddress,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/health/ready" && runner.StagingCleanupPending() {
+				http.Error(w, "Worker staging cleanup is pending.", http.StatusServiceUnavailable)
+				return
+			}
+			healthHandler.ServeHTTP(w, request)
+		}),
+		ReadHeaderTimeout: config.ReadHeaderTimeout(),
+		ReadTimeout:       config.ReadTimeout(),
+		WriteTimeout:      config.WriteTimeout(),
+		IdleTimeout:       config.IdleTimeout(),
+	}
 	scheduler := workerapp.NewScheduler(db, logger, keys, cfg.LocalSourceRoots, workerapp.SchedulerOptions{
 		PollInterval: cfg.AutoSyncPollInterval,
 		Lease:        cfg.SchedulerLease,

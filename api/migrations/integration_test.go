@@ -436,12 +436,12 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = db.migration.Exec(context.Background(), `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = $2 WHERE singleton`, schemaVersion, minimumRuntime)
 	})
-	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = 18 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
+	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = 28 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
 		if !database.Ready(db.ctx, pool) {
-			t.Fatal("runtime 20 rejected compatible schema 21 with minimum runtime 18")
+			t.Fatalf("runtime %d rejected compatible schema %d with minimum runtime 28", database.SupportedSchemaVersion, database.SupportedSchemaVersion+1)
 		}
 	}
 	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = $1 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
@@ -669,8 +669,8 @@ func TestScheduledEnqueueIsolatesInvalidSourcesAndDerivesParents(t *testing.T) {
 			}
 		}
 		if _, err := tx.Exec(db.ctx, `INSERT INTO app.account_sync_schedules
-			(account_id,next_run_at,lease_worker,lease_token,lease_expires_at)
-			VALUES($1,clock_timestamp()-interval '10 minutes','scheduler-test',$2,clock_timestamp()+interval '2 minutes')`, result.account, token); err != nil {
+			(account_id,next_run_at,lease_worker,lease_token,lease_expires_at,lease_runtime_version)
+			VALUES($1,clock_timestamp()-interval '10 minutes','scheduler-test',$2,clock_timestamp()+interval '2 minutes',21)`, result.account, token); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(db.ctx); err != nil {
@@ -777,8 +777,8 @@ func TestSchedulerPolicyCadenceAndExponentialBackoff(t *testing.T) {
 	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.accounts(id) VALUES($1)`, account); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.account_sync_schedules(account_id,next_run_at,lease_worker,lease_token,lease_expires_at)
-		VALUES($1,$2,'scheduler-policy-test',$3,clock_timestamp()+interval '2 minutes')`, account, prior, token); err != nil {
+	if _, err := db.migration.Exec(db.ctx, `INSERT INTO app.account_sync_schedules(account_id,next_run_at,lease_worker,lease_token,lease_expires_at,lease_runtime_version)
+		VALUES($1,$2,'scheduler-policy-test',$3,clock_timestamp()+interval '2 minutes',21)`, account, prior, token); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -805,7 +805,7 @@ func TestSchedulerPolicyCadenceAndExponentialBackoff(t *testing.T) {
 	for failure := 1; failure <= 2; failure++ {
 		token = uuid.New()
 		if _, err := db.migration.Exec(db.ctx, `UPDATE app.account_sync_schedules SET next_run_at=clock_timestamp()-interval '1 second',
-			lease_worker='scheduler-policy-test',lease_token=$2,lease_expires_at=clock_timestamp()+interval '2 minutes'
+			lease_worker='scheduler-policy-test',lease_token=$2,lease_expires_at=clock_timestamp()+interval '2 minutes',lease_runtime_version=21
 			WHERE account_id=$1`, account, token); err != nil {
 			t.Fatal(err)
 		}
@@ -825,7 +825,7 @@ func TestSchedulerPolicyCadenceAndExponentialBackoff(t *testing.T) {
 	token = uuid.New()
 	if _, err := db.migration.Exec(db.ctx, `UPDATE app.account_sync_schedules SET consecutive_failures=1000000,
 		next_run_at=clock_timestamp()-interval '1 second',lease_worker='scheduler-policy-test',lease_token=$2,
-		lease_expires_at=clock_timestamp()+interval '2 minutes' WHERE account_id=$1`, account, token); err != nil {
+		lease_expires_at=clock_timestamp()+interval '2 minutes',lease_runtime_version=21 WHERE account_id=$1`, account, token); err != nil {
 		t.Fatal(err)
 	}
 	before := time.Now()
@@ -841,7 +841,7 @@ func TestSchedulerPolicyCadenceAndExponentialBackoff(t *testing.T) {
 	}
 	token = uuid.New()
 	if _, err := db.migration.Exec(db.ctx, `UPDATE app.account_sync_schedules SET next_run_at=clock_timestamp()-interval '1 second',
-		lease_worker='scheduler-policy-test',lease_token=$2,lease_expires_at=clock_timestamp()+interval '2 minutes' WHERE account_id=$1`, account, token); err != nil {
+		lease_worker='scheduler-policy-test',lease_token=$2,lease_expires_at=clock_timestamp()+interval '2 minutes',lease_runtime_version=21 WHERE account_id=$1`, account, token); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.worker.QueryRow(db.ctx, `SELECT app.finish_sync_account($1,'scheduler-policy-test',$2,NULL)`, account, token).Scan(&finished); err != nil || !finished {
@@ -877,7 +877,7 @@ func TestSchedulerClaimAndEnqueueConflictAreUnambiguous(t *testing.T) {
 	var claimedAccount, claimedToken uuid.UUID
 	var claimedNext string
 	if err := db.worker.QueryRow(db.ctx, `SELECT account_id,lease_token,next_run_at::text
-		FROM app.claim_due_sync_account($1,$2,interval '2 minutes',7)`, worker, token).
+		FROM app.claim_due_sync_account($1,$2,interval '2 minutes',$3)`, worker, token, database.SupportedSchemaVersion).
 		Scan(&claimedAccount, &claimedToken, &claimedNext); err != nil {
 		t.Fatalf("direct scheduler claim: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestSchedulerAccountLifecycleStopsClaimedAndUnseededAccounts(t *testing.T) 
 	token := uuid.New()
 	var account, claimedToken uuid.UUID
 	if err := db.worker.QueryRow(db.ctx, `SELECT account_id,lease_token
-		FROM app.claim_due_sync_account('lifecycle-worker',$1,interval '2 minutes',7)`, token).Scan(&account, &claimedToken); err != nil {
+		FROM app.claim_due_sync_account('lifecycle-worker',$1,interval '2 minutes',$2)`, token, database.SupportedSchemaVersion).Scan(&account, &claimedToken); err != nil {
 		t.Fatal(err)
 	}
 	if account != claimedAccount || claimedToken != token {
@@ -980,7 +980,7 @@ func TestSchedulerAccountLifecycleStopsClaimedAndUnseededAccounts(t *testing.T) 
 		t.Fatalf("deleting account lease release=%t err=%v", released, err)
 	}
 	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_due_sync_account(
-		'lifecycle-seed-worker',$1,interval '2 minutes',7)`, uuid.New()); err != nil {
+		'lifecycle-seed-worker',$1,interval '2 minutes',$2)`, uuid.New(), database.SupportedSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
 	var retainedSchedules, neverActiveSchedules, scheduledJobs, activeLeases int
@@ -1037,7 +1037,7 @@ func TestConcurrentSchedulerReplicasEnqueueOneParent(t *testing.T) {
 			worker, token := fmt.Sprintf("scheduler-replica-%d", replica), uuid.New()
 			var claimedAccount, claimedToken uuid.UUID
 			err := pool.QueryRow(ctx, `SELECT account_id,lease_token
-				FROM app.claim_due_sync_account($1,$2,interval '2 minutes',7)`, worker, token).Scan(&claimedAccount, &claimedToken)
+				FROM app.claim_due_sync_account($1,$2,interval '2 minutes',$3)`, worker, token, database.SupportedSchemaVersion).Scan(&claimedAccount, &claimedToken)
 			if errors.Is(err, pgx.ErrNoRows) {
 				results <- result{}
 				return
@@ -1920,14 +1920,14 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 
 	tx = beginAccount(t, db.ctx, db.worker, account)
 	var fencedSource uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, uuid.New()).Scan(&fencedSource); err != pgx.ErrNoRows {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, uuid.New(), database.SupportedSchemaVersion).Scan(&fencedSource); err != pgx.ErrNoRows {
 		_ = tx.Rollback(db.ctx)
 		t.Fatalf("stale lease ingest fence error=%v, want no rows", err)
 	}
 	_ = tx.Rollback(db.ctx)
 
 	tx = beginAccount(t, db.ctx, db.worker, account)
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil || fencedSource != sourceID {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil || fencedSource != sourceID {
 		_ = tx.Rollback(db.ctx)
 		t.Fatalf("explicit import job fence source=%s err=%v", fencedSource, err)
 	}
@@ -2072,7 +2072,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 
 	stateFileID := uuid.Must(uuid.NewV7())
 	tx = beginAccount(t, db.ctx, db.worker, account)
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2086,7 +2086,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 		t.Fatal(err)
 	}
 	tx = beginAccount(t, db.ctx, db.worker, account)
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2105,7 +2105,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 		{"succeeded", `UPDATE app.source_files SET state='succeeded',checksum_sha256=$2,processed_at=transaction_timestamp() WHERE id=$1`},
 	} {
 		tx = beginAccount(t, db.ctx, db.worker, account)
-		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 			_ = tx.Rollback(db.ctx)
 			t.Fatal(err)
 		}
@@ -2118,7 +2118,7 @@ func TestNormalizedImportPersistenceClaimsRLSConstraintsAndPrivileges(t *testing
 		}
 	}
 	tx = beginAccount(t, db.ctx, db.worker, account)
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'import-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2305,7 +2305,7 @@ func TestScheduledIngestClaimFenceCommitAndKindPairing(t *testing.T) {
 	fileID := uuid.Must(uuid.NewV7())
 	tx = beginAccount(t, db.ctx, db.worker, account)
 	var fencedSource uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'scheduled-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil || fencedSource != sourceID {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'scheduled-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil || fencedSource != sourceID {
 		_ = tx.Rollback(db.ctx)
 		t.Fatalf("scheduled fence source=%s err=%v", fencedSource, err)
 	}
@@ -2348,7 +2348,7 @@ func TestScheduledIngestClaimFenceCommitAndKindPairing(t *testing.T) {
 		t.Fatal("wrong-kind fixture claim failed")
 	}
 	tx = beginAccount(t, db.ctx, db.worker, account)
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'wrong-kind-worker',$2)`, wrongKind, wrongLease).Scan(&fencedSource); !errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'wrong-kind-worker',$2,$3)`, wrongKind, wrongLease, database.SupportedSchemaVersion).Scan(&fencedSource); !errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(db.ctx)
 		t.Fatalf("non-ingest job fence error=%v, want no rows", err)
 	}
@@ -2419,7 +2419,11 @@ func TestWorkerClaimSkipsParentLockedForCancellation(t *testing.T) {
 	}
 	compatibilityLease := uuid.New()
 	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id
-		FROM app.claim_next_source_connection_check('compatibility-worker',$1,interval '1 minute')`, compatibilityLease).Scan(&jobID, &accountID); err != nil {
+		FROM app.claim_next_source_connection_check('compatibility-worker',$1,interval '1 minute')`, compatibilityLease).Scan(&jobID, &accountID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("versionless source-check claim ignored schema-21 runtime gate: %v", err)
+	}
+	if err := db.worker.QueryRow(db.ctx, `SELECT job_id,account_id
+		FROM app.claim_next_worker_job('compatibility-worker',$1,interval '1 minute',$2)`, compatibilityLease, database.SupportedSchemaVersion).Scan(&jobID, &accountID); err != nil {
 		t.Fatal(err)
 	}
 	if jobID != connectionJob || accountID != connectionAccount {
@@ -2442,7 +2446,7 @@ func TestDeferredIngestFenceRollsBackCancelledCommit(t *testing.T) {
 	}
 	tx := beginAccount(t, db.ctx, db.migration, account)
 	var fencedSource uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'commit-fence-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'commit-fence-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2477,7 +2481,7 @@ func TestFencedCommitSurvivesLeaseExpiryAndBlocksRecovery(t *testing.T) {
 	}
 	tx := beginAccount(t, db.ctx, db.worker, account)
 	var fencedSource uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'slow-fenced-worker',$2)`, jobID, lease).Scan(&fencedSource); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'slow-fenced-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
@@ -2531,7 +2535,7 @@ func TestFencedCommitSurvivesLeaseExpiryAndBlocksRecovery(t *testing.T) {
 	}
 
 	oldWorker := beginAccount(t, db.ctx, db.worker, account)
-	if err := oldWorker.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'slow-fenced-worker',$2)`, jobID, lease).Scan(&fencedSource); err != pgx.ErrNoRows {
+	if err := oldWorker.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,'slow-fenced-worker',$2,$3)`, jobID, lease, database.SupportedSchemaVersion).Scan(&fencedSource); err != pgx.ErrNoRows {
 		_ = oldWorker.Rollback(db.ctx)
 		t.Fatalf("old worker began a new fence after recovery: err=%v", err)
 	}
@@ -3091,8 +3095,8 @@ func TestSchema8WorkerRuntimeClaimGate(t *testing.T) {
 	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_next_worker_job('schema6-worker',$1,interval '1 minute')`, uuid.New()); err == nil {
 		t.Fatal("schema-5 worker claim signature was not blocked")
 	}
-	if _, err := db.worker.Exec(db.ctx, `SELECT * FROM app.claim_next_worker_job('old-runtime',$1,interval '1 minute',7)`, uuid.New()); err == nil {
-		t.Fatal("old runtime version was accepted by schema-8 claim")
+	if err := db.worker.QueryRow(db.ctx, `SELECT job_id FROM app.claim_next_worker_job('old-runtime',$1,interval '1 minute',7)`, uuid.New()).Scan(new(uuid.UUID)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("old worker runtime claim did not return no rows: %v", err)
 	}
 	tx, err := db.worker.Begin(db.ctx)
 	if err != nil {
@@ -3143,6 +3147,11 @@ func TestWorkoutDeletionFenceAndPurge(t *testing.T) {
 	}
 	if _, err := tx.Exec(db.ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
 		VALUES($1,$2,$3,$4,$5,'deletion-fixture',$6,'Fixture','2026-08-01T12:00:00Z','2026-08-01T12:01:00Z','2026-08-01',60)`, workoutID, account, sourceID, sourceFileID, workoutTypeID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	// This administrative fixture must drain its deferred header invalidation
+	// before ALTER TABLE; production file transactions leave it until commit.
+	if _, err := tx.Exec(db.ctx, `SET CONSTRAINTS app.workouts_data_generation_after_write IMMEDIATE`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(db.ctx, `ALTER TABLE app.workouts ENABLE TRIGGER workouts_capability_before_write`); err != nil {
@@ -5708,7 +5717,7 @@ func recordSuccessfulObject(t *testing.T, db testDatabases, account, child, leas
 	tx := beginAccount(t, db.ctx, db.worker, account)
 	defer tx.Rollback(db.ctx)
 	var sourceID uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3)`, child, workerID, lease).Scan(&sourceID); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, child, workerID, lease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil {
 		t.Fatal(err)
 	}
 	var recorded bool
@@ -5848,7 +5857,7 @@ func expectFencedIngestMutationRejected(t *testing.T, db testDatabases, account,
 	t.Helper()
 	tx := beginAccount(t, db.ctx, db.migration, account)
 	var sourceID uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3)`, jobID, worker, lease).Scan(&sourceID); err != nil {
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, jobID, worker, lease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}

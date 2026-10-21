@@ -18,8 +18,8 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 20 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 20", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 28 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 28", SupportedSchemaVersion)
 	}
 }
 
@@ -28,6 +28,7 @@ func TestRuntimeReadinessBackwardCompatibleSchema(t *testing.T) {
 	for _, required := range []string{
 		"COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1",
 		"WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1",
+		"migration_baseline = 27",
 		"has_column_privilege('workouts_coverage_worker','app.jobs','created_at','SELECT')",
 		"has_column_privilege('workouts_coverage_worker','app.jobs','attempt','SELECT')",
 		"has_column_privilege('workouts_coverage_worker','app.jobs','retry_of_job_id','SELECT')",
@@ -41,6 +42,58 @@ func TestRuntimeReadinessBackwardCompatibleSchema(t *testing.T) {
 		if strings.Contains(sql, forbidden) {
 			t.Errorf("runtime readiness SQL rejects compatible newer schemas: %q", forbidden)
 		}
+	}
+}
+
+func TestICloudRuntimeReadinessContract(t *testing.T) {
+	for _, signature := range []string{
+		"app.read_typed_job_source_snapshot(uuid,text,uuid)",
+		"app.refresh_source_credentials(uuid,text,uuid,bigint,jsonb)",
+		"app.finish_connection_check_with_refresh(uuid,text,uuid,text,text,text,jsonb)",
+		"app.fail_source_connection(uuid,text,uuid,bigint,text,text)",
+	} {
+		if !strings.Contains(runtimeReadinessSQL, "'"+signature+"'::regprocedure") ||
+			!strings.Contains(runtimeReadinessSQL, "has_function_privilege(current_user, '"+signature+"', 'EXECUTE')") {
+			t.Errorf("readiness does not require owner and worker privilege for %s", signature)
+		}
+	}
+	if !strings.Contains(runtimeReadinessSQL, "attname='observed_identity' AND NOT attisdropped") {
+		t.Fatal("readiness does not require remote manifest identity")
+	}
+	for _, required := range []string{
+		"has_column_privilege('workouts_security_owner', 'app.sources', 'generation', 'UPDATE')",
+		"NOT has_function_privilege(current_user, 'app.lock_source_job_for_credentials(uuid,text,uuid)', 'EXECUTE')",
+		"NOT has_function_privilege(current_user, 'app.valid_source_config_envelope(jsonb)', 'EXECUTE')",
+	} {
+		if !strings.Contains(runtimeReadinessSQL, required) {
+			t.Errorf("readiness does not enforce private credential permissions: %s", required)
+		}
+	}
+}
+
+func TestICloudSchedulerReadinessFenceAndPrivacy(t *testing.T) {
+	sql := strings.Join(strings.Fields(runtimeReadinessSQL), " ")
+	for _, required := range []string{
+		"attname='lease_runtime_version' AND atttypid='integer'::regtype AND NOT attisdropped",
+		"runtime_version >= 21 AND runtime_version >= metadata.minimum_runtime_version",
+		"FROM app.schema_metadata metadata WHERE metadata.singleton",
+		"'app.claim_due_sync_account_internal(text,uuid,interval,integer)'::regprocedure",
+		"'app.enqueue_leased_scheduled_ingest_internal(uuid,text,uuid,uuid,bytea,jsonb)'::regprocedure",
+		"'app.finish_sync_account_internal(uuid,text,uuid,uuid)'::regprocedure",
+		"p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog, app']",
+		"aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner)))",
+		"acl.grantee=0 AND acl.privilege_type='EXECUTE'",
+		"runtime_role.rolname IN ('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')",
+		"has_function_privilege(runtime_role.oid,p.oid,'EXECUTE')",
+		"has_column_privilege('workouts_security_owner', 'app.account_sync_schedules', 'lease_runtime_version', 'UPDATE')",
+		"has_table_privilege('workouts_security_owner', 'app.schema_metadata', 'SELECT')",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("scheduler readiness is missing %q", required)
+		}
+	}
+	if strings.Contains(sql, "worker runtime version 8 or newer is required") {
+		t.Fatal("readiness still requires obsolete runtime-8 exception wording")
 	}
 }
 

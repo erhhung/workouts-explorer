@@ -55,6 +55,7 @@ type API struct {
 type CoverageDiagnostics struct {
 	Enabled                        bool
 	OSMDatabaseURL                 string
+	UseReadReplicasOnly            bool
 	Timeout                        time.Duration
 	Concurrency                    int
 	MinimumTraversalMeters         float64
@@ -78,14 +79,18 @@ type Worker struct {
 	AutoSyncStaleDays          int
 	SchedulerLease             time.Duration
 	CoverageMinTraversalMeters float64
+	CoverageBatchSize          int
 	OSM                        OSM
 }
 
 type CoverageWorker struct {
 	DatabaseURL                string
 	OSMDatabaseURL             string
+	UseReadReplicasOnly        bool
 	ListenAddress              string
 	OTLPEndpoint               string
+	JobConcurrency             int
+	AutoRetryCount             int
 	PollInterval               time.Duration
 	AdmissionInterval          time.Duration
 	LeaseDuration              time.Duration
@@ -100,6 +105,7 @@ type CoverageWorker struct {
 
 type OSM struct {
 	AutoAddRegions       bool
+	UseReadReplicasOnly  bool
 	MaxAutoDownloadBytes int64
 	DataProviders        []string
 	Regions              []string
@@ -155,6 +161,10 @@ func LoadAPI() (API, error) {
 		return API{}, err
 	}
 	diagnosticsEnabled, err := boolean("COVERAGE_DIAGNOSTICS_ENABLED", false)
+	if err != nil {
+		return API{}, err
+	}
+	useReadReplicasOnly, err := boolean("OSM_USE_READ_REPLICAS_ONLY", false)
 	if err != nil {
 		return API{}, err
 	}
@@ -230,7 +240,8 @@ func LoadAPI() (API, error) {
 		},
 		CoverageDiagnostics: CoverageDiagnostics{
 			Enabled: diagnosticsEnabled, OSMDatabaseURL: diagnosticsOSMURL, Timeout: diagnosticsTimeout,
-			Concurrency: diagnosticsConcurrency, MinimumTraversalMeters: diagnosticsMinimum,
+			UseReadReplicasOnly: useReadReplicasOnly,
+			Concurrency:         diagnosticsConcurrency, MinimumTraversalMeters: diagnosticsMinimum,
 			MotorLaneWidthMeters: motorLaneWidth, BicycleLaneWidthMeters: bicycleLaneWidth,
 			ParkingLaneWidthMeters: parkingLaneWidth, SidewalkSetbackMeters: sidewalkSetback,
 			DirectionalDriftMeters: directionalDrift, DeadEndEndpointAllowanceMeters: deadEndEndpointAllowance,
@@ -390,7 +401,11 @@ func LoadWorker() (Worker, error) {
 	if err != nil {
 		return Worker{}, err
 	}
-	osm, err := loadOSM()
+	coverageBatchSize, err := integerRange("WORKER_COVERAGE_BATCH_SIZE", 25, 1, 1000)
+	if err != nil {
+		return Worker{}, err
+	}
+	osm, err := LoadOSM()
 	if err != nil {
 		return Worker{}, err
 	}
@@ -403,6 +418,7 @@ func LoadWorker() (Worker, error) {
 		GlobalConcurrency: globalConcurrency, StagingRoot: stagingRoot, AutoSyncInterval: autoSyncInterval,
 		AutoSyncPollInterval: autoSyncPollInterval, AutoSyncStaleDays: autoSyncStaleDays, SchedulerLease: schedulerLease,
 		CoverageMinTraversalMeters: coverageMinimum,
+		CoverageBatchSize:          coverageBatchSize,
 		OSM:                        osm,
 	}, nil
 }
@@ -416,6 +432,14 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 	if osmDatabaseURL == "" {
 		return CoverageWorker{}, fmt.Errorf("COVERAGE_WORKER_OSM_DATABASE_URL is required")
 	}
+	jobConcurrency, err := integerRange("COVERAGE_WORKER_JOB_CONCURRENCY", 2, 1, 8)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	autoRetryCount, err := integerRange("COVERAGE_WORKER_AUTO_RETRY_COUNT", 1, 0, 20)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
 	poll, err := durationRange("COVERAGE_WORKER_POLL_INTERVAL", time.Second, 100*time.Millisecond, time.Minute)
 	if err != nil {
 		return CoverageWorker{}, err
@@ -424,7 +448,7 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 	if err != nil {
 		return CoverageWorker{}, err
 	}
-	lease, err := durationRange("COVERAGE_WORKER_LEASE_DURATION", 4*time.Minute, 30*time.Second, 15*time.Minute)
+	lease, err := durationRange("COVERAGE_WORKER_LEASE_DURATION", 7*time.Minute, 30*time.Second, 15*time.Minute)
 	if err != nil {
 		return CoverageWorker{}, err
 	}
@@ -432,7 +456,7 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 	if err != nil {
 		return CoverageWorker{}, err
 	}
-	routeTimeout, err := durationRange("COVERAGE_WORKER_ROUTE_TIMEOUT", 3*time.Minute, 5*time.Second, 10*time.Minute)
+	routeTimeout, err := durationRange("COVERAGE_WORKER_ROUTE_TIMEOUT", 6*time.Minute, 5*time.Second, 10*time.Minute)
 	if err != nil {
 		return CoverageWorker{}, err
 	}
@@ -462,19 +486,34 @@ func LoadCoverageWorker() (CoverageWorker, error) {
 	if err != nil {
 		return CoverageWorker{}, err
 	}
+	useReadReplicasOnly, err := boolean("OSM_USE_READ_REPLICAS_ONLY", false)
+	if err != nil {
+		return CoverageWorker{}, err
+	}
+	if useReadReplicasOnly && osmAutoAddRegions {
+		return CoverageWorker{}, fmt.Errorf("OSM_USE_READ_REPLICAS_ONLY must not be enabled with OSM_AUTO_ADD_REGIONS")
+	}
 	return CoverageWorker{DatabaseURL: databaseURL, OSMDatabaseURL: osmDatabaseURL,
+		JobConcurrency: jobConcurrency, AutoRetryCount: autoRetryCount,
 		ListenAddress: env("COVERAGE_WORKER_LISTEN_ADDRESS", ":8082"), OTLPEndpoint: otlpEndpoint(),
 		PollInterval: poll, AdmissionInterval: admission, LeaseDuration: lease,
 		HeartbeatInterval: heartbeat, RouteTimeout: routeTimeout,
 		ReconciliationPollInterval: reconciliationPoll, ReconciliationScanInterval: reconciliationScan,
 		ReconciliationPageSize: reconciliationPageSize, MinimumTraversalMeters: minimumTraversal,
-		OSMAutoAddRegions: osmAutoAddRegions}, nil
+		OSMAutoAddRegions: osmAutoAddRegions, UseReadReplicasOnly: useReadReplicasOnly}, nil
 }
 
-func loadOSM() (OSM, error) {
+func LoadOSM() (OSM, error) {
 	autoAdd, err := boolean("OSM_AUTO_ADD_REGIONS", false)
 	if err != nil {
 		return OSM{}, err
+	}
+	useReadReplicasOnly, err := boolean("OSM_USE_READ_REPLICAS_ONLY", false)
+	if err != nil {
+		return OSM{}, err
+	}
+	if useReadReplicasOnly && autoAdd {
+		return OSM{}, fmt.Errorf("OSM_USE_READ_REPLICAS_ONLY must not be enabled with OSM_AUTO_ADD_REGIONS")
 	}
 	maximum, err := int64Range("OSM_MAX_AUTO_DOWNLOAD_BYTES", 1<<30, 1, 1<<40)
 	if err != nil {
@@ -491,7 +530,7 @@ func loadOSM() (OSM, error) {
 	if autoAdd && len(providers) == 0 {
 		return OSM{}, fmt.Errorf("OSM_DATA_PROVIDERS_JSON must not be empty when OSM_AUTO_ADD_REGIONS is enabled")
 	}
-	return OSM{AutoAddRegions: autoAdd, MaxAutoDownloadBytes: maximum, DataProviders: providers, Regions: regions}, nil
+	return OSM{AutoAddRegions: autoAdd, UseReadReplicasOnly: useReadReplicasOnly, MaxAutoDownloadBytes: maximum, DataProviders: providers, Regions: regions}, nil
 }
 
 func identifierList(name, fallback string, qualified bool) ([]string, error) {

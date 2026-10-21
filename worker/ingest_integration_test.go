@@ -159,7 +159,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sourceID, _, _, err := runner.readSnapshot(ctx, job)
+		snapshot, _, err := runner.readSnapshot(ctx, job)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,13 +172,13 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		if err != nil || len(files) != 1 {
 			t.Fatalf("files=%d err=%v", len(files), err)
 		}
-		if err := runner.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
+		if err := runner.resolveCandidateActions(ctx, job, snapshot.sourceID, files); err != nil {
 			t.Fatal(err)
 		}
 		if state, err := runner.recordFileManifest(ctx, job, files); err != nil || state != "created" {
 			t.Fatalf("manifest=%s err=%v", state, err)
 		}
-		outcome := runner.processSourceFile(ctx, job, sourceID, root, files[0])
+		outcome := runner.processSourceFile(ctx, job, snapshot.sourceID, root, files[0], nil)
 		if !outcome.succeeded || outcome.fatal != nil {
 			t.Fatalf("pre-progress outcome=%+v fatal=%v", outcome, outcome.fatal)
 		}

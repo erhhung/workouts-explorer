@@ -16,11 +16,14 @@ import (
 )
 
 type updateStoreStub struct {
-	events      []string
-	failures    []string
-	gcCalls     int
-	gcFailureAt int
-	promoted    bool
+	events              []string
+	failures            []string
+	gcCalls             int
+	gcFailureAt         int
+	promoted            bool
+	statisticsCalls     int
+	statisticsFailureAt int
+	statisticsHook      func(context.Context) error
 }
 
 func (s *updateStoreStub) Reserve(context.Context, string, ToolVersions) (Generation, error) {
@@ -54,6 +57,18 @@ func (s *updateStoreStub) ProcessStorageGC(context.Context) error {
 	s.events = append(s.events, "gc")
 	if s.gcFailureAt == s.gcCalls {
 		return errors.New("GC unavailable")
+	}
+	return nil
+}
+
+func (s *updateStoreStub) RefreshStatistics(ctx context.Context) error {
+	s.statisticsCalls++
+	s.events = append(s.events, "statistics")
+	if s.statisticsHook != nil {
+		return s.statisticsHook(ctx)
+	}
+	if s.statisticsFailureAt == s.statisticsCalls {
+		return errors.New("statistics unavailable")
 	}
 	return nil
 }
@@ -246,7 +261,7 @@ func TestUpdaterRunsStagesInOrder(t *testing.T) {
 	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"versions", "gc", "reserve", "download", "fileinfo", "record-download", "tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate", "set-validating", "promote", "gc"}
+	want := []string{"versions", "gc", "statistics", "reserve", "download", "fileinfo", "record-download", "tags-filter", "check-refs", "osm2pgsql", "postprocess", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate", "set-validating", "promote", "gc", "statistics"}
 	if !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events = %v, want %v", store.events, want)
 	}
@@ -525,6 +540,88 @@ func TestUpdaterPostPromotionGCFailureDoesNotFailActiveGeneration(t *testing.T) 
 	}
 	if !store.promoted || len(store.failures) != 0 || contains(store.events, "drop-schema") {
 		t.Fatalf("active generation was treated as failed: %v", store.events)
+	}
+}
+
+func TestUpdaterStatisticsFailureBeforeReserveOrResume(t *testing.T) {
+	for _, resume := range []int64{0, 42} {
+		t.Run(fmt.Sprint(resume), func(t *testing.T) {
+			base := &updateStoreStub{statisticsFailureAt: 1}
+			updater := newTestUpdater(t, base, updatePipelineStub{events: &base.events})
+			updater.Store = resumableUpdateStoreStub{updateStoreStub: base}
+			updater.ResumeGenerationID = resume
+			if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil || !strings.Contains(err.Error(), "retryable") {
+				t.Fatalf("expected retryable maintenance failure, got %v", err)
+			}
+			for _, forbidden := range []string{"reserve", "resume", "download", "fail", "drop-schema"} {
+				if contains(base.events, forbidden) {
+					t.Fatalf("maintenance failure performed %s: %v", forbidden, base.events)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdaterPostCommitStatisticsFailureAndCancellationAreReplayed(t *testing.T) {
+	for _, failure := range []error{errors.New("maintenance failed"), context.Canceled, context.DeadlineExceeded} {
+		for _, resume := range []int64{0, 42} {
+			t.Run(fmt.Sprintf("%s/resume=%d", failure, resume), func(t *testing.T) {
+				base := &updateStoreStub{}
+				base.statisticsHook = func(ctx context.Context) error {
+					if base.statisticsCalls == 2 {
+						if !base.promoted || base.gcCalls != 2 {
+							t.Fatalf("maintenance preceded promotion/GC: %v", base.events)
+						}
+						return failure
+					}
+					return ctx.Err()
+				}
+				updater := newTestUpdater(t, base, updatePipelineStub{events: &base.events, validation: validUpdateReport()})
+				if _, err := updater.Run(context.Background(), "geofabrik:norcal"); !errors.Is(err, failure) || !strings.Contains(err.Error(), "promoted; statistics refresh remains retryable") {
+					t.Fatalf("expected post-commit maintenance error, got %v", err)
+				}
+				if !base.promoted || len(base.failures) != 0 || contains(base.events, "drop-schema") {
+					t.Fatalf("active generation was treated as failed: %v", base.events)
+				}
+				entries, err := os.ReadDir(updater.ScratchRoot)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("scratch was not removed: %v, %v", entries, err)
+				}
+				base.events = nil
+				updater.Store = resumableUpdateStoreStub{updateStoreStub: base}
+				updater.ResumeGenerationID = resume
+				// A fresh run downloads identical bytes; maintenance must not depend on
+				// a changed source, generation ID, or prepare-partitions checkpoint.
+				if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"versions", "gc", "statistics", "reserve"}
+				if resume > 0 {
+					want = []string{"gc", "statistics", "resume"}
+				}
+				if !reflect.DeepEqual(base.events[:len(want)], want) || base.statisticsCalls != 4 {
+					t.Fatalf("maintenance was not replayed before new work: %v; calls=%d", base.events, base.statisticsCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestUpdaterGCFailureLeavesStatisticsReplayable(t *testing.T) {
+	base := &updateStoreStub{gcFailureAt: 2}
+	updater := newTestUpdater(t, base, updatePipelineStub{events: &base.events, validation: validUpdateReport()})
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil {
+		t.Fatal("expected GC failure")
+	}
+	if base.statisticsCalls != 1 {
+		t.Fatal("statistics ran despite failed GC")
+	}
+	base.events = nil
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base.events[:4], []string{"versions", "gc", "statistics", "reserve"}) || base.statisticsCalls != 3 {
+		t.Fatalf("GC recovery skipped statistics: %v", base.events)
 	}
 }
 

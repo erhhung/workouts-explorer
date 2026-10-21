@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/erhhung/workouts-explorer/internal/coverage/routepipeline"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
+	"github.com/erhhung/workouts-explorer/internal/workouttimezone"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -83,11 +85,24 @@ func (tx *activityIngestTx) QueryRow(_ context.Context, query string, arguments 
 	case strings.HasPrefix(query, "INSERT INTO app.workout_types"):
 		tx.writes[query] = arguments
 		return activityIngestRow(func(destinations ...any) error { *destinations[0].(*uuid.UUID) = tx.typeID; return nil })
-	case strings.HasPrefix(query, "SELECT id,content_sha256"):
-		return tx.prior
-	case strings.Contains(query, "workout_deletion_suppressed"):
-		tx.writes[query] = arguments
-		return activityIngestRow(func(destinations ...any) error { *destinations[0].(*bool) = tx.suppressed; return nil })
+	case strings.Contains(query, "resolve_ingest_workout_identity"):
+		if tx.suppressed {
+			tx.writes[query] = arguments
+			return activityIngestRow(func(destinations ...any) error {
+				*destinations[2].(*string) = "suppressed"
+				return nil
+			})
+		}
+		return activityIngestRow(func(destinations ...any) error {
+			err := tx.prior(destinations[:2]...)
+			if errors.Is(err, pgx.ErrNoRows) {
+				*destinations[0].(*uuid.UUID) = arguments[4].(uuid.UUID)
+				*destinations[2].(*string) = "created"
+				return nil
+			}
+			*destinations[2].(*string) = "existing"
+			return err
+		})
 	default:
 		if strings.Contains(query, "replace_workout_") {
 			tx.derivedCalls++
@@ -111,14 +126,15 @@ func TestPersistWorkoutSuppressionUsesRawActivityIdentity(t *testing.T) {
 				workout := document.Workouts[0]
 				tx := &activityIngestTx{suppressed: true, writes: make(map[string][]any)}
 				sourceID := uuid.New()
-				kind, err := (&Runner{}).persistWorkout(context.Background(), tx, claimedJob{}, sourceID, uuid.New(), workout)
+				job := claimedJob{id: uuid.New(), accountID: uuid.New(), lease: uuid.New()}
+				kind, err := (&Runner{}).persistWorkout(context.Background(), tx, job, sourceID, uuid.New(), workout, workouttimezone.Resolution{})
 				if err != nil || kind != "suppressed" || len(tx.writes) != 1 || tx.derivedCalls != 0 {
 					t.Fatalf("suppression=%s writes=%d derived=%d err=%v", kind, len(tx.writes), tx.derivedCalls, err)
 				}
 				for _, arguments := range tx.writes {
-					id, version, hash := arguments[1].(*string), arguments[2].(*string), arguments[3].([]byte)
-					if arguments[0] != sourceID {
-						t.Fatal("suppression changed source scope")
+					id, version, hash := arguments[5].(*string), arguments[6].(*string), arguments[7].([]byte)
+					if arguments[0] != job.id || arguments[2] != job.lease {
+						t.Fatal("suppression changed fenced job scope")
 					}
 					if providerID == "" {
 						if id != nil || version == nil || *version != healthautoexport.FallbackFingerprintVersion || !bytes.Equal(hash, workout.FallbackSHA256[:]) {
@@ -166,7 +182,7 @@ func TestPersistWorkoutCanonicalDisplayWithoutIdentityRewrite(t *testing.T) {
 					return nil
 				}
 				runner := &Runner{}
-				got, err := runner.persistWorkout(context.Background(), tx, claimedJob{accountID: uuid.New(), id: uuid.New()}, uuid.New(), fileID, workout)
+				got, err := runner.persistWorkout(context.Background(), tx, claimedJob{accountID: uuid.New(), id: uuid.New()}, uuid.New(), fileID, workout, workouttimezone.Resolution{})
 				if err != nil || got != kind || !reflect.DeepEqual(workout, original) {
 					t.Fatalf("kind=%s err=%v or raw workout changed", got, err)
 				}
