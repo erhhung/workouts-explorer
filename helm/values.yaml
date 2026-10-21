@@ -1,241 +1,559 @@
+# -- Shared image settings for application Deployments and jobs.
 image:
+  # -- Registry prefix for application images; empty uses each image name as written.
   registry: ""
+  # -- Kubernetes image pull policy for application, tile, and collector containers.
   pullPolicy: IfNotPresent
+  # -- Existing image-pull Secret references, as a list of objects with a name field.
   pullSecrets: []
+  # -- Application image tag; use published images compatible with this chart's migrations.
   tag: "0.1.0"
+  # -- Optional image-name-to-sha256 digest map for application images; tags remain present.
   digests: {}
 
+# -- Application logging settings.
 logging:
+  # -- Log output format: json or text.
   format: json
 
+# -- Browser UI served by nginx.
 ui:
+  # -- UI image name, combined with image.registry, image.tag, and optional image.digests.
   image: workouts-ui
+  # -- Number of UI pods.
   replicas: 1
+  # -- UI container resource requests and limits.
   resources:
+    # -- Resources reserved for each UI container.
     requests:
+      # -- CPU request for each UI container.
       cpu: 25m
+      # -- Memory request for each UI container.
       memory: 64Mi
+    # -- Resource ceilings for each UI container.
     limits:
+      # -- CPU limit for each UI container.
       cpu: 250m
+      # -- Memory limit for each UI container.
       memory: 256Mi
 
+# -- HTTP API, authentication, and application database jobs.
 api:
+  # -- API image name; also used by migration, role-provisioning, and bootstrap jobs.
   image: workouts-api
+  # -- Number of API pods.
   replicas: 1
+  # -- Browser-facing application URL, used for links and sign-in origin validation.
   publicUrl: https://localhost
+  # -- Additional allowed browser sign-in origins; include scheme and optional port, without paths.
   browserSigninOrigins: []
+  # -- Existing Secret reference for least-privilege runtime API access to the application database.
   databaseSecret:
+    # -- Name of the runtime API database Secret in the release namespace.
     name: workouts-explorer-database
+    # -- Secret key containing the runtime API database connection URL.
     key: apiDatabaseUrl
-  migrationDatabaseKey: migrationDatabaseUrl
+  # -- Application migration hook before install/upgrade; native Goose cannot replay applied 028 to repair old-contract 28. See the private offline-repair requirements in the migration guide.
+  migration:
+    # -- Existing Secret reference for migration credentials, separate from runtime API credentials.
+    databaseSecret:
+      # -- Name of the application migration database Secret.
+      name: workouts-explorer-database
+      # -- Secret key containing a URL with the ownership and DDL privileges required by migrations.
+      key: migrationDatabaseUrl
+  # -- Optional privileged role-provisioning hook; otherwise provision roles through database-owner automation.
   roleProvisioning:
+    # -- Enable the pre-install/pre-upgrade database role-provisioning job.
     enabled: false
-    secretName: workouts-explorer-role-provisioning
-    databaseKey: databaseUrl
+    # When enabled, requires privileged CREATEROLE credentials, not runtime API credentials.
+    # Sharing the migration key is a development convenience, not a CREATEROLE guarantee.
+    # -- Existing Secret reference for privileged role-provisioning access, including CREATEROLE.
+    databaseSecret:
+      # -- Name of the role-provisioning database Secret; it may differ from the migration Secret.
+      name: workouts-explorer-database
+      # -- Secret key containing privileged role-provisioning credentials; the default migration key does not guarantee CREATEROLE.
+      key: migrationDatabaseUrl
+  # -- Existing Secret holding the API rate-limit key and SMTP password, not database credentials.
   securitySecret:
+    # -- Name of the API security Secret.
     name: workouts-explorer-security
+    # -- Secret key containing the private rate-limit signing key.
     rateLimitKey: rateLimitKey
+    # -- Secret key containing the SMTP password; mounted unless smtp.allowInsecureLocal is true.
     smtpPasswordKey: smtpPassword
+  # -- Existing Secret reference for the API's public CA trust bundle; no client private key is mounted here.
   trustedCASecret:
+    # -- Name of the API CA trust Secret; also the default trust source for collector sidecars.
     name: workouts-explorer-database-tls
+    # -- Secret key containing the PEM CA certificate bundle.
     key: ca.crt
+  # -- Minimum password length, including for the optional bootstrap administrator.
   passwordMinimumLength: 12
+  # -- Authentication session lifetime as a Go duration.
   sessionLifetime: 6h
+  # -- Maximum API pagination page size.
   pageSizeMaximum: 100
+  # -- Comma-separated proxy CIDRs whose forwarded client addresses are trusted; empty trusts none.
   trustedProxyCidrs: ""
+  # -- Enable local-development authentication behavior; keep false for public installations.
   localDevelopment: false
+  # -- Optional API coverage diagnostics using the read-only OSM database.
   coverageDiagnostics:
+    # -- Enable coverage diagnostics endpoints; disabled by default.
     enabled: false
+    # -- Maximum duration of an API coverage diagnostic request.
     timeout: 120s
+    # -- Per-API-process diagnostic concurrency; database-wide matcher admission still applies.
     concurrency: 1
-    osmDatabaseKey: osmDatabaseUrl
+    # -- Existing Secret reference for read-only OSM access when diagnostics are enabled.
+    databaseSecret:
+      # -- Name of the diagnostic OSM reader database Secret.
+      name: workouts-explorer-database
+      # -- Secret key containing the diagnostic OSM reader connection URL.
+      key: osmReaderDatabaseUrl
+    # -- Existing TLS Secret mounted at /tls/prod-db for diagnostic OSM connections; match URL certificate paths.
     databaseTLSSecret: workouts-explorer-database-tls
+    # -- Motor-vehicle lane width used by coverage diagnostics, in meters.
     motorLaneWidthMeters: 3
+    # -- Bicycle lane width used by coverage diagnostics, in meters.
     bicycleLaneWidthMeters: 1.5
+    # -- Parking lane width used by coverage diagnostics, in meters.
     parkingLaneWidthMeters: 2.1
+    # -- Sidewalk offset used by coverage diagnostics, in meters.
     sidewalkSetbackMeters: 3
+    # -- Allowed directional drift used by coverage diagnostics, in meters.
     directionalDriftMeters: 7
+    # -- Endpoint allowance for dead ends used by coverage diagnostics, in meters.
     deadEndEndpointAllowanceMeters: 3
+  # -- Outbound SMTP settings; the password comes from api.securitySecret.
   smtp:
+    # -- SMTP server address as host:port; replace the example placeholder.
     address: smtp.example.invalid:587
+    # -- SMTP authentication username; the password is never a values field.
     username: workouts-explorer
+    # -- Sender email address for application mail; replace the example placeholder.
     fromAddress: workouts@example.invalid
+    # -- Allow insecure local SMTP without the password mount; do not enable for public installations.
     allowInsecureLocal: false
+  # -- Optional administrator bootstrap job, using separate account and database Secret references.
   bootstrap:
+    # -- Enable administrator bootstrap after Helm installation/upgrade; disabled by default.
     enabled: false
+    # -- Replace an existing bootstrap administrator's password when the job runs.
     rotateExistingPassword: false
+    # -- Existing Secret containing the bootstrap administrator's username, email, and password.
     secretName: workouts-explorer-bootstrap-admin
+    # -- Bootstrap account Secret key containing the username.
     usernameKey: username
+    # -- Bootstrap account Secret key containing the email address.
     emailKey: email
+    # -- Bootstrap account Secret key containing the password, supplied to the job through a private file.
     passwordKey: password
-    databaseKey: migrationDatabaseUrl
+    # -- Existing Secret reference for database access with administrator-bootstrap privileges, not runtime API credentials.
+    databaseSecret:
+      # -- Name of the bootstrap database Secret; independent of the bootstrap account Secret.
+      name: workouts-explorer-database
+      # -- Secret key containing the bootstrap database connection URL.
+      key: migrationDatabaseUrl
+  # -- Public browser configuration; never put private credentials in this group.
   publicConfig:
+    # -- Browser polling interval for refreshed application data, in seconds.
     pollingIntervalSeconds: 30
+    # -- Padding around routes when fitting the map viewport, in pixels.
     mapFitPaddingPixels: 48
+    # -- Public base-map style selection and attribution.
     baseMaps:
+      # -- Complete MapTiler Outdoor/Streets examples; replace YOUR_MAPTILER_KEY with a browser-restricted public key and verify provider licensing.
       styleFamilies:
-        - id: local-placeholder
-          label: Local placeholder
+        # helm-docs needs an explicit path for the first field of a list item.
+        # -- Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings.
+        # api.publicConfig.baseMaps.styleFamilies[0].id -- Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings.
+        - id: outdoor
+          # -- Browser-visible style-family label.
+          label: Outdoor
+          # -- Public MapLibre style URLs for light and dark appearance.
           styles:
-            light: https://maps.example.invalid/styles/light.json
-            dark: https://maps.example.invalid/styles/dark.json
+            # -- HTTPS light style URL; only browser-restricted public provider keys may appear here.
+            light: https://api.maptiler.com/maps/outdoor-v4/style.json?key=YOUR_MAPTILER_KEY
+            # -- HTTPS dark style URL; only browser-restricted public provider keys may appear here.
+            dark: https://api.maptiler.com/maps/outdoor-v4-dark/style.json?key=YOUR_MAPTILER_KEY
+          # -- Attribution displayed for this base-map family.
           attribution:
-            text: Base map not configured
-            links: []
+            # -- Browser-visible attribution text.
+            text: MapTiler and OpenStreetMap contributors
+            # -- Attribution links as objects with label and url fields.
+            links:
+              # -- Browser-visible attribution link label.
+              # api.publicConfig.baseMaps.styleFamilies[0].attribution.links[0].label -- Browser-visible attribution link label.
+              - label: MapTiler
+                # -- Public map-provider attribution URL.
+                url: https://www.maptiler.com/copyright
+              # -- Browser-visible attribution link label.
+              # api.publicConfig.baseMaps.styleFamilies[0].attribution.links[1].label -- Browser-visible attribution link label.
+              - label: OpenStreetMap
+                # -- Public map-data attribution URL.
+                url: https://www.openstreetmap.org/copyright
+          # -- HTTPS origins required by style, tile, sprite, and font resources; added to the UI content security policy.
           resourceOrigins:
-            - https://maps.example.invalid
-      fallbackFamilyId: local-placeholder
-      workoutTypeMappings: []
+            # -- Allowed origin for MapTiler styles, tiles, sprites, and fonts.
+            - https://api.maptiler.com
+        # -- Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings.
+        # api.publicConfig.baseMaps.styleFamilies[1].id -- Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings.
+        - id: streets
+          # -- Browser-visible style-family label.
+          label: Streets
+          # -- Public MapLibre style URLs for light and dark appearance.
+          styles:
+            # -- HTTPS light style URL; only browser-restricted public provider keys may appear here.
+            light: https://api.maptiler.com/maps/streets-v4/style.json?key=YOUR_MAPTILER_KEY
+            # -- HTTPS dark style URL; only browser-restricted public provider keys may appear here.
+            dark: https://api.maptiler.com/maps/streets-v4-dark/style.json?key=YOUR_MAPTILER_KEY
+          # -- Attribution displayed for this base-map family.
+          attribution:
+            # -- Browser-visible attribution text.
+            text: MapTiler and OpenStreetMap contributors
+            # -- Attribution links as objects with label and url fields.
+            links:
+              # -- Browser-visible attribution link label.
+              # api.publicConfig.baseMaps.styleFamilies[1].attribution.links[0].label -- Browser-visible attribution link label.
+              - label: MapTiler
+                # -- Public map-provider attribution URL.
+                url: https://www.maptiler.com/copyright
+              # -- Browser-visible attribution link label.
+              # api.publicConfig.baseMaps.styleFamilies[1].attribution.links[1].label -- Browser-visible attribution link label.
+              - label: OpenStreetMap
+                # -- Public map-data attribution URL.
+                url: https://www.openstreetmap.org/copyright
+          # -- HTTPS origins required by style, tile, sprite, and font resources; added to the UI content security policy.
+          resourceOrigins:
+            # -- Allowed origin for MapTiler styles, tiles, sprites, and fonts.
+            - https://api.maptiler.com
+      # -- Style-family id used when no workout-type mapping applies; must identify a configured family.
+      fallbackFamilyId: streets
+      # -- Style-family mappings keyed by normalized original provider labels, not canonical UI names; qualified indoor/outdoor aliases provide a display-label fallback.
+      workoutTypeMappings:
+        # -- Original exported workout-type label matched by normalized provider identity.
+        # api.publicConfig.baseMaps.workoutTypeMappings[0].providerLabel -- Original exported workout-type label matched by normalized provider identity.
+        - providerLabel: Hiking
+          # -- Configured style-family id selected for this workout type.
+          familyId: outdoor
+        # -- Original exported workout-type label matched by normalized provider identity.
+        # api.publicConfig.baseMaps.workoutTypeMappings[1].providerLabel -- Original exported workout-type label matched by normalized provider identity.
+        - providerLabel: Running
+          # -- Configured style-family id selected for this workout type.
+          familyId: streets
+  # -- API container resources, also reused by application migration, role-provisioning, and bootstrap jobs.
   resources:
+    # -- Resources reserved for each API or associated job container.
     requests:
+      # -- CPU request for each API or associated job container.
       cpu: 25m
+      # -- Memory request for each API or associated job container.
       memory: 64Mi
+    # -- Resource ceilings for each API or associated job container.
     limits:
+      # -- CPU limit for each API or associated job container.
       cpu: 250m
+      # -- Memory limit for each API or associated job container.
       memory: 256Mi
 
-# MapTiler style URLs may contain a browser-restricted public key. Stadia can
-# use domain authentication. Put either provider's HTTPS origins in each
-# family's resourceOrigins; never put private credentials in this file.
+# MapTiler style URLs may contain a browser-restricted public key.
+# Stadia can use domain authentication.
+# Put either provider's HTTPS origins in each family's resourceOrigins;
+# never put private credentials in this file.
+# -- Internal Martin vector-tile server, reached through the API rather than exposed directly.
 tileServer:
+  # -- Complete Martin image reference, independent of the application registry/tag settings.
   image: ghcr.io/maplibre/martin:1.15.0@sha256:84f406ac96839aad3ea06ddaa68ef7617ed55305c21038c182d59f100e48dd6d
+  # -- Number of Martin tile-server pods.
   replicas: 1
+  # -- Existing Secret reference for restricted tile access to the application database.
   databaseSecret:
+    # -- Name of the tile-server database Secret.
     name: workouts-explorer-database
+    # -- Secret key containing the tile-server database connection URL.
     key: tilesDatabaseUrl
+  # -- Martin container resource requests and limits.
   resources:
+    # -- Resources reserved for each Martin container.
     requests:
+      # -- CPU request for each Martin container.
       cpu: 25m
+      # -- Memory request for each Martin container.
       memory: 64Mi
+    # -- Resource ceilings for each Martin container.
     limits:
+      # -- CPU limit for each Martin container.
       cpu: 250m
+      # -- Memory limit for each Martin container.
       memory: 256Mi
 
+# -- Source synchronization and workout-file ingestion worker.
 worker:
+  # -- Worker image name; also used by OSM migration and timezone import jobs.
   image: workouts-worker
+  # -- Number of ingestion worker pods.
   replicas: 1
+  # -- Existing Secret reference for runtime worker access to the application database.
   databaseSecret:
+    # -- Name of the ingestion worker application database Secret.
     name: workouts-explorer-database
+    # -- Secret key containing the ingestion worker application database connection URL.
     key: workerDatabaseUrl
-  osmDatabaseKey: osmDatabaseUrl
-  databaseTLSSecret: workouts-explorer-database-tls
-  fileConcurrency: 2
-  accountFileConcurrency: 2
-  globalFileConcurrency: 4
-  autoSyncInterval: 24h
-  autoSyncPollInterval: 30s
-  autoSyncStaleDays: 3
-  schedulerLeaseDuration: 2m
-  coverageMinTraversalMeters: 5
-  staging:
-    root: /var/lib/workouts/staging
-    sizeLimit: 2Gi
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 250m
-      memory: 256Mi
-
-coverageWorker:
-  image: workouts-worker
-  replicas: 1
-  databaseSecret:
+  # -- Existing Secret reference for read-only OSM catalog access; not the OSM writer credentials.
+  osmDatabaseSecret:
+    # -- Name of the ingestion worker OSM reader Secret.
     name: workouts-explorer-database
-    key: coverageWorkerDatabaseUrl
-  osmDatabaseKey: osmDatabaseUrl
+    # -- Secret key containing the ingestion worker OSM reader connection URL.
+    key: osmReaderDatabaseUrl
+  # -- Existing TLS Secret mounted at /tls/prod-db; match database URL certificate paths.
   databaseTLSSecret: workouts-explorer-database-tls
+  # -- Maximum concurrent file-processing tasks per worker process.
+  fileConcurrency: 2
+  # -- Database-coordinated concurrent ingestion file limit per account; must not exceed globalFileConcurrency.
+  accountFileConcurrency: 2
+  # -- Database-coordinated concurrent ingestion file limit across all worker pods.
+  globalFileConcurrency: 4
+  # -- Interval between automatic source synchronizations.
+  autoSyncInterval: 24h
+  # -- Interval between automatic-sync scheduler polls.
+  autoSyncPollInterval: 30s
+  # -- Age in days after which automatic synchronization treats source data as stale.
+  autoSyncStaleDays: 3
+  # -- Automatic-sync scheduler leadership lease; must exceed autoSyncPollInterval.
+  schedulerLeaseDuration: 2m
+  # -- Minimum route traversal length used for coverage matching, in meters; also passed to API diagnostics and coverage workers.
+  coverageMinTraversalMeters: 5
+  # -- New folded-028 contract (undeployed): exact new eligible targets per active-ingest normal parent (1 to 1000), globally across regions in root/sibling scope; only terminal-root account recovery seals a final partial. Retries never accept fresh top-up work.
+  coverageBatchSize: 25
+  # -- Ephemeral per-pod staging space for downloaded workout files.
+  staging:
+    # -- Worker filesystem path for the staging emptyDir volume.
+    root: /var/lib/workouts/staging
+    # -- Size limit of each worker's staging emptyDir volume.
+    sizeLimit: 2Gi
+  # -- Ingestion worker container resource requests and limits.
+  resources:
+    # -- Resources reserved for each ingestion worker container.
+    requests:
+      # -- CPU request for each ingestion worker container.
+      cpu: 25m
+      # -- Memory request for each ingestion worker container.
+      memory: 64Mi
+    # -- Resource ceilings for each ingestion worker container.
+    limits:
+      # -- CPU limit for each ingestion worker container.
+      cpu: 250m
+      # -- Memory limit for each ingestion worker container.
+      memory: 256Mi
+
+# -- Dedicated route-coverage worker, separate from file ingestion.
+coverageWorker:
+  # -- Application image containing /app/coverage-worker.
+  image: workouts-worker
+  # -- Number of coverage worker pods; increasing this does not raise database-wide admission limits.
+  replicas: 1
+  # Per-process concurrency; cluster-wide admission limits remain database-controlled.
+  # -- Concurrent coverage jobs per pod; replicas times this value is only a potential worker count, still bounded by database admission and reader reservations.
+  jobConcurrency: 2
+  # -- Additional automatic Coverage attempts per root (0 to 20, 0 disables), durable across manual retries/descendants, with a 30s cooldown. New folded-028 policy (undeployed): one eligible transient/timeout failure carries all authoritative failed siblings, never successes; all-permanent failures stop.
+  autoRetryCount: 1
+  # -- Existing Secret reference for runtime coverage access to the application database.
+  databaseSecret:
+    # -- Name of the coverage worker application database Secret.
+    name: workouts-explorer-database
+    # -- Secret key containing the coverage worker application database connection URL.
+    key: coverageWorkerDatabaseUrl
+  # -- Existing Secret reference for read-only OSM matching access; not the OSM writer credentials.
+  osmDatabaseSecret:
+    # -- Name of the coverage worker OSM reader Secret.
+    name: workouts-explorer-database
+    # -- Secret key containing the coverage worker OSM reader connection URL.
+    key: osmReaderDatabaseUrl
+  # -- Existing TLS Secret mounted at /tls/prod-db for coverage database connections; match URL certificate paths.
+  databaseTLSSecret: workouts-explorer-database-tls
+  # -- Interval between coverage job queue polls.
   pollInterval: 1s
+  # -- Interval between attempts to obtain database-wide matcher admission.
   admissionInterval: 1s
-  leaseDuration: 4m
+  # -- Renewable coverage job ownership TTL, not the match timeout; must exceed routeTimeout plus 10s. Heartbeats support retries longer than this TTL.
+  leaseDuration: 420s
+  # -- Interval between coverage job lease heartbeats.
   heartbeatInterval: 20s
-  routeTimeout: 180s
+  # -- Initial route match timeout only (runtime range 5s to 10m); timeout-only retries use at least 10m on the first retry and 15m thereafter, capped at 15m without shortening a longer initial budget.
+  routeTimeout: 360s
+  # -- Interval between coverage reconciliation coordinator polls.
   reconciliationPollInterval: 30s
+  # -- Interval between full coverage reconciliation scans.
   reconciliationScanInterval: 24h
+  # -- Number of records processed per coverage reconciliation page.
   reconciliationPageSize: 10
+  # -- Coverage worker container resource requests and limits.
   resources:
+    # -- Resources reserved for each coverage worker container.
     requests:
+      # -- CPU request for each coverage worker container.
       cpu: 25m
+      # -- Memory request for each coverage worker container.
       memory: 64Mi
+    # -- Resource ceilings for each coverage worker container.
     limits:
-      cpu: 250m
+      # -- CPU limit for each coverage worker container.
+      cpu: 500m
+      # -- Memory limit for each coverage worker container.
       memory: 256Mi
 
+# -- External OpenStreetMap database access, catalog selection, and timezone import hooks.
 osm:
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 250m
-      memory: 256Mi
-  autoAddRegions: false
-  maxAutoDownloadBytes: 1073741824
+  # -- Require standby OSM readers, checking role on connection and checkout; strict matcher placement needs direct discoverable backends. False allows primary readers.
+  useReadReplicasOnly: false
+  # -- Existing Secret reference for OSM schema migration and timezone import writes, separate from all runtime reader URLs.
+  writerDatabaseSecret:
+    # -- Name of the OSM writer database Secret.
+    name: workouts-explorer-database
+    # -- Secret key containing the OSM writer connection URL with the required migration/import privileges.
+    key: osmDatabaseUrl
+  # -- Existing TLS Secret mounted at /tls/prod-db for OSM writer jobs; match URL certificate paths.
+  writerDatabaseTLSSecret: workouts-explorer-database-tls
+  # -- OSM data-provider identifiers available to source synchronization.
   dataProviders:
+    # -- Default OSM data provider.
     - geofabrik
+  # -- Initial OSM catalog region identifiers; their map data must be prepared outside this chart.
   regions:
+    # -- Default provider-qualified OSM region identifier.
     - geofabrik:norcal
+  # -- Allow workers to request additional OSM regions; this does not make the chart import map data.
+  autoAddRegions: false
+  # -- Maximum size in bytes for an automatically requested OSM download.
+  maxAutoDownloadBytes: 1073741824
+  # -- Timezone boundary import hook; enabled by default and writes through osm.writerDatabaseSecret.
   timezoneBoundaries:
+    # -- Run the timezone boundary import before installation and upgrade.
     enabled: true
+    # -- Timezone boundary release identifier recorded by the importer.
     release: 2026c
+    # -- Public HTTPS URL of the timezone boundary GeoJSON ZIP archive.
     sourceUrl: https://github.com/evansiroky/timezone-boundary-builder/releases/download/2026c/timezones.geojson.zip
+    # -- Expected SHA-256 checksum of the downloaded timezone boundary archive.
     sha256: 7d3f0c5a33b6acd891335c0ad5ba767736b6914cb1a1d68c71921c17ce358948
+  # -- Resources for OSM migration and timezone import job containers.
+  resources:
+    # -- Resources reserved for each OSM job container.
+    requests:
+      # -- CPU request for each OSM job container.
+      cpu: 25m
+      # -- Memory request for each OSM job container.
+      memory: 64Mi
+    # -- Resource ceilings for each OSM job container.
+    limits:
+      # -- CPU limit for each OSM job container.
+      cpu: 250m
+      # -- Memory limit for each OSM job container.
+      memory: 256Mi
 
+# -- Encrypted account source configuration and optional read-only local source storage.
 sources:
+  # -- Existing Secret reference for the source-configuration encryption keyring, shared by API and ingestion workers.
   keyringSecret:
+    # -- Name of the source encryption keyring Secret.
     name: workouts-explorer-source-encryption
+    # -- Secret key containing the source encryption keyring JSON; preserve decryption keys when rotating.
     key: keyring.json
+  # -- Allowed local source root paths inside ingestion worker containers; paths must be backed by accessible storage.
   localRoots:
+    # -- Default allowed local source root; the path alone does not provision storage.
     - /data/workouts
+  # -- Optional read-only NFS mount for ingestion worker local sources; does not create an NFS server.
   nfs:
+    # -- Mount the supplied NFS export into ingestion worker pods.
     enabled: false
+    # -- Existing NFS server hostname or address; required when enabled.
     server: ""
+    # -- Existing NFS export path; required when enabled.
     path: ""
+    # -- Worker mount path for the NFS export; keep it within an allowed sources.localRoots path.
     mountPath: /data/workouts
+    # -- Supplemental group id used by ingestion worker pods to read the NFS export.
     supplementalGroup: 1000
 
+# -- OpenTelemetry export and optional UI/Martin metrics collector sidecars.
 otel:
+  # -- External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting.
   endpoint: grpcs://otel-gateway-collector.observability.svc.cluster.local:4317
+  # -- Deployment environment label attached to telemetry.
   environment: development
+  # -- OpenTelemetry service namespace label.
   serviceNamespace: workouts-explorer
   # Empty name reuses api.trustedCASecret. Only the public CA is mounted.
+  # -- Public CA trust for collector sidecars; an empty name reuses the entire api.trustedCASecret reference.
   trustedCASecret:
+    # -- Existing collector CA Secret name; empty falls back to api.trustedCASecret.name and key.
     name: ""
+    # -- PEM CA bundle key used only when otel.trustedCASecret.name is nonempty.
     key: ca.crt
+  # -- Metrics collector sidecars for UI and Martin; no external collector backend is provisioned.
   collector:
+    # -- Enable collector sidecars when otel.endpoint is nonempty.
     enabled: true
+    # -- Complete collector image reference, independent of application registry/tag settings.
     image: docker.io/otel/opentelemetry-collector-contrib:0.156.0@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+    # -- Resource requests and limits for each metrics collector sidecar.
     resources:
+      # -- Resources reserved for each metrics collector sidecar.
       requests:
+        # -- CPU request for each metrics collector sidecar.
         cpu: 25m
+        # -- Memory request for each metrics collector sidecar.
         memory: 64Mi
+      # -- Resource ceilings for each metrics collector sidecar.
       limits:
+        # -- CPU limit for each metrics collector sidecar.
         cpu: 250m
+        # -- Memory limit for each metrics collector sidecar.
         memory: 256Mi
 
 # The host Grafana sidecar imports these ConfigMaps after vCluster syncs them.
 # Disable in test releases to avoid replacing dashboards with the same UIDs.
+# -- Grafana dashboard ConfigMaps; dashboard discovery requires an existing Grafana installation.
 grafanaDashboards:
+  # -- Create dashboard ConfigMaps; disable for test releases that would overwrite dashboards with the same UIDs.
   enabled: true
 
 # Requires the Pyrra CRD and a controller whose rules are evaluated by Thanos Ruler.
+# -- Optional Pyrra service-level objectives; requires the Pyrra CRD/controller and an existing rule evaluator.
 pyrraSLOs:
+  # -- Create Pyrra ServiceLevelObjective resources; disabled by default.
   enabled: false
   # Pyrra copies this guard to host-generated rule ConfigMaps in namespace-sync vClusters.
+  # -- Add the skip-backsync guard for Pyrra-generated rule ConfigMaps in namespace-sync vClusters.
   skipBacksync: false
+  # -- Rolling evaluation window for service-level objectives.
   window: 2w
+  # -- Percentage targets for API and tile service-level objectives, expressed as strings.
   targets:
+    # -- API availability target percentage.
     apiAvailability: "99.9"
+    # -- Percentage of API requests meeting the configured latency objective.
     apiLatency: "95"
+    # -- Successful tile request target percentage.
     tileSuccess: "99.9"
+    # -- Percentage of tile requests meeting the configured latency objective.
     tileLatency: "99"
 
+# -- Optional browser-facing Ingress and cert-manager Certificate; backend services remain HTTP.
 ingress:
+  # -- Create both Ingress and Certificate resources; requires an ingress controller, cert-manager, and StepClusterIssuer step-issuer.
   enabled: false
+  # -- Ingress class name; empty leaves controller selection to cluster defaults.
   className: ""
+  # -- Annotations applied to the Ingress resource.
   annotations: {}
+  # -- Primary browser-facing hostname; required when ingress is enabled.
   host: ""
+  # -- Additional browser-facing hostnames included in ingress rules and certificate DNS names.
   additionalHosts: []
+  # -- TLS Secret consumed by the ingress controller; normally match certificateSecretName.
   tlsSecretName: workouts-explorer-ingress-tls
+  # -- TLS Secret populated by the chart's cert-manager Certificate; normally match tlsSecretName.
   certificateSecretName: workouts-explorer-ingress-tls

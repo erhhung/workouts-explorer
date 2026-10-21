@@ -138,13 +138,86 @@ or repository.
 The migration command holds a PostgreSQL advisory lock and is idempotent. API
 and worker never migrate on startup. Kubernetes receives these URLs from an
 existing Secret selected by Helm values; the chart never creates credentials.
+The user-approved active API sequence is **001-028**, with **no active 029**.
+Ordinary static 027 and 001-027 stay unchanged; new 028 folds the lock fix, strict
+eligible cohorts and mixed-failure automatic policy into the pipeline. Source
+`SupportedSchemaVersion`, schema and minimum runtime are **28**, marker **27**.
+The folded contract, exact parking repair and UI follow-up are **deployed in
+`dev-20261020`, Helm revision 29**, schema/Goose/minimum runtime 28, marker 27.
+The native command validates history read-only, then runs Goose Up; canonical 27
+applies new 028 without replaying 027. Native Goose **does not replay an applied
+028**, and matching numeric versions do not prove runtime compatibility.
+
+Old-contract 28 needs a new **private guarded offline repair**, explicit operator
+approval, fresh protected backup and rehearsal on a protected restore of an
+actual application backup using the actual migration role, new source and catalog
+proof. Pause all old API/ingest/Coverage runtimes, plus tiles if DDL affects their
+application constraints. Old apply-10/defer-6 ABIs are intentionally absent; old
+runtime-28 readiness fails and new runtime-28 readiness requires private builders.
+Do not claim a rolling DB-only upgrade or reuse old images. Preserve ledger 0-28
+IDs/timestamps without DML/rewrite, application data, retry roots/budgets, sources
+and credentials. Retain old images/backups; rollback needs the old DB contract
+and images, not images alone. The current release's separately approved exact
+actual-profile repair passed protected actual-backup rehearsal and live
+transactional application under the real non-superuser migration login with its
+existing security-owner SET capability. Full old-tuple/ledger preservation and
+new readiness passed; native Goose confirmed applied 028 without replay. This
+frozen-corpus qualification is not generic SQL-lexer equivalence or permission to
+weaken exact repair guards. Old artifacts were deleted only after verified local
+rollback exports; incompatible-image rollback requires the whole old database
+restore plus matching old OCI images. Final yearly closure and M8 owner acceptance
+are separate from deployment. All release-manifest source/chart files stay frozen;
+for this documentation-only update, edit only the Helm README template and
+regenerate its README, not values or runtime chart files.
+See the [migration and recovery contract](docs/database-migrations.md) before deployment.
 Schema 9 requires the PostGIS extension to be installed by a database
 administrator before migration. Migrations fail unless `workouts_api`,
 `workouts_worker`, and `workouts_tiles` already exist as non-superuser
 `NOBYPASSRLS` login roles and `workouts_security_owner` exists as a non-login,
 non-bypass function owner. Job status, attempts, leases,
 cancellation, and parent derivation are changed through the `app.*_job`
-state-machine functions rather than direct runtime-role updates.
+  state-machine functions rather than direct runtime-role updates.
+
+For folded-028 verification, distinguish deferred commit-time invalidation from job
+retries. Four same-name triggers keep their exact events/WHEN scopes and
+per-qualifying-event increments; the account seed remains immediate. PostgreSQL
+can flush them early with `SET CONSTRAINTS`, although production does not. Ingest
+keeps its missing-generation `55000` and all identity/source/job/lease/epoch/runtime
+and KEY SHARE fences. Map generation and selected data must use one Repeatable
+Read snapshot through the historic, now nonlocking helper; current-generation
+validation rejects a concurrently stale response. Commit failures roll back
+data/checkpoints/evidence/progress with the generation. Commit tails still
+serialize; no worker transaction retry or deadline budget is added.
+
+Active ingest seals a normal parent only with saved B (default 25, range 1-1000)
+**new eligible matching targets** globally across regions within its ingest-root/
+source-sibling scope. Missing maps, current/live/unchanged failed/cancelled targets
+and deduplication do not count. Durable prepared metadata survives files/crashes;
+there is no placeholder parent before atomic full-B sealing. Only account recovery
+after the visible root and all source siblings are terminal and due preparation is
+exhausted may seal a final partial cohort, not active EOF. Keep metadata bounded,
+one coordinate route at a time, and require the full trusted catalog fingerprint
+in the ROI Repeatable Read lookup and before seal; mismatch requires fresh ROI.
+Mixed-region parent anchors are representative; optional `coverage.regionIds`
+reports the actual union, including retries. Per-route vectors/admission stay intact.
+
+One timeout/verified-transient eligible failed child enables carrying **all
+authoritative failed siblings**, including permanent/unknown/null-code failures,
+into the next automatic attempt if every failed descriptor remains valid. Do not
+rerun successes, revive cancellations or fork latest-only ancestry. All-permanent
+parents stop. The durable per-root automatic allowance defaults to one additional
+attempt (0-20); manual retries and normal reconciliation never reset it.
+
+Earlier isolated lock/commit/snapshot and Coverage tests are scoped synthetic
+evidence, not a fresh pass of the final folded-028 contract, repair or broad DB
+suite. Unrelated scheduler/stale-target and broader API fixture failures remain
+documented in
+[Development Progress](docs/development-progress.md#deferred-generation-fix-source-only).
+Never use deployed databases or private source profiles to rerun fixture-writing
+tests. Documentation work needs no live credentials, cloud calls, migration,
+image publication or cluster commands. Chart semantics remain frozen/not started;
+edit only values comments and the README template, then regenerate with pinned
+`helm-docs` as described in [the chart README](helm/README.md#regenerate-documentation).
 
 For an existing Milestone 1 database, infrastructure must provision the new
 function-owner role before migration 00002. Use a temporary external credential
@@ -255,6 +328,137 @@ a synced Certificate's `spec.secretName`; the xdev harness overrides only
 virtual Ingress `tlsSecretName` unchanged. For a
 private image project, create a pull Secret in `workouts-explorer` and set
 `WORKOUTS_TEST_IMAGE_PULL_SECRET` to its name.
+
+## iCloud Source Verification
+
+Read [iCloud Source Setup](docs/icloud-source-setup.md) before working on M8.
+Implementation and synthetic verification are ready for owner review; owner
+acceptance and the milestone completion checkbox remain pending. Do not use real
+Apple credentials or host rclone configs for automated tests. Helpers use
+synthetic processes/exports; no cloud or deployment command is needed.
+
+From the repository root, run the focused synthetic suites without inherited
+application database URLs:
+
+```sh
+go test ./internal/sourceconfig ./internal/rclonesource
+env -u API_DATABASE_URL -u WORKER_DATABASE_URL -u MIGRATION_DATABASE_URL \
+  go test ./api ./worker -run 'TestICloud|TestManifestIdentityOptional|TestRunnerTransportOptions' -count=1
+```
+
+The adapter's `TestActualRcloneVersion` skips if no native binary is installed;
+when installed, it must be 1.75.2. That check uses `--config /dev/null version`,
+not cloud access or host configuration. Do not interpret skipped database or
+native checks as passing integration/packaging evidence.
+
+For the migration suite, provision standard application roles and an **empty,
+disposable loopback database** named `workouts_icloud_test_*`. Its admin URL must
+be able to `SET ROLE` to the test roles. Set `SCRATCH_ADMIN_URL` privately to that
+database only; never reuse a deployed or personal-data database. The suite checks
+the empty-database precondition, creates PostGIS by default and exercises the
+complete 020-to-021 upgrade, CAS, status, runtime-20 and pre-upgrade scheduler
+lease fences. It intentionally does not fall back to application database URLs.
+
+```sh
+ICLOUD_TEST_DISPOSABLE=1 ICLOUD_TEST_DATABASE_URL="$SCRATCH_ADMIN_URL" \
+  go test ./api/migrations -run '^TestICloudMigrationIntegration$' -count=1
+ICLOUD_TEST_DISPOSABLE=1 ICLOUD_READINESS_TEST_DATABASE_URL="$SCRATCH_ADMIN_URL" \
+  go test ./internal/database -run '^TestICloudReadinessIntegration$' -count=1
+```
+
+Readiness requires a **fully migrated schema-21** scratch database and uses
+transaction-local rolled-back faults. It may use the full migration suite's
+resulting database. For a separate limited source-foundations run, use another
+empty scratch database and add `ICLOUD_TEST_SOURCE_FOUNDATIONS_ONLY=1` to the
+migration command: this runs 001-006 plus 021 without PostGIS, not the complete
+upgrade or full-runtime readiness contract.
+
+API and worker lifecycle integration tests use the existing role-URL convention,
+not the disposable-flag guard. Explicitly point **every** URL below at a fully
+migrated disposable database with its corresponding role before running them;
+they write fixtures and worker tests configure file-slot limits.
+
+```sh
+API_DATABASE_URL="$SCRATCH_API_ROLE_URL" MIGRATION_DATABASE_URL="$SCRATCH_MIGRATION_ROLE_URL" \
+  go test ./api -run '^TestICloudSourceLifecycleIntegration$' -count=1
+WORKER_DATABASE_URL="$SCRATCH_WORKER_ROLE_URL" MIGRATION_DATABASE_URL="$SCRATCH_MIGRATION_ROLE_URL" \
+  go test ./worker -run '^TestICloudWorkerPostgreSQL$' -count=1
+```
+
+### Recorded Verification (10/12/2026)
+
+| Scope | Result |
+|---|---|
+| Final `make verify` | Exit 0, including Go tests/vet, generation/format, typecheck, Go/UI builds, Helm and 303 UI tests; database-backed cases skip when URLs are unset |
+| Scoped race suite | Exit 0 for sourceconfig, rclonesource, database, API, worker and worker command with database URLs unset |
+| Disposable PostGIS M8 | Actual PostgreSQL 18.6 / PostGIS 3.6.4 worker normal/race, internal full-race, SQL/readiness/race and API integration receipts pass; fresh/repeat/upgrade and runtime-role readiness checked |
+| Local image/native/browser | Full worker Buildah build, amd64 native non-root checks, private bind-root check and synthetic built-UI desktop/tablet flows pass within their recorded boundaries |
+
+The [detailed M8 results](docs/implementation-plan.md#verification-results-10122026)
+record exact counts, the message-only recovery-copy fix chronology and three
+wider database failures reproduced on isolated archived schema-20 HEAD. The
+ordinary suite's database skips are not integration passes; the wider database
+suite is not wholly green. PostgreSQL was not rerun after the recovery-message
+fix; final API unit/race checks were. Temporary receipts and the ignored browser
+harness are local artifacts, not durable backup evidence.
+
+Cleanup claim/readiness gating and scavenging are worker/pod-local: a local
+failure blocks that attempt's terminal writes and that worker's new claims/readiness until
+confirmed cleanup. They do not guarantee distributed cleanup, lost-volume
+recovery or immediate physical erasure under permanent filesystem faults.
+Arm64 execution, read-only-root-filesystem/seccomp behavior and full worker
+startup were not verified. Owner acceptance remains pending; optional
+owner-operated cloud smoke tests outside CI and image publication/redeployment
+need explicit authorization, not further implementation work. No production
+validation is claimed.
+
+## OSM Reader Verification
+
+Read [OSM Read Replicas](docs/osm-read-replicas.md) for the global default-off
+boolean policy, independent complete reader references
+(`api.coverageDiagnostics.databaseSecret`, `worker.osmDatabaseSecret` and
+`coverageWorker.osmDatabaseSecret`, each defaulting to name
+`workouts-explorer-database` and key `osmReaderDatabaseUrl`), separate writer
+name/key/TLS selectors, headless TLS and
+lag/admission behavior. Documentation checks do not require an app build, private
+values/keyring/profile reads, live account tools or cluster changes.
+
+The boolean never selects a Secret or overrides an endpoint. Each reader reference
+is independent of application-database references and the other readers, even
+when default names coincide. Removed key-only properties have no compatibility
+aliases and must fail schema validation; operators privately convert local
+overrides to explicit name/key references using the guide's historical mapping
+and a complete fresh values file, not `--reuse-values`. Shared Secrets can retain
+application, reader and writer keys; dedicated reader roles can instead use
+separate Secrets with existing reader TLS selectors. Operator CLI database
+environment options select writers independently of Helm reader references,
+without parsing private values. Documentation work must not read or edit the
+private local values file.
+
+Focused synthetic/configuration/chart checks use public source and fixtures:
+
+```sh
+go test ./internal/config -run 'TestOSMUseReadReplicasOnly|TestOSMReadReplicasRejectAutoAddRegions|TestLoadOSMDoesNotRequireCommonConfiguration' -count=1
+go test ./internal/database -run '^TestOSMReader' -count=1
+go test ./internal/osm -run '^TestClassifyMatcherReplicaGenerations$' -count=1
+go test ./tests/helm -run '^TestHelmOSMReadReplica' -count=1
+env -u COVERAGE_ACCEPTANCE_DISPOSABLE \
+  go test ./worker -run '^TestCoverageReplica|^TestRecoverableCoverageReaderErrors$' -count=1
+```
+
+Helm rendering tests require the Helm binary; a skip is not rendering evidence.
+Worker database-backed cases skip without the disposable guard. To run those
+integration cases, explicitly provision isolated, fully migrated application/OSM
+databases and roles under the existing [Coverage acceptance guards](docs/coverage-acceptance.md).
+The fixture requires `COVERAGE_ACCEPTANCE_DISPOSABLE=true` and all six role URLs:
+`MIGRATION_DATABASE_URL`, `API_DATABASE_URL`, `WORKER_DATABASE_URL`,
+`COVERAGE_WORKER_DATABASE_URL`, `OSM_MIGRATION_DATABASE_URL` and
+`COVERAGE_WORKER_OSM_DATABASE_URL`. There are no URL fallbacks; the OSM reader must
+be read-only. Never point these fixture-writing tests at a deployed database.
+Run `go test ./worker -run '^TestCoverageReplica.*Integration$' -count=1` only
+after those guards are privately satisfied. They simulate generation lag, not a
+physical HA cluster or concurrent-capacity benchmark. Live DNS/TLS/authentication
+probes and any image publication/rollout need separate authorization.
 
 ## Packaging
 

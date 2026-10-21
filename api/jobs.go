@@ -21,6 +21,7 @@ const jobDetailSelect = `SELECT j.id,j.parent_job_id,j.kind,j.status,j.attempt,j
 	j.cancel_requested_at,j.started_at,j.terminal_at,j.failure_code,j.failure_summary,j.retry_of_job_id,j.created_at,j.updated_at,
 	COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
 	COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
+	p.workouts_created_with_route,p.workouts_updated_with_route,
 	c.source_id,c.source_generation,c.display_name,c.source_type,
 	COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
 	COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
@@ -76,39 +77,21 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		operation = string(*params.Operation)
 	}
 	var total int64
-	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM app.jobs WHERE parent_job_id IS NULL
-		AND kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update') AND ($1='' OR
-			CASE WHEN kind='coverage_update' AND status='running' AND NOT EXISTS (
-				SELECT 1 FROM app.jobs running_child WHERE running_child.parent_job_id=jobs.id AND running_child.status='running')
-			THEN 'queued' ELSE status END=$1)
-		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=jobs.id
-			AND successor.parent_job_id IS NULL AND ((jobs.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
-				OR (jobs.kind='workout_deletion' AND successor.kind='workout_deletion')
-				OR (jobs.kind='coverage_update' AND successor.kind='coverage_update')))
-		AND ($2='' OR kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' WHEN 'coverage_update' THEN 'coverage_update' END)`, status, operation).Scan(&total)
-	if err != nil {
-		writeJobUnavailable(w, r)
-		return
-	}
-	rows, err := tx.Query(r.Context(), `SELECT j.id,j.kind,j.status,j.progress_current,COALESCE(j.progress_total,0),
+	rows, err := tx.Query(r.Context(), `WITH history AS MATERIALIZED (
+		SELECT * FROM app.read_job_history($1,$2,$3,$4,$5)
+		) SELECT j.id,COALESCE(j.kind,''),COALESCE(j.status,''),COALESCE(j.progress_current,0),COALESCE(j.progress_total,0),
 		j.started_at,j.terminal_at,j.created_at,j.updated_at,
 		COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),
 		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
+		p.workouts_created_with_route,p.workouts_updated_with_route,
 		COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
 		COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
-		COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0)
-		FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
+		COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0),
+		history.display_status,history.total_items
+		FROM history LEFT JOIN app.jobs j ON j.id=history.job_id
+		LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
 		LEFT JOIN app.coverage_job_progress cp ON cp.job_id=j.id AND cp.account_id=j.account_id
-		WHERE j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update') AND ($1='' OR
-			CASE WHEN j.kind='coverage_update' AND j.status='running' AND NOT EXISTS (
-				SELECT 1 FROM app.jobs running_filter_child WHERE running_filter_child.parent_job_id=j.id AND running_filter_child.status='running')
-			THEN 'queued' ELSE j.status END=$1)
-		AND NOT EXISTS (SELECT 1 FROM app.jobs successor WHERE successor.retry_of_job_id=j.id
-			AND successor.parent_job_id IS NULL AND ((j.kind IN ('manual_ingest','scheduled_ingest') AND successor.kind IN ('manual_ingest','scheduled_ingest'))
-				OR (j.kind='workout_deletion' AND successor.kind='workout_deletion')
-				OR (j.kind='coverage_update' AND successor.kind='coverage_update')))
-		AND ($2='' OR j.kind=CASE $2 WHEN 'manual_sync' THEN 'manual_ingest' WHEN 'automated_sync' THEN 'scheduled_ingest' WHEN 'workout_deletion' THEN 'workout_deletion' WHEN 'coverage_update' THEN 'coverage_update' END)
-		ORDER BY j.created_at DESC,j.id DESC LIMIT $3 OFFSET $4`, status, operation, pageSize, (page-1)*pageSize)
+		ORDER BY j.created_at DESC,j.id DESC`, status, operation, pageSize, (page-1)*pageSize, maxJobRetryOrdinal)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -116,20 +99,25 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 	defer rows.Close()
 	items := make([]generated.JobSummary, 0)
 	for rows.Next() {
-		var id uuid.UUID
+		var id *uuid.UUID
 		var kind, jobStatus string
+		var displayStatus *generated.JobDisplayStatus
 		var current, progressTotal int64
 		var started, terminal *time.Time
-		var created, updated time.Time
+		var created, updated *time.Time
 		progress := generated.JobProgress{}
 		routeStats := generated.CoverageRouteStats{}
 		if err = rows.Scan(&id, &kind, &jobStatus, &current, &progressTotal, &started, &terminal, &created, &updated,
 			&progress.FilesDiscovered, &progress.FilesSkipped, &progress.FilesSucceeded, &progress.FilesFailed,
 			&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected,
+			&progress.WorkoutsCreatedWithRoute, &progress.WorkoutsUpdatedWithRoute,
 			&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
-			&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running); err != nil {
+			&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running, &displayStatus, &total); err != nil {
 			writeJobUnavailable(w, r)
 			return
+		}
+		if id == nil {
+			continue
 		}
 		progress.Current, progress.Total = current, progressTotal
 		operation := generated.JobSummaryOperationDataSync
@@ -141,8 +129,11 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		if kind == "coverage_update" {
 			jobStatus = coverageParentPresentationStatus(jobStatus, routeStats.Running)
 		}
-		item := generated.JobSummary{Id: compactUUID(id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
-			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: created, UpdatedAt: updated}
+		item := generated.JobSummary{Id: compactUUID(*id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
+			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: *created, UpdatedAt: *updated}
+		if displayStatus != nil && *displayStatus == generated.JobDisplayStatusSuperseded {
+			item.DisplayStatus = displayStatus
+		}
 		if kind == "coverage_update" {
 			item.RouteStats = &routeStats
 		}
@@ -287,11 +278,19 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 		return
 	}
 	if lineages[id].ordinal >= maxJobRetryOrdinal {
-		writeProblem(w, r, http.StatusConflict, "Conflict", jobRetryLimitDetail)
+		if kind == "coverage_update" {
+			writeCoverageRetryConflict(w, r, "retry-limit")
+		} else {
+			writeProblem(w, r, http.StatusConflict, "Conflict", jobRetryLimitDetail)
+		}
 		return
 	}
 	if status != "failed" && status != "cancelled" && status != "partially_succeeded" {
-		writeProblem(w, r, http.StatusConflict, "Conflict", "job is not retryable")
+		if kind == "coverage_update" {
+			writeCoverageRetryConflict(w, r, "not-terminal")
+		} else {
+			writeProblem(w, r, http.StatusConflict, "Conflict", "job is not retryable")
+		}
 		return
 	}
 	if kind == "coverage_update" {
@@ -300,12 +299,25 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 		err = tx.QueryRow(r.Context(), `SELECT job_id,route_count FROM app.retry_coverage_update($1,$2,$3)`,
 			id, session.principalID, maxJobRetryOrdinal).Scan(&retryID, &routeCount)
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeProblem(w, r, http.StatusConflict, "Conflict", "coverage update has no unsuccessful routes to retry")
+			// No exception occurred, so this transaction can still read the
+			// exact current explanation. POST remains the authority, not GET.
+			eligibility, readErr := readCoverageRetryEligibility(r.Context(), tx, id)
+			if readErr != nil {
+				writeJobUnavailable(w, r)
+				return
+			}
+			reason := "no-eligible-routes"
+			if eligibility.Reason == generated.AlreadyCurrent {
+				reason = "already-current"
+			}
+			writeCoverageRetryConflict(w, r, reason)
 			return
 		}
 		var databaseError *pgconn.PgError
 		if errors.As(err, &databaseError) && (databaseError.Code == "55000" || databaseError.Code == "54001") {
-			writeProblem(w, r, http.StatusConflict, "Conflict", databaseError.Message)
+			// An exception aborts the transaction. Never query it for metadata
+			// or expose arbitrary database messages as a public explanation.
+			writeCoverageRetryConflict(w, r, coverageRetryErrorReason(databaseError))
 			return
 		}
 		if err != nil || routeCount < 1 || tx.Commit(r.Context()) != nil {
@@ -706,6 +718,19 @@ func readJobDetail(ctx context.Context, tx pgx.Tx, id uuid.UUID) (generated.JobD
 		}
 		rows.Close()
 	}
+	if kind == "coverage_update" && detail.Coverage != nil {
+		// Read immutable targets directly under account RLS: deletion-pending
+		// workouts can hide route presentation without removing child contexts.
+		var regionIDs []string
+		if err = tx.QueryRow(ctx, `SELECT ARRAY(SELECT DISTINCT target.item->>'regionId'
+			FROM app.jobs child JOIN app.coverage_route_job_contexts context
+			ON context.job_id=child.id AND context.account_id=child.account_id
+			CROSS JOIN LATERAL jsonb_array_elements(context.target_generations) target(item)
+			WHERE child.parent_job_id=$1 AND child.kind='coverage_update_route' ORDER BY 1)`, id).Scan(&regionIDs); err != nil {
+			return generated.JobDetail{}, err
+		}
+		detail.Coverage.RegionIds = &regionIDs
+	}
 	refs := make([]jobDetailRef, 0, len(detail.Children)+1)
 	refs = append(refs, jobDetailRef{id: id, detail: &detail})
 	for index := range detail.Children {
@@ -718,7 +743,66 @@ func readJobDetail(ctx context.Context, tx pgx.Tx, id uuid.UUID) (generated.JobD
 	if err = readJobRetryMetadata(ctx, tx, refs); err != nil {
 		return generated.JobDetail{}, err
 	}
+	if kind == "coverage_update" && detail.ParentJobId == nil {
+		detail.RetryEligibility, err = readCoverageRetryEligibility(ctx, tx, id)
+		if err != nil {
+			return generated.JobDetail{}, err
+		}
+		if (detail.Status == generated.JobStatus("failed") || detail.Status == generated.JobStatus("partially_succeeded")) && detail.RetryEligibility.Reason == generated.AlreadyCurrent {
+			displayStatus := generated.JobDisplayStatusSuperseded
+			detail.DisplayStatus = &displayStatus
+		}
+	}
 	return detail, nil
+}
+
+func readCoverageRetryEligibility(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*generated.CoverageRetryEligibility, error) {
+	var eligibility generated.CoverageRetryEligibility
+	var currentJobIDs []uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT can_retry,reason,eligible_route_count,unsuccessful_route_count,current_route_count,current_coverage_job_ids
+		FROM app.read_coverage_retry_eligibility($1,$2)`, id, maxJobRetryOrdinal).Scan(&eligibility.CanRetry,
+		&eligibility.Reason, &eligibility.EligibleRouteCount, &eligibility.UnsuccessfulRouteCount, &eligibility.CurrentRouteCount, &currentJobIDs)
+	eligibility.CurrentCoverageJobIds = make([]generated.CompactUUID, len(currentJobIDs))
+	for index, jobID := range currentJobIDs {
+		eligibility.CurrentCoverageJobIds[index] = compactUUID(jobID)
+	}
+	return &eligibility, err
+}
+
+func coverageRetryErrorReason(err *pgconn.PgError) string {
+	if err.Code == "55000" {
+		switch err.Message {
+		case "coverage retry requires a terminal parent":
+			return "not-terminal"
+		case "only the latest coverage attempt may be retried":
+			return "not-latest"
+		case "coverage retry target is busy; retry the latest attempt":
+			return "busy"
+		}
+	}
+	if err.Code == "54001" && err.Message == "coverage retry limit reached" {
+		return "retry-limit"
+	}
+	return "unavailable"
+}
+
+func writeCoverageRetryConflict(w http.ResponseWriter, r *http.Request, reason string) {
+	details := map[string]string{
+		"already-current":    "Coverage is already current for all unsuccessful routes in this attempt.",
+		"no-eligible-routes": "This coverage attempt has no currently eligible routes to retry.",
+		"not-terminal":       "This coverage attempt is not in a retryable terminal state.",
+		"not-latest":         "Only the latest coverage attempt may be retried.",
+		"retry-limit":        "The coverage retry limit has been reached.",
+		"busy":               "Coverage retry is busy. Refresh and try again.",
+		"unavailable":        "Coverage retry is currently unavailable.",
+	}
+	detail, ok := details[reason]
+	if !ok {
+		reason, detail = "unavailable", details["unavailable"]
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	writeJSON(w, http.StatusConflict, generated.Problem{Type: "https://workouts-explorer.invalid/problems/coverage-retry/" + reason,
+		Title: "Conflict", Status: http.StatusConflict, Detail: &detail, RequestId: requestIDFrom(r.Context())})
 }
 
 type jobDetailRef struct {
@@ -939,6 +1023,7 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 		&detail.StartedAt, &detail.TerminalAt, &rawFailureCode, &rawFailureSummary, &retryID, &detail.CreatedAt, &detail.UpdatedAt,
 		&progress.FilesDiscovered, &progress.FilesSkipped, &progress.FilesSucceeded, &progress.FilesFailed,
 		&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected,
+		&progress.WorkoutsCreatedWithRoute, &progress.WorkoutsUpdatedWithRoute,
 		&sourceID, &sourceGeneration, &displayName, &sourceType,
 		&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
 		&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running,
@@ -966,19 +1051,23 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 	detail.Progress = progress
 	if kind != "coverage_update" && kind != "coverage_update_route" {
 		detail.Results = &struct {
-			FilesFailed       *int64 `json:"filesFailed,omitempty"`
-			FilesSucceeded    *int64 `json:"filesSucceeded,omitempty"`
-			WorkoutsCreated   *int64 `json:"workoutsCreated,omitempty"`
-			WorkoutsRejected  *int64 `json:"workoutsRejected,omitempty"`
-			WorkoutsUnchanged *int64 `json:"workoutsUnchanged,omitempty"`
-			WorkoutsUpdated   *int64 `json:"workoutsUpdated,omitempty"`
+			FilesFailed              *int64 `json:"filesFailed,omitempty"`
+			FilesSucceeded           *int64 `json:"filesSucceeded,omitempty"`
+			WorkoutsCreated          *int64 `json:"workoutsCreated,omitempty"`
+			WorkoutsCreatedWithRoute *int64 `json:"workoutsCreatedWithRoute,omitempty"`
+			WorkoutsRejected         *int64 `json:"workoutsRejected,omitempty"`
+			WorkoutsUnchanged        *int64 `json:"workoutsUnchanged,omitempty"`
+			WorkoutsUpdated          *int64 `json:"workoutsUpdated,omitempty"`
+			WorkoutsUpdatedWithRoute *int64 `json:"workoutsUpdatedWithRoute,omitempty"`
 		}{
-			FilesFailed:       &progress.FilesFailed,
-			FilesSucceeded:    &progress.FilesSucceeded,
-			WorkoutsCreated:   &progress.WorkoutsCreated,
-			WorkoutsRejected:  &progress.WorkoutsRejected,
-			WorkoutsUnchanged: &progress.WorkoutsUnchanged,
-			WorkoutsUpdated:   &progress.WorkoutsUpdated,
+			FilesFailed:              &progress.FilesFailed,
+			FilesSucceeded:           &progress.FilesSucceeded,
+			WorkoutsCreated:          &progress.WorkoutsCreated,
+			WorkoutsCreatedWithRoute: progress.WorkoutsCreatedWithRoute,
+			WorkoutsRejected:         &progress.WorkoutsRejected,
+			WorkoutsUnchanged:        &progress.WorkoutsUnchanged,
+			WorkoutsUpdated:          &progress.WorkoutsUpdated,
+			WorkoutsUpdatedWithRoute: progress.WorkoutsUpdatedWithRoute,
 		}
 	}
 	if parentID != nil {
@@ -1029,19 +1118,23 @@ func safeJobFailure(code *string) (*string, *string) {
 		return nil, nil
 	}
 	summaries := map[string]string{
-		"ingest-parameters-invalid":  "Ingest parameters were invalid.",
-		"source-config-invalid":      "Source configuration could not be read.",
-		"source-unavailable":         "Source data could not be accessed.",
-		"source-directory-limit":     "The source contains too many entries.",
-		"source-files-changed":       "Source files changed while ingest was running.",
-		"source-file-invalid":        "One or more source files could not be processed.",
-		"workout-delete-failed":      "The workout deletion could not be completed.",
-		"coverage-route-invalid":     "Coverage route input was invalid.",
-		"coverage-route-read-failed": "Coverage route input could not be read.",
-		"coverage-route-timeout":     "Coverage matching timed out.",
-		"coverage-route-too-large":   "Coverage route exceeded a processing limit.",
-		"coverage-osm-unavailable":   "Coverage map data is temporarily unavailable.",
-		"coverage-persist-failed":    "Coverage results could not be persisted.",
+		"ingest-parameters-invalid":    "Ingest parameters were invalid.",
+		"source-config-invalid":        "Source configuration could not be read.",
+		"source-unavailable":           "Source data could not be accessed.",
+		"source-directory-limit":       "The source contains too many entries.",
+		"source-files-changed":         "Source files changed while ingest was running.",
+		"source-file-invalid":          "One or more source files could not be processed.",
+		"source-auth-expired":          "iCloud access expired. Reconnect with Rclone externally, then update this source's credentials.",
+		"source-auth-failed":           "iCloud authentication failed. Check the Rclone connection externally, then update this source's credentials.",
+		"source-adp-approval-required": "iCloud requires trusted-device approval. Enable web access, approve the request, reconnect externally, then update this source's credentials.",
+		"workout-delete-failed":        "The workout deletion could not be completed.",
+		"coverage-route-invalid":       "Coverage route input was invalid.",
+		"coverage-route-read-failed":   "Coverage route input could not be read.",
+		"coverage-route-timeout":       "Coverage matching timed out.",
+		"coverage-route-too-large":     "Coverage route exceeded a processing limit.",
+		"coverage-osm-unavailable":     "Coverage map data could not be processed.",
+		"coverage-transient-failed":    "Coverage processing was interrupted by a transient database failure.",
+		"coverage-persist-failed":      "Coverage results could not be persisted.",
 	}
 	summary, ok := summaries[*code]
 	if !ok {

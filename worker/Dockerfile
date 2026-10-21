@@ -1,3 +1,20 @@
+FROM docker.io/library/alpine:3.23 AS rclone
+RUN for attempt in 1 2 3; do apk add --no-cache ca-certificates unzip && break; sleep 5; done && \
+    apk info --exists ca-certificates unzip
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64) arch=amd64; checksum=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702 ;; \
+      aarch64) arch=arm64; checksum=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10 ;; \
+      *) exit 1 ;; \
+    esac; \
+    archive="rclone-v1.75.2-linux-${arch}"; \
+    wget -q -T 60 -O /tmp/rclone.zip "https://downloads.rclone.org/v1.75.2/${archive}.zip"; \
+    printf '%s  /tmp/rclone.zip\n' "$checksum" | sha256sum -c -; \
+    unzip -q /tmp/rclone.zip "${archive}/rclone" -d /tmp; \
+    cp "/tmp/${archive}/rclone" /usr/local/bin/rclone; \
+    chmod 0755 /usr/local/bin/rclone; \
+    rclone --config /dev/null version
+
 FROM docker.io/library/golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -25,6 +42,7 @@ COPY --from=build /out/osm-catalog /app/osm-catalog
 COPY --from=build /out/timezone-import /app/timezone-import
 COPY --from=build /out/timezone-backfill /app/timezone-backfill
 COPY --from=build /out/coverage-evaluate /app/coverage-evaluate
+COPY --from=rclone /usr/local/bin/rclone /usr/local/bin/rclone
 USER 65532:65532
 EXPOSE 8081
 ENTRYPOINT ["/app/worker"]

@@ -32,5 +32,5 @@ spec:
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
             - name: ROLE_PROVISIONING_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ required "api.roleProvisioning.secretName is required" .Values.api.roleProvisioning.secretName }}, key: {{ required "api.roleProvisioning.databaseKey is required" .Values.api.roleProvisioning.databaseKey }}}}
+              valueFrom: {secretKeyRef: {name: {{ required "api.roleProvisioning.databaseSecret.name is required" .Values.api.roleProvisioning.databaseSecret.name }}, key: {{ required "api.roleProvisioning.databaseSecret.key is required" .Values.api.roleProvisioning.databaseSecret.key }}}}
 {{- end }}

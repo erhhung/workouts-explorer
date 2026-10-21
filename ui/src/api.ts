@@ -73,6 +73,7 @@ export interface SummaryTotals {
   count: number;
   duration: string;
   distance: ExactMetric | null;
+  distanceCount: number;
   energy: ExactMetric | null;
   routeCount: number;
   routedDistance: ExactMetric | null;
@@ -137,7 +138,7 @@ export interface WorkoutProvenanceWarning {
 
 export interface WorkoutProvenanceEvent {
   id: string;
-  kind: "created" | "updated" | "matched_unchanged";
+  kind: "created" | "updated" | "matched_unchanged" | "adopted" | "skipped_live_owner";
   jobId: string;
   sourceId: string;
   sourceName: string;
@@ -480,6 +481,7 @@ export type CoverageDiagnosticRun = Omit<CoverageDiagnosticRunThroughV60, "pathP
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
 export type JobStatus =
   "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
+export type JobDisplayStatus = JobStatus | "superseded";
 export type JobTrigger = "manual" | "scheduled" | "system";
 export type NotificationState = "unresolved" | "remind" | "resolved" | "dismissed";
 export type NotificationSeverity = "info" | "warning" | "error";
@@ -500,6 +502,8 @@ export interface JobProgress {
   filesFailed: number;
   workoutsCreated: number;
   workoutsUpdated: number;
+  workoutsCreatedWithRoute?: number | null;
+  workoutsUpdatedWithRoute?: number | null;
   workoutsUnchanged: number;
   workoutsRejected: number;
 }
@@ -516,6 +520,7 @@ export interface JobSummary {
   operation?: "data_sync" | "workout_deletion" | "coverage_update";
   trigger: JobTrigger;
   status: JobStatus;
+  displayStatus?: JobDisplayStatus;
   progress: JobProgress;
   createdAt: string;
   updatedAt: string;
@@ -535,7 +540,9 @@ export interface CoverageRouteStats {
 }
 
 export interface CoverageJobContext {
+  // Representative anchor; child target vectors remain authoritative.
   regionId: string;
+  regionIds?: string[];
   targetOsmGeneration: number;
   targetWorkRevision: number;
   rulesVersion: string;
@@ -558,8 +565,25 @@ export interface JobResults {
   filesFailed?: number;
   workoutsCreated?: number;
   workoutsUpdated?: number;
+  workoutsCreatedWithRoute?: number | null;
+  workoutsUpdatedWithRoute?: number | null;
   workoutsUnchanged?: number;
   workoutsRejected?: number;
+}
+
+export interface CoverageRetryEligibility {
+  canRetry: boolean;
+  reason:
+    | "eligible"
+    | "not_terminal"
+    | "not_latest"
+    | "retry_limit"
+    | "already_current"
+    | "no_eligible_routes";
+  eligibleRouteCount: number;
+  unsuccessfulRouteCount: number;
+  currentRouteCount: number;
+  currentCoverageJobIds: string[];
 }
 
 export interface JobDetail extends JobSummary {
@@ -568,6 +592,7 @@ export interface JobDetail extends JobSummary {
   retryOrdinal?: number;
   latestRetryJobId?: string;
   latestRetryOrdinal?: number;
+  retryEligibility?: CoverageRetryEligibility;
   attempt: number;
   source?: JobSourceContext;
   coverage?: CoverageJobContext;
@@ -600,6 +625,8 @@ export interface DataSyncSource {
   displayName: string;
   type: string;
   status: SourceStatus;
+  statusCode?: string;
+  statusSummary?: string;
   autoSyncEnabled: boolean;
   checkedAt?: string;
   freshness: SourceFreshness;
@@ -706,6 +733,7 @@ export interface JobLogList {
 }
 
 export interface ApiProblem {
+  type?: string;
   title?: string;
   detail?: string;
   errors?: Array<{ field: string; code: string; message?: string }>;

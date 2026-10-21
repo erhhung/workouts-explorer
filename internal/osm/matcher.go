@@ -2,15 +2,20 @@ package osm
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -193,14 +198,25 @@ func (e *MatcherOverflowError) Error() string {
 
 type MatcherSnapshot struct {
 	tx                 pgx.Tx
+	ownedConn          *pgx.Conn
+	physicalClosed     atomic.Bool
 	closed             bool
 	allowedRegions     []string
 	allowedGenerations []int64
 }
 
 var ErrMatcherGenerationChanged = errors.New("OSM matcher generation changed")
+var ErrMatcherReplicaNotReady = errors.New("OSM matcher replica is not ready")
 
 func BeginMatcherSnapshotForGenerations(ctx context.Context, pool *pgxpool.Pool, targets []MatcherGeneration) (*MatcherSnapshot, error) {
+	return BeginMatcherSnapshotForGenerationsOnReader(ctx, pool, targets, false)
+}
+
+// BeginMatcherSnapshotForGenerationsOnReader distinguishes replica lag from
+// supersession. Generation IDs increase with normal promotions; automatic
+// numeric rollback detection is unsupported. Reconciliation must update targets
+// from authoritative current generations when an older generation is promoted.
+func BeginMatcherSnapshotForGenerationsOnReader(ctx context.Context, pool *pgxpool.Pool, targets []MatcherGeneration, useReadReplicasOnly bool) (*MatcherSnapshot, error) {
 	if len(targets) == 0 || len(targets) > 256 {
 		return nil, &MatcherBoundsError{Field: "target generations", Limit: 256}
 	}
@@ -208,36 +224,156 @@ func BeginMatcherSnapshotForGenerations(ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		return nil, err
 	}
+	return validateMatcherSnapshot(ctx, snapshot, targets, useReadReplicasOnly)
+}
+
+// BeginMatcherSnapshotOnConnection transfers connection ownership only on success.
+// The caller must close conn on failure. Even non-standby readers wait for lagging
+// heads rather than treating them as genuine generation supersession.
+func BeginMatcherSnapshotOnConnection(ctx context.Context, conn *pgx.Conn, targets []MatcherGeneration, requireStandby bool) (*MatcherSnapshot, error) {
+	if len(targets) == 0 || len(targets) > 256 {
+		return nil, &MatcherBoundsError{Field: "target generations", Limit: 256}
+	}
+	if conn == nil || conn.IsClosed() {
+		return nil, errors.New("OSM database is unavailable")
+	}
+	if requireStandby {
+		roleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		result := conn.PgConn().ExecParams(roleCtx, "SELECT pg_catalog.pg_is_in_recovery()", nil, nil, nil, nil).Read()
+		roleErr := roleCtx.Err()
+		cancel()
+		if result.Err != nil {
+			var state interface{ SQLState() string }
+			if errors.As(result.Err, &state) && (state.SQLState() == "42501" || state.SQLState() == "28P01") {
+				return nil, &pgconn.PgError{Code: state.SQLState(), Message: "OSM reader role check denied"}
+			}
+			if roleErr != nil {
+				return nil, roleErr
+			}
+			var network net.Error
+			if errors.As(result.Err, &network) || errors.Is(result.Err, io.EOF) || errors.Is(result.Err, pgconn.ErrConnClosed) {
+				return nil, ErrMatcherReplicaNotReady
+			}
+			return nil, errors.New("OSM reader role check failed")
+		}
+		if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || string(result.Rows[0][0]) != "t" {
+			return nil, ErrMatcherReplicaNotReady
+		}
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := validateMatcherSnapshot(ctx, &MatcherSnapshot{tx: tx}, targets, true)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.ownedConn = conn
+	return snapshot, nil
+}
+
+func validateMatcherSnapshot(ctx context.Context, snapshot *MatcherSnapshot, targets []MatcherGeneration, useReadReplicasOnly bool) (*MatcherSnapshot, error) {
 	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		if target.RegionID == "" || target.GenerationID <= 0 {
-			_ = snapshot.Close(context.WithoutCancel(ctx))
+			closeMatcherSnapshot(ctx, snapshot)
 			return nil, &MatcherBoundsError{Field: "target generation provenance", Limit: 256}
 		}
 		if _, duplicate := seen[target.RegionID]; duplicate {
-			_ = snapshot.Close(context.WithoutCancel(ctx))
+			closeMatcherSnapshot(ctx, snapshot)
 			return nil, &MatcherBoundsError{Field: "unique target regions", Limit: 256}
 		}
 		seen[target.RegionID] = struct{}{}
 		snapshot.allowedRegions = append(snapshot.allowedRegions, target.RegionID)
 		snapshot.allowedGenerations = append(snapshot.allowedGenerations, target.GenerationID)
 	}
+	if useReadReplicasOnly {
+		// Check heads before decoding metadata: a missing target is lag even
+		// when metadata on the older replica is not yet complete.
+		rows, err := snapshot.tx.Query(ctx, `SELECT region_id,id FROM osm_catalog.generations WHERE state='active'`)
+		if err != nil {
+			closeMatcherSnapshot(ctx, snapshot)
+			return nil, err
+		}
+		active := make(map[string]int64)
+		for rows.Next() {
+			var region string
+			var generation int64
+			if err = rows.Scan(&region, &generation); err != nil {
+				break
+			}
+			active[region] = generation
+		}
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+		if err == nil {
+			err = classifyMatcherGenerations(targets, active, true)
+		}
+		if err != nil {
+			if errors.Is(err, ErrMatcherReplicaNotReady) {
+				snapshot.closed = true
+				discardReplicaSnapshot(ctx, snapshot.tx)
+			} else {
+				closeMatcherSnapshot(ctx, snapshot)
+			}
+			return nil, err
+		}
+	}
 	active, err := snapshot.Generations(ctx)
 	if err != nil {
-		_ = snapshot.Close(context.WithoutCancel(ctx))
+		closeMatcherSnapshot(ctx, snapshot)
 		return nil, err
 	}
 	activeByRegion := make(map[string]int64, len(active))
 	for _, generation := range active {
 		activeByRegion[generation.RegionID] = generation.GenerationID
 	}
-	for _, target := range targets {
-		if activeByRegion[target.RegionID] != target.GenerationID {
-			_ = snapshot.Close(context.WithoutCancel(ctx))
-			return nil, ErrMatcherGenerationChanged
+	if err := classifyMatcherGenerations(targets, activeByRegion, useReadReplicasOnly); err != nil {
+		if errors.Is(err, ErrMatcherReplicaNotReady) {
+			snapshot.closed = true
+			discardReplicaSnapshot(ctx, snapshot.tx)
+		} else {
+			closeMatcherSnapshot(ctx, snapshot)
 		}
+		return nil, err
 	}
 	return snapshot, nil
+}
+
+func classifyMatcherGenerations(targets []MatcherGeneration, active map[string]int64, replicasOnly bool) error {
+	changed := false
+	for _, target := range targets {
+		actual := active[target.RegionID]
+		// In a mixed snapshot, wait until every target is visible before
+		// allowing a terminal supersession decision.
+		if replicasOnly && actual < target.GenerationID {
+			return ErrMatcherReplicaNotReady
+		}
+		changed = changed || actual != target.GenerationID
+	}
+	if changed {
+		return ErrMatcherGenerationChanged
+	}
+	return nil
+}
+
+func closeMatcherSnapshot(ctx context.Context, snapshot *MatcherSnapshot) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	_ = snapshot.Close(closeCtx)
+}
+
+// discardReplicaSnapshot requires a still-held transaction. Close its physical
+// connection before rollback releases it, so a lagged LIFO idle connection cannot
+// starve other replicas or be handed to another route during cleanup. This renews
+// the connection on a later acquisition; it does not blacklist a backend.
+func discardReplicaSnapshot(ctx context.Context, tx pgx.Tx) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	_ = tx.Conn().Close(closeCtx)
+	_ = tx.Rollback(closeCtx)
 }
 
 func BeginMatcherSnapshot(ctx context.Context, pool *pgxpool.Pool) (*MatcherSnapshot, error) {
@@ -275,7 +411,41 @@ func (s *MatcherSnapshot) Rollback(ctx context.Context) error {
 
 // Close rolls back an uncommitted snapshot and is safe to defer.
 func (s *MatcherSnapshot) Close(ctx context.Context) error {
-	if s == nil || s.tx == nil || s.closed {
+	if s == nil {
+		return nil
+	}
+	if s.ownedConn != nil {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		var err error
+		if s.tx != nil && !s.closed {
+			err = s.Rollback(closeCtx)
+		}
+		closeErr := s.ownedConn.Close(closeCtx)
+		// pgx may already be logically closed while its asynchronous cancel
+		// cleanup still owns an open socket. Confirm physical closure here.
+		socket := s.ownedConn.PgConn().Conn()
+		if secured, ok := socket.(*tls.Conn); ok {
+			socket = secured.NetConn()
+		}
+		socketErr := socket.Close()
+		if errors.Is(socketErr, net.ErrClosed) {
+			socketErr = nil
+		}
+		if socketErr == nil {
+			s.physicalClosed.Store(true)
+		}
+		if socketErr != nil || closeErr != nil {
+			closeErr = errors.New("close OSM matcher connection failed")
+		}
+		if errors.Is(err, pgx.ErrTxClosed) {
+			err = nil
+		} else if err != nil {
+			err = errors.New("roll back OSM matcher snapshot failed")
+		}
+		return errors.Join(err, closeErr)
+	}
+	if s.tx == nil || s.closed {
 		return nil
 	}
 	err := s.Rollback(ctx)
@@ -283,6 +453,23 @@ func (s *MatcherSnapshot) Close(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// PhysicalConnectionClosed confirms dedicated socket closure, not merely pgx's
+// logical IsClosed state. Nil and legacy pooled snapshots report false because
+// they cannot establish dedicated physical-connection ownership and closure.
+func (s *MatcherSnapshot) PhysicalConnectionClosed() bool {
+	if s == nil || s.ownedConn == nil {
+		return false
+	}
+	socket := s.ownedConn.PgConn().Conn()
+	if secured, ok := socket.(*tls.Conn); ok {
+		socket = secured.NetConn()
+	}
+	if tracked, ok := socket.(interface{ PhysicalConnectionClosed() bool }); ok {
+		return tracked.PhysicalConnectionClosed()
+	}
+	return s.physicalClosed.Load()
 }
 
 const matcherCandidatesSQL = `
@@ -368,7 +555,7 @@ func (s *MatcherSnapshot) Candidates(ctx context.Context, observations []Matcher
 	if err := s.queryable(); err != nil {
 		return nil, err
 	}
-	rows, err := s.tx.Query(ctx, matcherCandidatesSQL, longitudes, latitudes, radii, maxPerObservation+1,
+	rows, err := s.tx.Query(ctx, matcherCandidatesBatchSQL, longitudes, latitudes, radii, maxPerObservation+1,
 		s.allowedRegions, s.allowedGenerations)
 	if err != nil {
 		return nil, fmt.Errorf("query OSM matcher candidates: %w", err)
@@ -633,7 +820,11 @@ JOIN osm_canonical.path_segments segment
 LEFT JOIN osm_canonical.localities locality
   ON locality.region_id=segment.region_id AND locality.generation_id=segment.generation_id
  AND locality.relation_id=segment.locality_relation_id
-LEFT JOIN osm_active.logical_paths path ON path.logical_path_id=segment.logical_path_id
+LEFT JOIN LATERAL (
+    SELECT min(member.name) AS name,min(member.normalized_name) AS normalized_name
+    FROM osm_active.path_segments member
+    WHERE member.logical_path_id=segment.logical_path_id
+) path ON true
 ORDER BY requested.ordinal
 LIMIT $4`
 

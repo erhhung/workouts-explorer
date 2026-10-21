@@ -12,10 +12,8 @@ alias omp &> /dev/null || {
   source "$HOME/.bash_profile"
 }
 
-if [ "$OPENCODE_CALLER" == vscode ] && \
-   [ "$_EXTENSION_OPENCODE_PORT"  ]; then
-  exec opencode --port $_EXTENSION_OPENCODE_PORT
-fi
+[ "$OPENCODE_CALLER" == vscode ] && \
+  . .vscode/opencode.sh
 
 git_root() {
   local root

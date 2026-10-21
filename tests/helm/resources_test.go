@@ -27,7 +27,8 @@ type container struct {
 		Name      string
 		Value     string
 		ValueFrom struct {
-			FieldRef struct {
+			SecretKeyRef struct{ Name, Key string } `yaml:"secretKeyRef"`
+			FieldRef     struct {
 				FieldPath string `yaml:"fieldPath"`
 			} `yaml:"fieldRef"`
 		} `yaml:"valueFrom"`
@@ -108,6 +109,7 @@ type workload struct {
 	Metadata struct{ Name string }
 	Data     map[string]string
 	Spec     struct {
+		Replicas int
 		Template struct {
 			Metadata struct {
 				Labels      map[string]string
@@ -153,6 +155,9 @@ func TestHelmPodResources(t *testing.T) {
 				resources := map[string]map[string]string{
 					"requests": {"cpu": "25m", "memory": "64Mi"},
 					"limits":   {"cpu": "250m", "memory": "256Mi"},
+				}
+				if component == "coverageWorker" {
+					resources["limits"]["cpu"] = "500m"
 				}
 				if overrides {
 					resources["requests"]["cpu"] = fmt.Sprintf("%dm", 30+i)

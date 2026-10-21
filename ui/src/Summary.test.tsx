@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
-import { type Preferences, type Workout } from "./api";
+import { type Preferences, type Workout, type WorkoutProvenance } from "./api";
 import { Summary, formatAggregateDuration, formatDuration } from "./Summary";
 
 const preferences: Preferences = {
@@ -22,6 +22,7 @@ const totals = {
   count: 2,
   duration: "3900.5",
   distance: { value: "10.5", unit: "km" },
+  distanceCount: 2,
   energy: { value: "450.25", unit: "kcal" },
   routeCount: 2,
   routedDistance: { value: "10.5", unit: "km" },
@@ -139,6 +140,44 @@ describe("Summary", () => {
     expect(main.querySelector(".aggregate-section")?.nextElementSibling).toHaveClass(
       "workouts-section",
     );
+  });
+
+  test.each([
+    { count: 14, routes: 5, measured: 9, expected: ["14", "5"] },
+    { count: 6, routes: 0, measured: 3, expected: ["6", "0"] },
+    { count: 0, routes: 0, measured: 0, expected: ["0", "0"] },
+    { count: 1275, routes: 1100, measured: 1002, expected: ["1,275", "1,100"] },
+  ])("shows $routes routed workouts beside the $count workout total", async (example) => {
+    const counts = {
+      ...summary,
+      totals: {
+        ...totals,
+        count: example.count,
+        routeCount: example.routes,
+        distanceCount: example.measured,
+      },
+      byType: [],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? counts : workoutPage())),
+    );
+    renderSummary();
+    const card = await screen.findByRole("button", { name: /Workouts.*By workout type/ });
+    const values = () => Array.from(card.querySelectorAll("strong"), (value) => value.textContent);
+    expect(values()).toEqual(example.expected);
+    expect(card.closest("article")).toHaveClass("aggregate-card-with-routes");
+    const routedValue = card.querySelector(".aggregate-routed-count")!;
+    const routedLabel = card.querySelector("small.aggregate-routed-label")!;
+    expect(routedLabel).toHaveTextContent("With routes");
+    expect(routedValue).toHaveAttribute("aria-describedby", routedLabel.id);
+    expect(Array.from(card.querySelectorAll("small"), (label) => label.textContent)).toEqual([
+      "By workout type",
+      "With routes",
+    ]);
+    expect(screen.getAllByText("With routes")).toHaveLength(1);
+    await userEvent.click(card);
+    expect(screen.getByText("Range averages")).toBeInTheDocument();
+    expect(values()).toEqual(example.expected);
   });
 
   test("formats resolved dates without commas and shows the current PDT range-zone badge", async () => {
@@ -495,23 +534,37 @@ describe("Summary", () => {
     });
   });
 
-  test("does not replace an existing custom-range end date when the start date loses focus", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
-      String(input).startsWith("/api/summary?")
-        ? Promise.resolve(json(summary))
-        : Promise.resolve(json(workoutPage())),
-    );
-    renderSummary({ dateRange: "2026-08-01/2026-08-31" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Select date range" }));
-    await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
-    const startDate = await screen.findByLabelText("Start date");
-    const endDate = screen.getByLabelText("End date");
-    await user.clear(startDate);
-    await user.type(startDate, "2026-08-05");
-    await user.tab();
-    expect(endDate).toHaveValue("2026-08-31");
-  });
+  test.each([
+    ["2023-04-01", "2022-03-01", "2023-04-01"],
+    ["2022-02-15", "2022-03-01", "2022-03-01"],
+    ["2022-03-01", "2022-03-01", "2022-03-01"],
+    ["2023-04-01", "", "2023-04-01"],
+    ["", "2022-03-01", "2022-03-01"],
+    ["", "", ""],
+  ])(
+    "completes the Summary range only on start blur: %s / %s -> %s",
+    async (start, end, expected) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+        String(input).startsWith("/api/summary?")
+          ? Promise.resolve(json(summary))
+          : Promise.resolve(json(workoutPage())),
+      );
+      renderSummary({ dateRange: "2022-02-01/2022-03-01" });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Select date range" }));
+      await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
+      const startDate = await screen.findByLabelText("Start date");
+      const endDate = screen.getByLabelText("End date");
+      fireEvent.change(endDate, { target: { value: end } });
+      await user.click(startDate);
+      fireEvent.change(startDate, { target: { value: start } });
+      expect(startDate).toHaveFocus();
+      expect(endDate).toHaveValue(end);
+      await user.tab();
+      expect(endDate).toHaveFocus();
+      expect(endDate).toHaveValue(expected);
+    },
+  );
 
   test("renders precise converted aggregate cards and exposes type breakdowns by pointer and keyboard state", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
@@ -613,6 +666,7 @@ describe("Summary", () => {
         count: 14,
         duration: "40200",
         distance: { value: "62", unit: "km" },
+        distanceCount: 9,
         energy: { value: "6700", unit: "kcal" },
         routeCount: 9,
         routedDistance: { value: "62", unit: "km" },
@@ -624,6 +678,7 @@ describe("Summary", () => {
             count: 4,
             duration: "7200",
             distance: { value: "12", unit: "km" },
+            distanceCount: 4,
             energy: { value: "1200", unit: "kcal" },
             routeCount: 4,
             routedDistance: { value: "12", unit: "km" },
@@ -635,6 +690,7 @@ describe("Summary", () => {
             count: 5,
             duration: "15000",
             distance: { value: "50", unit: "km" },
+            distanceCount: 5,
             energy: { value: "3000", unit: "kcal" },
             routeCount: 5,
             routedDistance: { value: "50", unit: "km" },
@@ -646,6 +702,7 @@ describe("Summary", () => {
             count: 5,
             duration: "18000",
             distance: null,
+            distanceCount: 0,
             energy: { value: "2500", unit: "kcal" },
             routeCount: 0,
             routedDistance: null,
@@ -733,6 +790,7 @@ describe("Summary", () => {
         count: 2,
         duration: "7200",
         distance: { value: "10", unit: "km" },
+        distanceCount: 2,
         energy: { value: "385", unit: "kcal" },
         routeCount: 2,
         routedDistance: { value: "10", unit: "km" },
@@ -744,6 +802,7 @@ describe("Summary", () => {
             count: 2,
             duration: "7200",
             distance: { value: "10", unit: "km" },
+            distanceCount: 2,
             energy: { value: "385", unit: "kcal" },
             routeCount: 2,
             routedDistance: { value: "10", unit: "km" },
@@ -764,6 +823,198 @@ describe("Summary", () => {
       "Outdoor Walk193 kcal",
     );
   });
+
+  test.each([
+    {
+      units: "metric" as const,
+      total: "42 km",
+      average: "4.67 km",
+      totals: ["12 km", "10 km", "9 km", "7 km", "4 km", "0 km"],
+      averages: ["12 km", "7 km", "5 km", "4.5 km", "2 km", "0 km"],
+    },
+    {
+      units: "imperial" as const,
+      total: "26.1 mi",
+      average: "2.9 mi",
+      totals: ["7.46 mi", "6.21 mi", "5.59 mi", "4.35 mi", "2.49 mi", "0 mi"],
+      averages: ["7.46 mi", "4.35 mi", "3.11 mi", "2.8 mi", "1.24 mi", "0 mi"],
+    },
+  ])(
+    "includes every measured-distance type in $units totals and averages without GPS",
+    async (expected) => {
+      const entries = [
+        { name: "Indoor Run", count: 3, distance: "9", distanceCount: 2, routes: 0 },
+        { name: "Indoor Walk", count: 2, distance: "4", distanceCount: 2, routes: 0 },
+        { name: "Snowboarding", count: 1, distance: "12", distanceCount: 1, routes: 0 },
+        { name: "Novel Provider Activity", count: 1, distance: "7", distanceCount: 1, routes: 0 },
+        { name: "Zero Distance", count: 1, distance: "0", distanceCount: 1, routes: 0 },
+        { name: "Missing Distance", count: 3, distance: null, distanceCount: 0, routes: 2 },
+        { name: "Outdoor Run", count: 3, distance: "10", distanceCount: 2, routes: 3 },
+      ];
+      const measuredSummary = {
+        range,
+        totals: {
+          count: 14,
+          duration: "8400",
+          distance: { value: "42", unit: "km" },
+          distanceCount: 9,
+          energy: null,
+          routeCount: 5,
+          routedDistance: { value: "10", unit: "km" },
+        },
+        byType: entries.map((entry, index) => ({
+          type: {
+            id: String(index + 1).padStart(32, "0"),
+            key: entry.name.toLowerCase().replaceAll(" ", "-"),
+            displayName: entry.name,
+          },
+          totals: {
+            count: entry.count,
+            duration: String(entry.count * 600),
+            distance: entry.distance === null ? null : { value: entry.distance, unit: "km" },
+            distanceCount: entry.distanceCount,
+            energy: null,
+            routeCount: entry.routes,
+            routedDistance:
+              entry.routes > 0 && entry.distance !== null
+                ? { value: entry.distance, unit: "km" }
+                : null,
+          },
+        })),
+      };
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+        Promise.resolve(
+          json(String(input).startsWith("/api/summary?") ? measuredSummary : workoutPage(1, [])),
+        ),
+      );
+      renderSummary({ units: expected.units });
+      const card = await screen.findByRole("button", { name: /Distance.*By workout type/ });
+      const rows = () =>
+        Array.from(document.getElementById(card.getAttribute("aria-controls")!)!.children).map(
+          (row) => row.textContent,
+        );
+      expect(card).toHaveTextContent(expected.total);
+      expect(rows()).toEqual(
+        [
+          "Snowboarding",
+          "Outdoor Run",
+          "Indoor Run",
+          "Novel Provider Activity",
+          "Indoor Walk",
+          "Zero Distance",
+        ].map((name, index) => name + expected.totals[index]),
+      );
+      expect(rows().join("")).not.toContain("Missing Distance");
+      await userEvent.click(card);
+      expect(card).toHaveTextContent(expected.average);
+      expect(rows()).toEqual(
+        [
+          "Snowboarding",
+          "Novel Provider Activity",
+          "Outdoor Run",
+          "Indoor Run",
+          "Indoor Walk",
+          "Zero Distance",
+        ].map((name, index) => name + expected.averages[index]),
+      );
+      await userEvent.click(card);
+      expect(card).toHaveTextContent(expected.total);
+    },
+  );
+
+  test.each([
+    {
+      name: "measured zero",
+      deletedDistance: "0",
+      distanceCount: 2,
+      average: "4 km",
+      after: "8 km",
+    },
+    {
+      name: "missing distance",
+      deletedDistance: null,
+      distanceCount: 2,
+      average: "4 km",
+      after: "4 km",
+    },
+    {
+      name: "last measured distance",
+      deletedDistance: "8",
+      distanceCount: 1,
+      average: "8 km",
+      after: null,
+    },
+  ])(
+    "keeps measured-distance averages consistent while deleting a $name workout",
+    async (example) => {
+      const indoorWalk = {
+        id: "11111111111111111111111111111111",
+        key: "indoor-walk",
+        displayName: "Indoor Walk",
+      };
+      const deleting: Workout = {
+        ...workout,
+        type: indoorWalk,
+        routeAvailable: false,
+        routePointCount: 0,
+        distance:
+          example.deletedDistance === null ? null : { value: example.deletedDistance, unit: "km" },
+      };
+      const measuredTotals = {
+        ...totals,
+        count: 3,
+        distance: { value: "8", unit: "km" },
+        distanceCount: example.distanceCount,
+        routeCount: 0,
+        routedDistance: null,
+      };
+      let failDelete!: (response: Response) => void;
+      const pendingDelete = new Promise<Response>((resolve) => {
+        failDelete = resolve;
+      });
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        const path = String(input);
+        if (path.startsWith("/api/summary?"))
+          return Promise.resolve(
+            json({
+              range,
+              totals: measuredTotals,
+              byType: [{ type: indoorWalk, totals: measuredTotals }],
+            }),
+          );
+        if (path.startsWith("/api/workouts?"))
+          return Promise.resolve(json(workoutPage(1, [deleting])));
+        if (path === `/api/workouts/${deleting.id}`) return pendingDelete;
+        throw new Error(`Unhandled ${path}`);
+      });
+      renderSummary({ units: "metric" });
+      const user = userEvent.setup();
+      const card = await screen.findByRole("button", { name: /Distance.*By workout type/ });
+      await user.click(card);
+      expect(card).toHaveTextContent(example.average);
+      await user.click(
+        screen.getAllByRole("button", { name: "Actions for Indoor Walk on 2026-08-05" })[0],
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
+      await user.click(
+        within(screen.getByRole("dialog", { name: "Delete workout?" })).getByRole("button", {
+          name: "Yes",
+        }),
+      );
+      const breakdown = document.getElementById(card.getAttribute("aria-controls")!)!;
+      if (example.after === null) {
+        await waitFor(() => expect(breakdown).not.toHaveTextContent("Indoor Walk"));
+        expect(card).toHaveTextContent("Unavailable");
+      } else {
+        await waitFor(() => expect(card).toHaveTextContent(example.after!));
+        expect(breakdown).toHaveTextContent(`Indoor Walk${example.after}`);
+      }
+      failDelete(json({ title: "Deletion unavailable" }, 503));
+      await screen.findByRole("alert");
+      await waitFor(() => expect(card).toHaveTextContent(example.average));
+      expect(breakdown).toHaveTextContent(`Indoor Walk${example.average}`);
+    },
+  );
 
   test("rounds calories everywhere while omitting kcal only from individual workout values", async () => {
     const calorieTotals = { ...totals, energy: { value: "450.75", unit: "kcal" } };
@@ -1355,6 +1606,77 @@ describe("Summary", () => {
     await waitFor(() => expect(triggers[0]).toHaveFocus());
   });
 
+  test.each([0, 1])(
+    "labels creation, live-owner skips, and adoption accurately from action position %i",
+    async (position) => {
+      const provenance: WorkoutProvenance = {
+        workoutId: workout.id,
+        items: [
+          {
+            id: "11111111111111111111111111111111",
+            kind: "created",
+            jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1",
+            sourceId: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+            sourceName: "Deleted local source",
+            sourceType: "health-auto-export-local",
+            sourceFile: "original.json",
+            warnings: [],
+            importedAt: "2026-08-05T15:00:00Z",
+          },
+          {
+            id: "22222222222222222222222222222222",
+            kind: "skipped_live_owner",
+            jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2",
+            sourceId: workout.sourceId,
+            sourceName: "Replacement iCloud source",
+            sourceType: "health-auto-export-icloud",
+            sourceFile: "replacement.json",
+            warnings: [],
+            importedAt: "2026-08-06T15:00:00Z",
+          },
+          {
+            id: "33333333333333333333333333333333",
+            kind: "adopted",
+            jobId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3",
+            sourceId: workout.sourceId,
+            sourceName: "Replacement iCloud source",
+            sourceType: "health-auto-export-icloud",
+            sourceFile: "replacement.json",
+            warnings: [],
+            importedAt: "2026-08-07T15:00:00Z",
+          },
+        ],
+      };
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        const path = String(input);
+        if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
+        if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
+        if (path === `/api/workouts/${workout.id}/provenance`)
+          return Promise.resolve(json(provenance));
+        throw new Error(`Unhandled ${path}`);
+      });
+      renderSummary();
+      const user = userEvent.setup();
+      const triggers = await screen.findAllByRole("button", {
+        name: "Actions for Running on 2026-08-05",
+      });
+      await user.click(triggers[position]);
+      await user.click(screen.getByRole("menuitem", { name: "View provenance" }));
+      const dialog = await screen.findByRole("dialog", { name: "Workout provenance" });
+      const events = within(dialog).getAllByRole("listitem");
+      expect(
+        events.map((event) => event.querySelector(".provenance-event-heading strong")?.textContent),
+      ).toEqual(["Imported", "Skipped: owned by another source", "Adopted"]);
+      for (const [index, event] of provenance.items.entries()) {
+        expect(events[index]).toHaveTextContent(event.sourceName);
+        expect(events[index]).toHaveTextContent(event.sourceType);
+        expect(events[index]).toHaveTextContent(event.sourceFile);
+        expect(events[index]).toHaveTextContent(event.jobId);
+      }
+      expect(within(dialog).queryByText(/unchanged/i)).not.toBeInTheDocument();
+    },
+  );
+
   test("keeps provenance errors private and closes stale workouts while refreshing Summary", async () => {
     let provenanceAttempts = 0;
     let workoutReads = 0;
@@ -1561,6 +1883,7 @@ describe("Summary", () => {
                     count: 1,
                     duration: "0",
                     distance: { value: "0", unit: "km" },
+                    distanceCount: 0,
                     energy: { value: "0", unit: "kcal" },
                     routeCount: 0,
                     routedDistance: { value: "0", unit: "km" },
@@ -1630,7 +1953,10 @@ describe("Summary", () => {
       ).not.toBeInTheDocument(),
     );
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("1");
-    expect(document.querySelectorAll(".aggregate-card strong")[1]).toHaveTextContent("0m");
+    expect(document.querySelector(".aggregate-routed-count")).toHaveTextContent("1");
+    expect(
+      document.querySelectorAll(".aggregate-card")[1].querySelector("strong"),
+    ).toHaveTextContent("0m");
     expect(onWorkoutsDeleted).not.toHaveBeenCalled();
 
     deleted = true;
@@ -1684,6 +2010,7 @@ describe("Summary", () => {
     expect(alert).toHaveFocus();
     expect(screen.getByRole("dialog", { name: "Delete workout?" })).toBeInTheDocument();
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("2");
+    expect(document.querySelector(".aggregate-routed-count")).toHaveTextContent("2");
     expect(
       document.querySelectorAll(
         '.workout-action-trigger[aria-label="Actions for Running on 2026-08-05"]',
@@ -1713,6 +2040,7 @@ describe("Summary", () => {
                     count: 0,
                     duration: "0",
                     distance: { value: "0", unit: "km" },
+                    distanceCount: 0,
                     energy: { value: "0", unit: "kcal" },
                     routeCount: 0,
                     routedDistance: { value: "0", unit: "km" },
@@ -1786,6 +2114,7 @@ describe("Summary", () => {
       expect(document.querySelectorAll(".workout-action-trigger")).toHaveLength(0),
     );
     expect(document.querySelectorAll(".aggregate-card strong")[0]).toHaveTextContent("0");
+    expect(document.querySelector(".aggregate-routed-count")).toHaveTextContent("0");
     expect(onWorkoutsDeleted).not.toHaveBeenCalled();
 
     deleted = true;

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -222,19 +224,154 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	distance, _ := aggregate.Totals.Distance.Get()
 	energy, _ := aggregate.Totals.Energy.Get()
 	routedDistance, _ := aggregate.Totals.RoutedDistance.Get()
-	if aggregate.Totals.Count != 3 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "450.5" || aggregate.Totals.RouteCount != 2 || routedDistance.Value != "8.5" || len(aggregate.ByType) != 2 {
+	if aggregate.Totals.Count != 3 || aggregate.Totals.DistanceCount != 2 || aggregate.Totals.Duration != "600.375" || distance.Value != "8.5" || energy.Value != "450.5" || aggregate.Totals.RouteCount != 2 || routedDistance.Value != "8.5" || len(aggregate.ByType) != 2 {
 		t.Fatalf("summary=%#v", aggregate)
 	}
 	runningDistance, _ := aggregate.ByType[1].Totals.Distance.Get()
 	runningEnergy, _ := aggregate.ByType[1].Totals.Energy.Get()
-	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || runningDistance.Value != "5.5" || runningEnergy.Value != "300.25" || aggregate.ByType[1].Totals.RouteCount != 1 {
+	if aggregate.ByType[1].Type.DisplayName != "Running" || aggregate.ByType[1].Totals.Count != 2 || aggregate.ByType[1].Totals.DistanceCount != 1 || runningDistance.Value != "5.5" || runningEnergy.Value != "300.25" || aggregate.ByType[1].Totals.RouteCount != 1 {
 		t.Fatalf("mixed-unit type totals included suspicious values: %#v", aggregate.ByType[1])
 	}
 	unknownSummary := routeOwnerRead(handler, "/api/summary?startDate=2026-03-09&endDate=2026-03-09", bearer)
 	var unknownAggregate generated.WorkoutSummary
-	if err := json.Unmarshal(unknownSummary.Body.Bytes(), &unknownAggregate); err != nil || unknownAggregate.Totals.Count != 1 || unknownAggregate.Totals.Duration != "240.125" || !unknownAggregate.Totals.Distance.IsNull() || !unknownAggregate.Totals.Energy.IsNull() || unknownAggregate.Totals.RouteCount != 0 || !unknownAggregate.Totals.RoutedDistance.IsNull() || len(unknownAggregate.ByType) != 1 || !unknownAggregate.ByType[0].Totals.Distance.IsNull() || !unknownAggregate.ByType[0].Totals.Energy.IsNull() {
+	if err := json.Unmarshal(unknownSummary.Body.Bytes(), &unknownAggregate); err != nil || unknownAggregate.Totals.Count != 1 || unknownAggregate.Totals.DistanceCount != 0 || unknownAggregate.Totals.Duration != "240.125" || !unknownAggregate.Totals.Distance.IsNull() || !unknownAggregate.Totals.Energy.IsNull() || unknownAggregate.Totals.RouteCount != 0 || !unknownAggregate.Totals.RoutedDistance.IsNull() || len(unknownAggregate.ByType) != 1 || unknownAggregate.ByType[0].Totals.DistanceCount != 0 || !unknownAggregate.ByType[0].Totals.Distance.IsNull() || !unknownAggregate.ByType[0].Totals.Energy.IsNull() {
 		t.Fatalf("suspicious-only summary did not remain unavailable: %#v err=%v", unknownAggregate, err)
 	}
+
+	t.Run("measured distance independent of GPS and tenant", func(t *testing.T) {
+		_, otherAccount := insertSourceTestUser(t, adminDB)
+		otherFixture := insertWorkoutReadFixtures(t, adminDB, workerDB, otherAccount)
+		type measurement struct {
+			label, value, unit, day string
+			routed                  bool
+		}
+		measurements := []measurement{
+			{"IndoorRun", "4", "km", "2026-04-01", false},
+			{"IndoorRun", "8", "km", "2026-04-01", false},
+			{"IndoorRun", "", "", "2026-04-01", true},
+			{"IndoorWalk", "0", "km", "2026-04-02", false},
+			{"Snowboard", "2.1234567890123456789", "km", "2026-04-01", false},
+			{"Snowboard", "3.00000000000000000001", "km", "2026-04-01", false},
+			{"Novel Provider Rowing", "1.1", "km", "2026-04-01", false},
+			{"No Distance", "", "", "2026-04-03", false},
+			{"No Distance", "999", "mi", "2026-04-03", false},
+		}
+		for _, owner := range []struct {
+			account      uuid.UUID
+			fixture      workoutReadFixture
+			measurements []measurement
+		}{
+			{accountID, fixture, measurements},
+			{otherAccount, otherFixture, []measurement{{"IndoorRun", "999999", "km", "2026-04-01", false}}},
+		} {
+			tx := integrationAccountTransaction(t, workerDB, owner.account)
+			defer tx.Rollback(ctx)
+			var sourceID uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, owner.fixture.jobID, owner.fixture.childLease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil {
+				t.Fatal(err)
+			}
+			types := map[string]uuid.UUID{}
+			for _, m := range owner.measurements {
+				typeID, exists := types[m.label]
+				if !exists {
+					typeID = uuid.Must(uuid.NewV7())
+					types[m.label] = typeID
+					if _, err := tx.Exec(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,$3,$4)`, typeID, owner.account, healthautoexport.NormalizedTypeKey(m.label), m.label); err != nil {
+						t.Fatal(err)
+					}
+				}
+				id := uuid.Must(uuid.NewV7())
+				day, err := time.Parse(time.DateOnly, m.day)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+					VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,0)`, id, owner.account, sourceID, owner.fixture.fileID, typeID, id.String(), owner.fixture.hash[:], m.label, day, day); err != nil {
+					t.Fatal(err)
+				}
+				if m.value != "" {
+					if _, err := tx.Exec(ctx, `INSERT INTO app.workout_aggregates(account_id,workout_id,metric,value,unit,origin) VALUES($1,$2,'distance',$3::numeric,$4,'provider_direct')`, owner.account, id, m.value, m.unit); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if m.routed {
+					if _, err := tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,longitude,latitude)
+						VALUES($1,$2,0,$3,-105,40),($1,$2,1,$3,-104.9,40.1)`, owner.account, id, day); err != nil {
+						t.Fatal(err)
+					}
+					var replaced bool
+					if err := tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,2,-105,40,-104.9,40.1,NULL,NULL,NULL,false)`, id).Scan(&replaced); err != nil || !replaced {
+						t.Fatalf("routed fixture replaced=%v err=%v", replaced, err)
+					}
+				}
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		roleTx := integrationAccountTransaction(t, apiDB, accountID)
+		defer roleTx.Rollback(ctx)
+		var superuser, bypassRLS bool
+		if err := roleTx.QueryRow(ctx, `SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`).Scan(&superuser, &bypassRLS); err != nil || superuser || bypassRLS {
+			t.Fatalf("owner read must use an actual RLS role: superuser=%v bypass=%v err=%v", superuser, bypassRLS, err)
+		}
+		for _, test := range []struct {
+			start, end, distance    string
+			count, measured, routed int64
+		}{
+			{"2026-04-01", "2026-04-03", "18.22345678901234567891", 9, 6, 1},
+			{"2026-04-02", "2026-04-02", "0", 1, 1, 0},
+			{"2026-04-03", "2026-04-03", "", 2, 0, 0},
+		} {
+			path := "/api/summary?startDate=" + test.start + "&endDate=" + test.end
+			response := routeOwnerRead(handler, path, bearer)
+			if response.Code != http.StatusOK {
+				t.Fatalf("summary status=%d body=%s", response.Code, response.Body.String())
+			}
+			validateRecordedResponse(t, http.MethodGet, path, response)
+			var summary generated.WorkoutSummary
+			if err := json.Unmarshal(response.Body.Bytes(), &summary); err != nil {
+				t.Fatal(err)
+			}
+			if summary.Totals.Count != test.count || summary.Totals.DistanceCount != test.measured || summary.Totals.RouteCount != test.routed || summary.Totals.Duration != "0" || !summary.Totals.RoutedDistance.IsNull() || !summary.Totals.Energy.IsNull() {
+				t.Fatalf("measured totals=%+v", summary.Totals)
+			}
+			if test.distance == "" {
+				if !summary.Totals.Distance.IsNull() {
+					t.Fatal("nonempty unmeasured total must remain null")
+				}
+			} else if metric, err := summary.Totals.Distance.Get(); err != nil || metric.Value != test.distance || metric.Unit != "km" {
+				t.Fatalf("exact distance=%+v err=%v", metric, err)
+			}
+			var measured int64
+			for _, item := range summary.ByType {
+				measured += item.Totals.DistanceCount
+				want := map[string]struct {
+					count, measured, routed int64
+					distance                string
+				}{
+					"Indoor Run":            {3, 2, 1, "12"},
+					"Indoor Walk":           {1, 1, 0, "0"},
+					"Snowboard":             {2, 2, 0, "5.12345678901234567891"},
+					"Novel Provider Rowing": {1, 1, 0, "1.1"},
+					"No Distance":           {2, 0, 0, ""},
+				}[item.Type.DisplayName]
+				if item.Totals.Count != want.count || item.Totals.DistanceCount != want.measured || item.Totals.RouteCount != want.routed || !item.Totals.RoutedDistance.IsNull() {
+					t.Fatalf("per-type measurement denominator=%+v", item)
+				}
+				if want.distance == "" {
+					if !item.Totals.Distance.IsNull() {
+						t.Fatal("unmeasured type must remain null")
+					}
+				} else if metric, err := item.Totals.Distance.Get(); err != nil || metric.Value != want.distance || metric.Unit != "km" {
+					t.Fatalf("per-type exact distance=%+v err=%v", metric, err)
+				}
+			}
+			if measured != test.measured {
+				t.Fatalf("per-type measured count=%d want=%d", measured, test.measured)
+			}
+		}
+	})
 
 	snapshot, err := server.accountTransactionWithOptions(ctx, accountID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
@@ -285,7 +422,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 	}
 	emptyDistance, _ := emptySummary.Totals.Distance.Get()
 	emptyEnergy, _ := emptySummary.Totals.Energy.Get()
-	if emptySummary.Totals.Count != 0 || emptySummary.Totals.Duration != "0" || emptyDistance.Value != "0" || emptyEnergy.Value != "0" || len(emptySummary.ByType) != 0 {
+	if emptySummary.Totals.Count != 0 || emptySummary.Totals.DistanceCount != 0 || emptySummary.Totals.Duration != "0" || emptyDistance.Value != "0" || emptyEnergy.Value != "0" || len(emptySummary.ByType) != 0 {
 		t.Fatalf("empty summary=%#v", emptySummary)
 	}
 	foreignDelete := routeWorkoutDelete(handler, workouts[1], foreignBearer)
@@ -420,7 +557,7 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 	defer tx.Rollback(ctx)
 	if _, err = tx.Exec(ctx, `SELECT set_config('app.account_id',$1,true)`, accountID.String()); err == nil {
 		var fenced uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2)`, jobID, childLease).Scan(&fenced)
+		err = tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, jobID, childLease, database.SupportedSchemaVersion).Scan(&fenced)
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at) VALUES($1,$2,$3,$4,'archive/fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, fileID, accountID, sourceID, jobID, hash[:])
@@ -503,7 +640,7 @@ func insertConcurrentWorkout(t *testing.T, workerDB *pgxpool.Pool, accountID uui
 		t.Fatal(err)
 	}
 	var sourceID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2)`, fixture.jobID, fixture.childLease).Scan(&sourceID); err != nil || sourceID != fixture.sourceID {
+	if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, fixture.jobID, fixture.childLease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil || sourceID != fixture.sourceID {
 		t.Fatalf("concurrent fixture fence source=%s err=%v", sourceID, err)
 	}
 	workoutID := uuid.Must(uuid.NewV7())

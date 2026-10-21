@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,7 +55,7 @@ func TestCanonicalActivityOwnerReadsPostgreSQL(t *testing.T) {
 			tx := integrationAccountTransaction(t, workerDB, accountID)
 			defer tx.Rollback(ctx)
 			var sourceID uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2)`, fixture.jobID, fixture.childLease).Scan(&sourceID); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, fixture.jobID, fixture.childLease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,$3,$4)`, typeID, accountID, rawKey, expectedRawAlias); err != nil {

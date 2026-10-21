@@ -36,6 +36,16 @@ type OSMEvaluationOptions struct {
 	RoadGeometry                RoadGeometryRules
 }
 
+// OSMEvaluationLimitError identifies deterministic graph-expansion limits.
+type OSMEvaluationLimitError struct {
+	Field string
+	Limit int
+}
+
+func (e *OSMEvaluationLimitError) Error() string {
+	return fmt.Sprintf("OSM evaluation %s bound exceeded", e.Field)
+}
+
 func DefaultOSMEvaluationOptions() OSMEvaluationOptions {
 	return OSMEvaluationOptions{
 		MaxCandidatesPerObservation: 32,
@@ -67,11 +77,17 @@ type osmTopology interface {
 // It is an experimental evaluator: every physical edge is considered in both
 // directions until ADR 0009 accepts mode/access policy.
 func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObservation, rules Rules, options OSMEvaluationOptions) (Result, OSMEvaluationStats, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, OSMEvaluationStats{}, err
+	}
 	if topology == nil || len(input) == 0 {
 		return Result{RulesVersion: rules.Version, MinimumTraversalMeters: rules.MinTraversalLengthMeters}, OSMEvaluationStats{}, nil
 	}
 	inputCount := len(input)
 	input = SampleGeographicObservations(input, options.Sampling, rules)
+	if err := ctx.Err(); err != nil {
+		return Result{}, OSMEvaluationStats{}, err
+	}
 	if options.MaxCandidatesPerObservation < 1 || options.MaxExpansionLayers < 0 ||
 		options.MaxGraphNodes < 1 || options.MaxGraphEdges < 1 || !options.RoadGeometry.valid() {
 		return Result{}, OSMEvaluationStats{}, fmt.Errorf("invalid OSM evaluation bounds")
@@ -83,11 +99,19 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	policy := experimentalPathPolicy(options.MovementMode)
 	stats := OSMEvaluationStats{InputObservationCount: inputCount, SampledObservationCount: len(input)}
 	for i := range input {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, stats, err
+			}
+		}
 		observations[i] = Observation{input[i].Sequence, localPoint(origin, input[i].Longitude, input[i].Latitude), input[i].Time,
 			input[i].AccuracyMeters, input[i].HeadingDegrees, input[i].HeadingAccuracy}
 	}
 
 	for batchStart := 0; batchStart < len(input); batchStart += 256 {
+		if err := ctx.Err(); err != nil {
+			return Result{}, stats, err
+		}
 		batchEnd := min(len(input), batchStart+256)
 		query := make([]osm.MatcherObservation, batchEnd-batchStart)
 		for i := batchStart; i < batchEnd; i++ {
@@ -110,10 +134,21 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 			return Result{}, stats, err
 		}
 		stats.CandidateCount += len(candidates)
-		preferred, sidewalkSupport, suppressed := attributionCandidates(options.MovementMode, policy, candidates, options.RoadGeometry)
-		preferred = limitAttributionCandidates(preferred, sidewalkSupport, options.MaxCandidatesPerObservation)
+		preferred, sidewalkSupport, suppressed, err := attributionCandidatesContext(ctx, options.MovementMode, policy, candidates, options.RoadGeometry)
+		if err != nil {
+			return Result{}, stats, err
+		}
+		preferred, err = limitAttributionCandidatesContext(ctx, preferred, sidewalkSupport, options.MaxCandidatesPerObservation)
+		if err != nil {
+			return Result{}, stats, err
+		}
 		stats.SuppressedPedestrianCandidates += suppressed
-		for _, candidate := range preferred {
+		for i, candidate := range preferred {
+			if i&127 == 0 {
+				if err := ctx.Err(); err != nil {
+					return Result{}, stats, err
+				}
+			}
 			observationIndex := batchStart + candidate.ObservationIndex
 			if observationIndex < batchStart || observationIndex >= batchEnd {
 				return Result{}, stats, fmt.Errorf("OSM candidate returned an invalid observation index")
@@ -170,7 +205,9 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	if err := expandOSMGraph(ctx, topology, physical, policy, options, rules.MaxNetworkDistanceMeters, &stats); err != nil {
 		return Result{}, stats, err
 	}
-	applyDeadEndEndpointAllowance(options.MovementMode, supplied, physical, options.RoadGeometry)
+	if err := applyDeadEndEndpointAllowanceContext(ctx, options.MovementMode, supplied, physical, options.RoadGeometry); err != nil {
+		return Result{}, stats, err
+	}
 	graph := Graph{Segments: make([]DirectedSegment, 0, len(physical)*2)}
 	if options.MovementMode == MovementFoot || options.MovementMode == MovementBicycle {
 		graph.MaxContinuityConnectorMeters = maxContinuityConnectorMeters
@@ -180,10 +217,20 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	}
 	ids := make([]uuid.UUID, 0, len(physical))
 	for id := range physical {
+		if len(ids)&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, stats, err
+			}
+		}
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
-	for _, id := range ids {
+	for i, id := range ids {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Result{}, stats, err
+			}
+		}
 		segment := physical[id]
 		forward, reverse := policy.directions(segment.tags, segment.motorForward, segment.motorReverse)
 		if forward {
@@ -193,15 +240,28 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 			graph.Segments = append(graph.Segments, segment.directed(origin, false))
 		}
 	}
-	return Match(observations, supplied, graph, rules), stats, nil
+	result, err := MatchContext(ctx, observations, supplied, graph, rules)
+	return result, stats, err
 }
 
 func applyDeadEndEndpointAllowance(mode MovementMode, candidates [][]Candidate, physical map[uuid.UUID]physicalSegment, rules RoadGeometryRules) {
+	_ = applyDeadEndEndpointAllowanceContext(context.Background(), mode, candidates, physical, rules)
+}
+
+func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode, candidates [][]Candidate, physical map[uuid.UUID]physicalSegment, rules RoadGeometryRules) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if (mode != MovementFoot && mode != MovementBicycle) || rules.DeadEndEndpointAllowanceMeters <= 0 {
-		return
+		return nil
 	}
 	roadDegrees := make(map[uuid.UUID]int)
+	var checks uint
+	g := compiledGraph{ctx: ctx}
 	for _, segment := range physical {
+		if g.canceled(&checks) {
+			return ctx.Err()
+		}
 		if !drivableRoad(segment.highway, decodeTags(segment.tags)) {
 			continue
 		}
@@ -209,7 +269,13 @@ func applyDeadEndEndpointAllowance(mode MovementMode, candidates [][]Candidate, 
 		roadDegrees[segment.endNode]++
 	}
 	for observationIndex := range candidates {
+		if g.canceled(&checks) {
+			return ctx.Err()
+		}
 		for candidateIndex := range candidates[observationIndex] {
+			if g.canceled(&checks) {
+				return ctx.Err()
+			}
 			candidate := &candidates[observationIndex][candidateIndex]
 			physicalID, err := uuid.Parse(candidate.PhysicalGroupID)
 			if err != nil {
@@ -230,6 +296,7 @@ func applyDeadEndEndpointAllowance(mode MovementMode, candidates [][]Candidate, 
 			}
 		}
 	}
+	return ctx.Err()
 }
 
 func candidateContinuityClass(mode MovementMode, candidate osm.MatcherCandidate) (string, float64) {
@@ -263,6 +330,14 @@ func candidatePathSwitchCost(mode MovementMode, candidate osm.MatcherCandidate) 
 }
 
 func limitAttributionCandidates(candidates []osm.MatcherCandidate, sidewalkSupport map[string]float64, limit int) []osm.MatcherCandidate {
+	result, _ := limitAttributionCandidatesContext(context.Background(), candidates, sidewalkSupport, limit)
+	return result
+}
+
+func limitAttributionCandidatesContext(ctx context.Context, candidates []osm.MatcherCandidate, sidewalkSupport map[string]float64, limit int) ([]osm.MatcherCandidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	candidates = append([]osm.MatcherCandidate(nil), candidates...)
 	sort.SliceStable(candidates, func(i, j int) bool {
 		first, firstSupported := sidewalkSupport[roadSupportKey(candidates[i])]
@@ -277,22 +352,40 @@ func limitAttributionCandidates(candidates []osm.MatcherCandidate, sidewalkSuppo
 	})
 	counts := make(map[int]int)
 	result := make([]osm.MatcherCandidate, 0, min(len(candidates), limit))
-	for _, candidate := range candidates {
+	for i, candidate := range candidates {
+		if i&127 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if counts[candidate.ObservationIndex] >= limit {
 			continue
 		}
 		counts[candidate.ObservationIndex]++
 		result = append(result, candidate)
 	}
-	return result
+	return result, ctx.Err()
 }
 
 func attributionCandidates(mode MovementMode, policy pathPolicy, candidates []osm.MatcherCandidate, geometry RoadGeometryRules) ([]osm.MatcherCandidate, map[string]float64, int) {
+	result, support, suppressed, _ := attributionCandidatesContext(context.Background(), mode, policy, candidates, geometry)
+	return result, support, suppressed
+}
+
+func attributionCandidatesContext(ctx context.Context, mode MovementMode, policy pathPolicy, candidates []osm.MatcherCandidate, geometry RoadGeometryRules) ([]osm.MatcherCandidate, map[string]float64, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+	var checks uint
+	g := compiledGraph{ctx: ctx}
 	roadNearby := make(map[int]bool)
 	sidewalkSupport := make(map[string]float64)
 	nearestCrossing := make(map[int]osm.MatcherCandidate)
 	if mode == MovementFoot || mode == MovementBicycle {
 		for _, candidate := range candidates {
+			if g.canceled(&checks) {
+				return nil, nil, 0, ctx.Err()
+			}
 			if candidate.DistanceMeters <= footRoadAttributionDistanceMeters && drivableRoad(candidate.Highway, decodeTags(candidate.Tags)) && policy.eligible(candidate.Highway, candidate.Tags) {
 				roadNearby[candidate.ObservationIndex] = true
 			}
@@ -304,10 +397,16 @@ func attributionCandidates(mode MovementMode, policy pathPolicy, candidates []os
 			}
 		}
 		for _, road := range candidates {
+			if g.canceled(&checks) {
+				return nil, nil, 0, ctx.Err()
+			}
 			if !drivableRoad(road.Highway, decodeTags(road.Tags)) || !policy.eligible(road.Highway, road.Tags) || road.DistanceMeters > footRoadDriftSearchRadiusMeters {
 				continue
 			}
 			for _, sidewalk := range candidates {
+				if g.canceled(&checks) {
+					return nil, nil, 0, ctx.Err()
+				}
 				if sidewalk.ObservationIndex != road.ObservationIndex || sidewalk.DistanceMeters > footRoadCandidateSearchRadiusMeters ||
 					!sidewalkRoadSupport(sidewalk) || !parallelTangents(road.TangentDegrees, sidewalk.TangentDegrees, 25) ||
 					road.DistanceMeters > sidewalk.DistanceMeters+roadAttributionOffset(mode, road.Highway, road.Tags, geometry)+5 {
@@ -329,6 +428,9 @@ func attributionCandidates(mode MovementMode, policy pathPolicy, candidates []os
 	result := make([]osm.MatcherCandidate, 0, len(candidates))
 	suppressed := 0
 	for _, candidate := range candidates {
+		if g.canceled(&checks) {
+			return nil, nil, 0, ctx.Err()
+		}
 		if !policy.eligible(candidate.Highway, candidate.Tags) {
 			if (mode == MovementFoot || mode == MovementBicycle) && pedestrianRoadAccessory(candidate.Highway, decodeTags(candidate.Tags)) {
 				suppressed++
@@ -346,7 +448,7 @@ func attributionCandidates(mode MovementMode, policy pathPolicy, candidates []os
 		}
 		result = append(result, candidate)
 	}
-	return result, sidewalkSupport, suppressed
+	return result, sidewalkSupport, suppressed, ctx.Err()
 }
 
 func independentPedestrianPath(candidate osm.MatcherCandidate) bool {
@@ -479,9 +581,17 @@ func (segment physicalSegment) directed(origin GeographicObservation, forward bo
 }
 
 func expandOSMGraph(ctx context.Context, topology osmTopology, segments map[uuid.UUID]physicalSegment, policy pathPolicy, options OSMEvaluationOptions, maxDistance float64, stats *OSMEvaluationStats) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var checks uint
+	g := compiledGraph{ctx: ctx}
 	bestDistance := make(map[uuid.UUID]float64)
 	frontier := make([]uuid.UUID, 0, len(segments)*2)
 	for _, segment := range segments {
+		if g.canceled(&checks) {
+			return ctx.Err()
+		}
 		for _, node := range []uuid.UUID{segment.startNode, segment.endNode} {
 			if _, exists := bestDistance[node]; !exists {
 				bestDistance[node] = 0
@@ -490,22 +600,34 @@ func expandOSMGraph(ctx context.Context, topology osmTopology, segments map[uuid
 		}
 	}
 	for layer := 0; layer < options.MaxExpansionLayers && len(frontier) > 0; layer++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if len(bestDistance) > options.MaxGraphNodes {
-			return fmt.Errorf("OSM evaluation graph node bound exceeded")
+			return &OSMEvaluationLimitError{Field: "graph node", Limit: options.MaxGraphNodes}
 		}
 		sort.Slice(frontier, func(i, j int) bool { return frontier[i].String() < frontier[j].String() })
 		next := make([]uuid.UUID, 0)
 		for start := 0; start < len(frontier); start += 256 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			end := min(len(frontier), start+256)
 			remaining := options.MaxGraphEdges - len(segments)
 			if remaining < 1 {
-				return fmt.Errorf("OSM evaluation graph edge bound exceeded")
+				return &OSMEvaluationLimitError{Field: "graph edge", Limit: options.MaxGraphEdges}
 			}
 			edges, err := topology.IncidentEdges(ctx, frontier[start:end], remaining)
 			if err != nil {
 				return err
 			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			for _, edge := range edges {
+				if g.canceled(&checks) {
+					return ctx.Err()
+				}
 				segment := physicalFromEdge(edge)
 				if !policy.transitionEligible(segment.highway, segment.tags) {
 					continue
@@ -537,14 +659,14 @@ func expandOSMGraph(ctx context.Context, topology osmTopology, segments map[uuid
 		stats.ExpansionLayers = layer + 1
 		frontier = next
 		if len(segments) > options.MaxGraphEdges {
-			return fmt.Errorf("OSM evaluation graph edge bound exceeded")
+			return &OSMEvaluationLimitError{Field: "graph edge", Limit: options.MaxGraphEdges}
 		}
 	}
 	if len(frontier) > 0 {
-		return fmt.Errorf("OSM evaluation graph layer bound exceeded")
+		return &OSMEvaluationLimitError{Field: "graph layer", Limit: options.MaxExpansionLayers}
 	}
 	stats.GraphNodeCount, stats.GraphEdgeCount = len(bestDistance), len(segments)
-	return nil
+	return ctx.Err()
 }
 
 func directedID(id uuid.UUID, forward bool) string {

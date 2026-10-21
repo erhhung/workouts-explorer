@@ -86,17 +86,36 @@ Each user owns one personal workout account. Users cannot access another account
 
 - Type-agnostic source CRUD through authenticated REST APIs
 - `health-auto-export-local` source for local or NFS-mounted archives
-- `health-auto-export-icloud` source using an externally configured rclone session
+- `health-auto-export-icloud` source using an externally authenticated ready session and a job-scoped native rclone 1.75.2 CLI; implementation/synthetic verification ready for owner review
 - Per-source `autoSyncEnabled` behavior
 - High-priority asynchronous connection checks
-- Scheduled incremental sync of new or changed files
+- Scheduled incremental sync of new or changed files, default daily with an operator-configurable cadence independent of UI polling
 - Manual incremental or bounded historical sync
 - Parent ingest jobs with one child per selected source
 - Server-side deduplication of equivalent active jobs
-- File-at-a-time staging and guaranteed cleanup
+- File-at-a-time private staging with cleanup-gated terminal transitions, bounded retries and pod-scoped crash recovery
 - Idempotent workout upsert using source and provider workout ID
 - Complete, sanitized import provenance
 - Retry, cancellation, polling, notifications, and redacted diagnostic logs
+
+The 10/11/2026 M8 decisions accept remote ID/size/modification-time incremental
+skipping rather than downloading unchanged files to hash them. A content overwrite
+preserving all metadata is undetectable; bounded Manual Sync forces the selected
+dates to reprocess. Sync performs one application discovery, not necessarily one
+native listing or HTTP request. iCloud uses externally completed Apple 2FA/approval,
+full cookies and a trust token; no host config is automatically read/uploaded.
+Only version, path and optional client identity are returned, never Apple ID or
+masked credentials. See [iCloud setup](icloud-source-setup.md).
+
+Deduplication is source-scoped: importing identical exports through separate
+local and iCloud sources creates separate workouts. Transport changes never
+silently migrate or purge an existing archive. M8 implementation and synthetic
+verification are ready for owner review as of 10/12/2026; its completion checkbox
+remains unchecked pending owner acceptance. [Verification results](implementation-plan.md#verification-results-10122026)
+distinguish passing M8 PostGIS suites from ordinary checks with database skips
+and three reproduced baseline database failures. No live-cloud or production
+validation is claimed. Optional owner-operated cloud checks and publication/
+redeployment require separate authorization, not further implementation work.
 
 ### Workout data
 

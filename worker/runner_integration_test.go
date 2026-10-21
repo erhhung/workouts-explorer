@@ -233,9 +233,9 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		}
 		foreign := job
 		foreign.accountID = uuid.New()
-		finished, updated, err := runner.complete(ctx, foreign, connectedResult())
-		if err != nil || finished || updated {
-			t.Fatalf("finished=%t updated=%t err=%v", finished, updated, err)
+		finished, err := runner.complete(ctx, foreign, connectedResult())
+		if err != nil || finished {
+			t.Fatalf("finished=%t err=%v", finished, err)
 		}
 		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "running", 1)
 		if _, err := runner.execute(ctx, job); err != nil {

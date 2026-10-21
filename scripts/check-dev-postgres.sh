@@ -36,7 +36,7 @@ require_manifest '^    GRANT workouts_security_owner TO workouts_migration WITH 
 require_manifest '^        name: data$' 'Development PostgreSQL volume claim template must be named data'
 require_manifest '^          - ReadWriteOnce$' 'Development PostgreSQL PVC must use ReadWriteOnce'
 require_manifest '^        storageClassName: longhorn$' 'Development PostgreSQL PVC must use Longhorn'
-require_manifest '^            storage: 5Gi$' 'Development PostgreSQL PVC must request 5Gi'
+require_manifest '^            storage: 10Gi$' 'Development PostgreSQL PVC must request 10Gi'
 require_manifest '^              mountPath: /var/lib/postgresql$' 'PostgreSQL 18 data must be mounted at /var/lib/postgresql'
 
 if grep -Eq '^kind: Deployment$|emptyDir:' "$manifest"; then

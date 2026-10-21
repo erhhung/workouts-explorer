@@ -69,7 +69,7 @@ func TestMovementMode(t *testing.T) {
 func TestEvaluateEmptyRouteReportsUnavailableRegions(t *testing.T) {
 	want := osm.MatcherUnavailableRegion{RegionID: "geofabrik:new-york", DisplayName: "New York"}
 	result, err := Evaluate(context.Background(), emptySnapshot{unavailable: []osm.MatcherUnavailableRegion{want}}, nil, Config{
-		Rules: coverage.ExperimentalRules(), Sampling: coverage.ExperimentalSamplingRules(), Limits: DiagnosticLimits(),
+		Rules: coverage.ExperimentalRules(), Sampling: coverage.ExperimentalSamplingRules(), Limits: DefaultLimits(),
 	})
 	if err != nil {
 		t.Fatal(err)

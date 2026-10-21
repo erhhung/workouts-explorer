@@ -17,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/erhhung/workouts-explorer/internal/healthautoexport"
+	"github.com/erhhung/workouts-explorer/internal/rclonesource"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/erhhung/workouts-explorer/internal/workouttimezone"
@@ -47,22 +49,26 @@ type ingestFailure struct {
 	summary string
 }
 
+func (f *ingestFailure) Error() string { return f.code + ": " + f.summary }
+
 type ingestResults struct {
-	FilesProcessed    int      `json:"files_processed"`
-	WorkoutsProcessed int      `json:"workouts_processed"`
-	WorkoutsIngested  int      `json:"workouts_ingested"`
-	FailedProcessing  []string `json:"failed_processing"`
-	filesDiscovered   int
-	filesSkipped      int
-	filesSucceeded    int
-	filesFailed       int
-	workoutsCreated   int
-	workoutsUpdated   int
-	workoutsUnchanged int
+	FilesProcessed           int      `json:"files_processed"`
+	WorkoutsProcessed        int      `json:"workouts_processed"`
+	WorkoutsIngested         int      `json:"workouts_ingested"`
+	FailedProcessing         []string `json:"failed_processing"`
+	filesDiscovered          int
+	filesSkipped             int
+	filesSucceeded           int
+	filesFailed              int
+	workoutsCreated          int
+	workoutsUpdated          int
+	workoutsUnchanged        int
+	workoutsCreatedWithRoute *int
+	workoutsUpdatedWithRoute *int
 }
 
 func newIngestResults() ingestResults {
-	return ingestResults{FailedProcessing: make([]string, 0)}
+	return ingestResults{FailedProcessing: make([]string, 0), workoutsCreatedWithRoute: new(int), workoutsUpdatedWithRoute: new(int)}
 }
 
 func (r *ingestResults) recordFailedFile(name string) {
@@ -84,9 +90,11 @@ func (r ingestResults) hasPartialData() bool {
 }
 
 type persistedFileResult struct {
-	created   int
-	updated   int
-	unchanged int
+	created          int
+	updated          int
+	unchanged        int
+	createdWithRoute int
+	updatedWithRoute int
 }
 
 type sourceFile struct {
@@ -101,6 +109,8 @@ type sourceFile struct {
 	exportDate       time.Time
 	action           string
 	recoveredSkip    bool
+	remoteObject     *rclonesource.Object
+	observedIdentity string
 }
 
 type fileCheckpoint struct {
@@ -147,10 +157,13 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 	go r.runHeartbeat(opCtx, cancelOperation, job, heartbeatDone)
 
 	results := newIngestResults()
-	err := r.ingest(opCtx, job, &results)
+	err := ingestCommitError(r.ingest(opCtx, job, &results))
 	execution := executionResult{ingest: &results}
 	cancelOperation()
 	heartbeatErr := <-heartbeatDone
+	if errors.Is(err, errPrivateCleanup) {
+		return execution, err
+	}
 	if errors.Is(err, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
@@ -164,9 +177,12 @@ func (r *Runner) executeIngest(ctx context.Context, job claimedJob) (executionRe
 		return execution, errJobInterrupted
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
-		return execution, heartbeatErr
+		if !errors.Is(heartbeatErr, errCancellationRequested) {
+			return execution, heartbeatErr
+		}
+		err = errCancellationRequested
 	}
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+	if ctx.Err() != nil || (errors.Is(err, context.Canceled) && !errors.Is(heartbeatErr, errCancellationRequested)) {
 		if cause := context.Cause(ctx); cause != nil {
 			return execution, cause
 		}
@@ -225,11 +241,11 @@ func (r *Runner) finishCancellationPending(ctx context.Context, job claimedJob) 
 	return r.finishCancelled(ctx, job)
 }
 
-func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResults) error {
+func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResults) (err error) {
 	if job.paramsErr != nil {
 		return r.failIngest(ctx, job, ingestFailure{"ingest-parameters-invalid", "Ingest parameters were invalid."})
 	}
-	sourceID, envelope, cancellationPending, err := r.readSnapshot(ctx, job)
+	snapshot, cancellationPending, err := r.readSnapshot(ctx, job)
 	if err != nil {
 		return err
 	}
@@ -237,92 +253,105 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		_, err = r.finishCancelled(ctx, job)
 		return err
 	}
+	// A prior lease may have committed a file before transport cleanup or progress.
+	// Staging recovery precedes claims; replay durable work before touching source I/O.
+	if err := r.drainIngestCoverage(ctx, job, false); err != nil {
+		return err
+	}
 	r.recordDiagnosticsBestEffort(ctx, job, "ingest-started", map[string]any{"operation": "discover"})
 	plaintext, err := r.keys.Decrypt(sourcecrypto.Context{
 		Purpose: sourcecrypto.JobConfigSnapshot, AccountID: job.accountID, RecordID: job.id,
-	}, envelope)
+	}, snapshot.envelope)
 	if err != nil {
 		return r.failIngest(ctx, job, ingestFailure{"source-config-invalid", "Source configuration could not be read."})
 	}
-	config, canonical, err := sourceconfig.DecodeLocal(plaintext, r.localRoots)
+	canonical, err := sourceconfig.Canonicalize(snapshot.sourceType, plaintext, r.localRoots)
 	if err != nil || !bytes.Equal(plaintext, canonical) {
 		return r.failIngest(ctx, job, ingestFailure{"source-config-invalid", "Source configuration could not be read."})
 	}
-	directory, err := sourceconfig.OpenDirectory(config.Path, r.localRoots)
+	var files []sourceFile
+	var sourcePath string
+	var remote *rclonesource.Source
+	var original sourceconfig.ICloud
+	if snapshot.sourceType == sourceconfig.LocalType {
+		config, _, _ := sourceconfig.DecodeLocal(plaintext, r.localRoots)
+		sourcePath = config.Path
+		directory, openErr := sourceconfig.OpenDirectory(config.Path, r.localRoots)
+		if openErr != nil {
+			return r.failIngest(ctx, job, ingestFailure{"source-unavailable", "Source directory is not accessible."})
+		}
+		files, err = discoverSourceFiles(directory)
+		_ = directory.Close()
+		if err != nil {
+			recordDiscoveryFailure(results, err)
+			failure := ingestFailure{"source-unavailable", "Source directory could not be read."}
+			if errors.Is(err, errDiscoveryLimit) {
+				failure = ingestFailure{"source-directory-limit", "Source directory contains too many entries."}
+			}
+			return r.failIngest(ctx, job, failure)
+		}
+	} else {
+		original, _, _ = sourceconfig.DecodeICloud(plaintext)
+		remote, err = rclonesource.New(ctx, r.rcloneBinary, r.stagingRoot, original)
+		if err != nil {
+			err = r.icloudConstructorError(ctx, remote, err)
+			if errors.Is(err, errPrivateCleanup) || ctx.Err() != nil {
+				return err
+			}
+			remote = nil
+		} else {
+			defer func() {
+				if r.closeICloudSource(remote) != nil {
+					err = privateCleanupError(ctx)
+				}
+			}()
+			var objects []rclonesource.Object
+			objects, err = remote.List(ctx)
+			files = remoteSourceFiles(objects)
+		}
+		if err != nil && ctx.Err() == nil {
+			failure := remoteFailure(err)
+			err = &failure
+		}
+	}
+	if err == nil {
+		err = r.ingestFiles(ctx, job, snapshot.sourceID, sourcePath, remote, files, results)
+	}
+	if remote != nil {
+		updated := remote.Config()
+		if r.closeICloudSource(remote) != nil {
+			return privateCleanupError(ctx)
+		}
+		if ctx.Err() == nil && !errors.Is(err, errPrivateCleanup) && !isRemoteAuthFailure(err) {
+			if refreshErr := r.refreshICloudCredentials(ctx, job, snapshot, original, updated); refreshErr != nil {
+				return refreshErr
+			}
+		}
+	}
+	if errors.Is(err, errPrivateCleanup) {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var failure *ingestFailure
+	if errors.As(err, &failure) {
+		if isRemoteAuthFailure(err) {
+			if failErr := r.failSourceConnection(ctx, job, snapshot, *failure); failErr != nil {
+				return failErr
+			}
+		}
+		return r.failIngest(ctx, job, *failure)
+	}
 	if err != nil {
-		return r.failIngest(ctx, job, ingestFailure{"source-unavailable", "Source directory is not accessible."})
-	}
-	files, err := discoverSourceFiles(directory)
-	_ = directory.Close()
-	if err != nil {
-		recordDiscoveryFailure(results, err)
-		failure := ingestFailure{"source-unavailable", "Source directory could not be read."}
-		if errors.Is(err, errDiscoveryLimit) {
-			failure = ingestFailure{"source-directory-limit", "Source directory contains too many entries."}
-		}
-		return r.failIngest(ctx, job, failure)
-	}
-	files = filterSourceFiles(files, job.startDate, job.endDate)
-	if err := r.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
-		return err
-	}
-	manifestState, err := r.recordFileManifest(ctx, job, files)
-	if err != nil {
-		return err
-	}
-	if manifestState == "mismatch" {
-		return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
-	}
-	if err := r.loadIngestProgress(ctx, job, results); err != nil {
-		return err
-	}
-	if manifestState == "created" {
-		if results.filesDiscovered != 0 || results.filesSkipped != 0 || results.filesSucceeded != 0 || results.filesFailed != 0 {
-			return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
-		}
-	}
-	if results.filesDiscovered == 0 {
-		results.filesDiscovered = len(files)
-	}
-	markRecoveredSkips(files, results.filesSkipped)
-	if results.filesDiscovered != len(files) {
-		return r.failIngest(ctx, job, ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."})
-	}
-	if err := r.recordIngestProgress(ctx, job, *results); err != nil {
-		return err
-	}
-	r.recordDiagnosticsBestEffort(ctx, job, "ingest-progress", map[string]any{"current": 0, "total": len(files)})
-
-	for _, file := range files {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		outcome := r.processSourceFile(ctx, job, sourceID, config.Path, file)
-		if outcome.fatal != nil {
-			return outcome.fatal
-		}
-		if outcome.alreadyCounted {
-			continue
-		}
-		results.applyFileOutcome(file.name, outcome)
-		if err := r.recordIngestProgress(ctx, job, *results); err != nil {
-			return err
-		}
-	}
-	if err := r.repairCoverageReadiness(ctx, job); err != nil {
-		return fmt.Errorf("repair workout coverage readiness: %w", err)
-	}
-	if err := r.reconcileAccountTimezones(ctx, job); err != nil {
 		return err
 	}
 	status := "succeeded"
-	var finalFailure *ingestFailure
 	if results.filesFailed > 0 {
 		status = "failed"
-		failure := ingestFailure{"source-file-invalid", "One or more source files could not be processed."}
-		finalFailure = &failure
+		failure = &ingestFailure{"source-file-invalid", "One or more source files could not be processed."}
 	}
-	finished, err := r.finishJob(ctx, job, status, finalFailure)
+	finished, err := r.finishJob(ctx, job, status, failure)
 	if err != nil {
 		return err
 	}
@@ -333,6 +362,74 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 			return nil
 		}
 		return errLeaseLost
+	}
+	return nil
+}
+
+// No terminal writes here: the caller must remove private transport files and
+// persist final cookies before clearing the immutable job snapshot.
+func (r *Runner) ingestFiles(ctx context.Context, job claimedJob, sourceID uuid.UUID, sourcePath string, remote *rclonesource.Source, files []sourceFile, results *ingestResults) error {
+	files = filterSourceFiles(files, job.startDate, job.endDate)
+	if err := r.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
+		return err
+	}
+	manifestState, err := r.recordFileManifest(ctx, job, files)
+	if err != nil {
+		return err
+	}
+	if manifestState == "mismatch" {
+		return &ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."}
+	}
+	if err := r.loadIngestProgress(ctx, job, results); err != nil {
+		return err
+	}
+	if manifestState == "created" {
+		if results.filesDiscovered != 0 || results.filesSkipped != 0 || results.filesSucceeded != 0 || results.filesFailed != 0 {
+			return &ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."}
+		}
+	}
+	if results.filesDiscovered == 0 {
+		results.filesDiscovered = len(files)
+	}
+	markRecoveredSkips(files, results.filesSkipped)
+	if results.filesDiscovered != len(files) {
+		return &ingestFailure{"source-files-changed", "Source files changed while ingest was recovering."}
+	}
+	if err := r.recordIngestProgress(ctx, job, *results); err != nil {
+		return err
+	}
+	r.recordDiagnosticsBestEffort(ctx, job, "ingest-progress", map[string]any{"current": 0, "total": len(files)})
+
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		outcome := r.processSourceFile(ctx, job, sourceID, sourcePath, file, remote)
+		if outcome.fatal != nil {
+			return outcome.fatal
+		}
+		// processSourceFile has returned, including transport and file-slot cleanup.
+		if err := r.drainIngestCoverage(ctx, job, false); err != nil {
+			return err
+		}
+		if outcome.alreadyCounted {
+			continue
+		}
+		results.applyFileOutcome(file.name, outcome)
+		if err := r.recordIngestProgress(ctx, job, *results); err != nil {
+			return err
+		}
+	}
+	// EOF does not make this source job or its root terminal. Only account
+	// recovery, after the terminal commit, may seal an underfull cohort.
+	if err := r.drainIngestCoverage(ctx, job, false); err != nil {
+		return err
+	}
+	if err := r.repairCoverageReadiness(ctx, job); err != nil {
+		return fmt.Errorf("repair workout coverage readiness: %w", err)
+	}
+	if err := r.reconcileAccountTimezones(ctx, job); err != nil {
+		return err
 	}
 	return nil
 }
@@ -359,6 +456,12 @@ func (r *ingestResults) applyFileOutcome(name string, outcome fileOutcome) {
 	r.workoutsCreated += outcome.workouts.created
 	r.workoutsUpdated += outcome.workouts.updated
 	r.workoutsUnchanged += outcome.workouts.unchanged
+	if r.workoutsCreatedWithRoute != nil {
+		*r.workoutsCreatedWithRoute += outcome.workouts.createdWithRoute
+	}
+	if r.workoutsUpdatedWithRoute != nil {
+		*r.workoutsUpdatedWithRoute += outcome.workouts.updatedWithRoute
+	}
 	r.syncTotals()
 }
 
@@ -369,7 +472,7 @@ func filterSourceFiles(files []sourceFile, start, end *time.Time) []sourceFile {
 	return slices.DeleteFunc(files, func(file sourceFile) bool { return file.exportDate.Before(*start) || file.exportDate.After(*end) })
 }
 
-func (r *Runner) processSourceFile(ctx context.Context, job claimedJob, sourceID uuid.UUID, sourcePath string, file sourceFile) fileOutcome {
+func (r *Runner) processSourceFile(ctx context.Context, job claimedJob, sourceID uuid.UUID, sourcePath string, file sourceFile, remote *rclonesource.Source) (outcome fileOutcome) {
 	if file.action == "skip" {
 		if file.recoveredSkip {
 			return fileOutcome{alreadyCounted: true}
@@ -407,17 +510,68 @@ func (r *Runner) processSourceFile(ctx context.Context, job claimedJob, sourceID
 	if err != nil {
 		return fileOutcome{fatal: err}
 	}
-	defer r.releaseFileSlot(job, slot)
-	directory, err := sourceconfig.OpenDirectory(sourcePath, r.localRoots)
-	if err != nil {
-		failure := ingestFailure{"source-unavailable", "Source directory is not accessible."}
-		if persistErr := r.persistFailedFile(ctx, job, checkpoint, failure); persistErr != nil {
-			return fileOutcome{fatal: persistErr}
+	releaseSlot := true
+	defer func() {
+		if releaseSlot {
+			r.releaseFileSlot(job, slot)
 		}
-		return fileOutcome{failed: true}
+	}()
+	var parsed parsedSourceFile
+	var failure *ingestFailure
+	if remote != nil {
+		// Installed before Download: even failed/cancelled downloads may retain
+		// plaintext. Confirm pinned-root cleanup before releasing the DB slot.
+		defer func() {
+			if remote.DiscardDownload() != nil {
+				r.stagingDirty.Store(true)
+				releaseSlot = r.closeICloudSource(remote) == nil
+				outcome = fileOutcome{fatal: privateCleanupError(ctx)}
+			}
+		}()
+		path, downloadErr := remote.Download(ctx, *file.remoteObject)
+		if downloadErr != nil {
+			if remote.DiscardDownload() != nil {
+				r.stagingDirty.Store(true)
+				releaseSlot = r.closeICloudSource(remote) == nil
+				return fileOutcome{fatal: privateCleanupError(ctx)}
+			}
+			var safe *rclonesource.Error
+			if errors.As(downloadErr, &safe) && safe.Code == "source-cleanup-failed" {
+				r.stagingDirty.Store(true)
+				return fileOutcome{fatal: privateCleanupError(ctx)}
+			}
+			if ctx.Err() != nil {
+				return fileOutcome{fatal: ctx.Err()}
+			}
+			if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
+				return fileOutcome{fatal: downloadErr}
+			}
+			failure := remoteFailure(downloadErr)
+			switch failure.code {
+			case "source-file-unavailable", "source-file-mutated", "source-file-invalid":
+				if err := r.persistFailedFile(ctx, job, checkpoint, failure); err != nil {
+					return fileOutcome{fatal: err}
+				}
+				return fileOutcome{failed: true}
+			}
+			return fileOutcome{fatal: &failure}
+		}
+		parsed, failure = readStagedSourceFile(ctx, path, file)
+	} else {
+		directory, err := sourceconfig.OpenDirectory(sourcePath, r.localRoots)
+		if err != nil {
+			failure := ingestFailure{"source-unavailable", "Source directory is not accessible."}
+			if persistErr := r.persistFailedFile(ctx, job, checkpoint, failure); persistErr != nil {
+				return fileOutcome{fatal: persistErr}
+			}
+			return fileOutcome{failed: true}
+		}
+		parsed, failure = readSourceFile(ctx, directory, file)
+		_ = directory.Close()
 	}
-	parsed, failure := readSourceFile(ctx, directory, file)
-	_ = directory.Close()
+	if ctx.Err() != nil {
+		return fileOutcome{fatal: ctx.Err()}
+	}
 	if failure != nil {
 		if err := r.persistFailedFile(ctx, job, checkpoint, *failure); err != nil {
 			return fileOutcome{fatal: err}
@@ -443,68 +597,79 @@ func markRecoveredSkips(files []sourceFile, recorded int) {
 	}
 }
 
-func (r *Runner) resolveCandidateActions(ctx context.Context, job claimedJob, sourceID uuid.UUID, files []sourceFile) error {
+func (r *Runner) resolveCandidateActions(ctx context.Context, job claimedJob, _ uuid.UUID, files []sourceFile) error {
 	for index := range files {
 		files[index].action = "process"
-		if job.mode != ingestIncremental {
-			continue
-		}
-		tx, err := beginAccount(ctx, r.db, job.accountID)
-		if err != nil {
-			return err
-		}
-		var state string
-		err = tx.QueryRow(ctx, `SELECT state FROM app.source_files WHERE job_id=$1 AND relative_name=$2`,
-			job.id, files[index].name).Scan(&state)
-		if err == nil && (state == "succeeded" || state == "failed") {
-			if err := tx.Commit(ctx); err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(ctx)
-			return err
-		}
-		var identity string
-		err = tx.QueryRow(ctx, `SELECT observed_identity FROM app.source_objects
-			WHERE source_id=$1 AND relative_name=$2 AND successful_checksum IS NOT NULL`, sourceID, files[index].name).Scan(&identity)
-		if err == nil && identity == sourceIdentity(files[index]) {
-			files[index].action = "skip"
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(ctx)
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return err
-		}
 	}
-	return nil
+	encoded, err := encodeManifestCandidates(files)
+	if err != nil {
+		return err
+	}
+	tx, _, err := r.beginIngestWrite(ctx, job)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT relative_name,action FROM app.read_ingest_candidate_actions($1,$2,$3,$4)`,
+		job.id, r.workerID, job.lease, string(encoded))
+	if err != nil {
+		return err
+	}
+	actions := make(map[string]string, len(files))
+	for rows.Next() {
+		var name, action string
+		if err := rows.Scan(&name, &action); err != nil {
+			rows.Close()
+			return err
+		}
+		if action != "process" && action != "skip" {
+			rows.Close()
+			return errors.New("invalid ingest candidate action")
+		}
+		actions[name] = action
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range files {
+		action, ok := actions[files[index].name]
+		if !ok {
+			return errLeaseLost
+		}
+		files[index].action = action
+	}
+	return tx.Commit(ctx)
 }
 
 type manifestCandidate struct {
-	Name        string `json:"name"`
-	ExportDate  string `json:"export_date"`
-	Size        int64  `json:"size"`
-	ModifiedSec int64  `json:"modified_sec"`
-	ModifiedNS  int64  `json:"modified_ns"`
-	Device      uint64 `json:"device"`
-	Inode       uint64 `json:"inode"`
-	CTimeSec    int64  `json:"ctime_sec"`
-	CTimeNS     int64  `json:"ctime_ns"`
-	Action      string `json:"action"`
+	Name             string `json:"name"`
+	ExportDate       string `json:"export_date"`
+	Size             int64  `json:"size"`
+	ModifiedSec      int64  `json:"modified_sec"`
+	ModifiedNS       int64  `json:"modified_ns"`
+	Device           uint64 `json:"device"`
+	Inode            uint64 `json:"inode"`
+	CTimeSec         int64  `json:"ctime_sec"`
+	CTimeNS          int64  `json:"ctime_ns"`
+	Action           string `json:"action"`
+	ObservedIdentity string `json:"observed_identity,omitempty"`
 }
 
-func (r *Runner) recordFileManifest(ctx context.Context, job claimedJob, files []sourceFile) (string, error) {
+func encodeManifestCandidates(files []sourceFile) ([]byte, error) {
 	manifest := make([]manifestCandidate, len(files))
 	for index, file := range files {
 		manifest[index] = manifestCandidate{
 			Name: file.name, ExportDate: file.exportDate.Format(time.DateOnly), Size: file.size,
 			ModifiedSec: file.observedModified.Unix(), ModifiedNS: int64(file.observedModified.Nanosecond()),
 			Device: file.device, Inode: file.inode, CTimeSec: file.ctimeSec, CTimeNS: file.ctimeNS, Action: file.action,
+			ObservedIdentity: file.observedIdentity,
 		}
 	}
-	encoded, err := json.Marshal(manifest)
+	return json.Marshal(manifest)
+}
+
+func (r *Runner) recordFileManifest(ctx context.Context, job claimedJob, files []sourceFile) (string, error) {
+	encoded, err := encodeManifestCandidates(files)
 	if err != nil {
 		return "", err
 	}
@@ -528,6 +693,9 @@ func (r *Runner) recordFileManifest(ctx context.Context, job claimedJob, files [
 }
 
 func sourceIdentity(file sourceFile) string {
+	if file.observedIdentity != "" {
+		return file.observedIdentity
+	}
 	return fmt.Sprintf("v1:%d:%d:%d:%d:%d:%d:%d", file.size, file.observedModified.Unix(), file.observedModified.Nanosecond(), file.device, file.inode, file.ctimeSec, file.ctimeNS)
 }
 
@@ -594,14 +762,20 @@ func (r *Runner) loadIngestProgress(ctx context.Context, job claimedJob, results
 		return err
 	}
 	var succeeded, failed, created, updated, unchanged int
+	var knownCreated, knownUpdated, routedCreated, routedUpdated int
 	if err := tx.QueryRow(ctx, `SELECT
 		count(DISTINCT file.id) FILTER (WHERE file.state='succeeded'),
 		count(DISTINCT file.id) FILTER (WHERE file.state='failed'),
 		count(event.id) FILTER (WHERE event.kind='created'),
-		count(event.id) FILTER (WHERE event.kind='updated'),
-		count(event.id) FILTER (WHERE event.kind='matched_unchanged')
+		count(event.id) FILTER (WHERE event.kind IN ('updated','adopted')),
+		count(event.id) FILTER (WHERE event.kind IN ('matched_unchanged','skipped_live_owner')),
+		count(event.id) FILTER (WHERE event.kind='created' AND event.has_route IS NOT NULL),
+		count(event.id) FILTER (WHERE event.kind IN ('updated','adopted') AND event.has_route IS NOT NULL),
+		count(event.id) FILTER (WHERE event.kind='created' AND event.has_route),
+		count(event.id) FILTER (WHERE event.kind IN ('updated','adopted') AND event.has_route)
 		FROM app.source_files file LEFT JOIN app.workout_import_events event ON event.source_file_id=file.id
-		WHERE file.job_id=$1`, job.id).Scan(&succeeded, &failed, &created, &updated, &unchanged); err != nil {
+		WHERE file.job_id=$1`, job.id).Scan(&succeeded, &failed, &created, &updated, &unchanged,
+		&knownCreated, &knownUpdated, &routedCreated, &routedUpdated); err != nil {
 		return err
 	}
 	results.filesSucceeded = max(results.filesSucceeded, succeeded)
@@ -609,6 +783,14 @@ func (r *Runner) loadIngestProgress(ctx context.Context, job claimedJob, results
 	results.workoutsCreated = max(results.workoutsCreated, created)
 	results.workoutsUpdated = max(results.workoutsUpdated, updated)
 	results.workoutsUnchanged = max(results.workoutsUnchanged, unchanged)
+	// Retained totals can outlive their events; gaps are unknown, not zero routes.
+	results.workoutsCreatedWithRoute, results.workoutsUpdatedWithRoute = nil, nil
+	if results.workoutsCreated == knownCreated {
+		results.workoutsCreatedWithRoute = &routedCreated
+	}
+	if results.workoutsUpdated == knownUpdated {
+		results.workoutsUpdatedWithRoute = &routedUpdated
+	}
 	if results.filesFailed > 0 && len(results.FailedProcessing) == 0 {
 		rows, err := tx.Query(ctx, `SELECT relative_name FROM app.source_files
 			WHERE job_id=$1 AND state='failed' ORDER BY relative_name LIMIT $2`, job.id, maxFailedProcessing)
@@ -640,9 +822,10 @@ func (r *Runner) recordIngestProgress(ctx context.Context, job claimedJob, resul
 	}
 	defer tx.Rollback(ctx)
 	var recorded bool
-	err = tx.QueryRow(ctx, `SELECT app.record_ingest_progress($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0)`,
+	err = tx.QueryRow(ctx, `SELECT app.record_ingest_progress($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12)`,
 		job.id, r.workerID, job.lease, results.filesDiscovered, results.filesSkipped, results.filesSucceeded,
-		results.filesFailed, results.workoutsCreated, results.workoutsUpdated, results.workoutsUnchanged).Scan(&recorded)
+		results.filesFailed, results.workoutsCreated, results.workoutsUpdated, results.workoutsUnchanged,
+		results.workoutsCreatedWithRoute, results.workoutsUpdatedWithRoute).Scan(&recorded)
 	if err != nil {
 		return err
 	}
@@ -853,6 +1036,14 @@ func checkpointMetadataFailure(size int64, modified *time.Time, state string, fi
 }
 
 func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoint fileCheckpoint, file parsedSourceFile) (persistedFileResult, error) {
+	zones := make([]workouttimezone.Resolution, len(file.document.Workouts))
+	for i, workout := range file.document.Workouts {
+		zone, err := workouttimezone.ResolveRoute(ctx, r.osmDB, workout.Start, &workout.StartOffsetMins, workout.Route)
+		if err != nil {
+			return persistedFileResult{}, fmt.Errorf("resolve workout timezone: %w", database.RedactOSMConnectionError(err))
+		}
+		zones[i] = zone
+	}
 	tx, sourceID, err := r.beginIngestWrite(ctx, job)
 	if err != nil {
 		return persistedFileResult{}, err
@@ -868,17 +1059,23 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 		return persistedFileResult{}, errLeaseLost
 	}
 	result := persistedFileResult{}
-	for _, workout := range file.document.Workouts {
-		kind, err := r.persistWorkout(ctx, tx, job, sourceID, checkpoint.id, workout)
+	for i, workout := range file.document.Workouts {
+		kind, err := r.persistWorkout(ctx, tx, job, sourceID, checkpoint.id, workout, zones[i])
 		if err != nil {
 			return persistedFileResult{}, err
 		}
 		switch kind {
 		case "created":
 			result.created++
-		case "updated":
+			if len(workout.Route) > 0 {
+				result.createdWithRoute++
+			}
+		case "updated", "adopted":
 			result.updated++
-		case "matched_unchanged":
+			if len(workout.Route) > 0 {
+				result.updatedWithRoute++
+			}
+		case "matched_unchanged", "skipped_live_owner":
 			result.unchanged++
 		}
 	}
@@ -901,7 +1098,7 @@ func (r *Runner) persistSourceFile(ctx context.Context, job claimedJob, checkpoi
 	return result, nil
 }
 
-func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fileID uuid.UUID, workout healthautoexport.Workout) (string, error) {
+func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, sourceID, fileID uuid.UUID, workout healthautoexport.Workout, zone workouttimezone.Resolution) (string, error) {
 	var providerID *string
 	var fallbackVersion *string
 	var fallbackHash []byte
@@ -911,110 +1108,113 @@ func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, 
 		version := healthautoexport.FallbackFingerprintVersion
 		fallbackVersion, fallbackHash = &version, workout.FallbackSHA256[:]
 	}
-	var suppressed bool
-	if err := tx.QueryRow(ctx, `SELECT app.workout_deletion_suppressed($1,$2,$3,$4)`, sourceID, providerID, fallbackVersion, fallbackHash).Scan(&suppressed); err != nil {
-		return "", err
-	}
-	if suppressed {
-		return "suppressed", nil
-	}
-	zone, err := workouttimezone.ResolveRoute(ctx, r.osmDB, workout.Start, &workout.StartOffsetMins, workout.Route)
-	if err != nil {
-		return "", fmt.Errorf("resolve workout timezone: %w", err)
-	}
-	typeID := uuid.Must(uuid.NewV7())
-	displayLabel := healthautoexport.CanonicalActivityLabel(workout.ProviderLabel)
-	if err := tx.QueryRow(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
-		VALUES($1,$2,$3,$4) ON CONFLICT(account_id,type_key) DO UPDATE SET provider_label=EXCLUDED.provider_label
-		RETURNING id`, typeID, job.accountID, workout.TypeKey, displayLabel).Scan(&typeID); err != nil {
-		return "", err
-	}
 	var workoutID uuid.UUID
 	var priorHash []byte
-	err = nil
-	if workout.ProviderID != "" {
-		err = tx.QueryRow(ctx, `SELECT id,content_sha256 FROM app.workouts
-			WHERE source_id=$1 AND provider_id=$2 FOR UPDATE`, sourceID, workout.ProviderID).Scan(&workoutID, &priorHash)
-	} else {
-		err = tx.QueryRow(ctx, `SELECT id,content_sha256 FROM app.workouts WHERE source_id=$1
-			AND provider_id IS NULL AND fallback_fingerprint_version=$2 AND fallback_sha256=$3 FOR UPDATE`,
-			sourceID, healthautoexport.FallbackFingerprintVersion, workout.FallbackSHA256[:]).Scan(&workoutID, &priorHash)
+	var outcome string
+	if err := tx.QueryRow(ctx, `SELECT workout_id,prior_content_sha256,outcome
+		FROM app.resolve_ingest_workout_identity($1,$2,$3,$4,$5,$6,$7,$8)`,
+		job.id, r.workerID, job.lease, fileID, uuid.Must(uuid.NewV7()), providerID, fallbackVersion, fallbackHash).
+		Scan(&workoutID, &priorHash, &outcome); err != nil {
+		return "", err
 	}
-	kind := "created"
-	changed := true
-	if errors.Is(err, pgx.ErrNoRows) {
-		workoutID = uuid.Must(uuid.NewV7())
-		_, err = tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
+	if outcome == "suppressed" {
+		return "suppressed", nil
+	}
+	if outcome != "created" && outcome != "existing" && outcome != "adopted" && outcome != "skipped_live_owner" {
+		return "", errors.New("invalid ingest identity outcome")
+	}
+	kind := "skipped_live_owner"
+	if outcome != "skipped_live_owner" {
+		var err error
+		typeID := uuid.Must(uuid.NewV7())
+		displayLabel := healthautoexport.CanonicalActivityLabel(workout.ProviderLabel)
+		if err := tx.QueryRow(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label)
+		VALUES($1,$2,$3,$4) ON CONFLICT(account_id,type_key) DO UPDATE SET provider_label=EXCLUDED.provider_label
+		RETURNING id`, typeID, job.accountID, workout.TypeKey, displayLabel).Scan(&typeID); err != nil {
+			return "", err
+		}
+		kind = "created"
+		changed := true
+		if outcome == "created" {
+			_, err = tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,
 			provider_id,fallback_fingerprint_version,fallback_sha256,content_sha256,provider_label,started_at,ended_at,
 			start_offset_minutes,end_offset_minutes,local_start_date,timezone_name,timezone_source,timezone_dataset_release,
 			provider_duration,is_indoor,location)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::numeric,$20,$21)`, workoutID,
-			job.accountID, sourceID, fileID, typeID, providerID, fallbackVersion, fallbackHash, workout.ContentSHA256[:],
-			displayLabel, workout.Start, workout.End, workout.StartOffsetMins, workout.EndOffsetMins,
-			workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(), workout.IsIndoor, workout.Location)
-	} else if err == nil {
-		changed = !bytes.Equal(priorHash, workout.ContentSHA256[:])
-		if !changed {
-			kind = "matched_unchanged"
-			// The write capability follows source_file_id to this fenced job.
-			// Repair display without replacing provider content or derived state.
-			_, err = tx.Exec(ctx, `UPDATE app.workouts SET provider_label=$2,source_file_id=$3
-				WHERE id=$1 AND provider_label IS DISTINCT FROM $2`, workoutID, displayLabel, fileID)
+				job.accountID, sourceID, fileID, typeID, providerID, fallbackVersion, fallbackHash, workout.ContentSHA256[:],
+				displayLabel, workout.Start, workout.End, workout.StartOffsetMins, workout.EndOffsetMins,
+				workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(), workout.IsIndoor, workout.Location)
 		} else {
-			kind = "updated"
-			_, err = tx.Exec(ctx, `UPDATE app.workouts SET source_file_id=$2,workout_type_id=$3,content_sha256=$4,
+			changed = !bytes.Equal(priorHash, workout.ContentSHA256[:])
+			if !changed {
+				kind = "matched_unchanged"
+				// The write capability follows source_file_id to this fenced job.
+				// Repair display without replacing provider content or derived state.
+				_, err = tx.Exec(ctx, `UPDATE app.workouts SET provider_label=$2,source_file_id=$3,source_id=$4
+				WHERE id=$1 AND (provider_label IS DISTINCT FROM $2 OR source_id IS DISTINCT FROM $4)`,
+					workoutID, displayLabel, fileID, sourceID)
+			} else {
+				kind = "updated"
+				_, err = tx.Exec(ctx, `UPDATE app.workouts SET source_file_id=$2,workout_type_id=$3,content_sha256=$4,
 				provider_label=$5,started_at=$6,ended_at=$7,start_offset_minutes=$8,end_offset_minutes=$9,
 				local_start_date=$10,timezone_name=$11,timezone_source=$12,timezone_reference_workout_id=NULL,
-				timezone_dataset_release=$13,provider_duration=$14::numeric,is_indoor=$15,location=$16 WHERE id=$1`, workoutID,
-				fileID, typeID, workout.ContentSHA256[:], displayLabel, workout.Start, workout.End,
-				workout.StartOffsetMins, workout.EndOffsetMins, workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(),
-				workout.IsIndoor, workout.Location)
-		}
-	}
-	if err != nil {
-		return "", err
-	}
-	if changed {
-		if _, err = tx.Exec(ctx, `DELETE FROM app.workout_aggregates WHERE workout_id=$1`, workoutID); err != nil {
-			return "", err
-		}
-		if _, err = tx.Exec(ctx, `DELETE FROM app.workout_route_points WHERE workout_id=$1`, workoutID); err != nil {
-			return "", err
-		}
-		for _, aggregate := range workout.Aggregates {
-			if _, err = tx.Exec(ctx, `INSERT INTO app.workout_aggregates(account_id,workout_id,metric,value,unit,origin)
-				VALUES($1,$2,$3,$4::numeric,$5,$6)`, job.accountID, workoutID, aggregate.Key,
-				aggregate.Qty.String(), aggregate.Units, aggregate.Origin); err != nil {
-				return "", err
+				timezone_dataset_release=$13,provider_duration=$14::numeric,is_indoor=$15,location=$16,source_id=$17 WHERE id=$1`, workoutID,
+					fileID, typeID, workout.ContentSHA256[:], displayLabel, workout.Start, workout.End,
+					workout.StartOffsetMins, workout.EndOffsetMins, workout.LocalStartDate, zone.Name, zone.Source, zone.Release, workout.ProviderDuration.String(),
+					workout.IsIndoor, workout.Location, sourceID)
 			}
 		}
-		for _, point := range workout.Route {
-			if _, err = tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,
+		if err != nil {
+			return "", err
+		}
+		if changed {
+			if _, err = tx.Exec(ctx, `DELETE FROM app.workout_aggregates WHERE workout_id=$1`, workoutID); err != nil {
+				return "", err
+			}
+			if _, err = tx.Exec(ctx, `DELETE FROM app.workout_route_points WHERE workout_id=$1`, workoutID); err != nil {
+				return "", err
+			}
+			for _, aggregate := range workout.Aggregates {
+				if _, err = tx.Exec(ctx, `INSERT INTO app.workout_aggregates(account_id,workout_id,metric,value,unit,origin)
+				VALUES($1,$2,$3,$4::numeric,$5,$6)`, job.accountID, workoutID, aggregate.Key,
+					aggregate.Qty.String(), aggregate.Units, aggregate.Origin); err != nil {
+					return "", err
+				}
+			}
+			for _, point := range workout.Route {
+				if _, err = tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,
 				timestamp_offset_minutes,latitude,longitude,altitude,speed,course,horizontal_accuracy,vertical_accuracy,
 				speed_accuracy,course_accuracy) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-				job.accountID, workoutID, point.Sequence, point.Timestamp, point.TimestampOffsetMins, point.Latitude,
-				point.Longitude, point.Altitude, point.Speed, point.Course, point.HorizontalAccuracy,
-				point.VerticalAccuracy, point.SpeedAccuracy, point.CourseAccuracy); err != nil {
+					job.accountID, workoutID, point.Sequence, point.Timestamp, point.TimestampOffsetMins, point.Latitude,
+					point.Longitude, point.Altitude, point.Speed, point.Course, point.HorizontalAccuracy,
+					point.VerticalAccuracy, point.SpeedAccuracy, point.CourseAccuracy); err != nil {
+					return "", err
+				}
+			}
+			summary := deriveRouteSummary(workout.Route)
+			var replaced bool
+			if err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				workoutID, summary.pointCount, summary.minimumLongitude, summary.minimumLatitude,
+				summary.maximumLongitude, summary.maximumLatitude, summary.minimumAltitude,
+				summary.maximumAltitude, summary.elevationGain, summary.hasCompleteAltitude).Scan(&replaced); err != nil {
 				return "", err
 			}
+			if !replaced {
+				return "", errors.New("route summary was not replaced")
+			}
+			// Empty routes remove their summary, so there is no split row to update.
+			if len(workout.Route) != 0 {
+				var splitsReplaced bool
+				if err = tx.QueryRow(ctx, `SELECT app.replace_workout_split_summary($1)`, workoutID).Scan(&splitsReplaced); err != nil {
+					return "", err
+				}
+				if !splitsReplaced {
+					return "", errors.New("route split summary was not replaced")
+				}
+			}
 		}
-		summary := deriveRouteSummary(workout.Route)
-		var replaced bool
-		if err = tx.QueryRow(ctx, `SELECT app.replace_workout_route_summary($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-			workoutID, summary.pointCount, summary.minimumLongitude, summary.minimumLatitude,
-			summary.maximumLongitude, summary.maximumLatitude, summary.minimumAltitude,
-			summary.maximumAltitude, summary.elevationGain, summary.hasCompleteAltitude).Scan(&replaced); err != nil {
-			return "", err
-		}
-		if !replaced {
-			return "", errors.New("route summary was not replaced")
-		}
-		var splitsReplaced bool
-		if err = tx.QueryRow(ctx, `SELECT app.replace_workout_split_summary($1)`, workoutID).Scan(&splitsReplaced); err != nil {
-			return "", err
-		}
-		if !splitsReplaced {
-			return "", errors.New("route split summary was not replaced")
+		if outcome == "adopted" {
+			kind = "adopted"
 		}
 	}
 	warnings, err := encodeWarnings(workout.Warnings)
@@ -1022,9 +1222,15 @@ func (r *Runner) persistWorkout(ctx context.Context, tx pgx.Tx, job claimedJob, 
 		return "", err
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO app.workout_import_events
-		(id,account_id,source_id,workout_id,source_file_id,job_id,kind,content_sha256,warnings)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, uuid.Must(uuid.NewV7()), job.accountID, sourceID, workoutID,
-		fileID, job.id, kind, workout.ContentSHA256[:], warnings)
+		(id,account_id,source_id,workout_id,source_file_id,job_id,kind,content_sha256,warnings,has_route)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, uuid.Must(uuid.NewV7()), job.accountID, sourceID, workoutID,
+		fileID, job.id, kind, workout.ContentSHA256[:], warnings, len(workout.Route) > 0)
+	if err == nil && kind == "adopted" {
+		// Coverage state locks belong to post-ingest repair/reconciliation,
+		// outside this file transaction. Only record the durable refresh here.
+		_, err = tx.Exec(ctx, `SELECT app.record_adopted_workout_coverage_refresh($1,$2,$3,$4)`,
+			job.id, r.workerID, job.lease, workoutID)
+	}
 	return kind, err
 }
 
@@ -1181,8 +1387,8 @@ func (r *Runner) beginIngestWrite(ctx context.Context, job claimedJob) (pgx.Tx, 
 		return nil, uuid.Nil, err
 	}
 	var sourceID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3)`,
-		job.id, r.workerID, job.lease).Scan(&sourceID); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`,
+		job.id, r.workerID, job.lease, database.SupportedSchemaVersion).Scan(&sourceID); errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
 		return nil, uuid.Nil, errLeaseLost
 	} else if err != nil {
@@ -1284,8 +1490,13 @@ func safeDiagnosticReason(failure *ingestFailure) string {
 
 func ingestCommitError(err error) error {
 	var postgres *pgconn.PgError
-	if errors.As(err, &postgres) && postgres.Code == "40001" {
-		return errLeaseLost
+	if errors.As(err, &postgres) {
+		switch postgres.Code {
+		case "55P03", "40P01", "40001":
+			// Yield the whole transaction to normal lease recovery. A busy owner
+			// must not become an invalid file or an identity conflict.
+			return errLeaseLost
+		}
 	}
 	return err
 }

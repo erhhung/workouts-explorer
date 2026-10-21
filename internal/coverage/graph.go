@@ -2,6 +2,7 @@ package coverage
 
 import (
 	"container/heap"
+	"context"
 	"math"
 	"sort"
 
@@ -9,24 +10,64 @@ import (
 )
 
 type compiledGraph struct {
-	segments                       map[string]DirectedSegment
-	lengths                        map[string]float64
-	outgoing                       map[string][]string
+	// Bound to one evaluation, including all filtered graphs; never cached.
+	ctx      context.Context
+	segments map[string]DirectedSegment
+	lengths  map[string]float64
+	outgoing map[string][]string
+	// Routing views share immutable segment metadata and sorted adjacency.
+	parkingFilter                  *parkingRouteFilter
 	maxContinuityConnectorMeters   float64
 	maxDrivewayConnectorMeters     float64
 	maxAccessoryConnectorMeters    float64
 	maxParkingAisleConnectorMeters float64
 }
 
+type parkingRouteFilter struct {
+	excludedPhysical map[string]bool
+	boundaryIDs      map[string]bool
+}
+
+func (g compiledGraph) allowsSegment(id string) bool {
+	segment, exists := g.segments[id]
+	if !exists || g.parkingFilter == nil {
+		return exists
+	}
+	filter := g.parkingFilter
+	return !filter.excludedPhysical[segment.PhysicalID] &&
+		(segment.ParkingAisleConnector || !segment.TransitionOnly && segment.ContinuityClass == "road" || filter.boundaryIDs[id])
+}
+
 func compileGraph(graph Graph) compiledGraph {
+	return compileGraphContext(context.Background(), graph)
+}
+
+func (g compiledGraph) err() error {
+	if g.ctx == nil {
+		return nil
+	}
+	return g.ctx.Err()
+}
+
+// Each CPU helper owns its counter; filtered graphs share only the context.
+func (g compiledGraph) canceled(checks *uint) bool {
+	*checks = *checks + 1
+	return *checks&127 == 0 && g.err() != nil
+}
+
+func compileGraphContext(ctx context.Context, graph Graph) compiledGraph {
 	result := compiledGraph{
+		ctx:      ctx,
 		segments: map[string]DirectedSegment{}, lengths: map[string]float64{}, outgoing: map[string][]string{},
 		maxContinuityConnectorMeters:   graph.MaxContinuityConnectorMeters,
 		maxDrivewayConnectorMeters:     graph.MaxDrivewayConnectorMeters,
 		maxAccessoryConnectorMeters:    graph.MaxAccessoryConnectorMeters,
 		maxParkingAisleConnectorMeters: graph.MaxParkingAisleConnectorMeters,
 	}
-	for _, segment := range graph.Segments {
+	for i, segment := range graph.Segments {
+		if i&127 == 0 && result.err() != nil {
+			return result
+		}
 		if segment.ID == "" || segment.FromNode == "" || segment.ToNode == "" {
 			continue
 		}
@@ -45,6 +86,9 @@ func compileGraph(graph Graph) compiledGraph {
 		result.outgoing[segment.FromNode] = append(result.outgoing[segment.FromNode], segment.ID)
 	}
 	for node := range result.outgoing {
+		if result.err() != nil {
+			return result
+		}
 		sort.Strings(result.outgoing[node])
 	}
 	return result
@@ -60,6 +104,10 @@ func (g compiledGraph) route(from, to Candidate, limit, epsilon float64) (networ
 }
 
 func (g compiledGraph) routeWithBoundaryClasses(from, to Candidate, limit, epsilon float64, beforeClass, afterClass string) (networkRoute, bool) {
+	if g.err() != nil || g.parkingFilter != nil && (!g.allowsSegment(from.SegmentID) || !g.allowsSegment(to.SegmentID)) {
+		return networkRoute{}, false
+	}
+	var checks uint
 	fromLength, fromOK := g.lengths[from.SegmentID]
 	toLength, toOK := g.lengths[to.SegmentID]
 	if !fromOK || !toOK {
@@ -105,6 +153,9 @@ func (g compiledGraph) routeWithBoundaryClasses(from, to Candidate, limit, epsil
 		portions = append(portions, g.portion(from.SegmentID, from.AlongMeters, fromLength))
 	}
 	for _, id := range middle {
+		if g.canceled(&checks) {
+			return networkRoute{}, false
+		}
 		portions = append(portions, g.portion(id, 0, g.lengths[id]))
 	}
 	if endDistance > epsilon {
@@ -117,12 +168,20 @@ func (g compiledGraph) routeWithBoundaryClasses(from, to Candidate, limit, epsil
 		return networkRoute{}, false
 	}
 	portions = g.emittedPortions(portions, epsilon, beforeClass, afterClass)
-	return networkRoute{startDistance + middleDistance + endDistance, cancelImmediateBacktracks(portions, epsilon)}, true
+	return networkRoute{startDistance + middleDistance + endDistance, g.cancelImmediateBacktracks(portions, epsilon)}, true
 }
 
 func (g compiledGraph) emittedPortions(portions []TraversedPortion, epsilon float64, beforeClass, afterClass string) []TraversedPortion {
+	if g.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	result := make([]TraversedPortion, 0, len(portions))
 	for i := 0; i < len(portions); {
+		if g.canceled(&checks) {
+			return nil
+		}
 		if !g.segments[portions[i].SegmentID].TransitionOnly {
 			result = append(result, portions[i])
 			i++
@@ -130,6 +189,9 @@ func (g compiledGraph) emittedPortions(portions []TraversedPortion, epsilon floa
 		}
 		j, length, crossing, driveway, accessory, parkingAisle := i, 0.0, true, true, true, true
 		for j < len(portions) && g.segments[portions[j].SegmentID].TransitionOnly {
+			if g.canceled(&checks) {
+				return nil
+			}
 			segment := g.segments[portions[j].SegmentID]
 			crossing = crossing && segment.ContinuityConnector
 			driveway = driveway && segment.DrivewayConnector
@@ -155,20 +217,37 @@ func (g compiledGraph) emittedPortions(portions []TraversedPortion, epsilon floa
 }
 
 func (g compiledGraph) parkingAisleRunsEligible(portions []TraversedPortion, epsilon float64, beforeClass, afterClass string) bool {
+	if g.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for i := 0; i < len(portions); {
+		if g.canceled(&checks) {
+			return false
+		}
 		if !g.segments[portions[i].SegmentID].ParkingAisleConnector {
 			i++
 			continue
 		}
 		start, end := i, i
 		for start > 0 && g.segments[portions[start-1].SegmentID].TransitionOnly {
+			if g.canceled(&checks) {
+				return false
+			}
 			start--
 		}
 		for end < len(portions) && g.segments[portions[end].SegmentID].TransitionOnly {
+			if g.canceled(&checks) {
+				return false
+			}
 			end++
 		}
 		length, onlyParkingAisles := 0.0, true
 		for k := start; k < end; k++ {
+			if g.canceled(&checks) {
+				return false
+			}
 			onlyParkingAisles = onlyParkingAisles && g.segments[portions[k].SegmentID].ParkingAisleConnector
 			length += portions[k].ToMeter - portions[k].FromMeter
 		}
@@ -187,13 +266,24 @@ func parkingAisleBoundaryClasses(left, right string) bool {
 }
 
 func (g compiledGraph) drivewayRunsEligible(portions []TraversedPortion, epsilon float64, beforeClass, afterClass string) bool {
+	if g.err() != nil {
+		return false
+	}
+	var checks uint
+
 	for i := 0; i < len(portions); {
+		if g.canceled(&checks) {
+			return false
+		}
 		if !g.segments[portions[i].SegmentID].DrivewayConnector {
 			i++
 			continue
 		}
 		j, length := i, 0.0
 		for j < len(portions) && g.segments[portions[j].SegmentID].DrivewayConnector {
+			if g.canceled(&checks) {
+				return false
+			}
 			length += portions[j].ToMeter - portions[j].FromMeter
 			j++
 		}
@@ -229,15 +319,23 @@ func samePhysicalSegment(first, second DirectedSegment) bool {
 }
 
 func (g compiledGraph) routeOnLogicalPath(from, to Candidate, logicalPathID string, limit, epsilon float64) (networkRoute, bool) {
+	if g.err() != nil {
+		return networkRoute{}, false
+	}
+	var checks uint
+
 	filtered := Graph{Segments: make([]DirectedSegment, 0), MaxContinuityConnectorMeters: g.maxContinuityConnectorMeters,
 		MaxDrivewayConnectorMeters: g.maxDrivewayConnectorMeters, MaxAccessoryConnectorMeters: g.maxAccessoryConnectorMeters,
 		MaxParkingAisleConnectorMeters: g.maxParkingAisleConnectorMeters}
 	for _, segment := range g.segments {
-		if segment.LogicalPathID == logicalPathID {
+		if g.canceled(&checks) {
+			return networkRoute{}, false
+		}
+		if segment.LogicalPathID == logicalPathID && (g.parkingFilter == nil || g.allowsSegment(segment.ID)) {
 			filtered.Segments = append(filtered.Segments, segment)
 		}
 	}
-	return compileGraph(filtered).route(from, to, limit, epsilon)
+	return compileGraphContext(g.ctx, filtered).route(from, to, limit, epsilon)
 }
 
 func (g compiledGraph) routeOnContinuityClass(from, to Candidate, continuityClass string, limit, epsilon float64) (networkRoute, bool) {
@@ -245,20 +343,36 @@ func (g compiledGraph) routeOnContinuityClass(from, to Candidate, continuityClas
 }
 
 func (g compiledGraph) onlyContinuityClass(continuityClass string) compiledGraph {
+	if g.err() != nil {
+		return compiledGraph{ctx: g.ctx}
+	}
+	var checks uint
+
 	filtered := Graph{Segments: make([]DirectedSegment, 0), MaxContinuityConnectorMeters: g.maxContinuityConnectorMeters,
 		MaxDrivewayConnectorMeters: g.maxDrivewayConnectorMeters, MaxAccessoryConnectorMeters: g.maxAccessoryConnectorMeters,
 		MaxParkingAisleConnectorMeters: g.maxParkingAisleConnectorMeters}
 	for _, segment := range g.segments {
-		if segment.ContinuityClass == continuityClass {
+		if g.canceled(&checks) {
+			return compiledGraph{ctx: g.ctx}
+		}
+		if segment.ContinuityClass == continuityClass && (g.parkingFilter == nil || g.allowsSegment(segment.ID)) {
 			filtered.Segments = append(filtered.Segments, segment)
 		}
 	}
-	return compileGraph(filtered)
+	return compileGraphContext(g.ctx, filtered)
 }
 
-func cancelImmediateBacktracks(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+func (graph compiledGraph) cancelImmediateBacktracks(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	result := make([]TraversedPortion, 0, len(portions))
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		if len(result) > 0 && mergeConsecutivePortions(&result[len(result)-1], portion, epsilon) {
 			continue
 		}
@@ -271,9 +385,17 @@ func cancelImmediateBacktracks(portions []TraversedPortion, epsilon float64) []T
 	return result
 }
 
-func mergeConsecutiveTraversedPortions(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+func (graph compiledGraph) mergeConsecutiveTraversedPortions(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+	if graph.err() != nil {
+		return nil
+	}
+	var checks uint
+
 	result := make([]TraversedPortion, 0, len(portions))
 	for _, portion := range portions {
+		if graph.canceled(&checks) {
+			return nil
+		}
 		if len(result) > 0 && mergeConsecutivePortions(&result[len(result)-1], portion, epsilon) {
 			continue
 		}
@@ -353,6 +475,9 @@ func (q *routeQueue) Pop() any {
 }
 
 func (g compiledGraph) shortest(start, end string, limit float64) ([]string, float64, bool) {
+	if g.err() != nil {
+		return nil, 0, false
+	}
 	if start == end {
 		return nil, 0, true
 	}
@@ -360,7 +485,11 @@ func (g compiledGraph) shortest(start, end string, limit float64) ([]string, flo
 	heap.Init(queue)
 	bestDistance := map[string]float64{start: 0}
 	bestPath := map[string]string{start: ""}
-	for queue.Len() > 0 {
+	var edges uint
+	for expansions := 0; queue.Len() > 0; expansions++ {
+		if expansions&63 == 0 && g.err() != nil {
+			return nil, 0, false
+		}
 		item := heap.Pop(queue).(queueItem)
 		if item.dist > limit || item.dist > bestDistance[item.node] || (item.dist == bestDistance[item.node] && item.path != bestPath[item.node]) {
 			continue
@@ -369,6 +498,12 @@ func (g compiledGraph) shortest(start, end string, limit float64) ([]string, flo
 			return item.ids, item.dist, true
 		}
 		for _, id := range g.outgoing[item.node] {
+			if g.canceled(&edges) {
+				return nil, 0, false
+			}
+			if g.parkingFilter != nil && !g.allowsSegment(id) {
+				continue
+			}
 			segment := g.segments[id]
 			d := item.dist + g.lengths[id]
 			path := item.path + "\x00" + id
@@ -385,13 +520,20 @@ func (g compiledGraph) shortest(start, end string, limit float64) ([]string, flo
 }
 
 func (g compiledGraph) hasShorterOrdinaryRoadPath(start, end string, limit float64) bool {
+	if g.err() != nil {
+		return false
+	}
 	if start == end || limit <= 0 {
 		return false
 	}
 	queue := &routeQueue{{node: start}}
 	heap.Init(queue)
 	bestDistance := map[string]float64{start: 0}
-	for queue.Len() > 0 {
+	var edges uint
+	for expansions := 0; queue.Len() > 0; expansions++ {
+		if expansions&63 == 0 && g.err() != nil {
+			return false
+		}
 		item := heap.Pop(queue).(queueItem)
 		if item.dist >= limit || item.dist > bestDistance[item.node] {
 			continue
@@ -400,6 +542,12 @@ func (g compiledGraph) hasShorterOrdinaryRoadPath(start, end string, limit float
 			return true
 		}
 		for _, id := range g.outgoing[item.node] {
+			if g.canceled(&edges) {
+				return false
+			}
+			if g.parkingFilter != nil && !g.allowsSegment(id) {
+				continue
+			}
 			segment := g.segments[id]
 			if segment.TransitionOnly || segment.ContinuityClass != "road" {
 				continue
@@ -417,3 +565,11 @@ func (g compiledGraph) hasShorterOrdinaryRoadPath(start, end string, limit float
 }
 
 func distance(a, b Point) float64 { return math.Hypot(a.X-b.X, a.Y-b.Y) }
+
+func cancelImmediateBacktracks(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+	return (compiledGraph{}).cancelImmediateBacktracks(portions, epsilon)
+}
+
+func mergeConsecutiveTraversedPortions(portions []TraversedPortion, epsilon float64) []TraversedPortion {
+	return (compiledGraph{}).mergeConsecutiveTraversedPortions(portions, epsilon)
+}

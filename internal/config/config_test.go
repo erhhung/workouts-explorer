@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -276,10 +277,10 @@ func TestLoadCoverageWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenAddress != ":8082" || cfg.LeaseDuration != 4*time.Minute || cfg.HeartbeatInterval != 20*time.Second ||
-		cfg.RouteTimeout != 3*time.Minute || cfg.PollInterval != time.Second || cfg.AdmissionInterval != time.Second ||
+	if cfg.ListenAddress != ":8082" || cfg.LeaseDuration != 7*time.Minute || cfg.HeartbeatInterval != 20*time.Second ||
+		cfg.RouteTimeout != 6*time.Minute || cfg.PollInterval != time.Second || cfg.AdmissionInterval != time.Second ||
 		cfg.ReconciliationPollInterval != 30*time.Second || cfg.ReconciliationScanInterval != 24*time.Hour ||
-		cfg.ReconciliationPageSize != 10 || cfg.MinimumTraversalMeters != 5 || cfg.OSMAutoAddRegions {
+		cfg.ReconciliationPageSize != 10 || cfg.MinimumTraversalMeters != 5 || cfg.OSMAutoAddRegions || cfg.JobConcurrency != 2 {
 		t.Fatalf("unexpected coverage worker defaults: %+v", cfg)
 	}
 	t.Setenv("OSM_AUTO_ADD_REGIONS", "true")
@@ -289,17 +290,130 @@ func TestLoadCoverageWorker(t *testing.T) {
 	}
 }
 
+func TestLoadCoverageWorkerJobConcurrency(t *testing.T) {
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	t.Setenv("API_DATABASE_URL", "postgresql://api.invalid/workouts")
+	t.Setenv("COVERAGE_DIAGNOSTICS_CONCURRENCY", "3")
+	setAccountLifecycleConfig(t)
+	for _, raw := range []string{"", "1", "2", "4", "8"} {
+		t.Run("valid="+raw, func(t *testing.T) {
+			t.Setenv("COVERAGE_WORKER_JOB_CONCURRENCY", raw)
+			want := 2
+			if raw != "" {
+				want, _ = strconv.Atoi(raw)
+			}
+			cfg, err := LoadCoverageWorker()
+			if err != nil || cfg.JobConcurrency != want {
+				t.Fatalf("job concurrency=%d want %d err=%v", cfg.JobConcurrency, want, err)
+			}
+			api, err := LoadAPI()
+			if err != nil || api.CoverageDiagnostics.Concurrency != 3 {
+				t.Fatalf("independent diagnostics concurrency=%d err=%v", api.CoverageDiagnostics.Concurrency, err)
+			}
+		})
+	}
+	for _, raw := range []string{"0", "-1", "9", "1.5", " ", "999999999999999999999999", "postgresql://fake-user:fake-secret@fixture.invalid/workouts"} {
+		t.Run("invalid="+raw, func(t *testing.T) {
+			t.Setenv("COVERAGE_WORKER_JOB_CONCURRENCY", raw)
+			_, err := LoadCoverageWorker()
+			if err == nil || err.Error() != "COVERAGE_WORKER_JOB_CONCURRENCY must be an integer between 1 and 8" {
+				t.Fatalf("expected safe range validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadCoverageWorkerAutoRetryCount(t *testing.T) {
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	for _, raw := range []string{"", "0", "1", "2", "20"} {
+		t.Run("valid="+raw, func(t *testing.T) {
+			t.Setenv("COVERAGE_WORKER_AUTO_RETRY_COUNT", raw)
+			want := 1
+			if raw != "" {
+				want, _ = strconv.Atoi(raw)
+			}
+			cfg, err := LoadCoverageWorker()
+			if err != nil || cfg.AutoRetryCount != want {
+				t.Fatalf("automatic retries=%d want=%d err=%v", cfg.AutoRetryCount, want, err)
+			}
+		})
+	}
+	for _, raw := range []string{"-1", "21", "1.5", " ", "999999999999999999999999", "private-value"} {
+		t.Run("invalid="+raw, func(t *testing.T) {
+			t.Setenv("COVERAGE_WORKER_AUTO_RETRY_COUNT", raw)
+			_, err := LoadCoverageWorker()
+			if err == nil || err.Error() != "COVERAGE_WORKER_AUTO_RETRY_COUNT must be an integer between 0 and 20" {
+				t.Fatalf("expected safe range error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadWorkerCoverageBatchSize(t *testing.T) {
+	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")
+	t.Setenv("OSM_DATABASE_URL", "postgresql://database.invalid/osm")
+	setSourceConfig(t)
+	for _, raw := range []string{"", "1", "25", "1000", "0", "1001", "-1", "1.5", "private-value"} {
+		t.Run("value="+raw, func(t *testing.T) {
+			t.Setenv("WORKER_COVERAGE_BATCH_SIZE", raw)
+			want := 25
+			if raw != "" {
+				want, _ = strconv.Atoi(raw)
+			}
+			cfg, err := LoadWorker()
+			valid := raw == "" || (want >= 1 && want <= 1000 && raw != "1.5")
+			if valid && (err != nil || cfg.CoverageBatchSize != want) {
+				t.Fatalf("batch size=%d want=%d err=%v", cfg.CoverageBatchSize, want, err)
+			}
+			if !valid && (err == nil || err.Error() != "WORKER_COVERAGE_BATCH_SIZE must be an integer between 1 and 1000") {
+				t.Fatalf("expected safe range error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadCoverageWorkerValidatesLeaseBudget(t *testing.T) {
 	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
 	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
 	for _, test := range []struct{ key, value string }{
-		{"COVERAGE_WORKER_HEARTBEAT_INTERVAL", "2m"},
-		{"COVERAGE_WORKER_ROUTE_TIMEOUT", "235s"},
+		{"COVERAGE_WORKER_HEARTBEAT_INTERVAL", "210s"},
+		{"COVERAGE_WORKER_ROUTE_TIMEOUT", "410s"},
+		{"COVERAGE_WORKER_ROUTE_TIMEOUT", "415s"},
+		{"COVERAGE_WORKER_LEASE_DURATION", "240s"},
 	} {
-		t.Run(test.key, func(t *testing.T) {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
 			t.Setenv(test.key, test.value)
 			if _, err := LoadCoverageWorker(); err == nil {
 				t.Fatal("unsafe coverage worker timing was accepted")
+			}
+		})
+	}
+}
+
+func TestLoadCoverageWorkerRouteTimeoutRange(t *testing.T) {
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	t.Setenv("COVERAGE_WORKER_LEASE_DURATION", "15m")
+	for _, test := range []struct {
+		value string
+		valid bool
+	}{
+		{"5s", true}, {"2m", true}, {"6m", true}, {"10m", true},
+		{"-1s", false}, {"0s", false}, {"2s", false}, {"601s", false}, {"12m", false}, {"15m", false},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			t.Setenv("COVERAGE_WORKER_ROUTE_TIMEOUT", test.value)
+			cfg, err := LoadCoverageWorker()
+			if (err == nil) != test.valid {
+				t.Fatalf("valid=%t, want %t: %v", err == nil, test.valid, err)
+			}
+			if test.valid {
+				want, _ := time.ParseDuration(test.value)
+				if cfg.RouteTimeout != want {
+					t.Errorf("initial timeout=%s, want %s", cfg.RouteTimeout, want)
+				}
 			}
 		})
 	}
@@ -371,5 +485,121 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 				t.Fatalf("valid scheduler lease %s rejected: %v", lease, err)
 			}
 		})
+	}
+}
+
+func TestOSMUseReadReplicasOnly(t *testing.T) {
+	t.Setenv("API_DATABASE_URL", "postgresql://api.invalid/workouts")
+	t.Setenv("API_OSM_DATABASE_URL", "postgresql://api.invalid/osm")
+	t.Setenv("WORKER_DATABASE_URL", "postgresql://worker.invalid/workouts")
+	t.Setenv("OSM_DATABASE_URL", "postgresql://worker.invalid/osm")
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	t.Setenv("OSM_AUTO_ADD_REGIONS", "false")
+	t.Setenv("OSM_USE_READ_REPLICAS_ONLY", "")
+	setAccountLifecycleConfig(t)
+
+	for _, diagnosticsEnabled := range []string{"false", "true"} {
+		t.Run("diagnostics="+diagnosticsEnabled, func(t *testing.T) {
+			t.Setenv("COVERAGE_DIAGNOSTICS_ENABLED", diagnosticsEnabled)
+			if diagnosticsEnabled == "false" {
+				t.Setenv("API_OSM_DATABASE_URL", "")
+			}
+			apiDefault, apiErr := LoadAPI()
+			workerDefault, workerErr := LoadWorker()
+			coverageDefault, coverageErr := LoadCoverageWorker()
+			osmDefault, osmErr := LoadOSM()
+			if apiErr != nil || workerErr != nil || coverageErr != nil || osmErr != nil {
+				t.Fatalf("defaults: api=%v worker=%v coverage=%v osm=%v", apiErr, workerErr, coverageErr, osmErr)
+			}
+			if apiDefault.CoverageDiagnostics.UseReadReplicasOnly || workerDefault.OSM.UseReadReplicasOnly || coverageDefault.UseReadReplicasOnly || osmDefault.UseReadReplicasOnly {
+				t.Fatal("reader-only mode must default to false")
+			}
+			for _, tc := range []struct {
+				value string
+				want  bool
+			}{
+				{"", false}, {"false", false}, {"true", true},
+			} {
+				t.Run("flag="+tc.value, func(t *testing.T) {
+					t.Setenv("OSM_USE_READ_REPLICAS_ONLY", tc.value)
+					api, apiErr := LoadAPI()
+					worker, workerErr := LoadWorker()
+					coverage, coverageErr := LoadCoverageWorker()
+					osm, osmErr := LoadOSM()
+					if apiErr != nil || workerErr != nil || coverageErr != nil || osmErr != nil {
+						t.Fatalf("load: api=%v worker=%v coverage=%v osm=%v", apiErr, workerErr, coverageErr, osmErr)
+					}
+					if api.CoverageDiagnostics.UseReadReplicasOnly != tc.want || worker.OSM.UseReadReplicasOnly != tc.want || coverage.UseReadReplicasOnly != tc.want || osm.UseReadReplicasOnly != tc.want {
+						t.Fatalf("reader-only fields do not match %t", tc.want)
+					}
+					api.CoverageDiagnostics.UseReadReplicasOnly = false
+					worker.OSM.UseReadReplicasOnly = false
+					coverage.UseReadReplicasOnly = false
+					osm.UseReadReplicasOnly = false
+					if !reflect.DeepEqual(api, apiDefault) || !reflect.DeepEqual(worker, workerDefault) || !reflect.DeepEqual(coverage, coverageDefault) || !reflect.DeepEqual(osm, osmDefault) {
+						t.Fatal("reader-only flag changed unrelated configuration or database URLs")
+					}
+				})
+			}
+			t.Run("malformed", func(t *testing.T) {
+				t.Setenv("OSM_USE_READ_REPLICAS_ONLY", "postgresql://fake-user:fake-secret@fixture.invalid/osm")
+				_, apiErr := LoadAPI()
+				_, workerErr := LoadWorker()
+				_, coverageErr := LoadCoverageWorker()
+				_, osmErr := LoadOSM()
+				for name, err := range map[string]error{"api": apiErr, "worker": workerErr, "coverage": coverageErr, "osm": osmErr} {
+					if err == nil || err.Error() != "OSM_USE_READ_REPLICAS_ONLY must be a boolean" {
+						t.Errorf("%s: expected safe boolean validation error, got %v", name, err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestOSMReadReplicasRejectAutoAddRegions(t *testing.T) {
+	t.Setenv("WORKER_DATABASE_URL", "postgresql://worker.invalid/workouts")
+	t.Setenv("OSM_DATABASE_URL", "postgresql://worker.invalid/osm")
+	t.Setenv("COVERAGE_WORKER_DATABASE_URL", "postgresql://coverage.invalid/workouts")
+	t.Setenv("COVERAGE_WORKER_OSM_DATABASE_URL", "postgresql://coverage.invalid/osm")
+	t.Setenv("OSM_AUTO_ADD_REGIONS", "true")
+	setSourceConfig(t)
+	for _, readOnly := range []string{"false", "true"} {
+		t.Run(readOnly, func(t *testing.T) {
+			t.Setenv("OSM_USE_READ_REPLICAS_ONLY", readOnly)
+			_, workerErr := LoadWorker()
+			_, coverageErr := LoadCoverageWorker()
+			_, osmErr := LoadOSM()
+			for name, err := range map[string]error{"worker": workerErr, "coverage": coverageErr, "osm": osmErr} {
+				if readOnly == "false" {
+					if err != nil {
+						t.Errorf("%s: existing auto-add configuration rejected: %v", name, err)
+					}
+				} else if err == nil || err.Error() != "OSM_USE_READ_REPLICAS_ONLY must not be enabled with OSM_AUTO_ADD_REGIONS" {
+					t.Errorf("%s: expected auto-add conflict, got %v", name, err)
+				}
+			}
+		})
+	}
+
+	t.Setenv("API_DATABASE_URL", "postgresql://api.invalid/workouts")
+	t.Setenv("API_OSM_DATABASE_URL", "postgresql://api.invalid/osm")
+	t.Setenv("OSM_USE_READ_REPLICAS_ONLY", "true")
+	t.Setenv("COVERAGE_DIAGNOSTICS_ENABLED", "true")
+	setAccountLifecycleConfig(t)
+	if cfg, err := LoadAPI(); err != nil || !cfg.CoverageDiagnostics.UseReadReplicasOnly {
+		t.Fatalf("read-only API diagnostics must not inherit auto-add restrictions: %v", err)
+	}
+}
+
+func TestLoadOSMDoesNotRequireCommonConfiguration(t *testing.T) {
+	for _, name := range []string{"API_DATABASE_URL", "WORKER_DATABASE_URL", "OSM_DATABASE_URL", "SOURCE_KEYRING_FILE", "LOCAL_SOURCE_ROOTS"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("OSM_AUTO_ADD_REGIONS", "false")
+	t.Setenv("OSM_USE_READ_REPLICAS_ONLY", "true")
+	if cfg, err := LoadOSM(); err != nil || !cfg.UseReadReplicasOnly {
+		t.Fatalf("standalone OSM configuration: %v", err)
 	}
 }

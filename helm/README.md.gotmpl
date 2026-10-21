@@ -1,0 +1,196 @@
+# Workouts Explorer Helm Chart
+
+{{ template "chart.badgesSection" . }}
+
+Install Workouts Explorer on Kubernetes to browse workout routes on a map, synchronize workout files, and track route coverage. Supply the databases, images, and credentials for your installation; this chart runs the application around them.
+
+## Components
+
+- **UI:** serves the browser application.
+- **API:** handles accounts, source settings, workout data, and authenticated tile access.
+- **Ingestion worker:** synchronizes sources and imports workout files.
+- **Coverage worker:** matches routes against OpenStreetMap data, separately from file ingestion.
+- **Martin tile server:** serves private vector tiles internally through the API.
+- **Jobs and monitoring:** database migration hooks, timezone import, optional role provisioning and administrator bootstrap, optional telemetry sidecars, Grafana dashboard ConfigMaps, and Pyrra objectives.
+
+## Before Installing
+
+1. Provide reachable external PostgreSQL/PostGIS application and OSM databases. Create the databases, install the required extensions, and provision the migration/runtime identities and their credentials. Prepare the coverage-worker, tile, and security-owner roles and required migration membership through database-owner automation, or enable `api.roleProvisioning.enabled` with a suitably privileged connection, including `CREATEROLE`. This optional job requires the `workouts_migration` role to exist and does not set login passwords or replace your credential provisioning.
+2. Prepare the OSM catalog and imported map data for the configured providers and regions outside this chart. Ensure OSM readers can see the required catalog generations and timezone data before relying on matching. The enabled-by-default timezone hook downloads and imports the pinned boundary archive; it needs outbound HTTPS and OSM writer access. If you disable it, supply compatible timezone data yourself.
+3. Publish or select compatible application images and configure `image.registry`, `image.tag`, optional `image.digests`, and any existing image-pull Secrets. Martin and collector images use their own complete references.
+4. Provision the existing Secrets described below in the release namespace before running Helm, including Secrets needed by pre-install hooks. Set your browser URL, SMTP server, and usable base-map styles. The default style families are complete MapTiler Outdoor/Streets examples with attribution links and resource origins; replace `YOUR_MAPTILER_KEY` in all four style URLs with your browser-restricted public key and follow the provider's licensing requirements. The mail and application domains remain placeholders.
+5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. Configure a reachable TLS OTLP endpoint or set `otel.endpoint: ""` to disable export and sidecars. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
+
+The chart does **not** create application/OSM databases, connection or application credential Secrets, OSM map imports, PostgreSQL high availability, DNS infrastructure, an NFS server, or monitoring backends. Its ingress Certificate can ask the existing certificate controller to populate the selected ingress TLS Secret. Resource names are fixed as `workouts-explorer` rather than derived from the release name; use a separate namespace for each installation.
+
+## Workout-Type Map Styles
+
+`api.publicConfig.baseMaps.workoutTypeMappings` selects a style family; it does not rename or reclassify workouts. Set `providerLabel` to the original exported workout name. The application derives a stable key from its Unicode-normalized, case-folded, outer-trimmed identity, which remains unchanged when the UI canonicalizes display names. For example, `Outdoor Cycling` can display as `Outdoor Cycle` while still matching an `Outdoor Cycling` mapping.
+
+Exact provider identity takes precedence. Qualified indoor/outdoor run, walk and cycle aliases have a limited display-label fallback only when the matching aliases select one unambiguous family. Unmapped or conflicting selections use `fallbackFamilyId`; a valid manual map-family selection takes precedence over automatic matching. These mappings are global, not per account or source.
+
+The active chart defaults map `Hiking` to `outdoor` and `Running` to `streets`, with `streets` as the fallback. Supply additional provider labels and families for your installation; existing installation-specific arrays replace these example defaults.
+
+## Credentials And Writes
+
+Values contain **Secret names and keys**, not passwords or connection URLs. A referenced key contains the connection URL or other credential in an existing Secret. References may share a Secret object, but use separate least-privilege database identities for each task. All references resolve in the release namespace.
+
+| Values reference | Access or contents |
+|------------------|--------------------|
+| `api.databaseSecret.{name,key}` | Runtime application database access for the API; not migration or role-management privileges. |
+| `worker.databaseSecret.{name,key}` | Runtime application database access for source synchronization and file ingestion. |
+| `coverageWorker.databaseSecret.{name,key}` | Runtime application database access for coverage jobs and their leases/reservations. |
+| `tileServer.databaseSecret.{name,key}` | Restricted application database access for Martin tile queries. |
+| `api.migration.databaseSecret.{name,key}` | Application schema migration credentials with the required ownership/DDL privileges. |
+| `api.roleProvisioning.databaseSecret.{name,key}` | Optional role-management credentials, including `CREATEROLE`; disabled by default. The default migration-key reference does not mean ordinary migration credentials can create roles. |
+| `api.bootstrap.databaseSecret.{name,key}` | Application database credentials permitted to bootstrap an administrator; distinct from the administrator account Secret. |
+| `osm.writerDatabaseSecret.{name,key}` | OSM schema migration and timezone import writes, not runtime reader access. |
+| `worker.osmDatabaseSecret.{name,key}` | Read-only OSM catalog access for the ingestion worker. |
+| `coverageWorker.osmDatabaseSecret.{name,key}` | Read-only OSM matching access for coverage workers. |
+| `api.coverageDiagnostics.databaseSecret.{name,key}` | Read-only OSM access for API diagnostics, only when enabled. |
+
+Also provide `api.securitySecret` with the private rate-limit key and SMTP password, and `sources.keyringSecret` with the source-configuration encryption keyring shared by API and ingestion workers. Preserve old decryption keys during keyring rotation. Source-account credentials belong in encrypted account source configuration, not chart values. Optional administrator bootstrap uses `api.bootstrap.secretName` and its username/email/password keys; it is disabled by default and does not rotate an existing password unless explicitly requested.
+
+For database TLS, `worker.databaseTLSSecret`, `coverageWorker.databaseTLSSecret`, `api.coverageDiagnostics.databaseTLSSecret`, and `osm.writerDatabaseTLSSecret` mount existing Secrets at `/tls/prod-db`. Connection URLs must refer to the certificate paths actually mounted for their component. Supply client certificates and private keys only where your database authentication requires them; direct backend access does not itself require mutual TLS. API trust uses `api.trustedCASecret`; collector sidecars mount only a public CA bundle and use `otel.trustedCASecret`, falling back to the entire API CA reference when its name is empty. Preserve database hostname verification and the configured TLS server names.
+
+Application and OSM migrations run as pre-install/pre-upgrade hooks, before the new workloads start; optional role provisioning runs first and timezone import follows migrations. Optional administrator bootstrap is a Helm post-install/post-upgrade hook (an Argo CD PreSync hook). These jobs write to your supplied databases. Review backups and database privileges before upgrading; Helm rollback does not undo completed database migrations.
+
+The approved active application sequence is **001-028**, with **no active 029**. Folded 028 implements generation locking, strict eligible cohorts and mixed-failure automatic retries at schema/minimum runtime **28**, marker **27**, source `SupportedSchemaVersion=28`. This contract, exact parking repair and UI follow-up are **deployed in `dev-20261020`, Helm revision 29**, schema/Goose/minimum 28 and marker 27. All four release images are digest-pinned and all five application deployments are Ready/Available. Equal numeric versions do not prove feature/runtime compatibility. Chart semantics remain **frozen**; all 23 release-manifest chart files, including `values.yaml`, are unchanged. This update edits only this README template and its generated README, not values comments, hooks or runtime settings.
+
+Native Goose does not replay applied 028. An existing old-contract 28 needs a **private guarded offline repair**, explicit operator approval, a fresh protected backup and rehearsal on a protected restore of an **actual application backup** using the actual migration role and released-source/catalog proof. For this release, the approved exact actual-profile rehearsal and transactional live repair passed under the real non-superuser migration login with its existing security-owner SET capability. Full original-tuple hashes and exact ledger 0-28 IDs/timestamps were preserved without data-field exclusions before startup; new readiness passed. This is a frozen-corpus qualification, not generic SQL-lexer equivalence. Old apply-10/defer-6 ABIs are intentionally absent: old runtime-28 readiness fails and new runtime-28 readiness requires private builders. There is **no rolling reuse of old runtime-28 images**. Preserve data, matcher roots/budgets, sources and credentials. Verified protected local rollback exports retain the final whole-database dump, password-free roles and four old OCI images after authorized old-artifact cleanup. Incompatible-image rollback requires a **full old-database restore and matching old OCI images**, never images alone. No global registry GC or blob deletion occurred; physical blob-space reclamation is not claimed. See [Application Database Migrations](../docs/database-migrations.md) and [current release evidence](../docs/development-progress.md#folded-028-production-release-10202026); private repair SQL, backup locations and dataset metrics are not published here.
+
+## Install Or Upgrade
+
+Keep installation-specific settings in a private values file, for example `private-values.yaml`, outside committed public configuration. Include image selection, public URLs, map styles, and Secret references, **never actual database URLs, passwords, certificates, encryption keys, or source credentials**. Provision those separately through your Secret-management process.
+
+For a compatible fresh install or separately authorized upgrade, after preparing the prerequisites, the generic chart command is shown here. **It does not repair an existing old-contract schema 28 and is not authorization for a live change.** From the repository root:
+
+```sh
+helm upgrade --install workouts ./helm \
+  --namespace workouts-explorer \
+  --create-namespace \
+  --values private-values.yaml \
+  --wait --timeout 10m
+```
+
+The filename is an example, not a file supplied by this repository. Pre-install Secrets must already exist, even when using `--create-namespace`. For an existing release, compare your overrides with the current complete `values.yaml` and schema. Supply a freshly reviewed set of overrides rather than using `--reuse-values`; add `--reset-values` when you need to discard stored release settings. Removed keys such as `bulkRef`, `api.migrationDatabaseKey`, `api.roleProvisioning.secretName`/`databaseKey`, and `api.bootstrap.databaseKey` must not be carried forward. Use the full nested database Secret references instead.
+
+Keep `api.localDevelopment` and `api.smtp.allowInsecureLocal` false for public installations. Public map style URLs may contain only browser-restricted public provider keys, never private credentials. Configure each style family's HTTPS `resourceOrigins` for all required tiles, sprites, and fonts; these origins feed the UI content security policy. MapTiler supports browser-restricted public keys; Stadia can use domain authentication.
+
+## OSM Readers And Concurrency
+
+`osm.useReadReplicasOnly` defaults to **false**, allowing primary OSM readers. When true, readers require a standby and check its role at connection and checkout. For strict physical-backend placement, supply a direct all-node/headless service or explicit backend hosts that expose discoverable database nodes, not a proxy that can switch backends. Use consistent reader cluster host/database configuration across coverage and diagnostic callers so their reservations coordinate. DNS resolution and TLS hostname verification must already work; this chart does not configure CoreDNS or create read replicas.
+
+Coverage matching and API diagnostics coordinate in the application database across all pods. They select a **globally least-active eligible backend**, then pin a fresh connection and snapshot to it; this is not per-job DNS round-robin. Eligibility includes the required OSM catalog generations and, in strict mode, standby role. Promotion cannot reroute an already-running transaction. Schema 23 adds a per-backend `reader_limit` default of **1**; existing global, per-account, and per-region matcher admission limits remain unchanged (fresh databases seed each at **1**). This chart does not configure those matcher limits or promise extra capacity from more replicas.
+
+`coverageWorker.jobConcurrency` defaults to **2 per pod**. With `N` pods, the potential worker count is `N * jobConcurrency`, but database admission, reader reservations, and job leases still constrain active work. `api.coverageDiagnostics.concurrency` is also per process. File ingestion is separate: `worker.fileConcurrency` is per process, while `worker.accountFileConcurrency` and `worker.globalFileConcurrency` are database-coordinated across worker pods.
+
+## Automatic Coverage Retries
+
+The following describes the **folded-028 contract deployed in `dev-20261020`**, not a reinterpretation of historical old-contract policy. Production mixed-failure automatic recovery has published authoritative current results; subsequent independent verification closes the historical year's available-map recovery. Owner acceptance and capacity certification remain separate; dataset metrics stay private. See [independent closure](../docs/development-progress.md#independent-yearly-recovery-closure-10202026). Policy stays `coverage-production-v1`, Coverage 500m CPU / 256 MiB, two lanes, B=25 and one additional automatic attempt. The source worker stays 250m / 256 MiB. Default limits, chart defaults and all other resources/infrastructure are unchanged.
+
+`coverageWorker.autoRetryCount` defaults to **1 additional attempt** per logical Coverage retry root. Set it to `0` to disable automatic creation, or an integer up to `20`. It renders `COVERAGE_WORKER_AUTO_RETRY_COUNT`; use the same policy on every coverage-worker pod. After a **30 second** failure cooldown, at least one authoritative timeout/verified-transient eligible FAILED child enables a new isolated chained attempt carrying **all authoritative FAILED siblings**, including permanent, unknown and null-code failures, provided every failed descriptor remains valid. Successful/superseded siblings never rerun; automatic retry never revives cancellation, current/live targets, deleting workouts or inactive accounts. A parent with only permanent/unknown failures stops automatically.
+
+Schema 28 enrolls failures as they occur after migration; it does not retry already-terminal historical failures. Automatic attempt origin, lineage, and spent budget survive worker restarts and lost replies. Raising the setting permits additional attempts up to the new total; lowering it does not cancel jobs already created. Manual retry remains available on the latest failed or cancelled terminal attempt after the automatic budget is exhausted, without resetting that budget. Manual and automatic creation share a serialized constructor. An explicit authenticated manual retry can reverse cancellation for unchanged, still-authoritative inputs, but never reruns successful siblings or steals newer/current/live work. A cleared target pointer requires a matching cancellation finish timestamp, consistent target/generation proof, and unambiguous route-attempt history; missing or conflicting proof is refused. Automatic retries and ordinary scans do not reverse cancellation of an unchanged target. Timeout-only retries preserve the **6m / 10m / 15m** default execution ladder; other failures reset the timeout counter, not the automatic budget.
+
+Only `coverage-route-timeout` and `coverage-transient-failed` (with a verified transient database-boundary cause) trigger automation. Generic map-processing, persistence, unknown/null, limit, validation, permission/authentication, schema/configuration and TLS failures are not themselves transient, but authoritative failed siblings with those causes travel with a qualifying mixed parent. Latest-only authority and all-failed-descriptor validation prevent a transient-only successor from stranding permanent siblings. The durable automatic budget is shared per root across descendants/restarts; manual retry does not reset it. Failure logs expose only bounded stages and validated SQLSTATE metadata, never original driver/query/route details.
+
+Typed graph node, edge, and expansion-layer limits are permanent processing limits, not timeouts, even if the operation context expires concurrently. Safe limit diagnostics contain only the `graph_node` / `graph_edge` / `graph_layer` field enum and a validated numeric bound.
+
+Ordinary reconciliation scans do not create fresh roots for identical authoritative failed or cancelled targets, including historical failures and jobs still acknowledging cancellation. Advancing scan revisions does not reset a retry budget. A genuinely changed route input, OSM generation vector, matcher/rules/sampling/path-policy/minimum-traversal contract, regained readiness, or distinct forced-adoption event can create fresh work. Parent contexts snapshot the matcher contract so changes are distinct from unrelated scan/OSM events.
+
+`worker.coverageBatchSize` / `WORKER_COVERAGE_BATCH_SIZE` defaults to **25** (`1..1000`). During active ingest, each normal parent seals **exactly saved B new eligible matching targets**, globally across regions within its ingest-root/source-sibling scope. Missing maps, current/live/unchanged authoritative failed or cancelled targets and deduplication do not count. Private durable prepared metadata saves B and scope across files/crashes; there is **no placeholder Coverage parent** before full parent and B children seal atomically. Mixed regions are explicitly allowed. Optional `coverage.regionIds` reports the actual child-region union, including retries; `regionId`/`targetGeneration` remain representative anchors, not complete matching scope. Per-route generation vectors, claim fencing and admission are unchanged.
+
+Saved builder B becomes parent capacity at seal; configuration changes do not resize saved cohorts. A retry remains a separate chained parent containing only authoritative unsuccessful predecessors as allowed by manual/automatic policy; spare capacity never accepts fresh ingest work. Successful siblings are not rerun. Existing larger historical parents keep inherited retry capacity rather than dropping failed siblings.
+
+Only leased account-reconciliation recovery may seal a final partial cohort, **after the visible ingest root and all source siblings are terminal and due preparation is exhausted**, never active source EOF. Failed/cancelled roots can legitimately owe derived work for committed data without reopening ingest. Normal metadata/deduplication retains cancellation footprints and never resurrects unchanged cancelled targets. Cancelling ingestion does not erase committed obligations or cancel separate Coverage jobs.
+
+Preparation keeps bounded metadata and only one route's coordinates at a time, with one efficient ROI query per route, not per point. A trusted fingerprint of **all catalog regions/configuration/boundaries/active heads** must match in the same Repeatable Read ROI lookup snapshot and before seal; mismatch invalidates preparation for fresh ROI, never substitutes new heads into an old vector. Separate APP/OSM transactions do not guarantee cross-database latest-state atomicity. The source runner downloads/processes files serially within its job, cleaning before and after the file pipeline; handoff follows commit/transport/slot cleanup. Matching policy, CPU, memory, semantic limits, concurrency and deadlines are not increased.
+
+The folded generation fix makes four same-name constraint triggers initially deferred with exact prior events/WHEN scopes, including 017's changed-current-finish-only Coverage rule; account seeding remains immediate. It removes the early generation fence lock and uses the historic nonlocking same-Repeatable-Read selection helper, preserving source/epoch/lease and other guards. All qualifying increments and data remain atomic at commit. Helper ABI preservation is not old-runtime compatibility.
+
+## Values
+
+**Deployment-status correction:** the table reproduces the frozen `values.yaml`
+comments verbatim. The historical `(undeployed)` labels in `autoRetryCount` and
+`coverageBatchSize` are superseded: both folded-028 behaviors are **deployed in
+`dev-20261020`, Helm revision 29**, as described above. Those inherited labels are
+not current release status. No value, default or frozen source comment is changed.
+
+Settings are grouped by their top-level values section. Keys are relative to that section, with the type shown beneath each key. Key paths wrap between whole components, packing each line within 30 characters where possible and balancing short final lines. Defaults longer than 40 characters link to their exact source line in [values.yaml](values.yaml) instead of widening the table. All actual defaults remain unchanged. Group comments and populated lists are also documented directly in that file.
+
+{{ template "chart.valuesTable" . }}
+
+## Regenerate Documentation
+
+Edit `helm/values.yaml` comments and `helm/README.md.gotmpl`, not the generated README. From the repository root, using **helm-docs v1.14.2**:
+
+```sh
+helm-docs --chart-search-root helm
+```
+
+{{ template "helm-docs.versionFooter" . }}
+
+{{- /* Avoid repeating entire parent objects/lists; all leaves have explicit descriptions. */ -}}
+{{- define "chart.valuesTable" -}}
+{{- $groups := dict -}}
+{{- range .Values }}
+{{- if or (and (ne .Type "object") (ne .Type "list")) (eq .Default "`{}`") (eq .Default "`[]`") }}
+{{- $group := first (splitList "." .Key) -}}
+{{- $_ := set $groups $group (append (default (list) (get $groups $group)) .) -}}
+{{- end }}
+{{- end }}
+{{- $labels := dict "api" "API" "coverageWorker" "Coverage Worker" "grafanaDashboards" "Grafana Dashboards" "image" "Images" "ingress" "Ingress" "logging" "Logging" "networkPolicy" "Network Policy" "osm" "OSM" "otel" "Telemetry" "pyrraSLOs" "Pyrra SLOs" "sources" "Sources" "tileServer" "Tile Server" "ui" "UI" "worker" "Ingestion Worker" -}}
+{{- range $group := keys $groups | sortAlpha }}
+
+### {{ default $group (get $labels $group) }}
+
+Values under `{{ $group }}`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+{{- range get $groups $group }}
+{{- $key := trimPrefix (printf "%s." $group) .Key -}}
+{{- $default := default .AutoDefault .Default -}}
+{{- if gt (len $default) 40 -}}
+{{- $default = printf "[View default](values.yaml#L%d)" .LineNumber -}}
+{{- end }}
+| {{ template "chart.keyPath" $key }}<br>_({{ .Type }})_ | {{ default .AutoDescription .Description }} | {{ $default }} |
+{{- end }}
+{{- end }}
+{{- end }}
+{{- define "chart.keyPath" -}}
+{{- $lines := list -}}
+{{- $line := "" -}}
+{{- $parts := splitList "." . -}}
+{{- range $index, $part := $parts -}}
+{{- $candidate := $part -}}
+{{- if $line -}}{{- $candidate = printf "%s.%s" $line $part -}}{{- end -}}
+{{- $width := len $candidate -}}
+{{- if lt $index (sub (len $parts) 1) -}}{{- $width = add $width 1 -}}{{- end -}}
+{{- if and $line (gt $width 30) -}}
+{{- $lines = append $lines $line -}}
+{{- $line = $part -}}
+{{- else -}}
+{{- $line = $candidate -}}
+{{- end -}}
+{{- end -}}
+{{- $lines = append $lines $line -}}
+{{- /* Move a whole component when it avoids an unnecessarily short final line. */ -}}
+{{- if gt (len $lines) 1 -}}
+{{- $prefix := initial $lines -}}
+{{- $previous := last $prefix -}}
+{{- $last := last $lines -}}
+{{- $previousParts := splitList "." $previous -}}
+{{- if gt (len $previousParts) 1 -}}
+{{- $shorter := join "." (initial $previousParts) -}}
+{{- $longer := printf "%s.%s" (last $previousParts) $last -}}
+{{- $before := sub (add (len $previous) 1) (len $last) -}}
+{{- $after := sub (add (len $shorter) 1) (len $longer) -}}
+{{- if and (le (len $longer) 30) (lt (mul $after $after) (mul $before $before)) -}}
+{{- $lines = append (append (initial $prefix) $shorter) $longer -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+`{{ join "`.<br>`" $lines }}`
+{{- end }}

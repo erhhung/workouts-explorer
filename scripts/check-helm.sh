@@ -43,7 +43,7 @@ if grep -q 'prepare-smtp-password' "$rendered" ||
   exit 1
 fi
 if ! grep -q 'name: workouts-explorer-ui-nginx' "$rendered" ||
-   ! grep -q 'https://maps.example.invalid' "$rendered" ||
+   ! grep -Fq 'https://api.maptiler.com' "$rendered" ||
    ! grep -q 'mountPath: /etc/nginx/conf.d/default.conf' "$rendered"; then
   printf '%s\n' 'UI provider CSP configuration is not mounted from validated map origins' >&2
   exit 1

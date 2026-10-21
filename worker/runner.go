@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/erhhung/workouts-explorer/internal/rclonesource"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/google/uuid"
@@ -43,9 +45,14 @@ type Runner struct {
 	osmDB                      *pgxpool.Pool
 	osmAutoAddRegions          bool
 	coverageMinTraversalMeters float64
+	coverageBatchSize          int
 	logger                     *slog.Logger
 	keys                       *sourcecrypto.Keyring
 	localRoots                 []string
+	rcloneBinary               string
+	stagingRoot                string
+	stagingDirty               atomic.Bool
+	pendingCleanup             []*rclonesource.Source
 	workerID                   string
 	pollInterval               time.Duration
 	leaseDuration              time.Duration
@@ -70,10 +77,14 @@ type claimedJob struct {
 }
 
 type RunnerOptions struct {
+	RcloneBinary string
+	// StagingRoot must be private to this serial runner, never shared by pods.
+	StagingRoot                string
 	FileConcurrency            int
 	OSMDatabase                *pgxpool.Pool
 	OSMAutoAddRegions          bool
 	CoverageMinTraversalMeters float64
+	CoverageBatchSize          int
 }
 
 type ingestMode string
@@ -88,9 +99,10 @@ type executionResult struct {
 }
 
 type connectionResult struct {
-	status  string
-	code    *string
-	summary *string
+	status             string
+	code               *string
+	summary            *string
+	refreshedEncrypted []byte
 }
 
 func NewRunner(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecrypto.Keyring, localRoots []string) *Runner {
@@ -104,14 +116,26 @@ func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecry
 	if options.CoverageMinTraversalMeters == 0 {
 		options.CoverageMinTraversalMeters = 5
 	}
+	if options.CoverageBatchSize < 1 || options.CoverageBatchSize > 1000 {
+		options.CoverageBatchSize = 25
+	}
+	if options.RcloneBinary == "" {
+		options.RcloneBinary = "rclone"
+	}
+	if options.StagingRoot == "" {
+		options.StagingRoot = "/var/lib/workouts/staging"
+	}
 	return &Runner{
 		db:                         db,
 		osmDB:                      options.OSMDatabase,
 		osmAutoAddRegions:          options.OSMAutoAddRegions,
 		coverageMinTraversalMeters: options.CoverageMinTraversalMeters,
+		coverageBatchSize:          options.CoverageBatchSize,
 		logger:                     logger,
 		keys:                       keys,
 		localRoots:                 append([]string(nil), localRoots...),
+		rcloneBinary:               options.RcloneBinary,
+		stagingRoot:                options.StagingRoot,
 		workerID:                   "source-worker-" + uuid.NewString(),
 		pollInterval:               defaultPollInterval,
 		leaseDuration:              defaultLease,
@@ -127,6 +151,20 @@ func ConfigureFileSlotLimits(ctx context.Context, db *pgxpool.Pool, accountLimit
 	}
 	if !configured {
 		return errors.New("configure ingest file slot limits: active slots use different limits")
+	}
+	return nil
+}
+
+func ConfigureCoverageBatchSize(ctx context.Context, db *pgxpool.Pool, size int) error {
+	if size < 1 || size > 1000 {
+		return errors.New("coverage batch size must be between 1 and 1000")
+	}
+	var configured bool
+	if err := db.QueryRow(ctx, `SELECT app.configure_coverage_batch_size($1,$2)`, database.SupportedSchemaVersion, size).Scan(&configured); err != nil {
+		return fmt.Errorf("configure coverage batch size: %w", err)
+	}
+	if !configured {
+		return errors.New("coverage batch size configuration rejected")
 	}
 	return nil
 }
@@ -161,6 +199,12 @@ func (r *Runner) logCycleFailure(ctx context.Context, err error) {
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
+	if err := r.recoverICloudStaging(); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	job, err := r.claimNext(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -171,6 +215,9 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 	r.loadJobLogContext(ctx, &job)
 	return true, r.executeLogged(ctx, job, r.execute)
 }
+
+// StagingCleanupPending is safe to read from the runtime readiness handler.
+func (r *Runner) StagingCleanupPending() bool { return r.stagingDirty.Load() }
 
 func (r *Runner) loadJobLogContext(ctx context.Context, job *claimedJob) {
 	var sourceName, sourceType *string
@@ -460,18 +507,32 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 	heartbeatDone := make(chan error, 1)
 	go r.runHeartbeat(opCtx, cancelOperation, job, heartbeatDone)
 
-	_, envelope, cancellationPending, err := r.readSnapshot(opCtx, job)
+	snapshot, cancellationPending, err := r.readSnapshot(opCtx, job)
 	var result connectionResult
 	if err == nil && !cancellationPending {
-		result = checkLocalConnection(opCtx, r.keys, r.localRoots, job.accountID, job.id, envelope)
+		switch snapshot.sourceType {
+		case sourceconfig.LocalType:
+			result = checkLocalConnection(opCtx, r.keys, r.localRoots, job.accountID, job.id, snapshot.envelope)
+		case sourceconfig.ICloudType:
+			result, err = r.checkICloudConnection(opCtx, job, snapshot)
+		default:
+			result = connectionFailed("source-config-invalid", "Source configuration could not be read.")
+		}
 	}
 	cancelOperation()
 	heartbeatErr := <-heartbeatDone
 
+	if errors.Is(err, errPrivateCleanup) {
+		return err
+	}
 	if errors.Is(err, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
 		return errJobInterrupted
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
+		if errors.Is(heartbeatErr, errCancellationRequested) {
+			_, finishErr := r.finishCancelled(ctx, job)
+			return finishErr
+		}
 		return heartbeatErr
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -486,7 +547,10 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 	if cancellationPending {
 		result = connectedResult()
 	}
-	_, _, err = r.complete(ctx, job, result)
+	finished, err := r.complete(ctx, job, result)
+	if err == nil && !finished {
+		return errJobInterrupted
+	}
 	return err
 }
 
@@ -502,31 +566,37 @@ func runHeartbeatOperation(cancelOperation context.CancelFunc, done chan<- error
 	done <- err
 }
 
-func (r *Runner) readSnapshot(ctx context.Context, job claimedJob) (uuid.UUID, []byte, bool, error) {
+type jobSourceSnapshot struct {
+	sourceID   uuid.UUID
+	generation int64
+	sourceType string
+	envelope   []byte
+}
+
+func (r *Runner) readSnapshot(ctx context.Context, job claimedJob) (jobSourceSnapshot, bool, error) {
 	tx, err := beginAccount(ctx, r.db, job.accountID)
 	if err != nil {
-		return uuid.Nil, nil, false, err
+		return jobSourceSnapshot{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	var sourceID uuid.UUID
-	var generation int64
-	var envelope []byte
-	err = tx.QueryRow(ctx, `SELECT source_id,source_generation,config_envelope
-		FROM app.read_job_config_snapshot($1,$2,$3)`, job.id, r.workerID, job.lease).Scan(&sourceID, &generation, &envelope)
+	var snapshot jobSourceSnapshot
+	err = tx.QueryRow(ctx, `SELECT source_id,source_generation,source_type,config_envelope
+		FROM app.read_typed_job_source_snapshot($1,$2,$3)`, job.id, r.workerID, job.lease).
+		Scan(&snapshot.sourceID, &snapshot.generation, &snapshot.sourceType, &snapshot.envelope)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, nil, false, errLeaseLost
+		return jobSourceSnapshot{}, false, errLeaseLost
 	}
 	if err != nil {
-		return uuid.Nil, nil, false, err
+		return jobSourceSnapshot{}, false, err
 	}
 	var cancellationPending bool
 	if err := tx.QueryRow(ctx, `SELECT cancel_requested_at IS NOT NULL FROM app.jobs WHERE id=$1`, job.id).Scan(&cancellationPending); err != nil {
-		return uuid.Nil, nil, false, err
+		return jobSourceSnapshot{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, nil, false, err
+		return jobSourceSnapshot{}, false, err
 	}
-	return sourceID, envelope, cancellationPending, nil
+	return snapshot, cancellationPending, nil
 }
 
 func checkLocalConnection(ctx context.Context, keys *sourcecrypto.Keyring, roots []string, accountID, jobID uuid.UUID, envelope []byte) connectionResult {
@@ -579,6 +649,15 @@ func (r *Runner) heartbeatLoop(ctx context.Context, job claimedJob) error {
 			if !alive {
 				return errLeaseLost
 			}
+			if isSourceJob(job.kind) {
+				cancelled, err := r.observeIngest(ctx, job)
+				if err != nil {
+					return err
+				}
+				if cancelled {
+					return errCancellationRequested
+				}
+			}
 		}
 	}
 }
@@ -599,22 +678,25 @@ func (r *Runner) heartbeat(ctx context.Context, job claimedJob) (bool, error) {
 	return alive, nil
 }
 
-func (r *Runner) complete(ctx context.Context, job claimedJob, result connectionResult) (bool, bool, error) {
+func (r *Runner) complete(ctx context.Context, job claimedJob, result connectionResult) (bool, error) {
 	tx, err := beginAccount(ctx, r.db, job.accountID)
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
-	var finished, sourceUpdated bool
-	if err := tx.QueryRow(ctx, `SELECT finished,source_updated
-		FROM app.complete_source_connection_check($1,$2,$3,$4,$5,$6)`,
-		job.id, r.workerID, job.lease, result.status, result.code, result.summary).Scan(&finished, &sourceUpdated); err != nil {
-		return false, false, err
+	var refreshed any
+	if result.refreshedEncrypted != nil {
+		refreshed = json.RawMessage(result.refreshedEncrypted)
+	}
+	var finished bool
+	if err := tx.QueryRow(ctx, `SELECT app.finish_connection_check_with_refresh($1,$2,$3,$4,$5,$6,$7)`,
+		job.id, r.workerID, job.lease, result.status, result.code, result.summary, refreshed).Scan(&finished); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, false, err
+		return false, err
 	}
-	return finished, sourceUpdated, nil
+	return finished, nil
 }
 
 func (r *Runner) finishCancelled(ctx context.Context, job claimedJob) (bool, error) {

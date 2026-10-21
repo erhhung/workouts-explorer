@@ -239,7 +239,8 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	if err := legacyTx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.UpContext(ctx, db, "."); err != nil {
+	// Exercise historical downgrade contracts before crossing forward-only 021.
+	if err := goose.UpToContext(ctx, db, ".", 20); err != nil {
 		t.Fatal(err)
 	}
 	var sourceSchemaReady bool
@@ -345,8 +346,8 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer apiDB.Close()
-	if !database.Ready(ctx, apiDB) {
-		t.Fatalf("API role is not ready after schema-v1 upgrade: %s", runtime9ReadinessDiagnostics(ctx, apiDB))
+	if database.Ready(ctx, apiDB) {
+		t.Fatal("runtime 21 accepted schema 20 without iCloud database contracts")
 	}
 	if err := goose.DownToContext(ctx, db, ".", 7); err == nil {
 		t.Fatal("migration 00008 down ignored an existing workout deletion job")
@@ -885,11 +886,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		WHERE singleton`).Scan(&ingestDownCorrect); err != nil || !ingestDownCorrect {
 		t.Fatalf("migration 00004 down is incomplete: correct=%t err=%v", ingestDownCorrect, err)
 	}
-	if err := goose.UpContext(ctx, db, "."); err != nil {
+	if err := goose.UpToContext(ctx, db, ".", 20); err != nil {
 		t.Fatal(err)
 	}
-	if !database.Ready(ctx, apiDB) {
-		t.Fatal("API role is not ready after migrations 00004 through 00010 reapply")
+	if database.Ready(ctx, apiDB) {
+		t.Fatal("runtime 21 accepted historical schema 20 after reapply")
 	}
 	if err := goose.DownToContext(ctx, db, ".", 2); err != nil {
 		t.Fatal(err)

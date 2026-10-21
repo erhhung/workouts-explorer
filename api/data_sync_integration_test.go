@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,11 +46,31 @@ func TestDataSyncScheduleFieldsAndTenantIsolation(t *testing.T) {
 	principalB, _ := insertSourceTestUser(t, adminDB)
 	bearerA := insertTestSession(t, apiDB, principalA, "bearer", "")
 	bearerB := insertTestSession(t, apiDB, principalB, "bearer", "")
-	source := createIntegrationSource(t, server, bearerA, "Scheduled API source", "/data/workouts/scheduled-api")
+	config := testICloudConfig()
+	body, err := json.Marshal(map[string]any{
+		"displayName":     "Scheduled API source",
+		"type":            "health-auto-export-icloud",
+		"autoSyncEnabled": false,
+		"config":          config,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := routeJobRequest(handler, http.MethodPost, "/api/sources", string(body), bearerA, "", false)
+	if created.recorder.Code != http.StatusCreated {
+		t.Fatalf("create data sync source: status=%d", created.recorder.Code)
+	}
+	var source generated.Source
+	if err := json.Unmarshal(created.recorder.Body.Bytes(), &source); err != nil {
+		t.Fatal(err)
+	}
 	sourceID, _ := parseCompactUUID(source.Id)
+	checkedAt := time.Now().UTC().Truncate(time.Microsecond)
+	const statusCode = "source-auth-expired"
+	const statusSummary = "iCloud authentication has expired. Update the source credentials."
 	tx := integrationAccountTransaction(t, adminDB, accountA)
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE app.sources SET status='connected',auto_sync_enabled=true,checked_at=transaction_timestamp() WHERE id=$1`, sourceID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE app.sources SET status='connection-failed',status_code=$2,status_summary=$3,auto_sync_enabled=true,checked_at=$4 WHERE id=$1`, sourceID, statusCode, statusSummary, checkedAt); err != nil {
 		t.Fatal(err)
 	}
 	nextRun := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
@@ -124,6 +145,13 @@ func TestDataSyncScheduleFieldsAndTenantIsolation(t *testing.T) {
 		if call.recorder.Code != http.StatusOK {
 			t.Fatalf("data sync status=%d body=%s", call.recorder.Code, call.recorder.Body.String())
 		}
+		validateRecordedResponse(t, http.MethodGet, "/api/data-sync", call.recorder)
+		assertICloudRedacted(t, call.recorder.Body.Bytes())
+		for _, forbidden := range []string{`"config"`, `"configEnvelope"`, `"config_envelope"`, config.Path, config.ClientID} {
+			if strings.Contains(call.recorder.Body.String(), forbidden) {
+				t.Fatalf("data sync response exposed source configuration: %s", forbidden)
+			}
+		}
 		var result generated.DataSync
 		if err := json.Unmarshal(call.recorder.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
@@ -131,12 +159,25 @@ func TestDataSyncScheduleFieldsAndTenantIsolation(t *testing.T) {
 		return result
 	}
 	owned := read(bearerA)
+	if len(owned.Sources) != 1 {
+		t.Fatalf("owned source count=%d", len(owned.Sources))
+	}
+	status := owned.Sources[0]
+	if status.Id != source.Id || status.Status != generated.DataSyncSourceStatusConnectionFailed ||
+		status.StatusCode == nil || *status.StatusCode != statusCode ||
+		status.StatusSummary == nil || *status.StatusSummary != statusSummary ||
+		status.CheckedAt == nil || !status.CheckedAt.Equal(checkedAt) {
+		t.Fatalf("owned source status=%+v", status)
+	}
 	if !owned.Schedule.Enabled || owned.Schedule.SourceCount != 1 || owned.Schedule.CadenceSeconds < 300 ||
 		owned.Schedule.StaleDays < 1 || owned.Schedule.NextRunAt == nil || !owned.Schedule.NextRunAt.Equal(nextRun) ||
 		owned.Schedule.LastEnqueuedAt == nil || !owned.Schedule.LastEnqueuedAt.Equal(lastEnqueued) {
 		t.Fatalf("owned schedule=%+v", owned.Schedule)
 	}
 	isolated := read(bearerB)
+	if len(isolated.Sources) != 0 {
+		t.Fatalf("cross-account source exposure=%+v", isolated.Sources)
+	}
 	if isolated.Schedule.Enabled || isolated.Schedule.SourceCount != 0 || isolated.Schedule.NextRunAt != nil ||
 		isolated.Schedule.LastEnqueuedAt != nil || isolated.Schedule.LastJobId != nil {
 		t.Fatalf("cross-account schedule exposure=%+v", isolated.Schedule)

@@ -28,6 +28,8 @@ duplicates.
 Contributor setup, database verification, and packaging guidance are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+For development status, see [Development Progress](docs/development-progress.md).
+
 ## Development Progress
 
 | Completed | Milestone | Features |

@@ -2054,6 +2054,12 @@ h2 {
     ),
     linear-gradient(145deg, var(--canvas), var(--canvas-deep));
 }
+.summary-atmosphere {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  pointer-events: none;
+}
 .summary-contours {
   position: absolute;
   width: 34rem;
@@ -2168,10 +2174,15 @@ h2 {
 }
 .section-line > .range-metadata {
   display: inline-flex;
+  margin-inline-start: auto;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+.summary-page .range-metadata .tooltip-content {
+  right: 0;
+  left: auto;
 }
 .aggregate-grid {
   display: grid;
@@ -2236,6 +2247,45 @@ h2 {
 }
 .aggregate-card small span {
   color: var(--accent);
+}
+.aggregate-card-with-routes {
+  container-type: inline-size;
+}
+.aggregate-card-with-routes > button {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  align-items: center;
+}
+.aggregate-card-with-routes > button > span {
+  grid-column: 1 / -1;
+}
+.aggregate-card-with-routes strong {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
+  min-width: 0;
+}
+.aggregate-card-with-routes .aggregate-routed-count {
+  grid-column: 2;
+  justify-self: end;
+  text-align: right;
+}
+.aggregate-card-with-routes small {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: start;
+}
+.aggregate-card-with-routes .aggregate-routed-label {
+  grid-column: 2;
+  justify-content: flex-end;
+  text-align: right;
+}
+@container (max-width: 16rem) {
+  .aggregate-card-with-routes strong {
+    font-size: clamp(1rem, 14cqi, 2.4rem);
+  }
 }
 .aggregate-mode-hint {
   position: fixed;
@@ -2937,6 +2987,7 @@ h2 {
 .detail-region,
 .history-section,
 .sync-notification,
+.sync-feedback,
 .sync-inline-error,
 .mobile-back {
   position: relative;
@@ -3266,6 +3317,26 @@ h2 {
   font-size: 0.78rem;
   text-align: right;
 }
+.sync-feedback {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--info);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-elevated);
+  line-height: 1.4;
+}
+.sync-command-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.sync-command-feedback > .secondary {
+  min-height: 2.75rem;
+  margin-left: auto;
+}
 .sync-inline-error {
   margin-bottom: var(--space-3);
   color: var(--error);
@@ -3299,7 +3370,8 @@ h2 {
   border-color: var(--status-info);
   background: var(--status-info);
 }
-.sync-status--succeeded {
+.sync-status--succeeded,
+.sync-status--superseded {
   color: var(--status-success-ink);
   border-color: var(--status-success);
   background: var(--status-success);
@@ -3349,6 +3421,15 @@ h2 {
 .result-counts dd {
   font-size: 1.15rem;
   font-weight: 650;
+}
+.sync-workout-count {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+.sync-route-count {
+  font-size: 1rem;
 }
 .sync-no-data {
   margin-block: var(--space-4);
@@ -3500,6 +3581,9 @@ h2 {
   min-width: 0;
   padding: 0 var(--space-2) var(--space-4);
 }
+.artifact-results {
+  display: flow-root;
+}
 .artifact-list {
   display: grid;
   gap: var(--space-2);
@@ -3631,7 +3715,8 @@ h2 {
 .sync-status-text--queued {
   color: var(--info);
 }
-.sync-status-text--succeeded {
+.sync-status-text--succeeded,
+.sync-status-text--superseded {
   color: var(--route-ride);
 }
 .sync-status-text--partially_succeeded {

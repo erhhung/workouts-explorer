@@ -181,15 +181,8 @@ func (s *Server) GetWorkoutProvenance(w http.ResponseWriter, r *http.Request, wo
 		writeWorkoutUnavailable(w, r)
 		return
 	}
-	rows, err := tx.Query(r.Context(), `SELECT event.id,event.kind,event.job_id,event.source_id,
-		COALESCE(context.display_name,source.display_name),COALESCE(context.source_type,source.type),
-		file.relative_name,event.warnings,event.created_at
-	 FROM app.workout_import_events event
-	 JOIN app.source_files file ON file.id=event.source_file_id AND file.account_id=event.account_id
-	 JOIN app.sources source ON source.id=event.source_id AND source.account_id=event.account_id
-	 LEFT JOIN app.job_source_contexts context ON context.job_id=event.job_id AND context.account_id=event.account_id
-	 WHERE event.workout_id=$1 AND event.account_id=$2
-	 ORDER BY event.created_at,event.id`, id, *session.accountID)
+	rows, err := tx.Query(r.Context(), `SELECT event_id,kind,job_id,source_id,source_name,source_type,
+		relative_name,warnings,imported_at FROM app.read_workout_provenance($1)`, id)
 	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
@@ -789,7 +782,7 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]generated.WorkoutTypeSummary, generated.SummaryTotals, error) {
 	rows, err := tx.Query(ctx, `SELECT wt.id,wt.type_key,wt.provider_label,count(*)::bigint,trim_scale(sum(w.provider_duration))::text,
 		 trim_scale(sum(metrics.distance))::text,trim_scale(sum(metrics.energy))::text,count(route.workout_id)::bigint,
-		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
+		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text,count(metrics.distance)::bigint
 	 FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
 	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
 	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
@@ -808,7 +801,7 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 		var item generated.WorkoutTypeSummary
 		var duration string
 		var distance, energy, routedDistance *string
-		if err := rows.Scan(&id, &item.Type.Key, &item.Type.DisplayName, &item.Totals.Count, &duration, &distance, &energy, &item.Totals.RouteCount, &routedDistance); err != nil {
+		if err := rows.Scan(&id, &item.Type.Key, &item.Type.DisplayName, &item.Totals.Count, &duration, &distance, &energy, &item.Totals.RouteCount, &routedDistance, &item.Totals.DistanceCount); err != nil {
 			return nil, generated.SummaryTotals{}, err
 		}
 		item.Type.Id = compactUUID(id)
@@ -825,20 +818,20 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 	}
 	// PostgreSQL computes the exact overall sums, avoiding decimal arithmetic in Go.
 	var duration, distance, energy, routedDistance *string
-	var routeCount int64
+	var routeCount, distanceCount int64
 	err = tx.QueryRow(ctx, `SELECT trim_scale(sum(w.provider_duration))::text,trim_scale(sum(metrics.distance))::text,
 		 trim_scale(sum(metrics.energy))::text,count(route.workout_id)::bigint,
-		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text
+		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text,count(metrics.distance)::bigint
 	 FROM app.workouts w
 	 LEFT JOIN LATERAL (SELECT max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance,
 	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
 	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
-	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy, &routeCount, &routedDistance)
+	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy, &routeCount, &routedDistance, &distanceCount)
 	if err != nil {
 		return nil, generated.SummaryTotals{}, err
 	}
-	totals := generated.SummaryTotals{Count: totalCount, RouteCount: routeCount}
+	totals := generated.SummaryTotals{Count: totalCount, RouteCount: routeCount, DistanceCount: distanceCount}
 	if totalCount == 0 {
 		duration, distance, energy, routedDistance = stringPointer("0"), stringPointer("0"), stringPointer("0"), stringPointer("0")
 	}

@@ -18,9 +18,9 @@ Optional environment:
 
   OSM_NAMESPACE           Defaults to workouts-explorer
   OSM_IMAGE_PULL_SECRET   Defaults to workouts-harbor
-  OSM_DATABASE_SECRET     Defaults to workouts-explorer-database
-  OSM_DATABASE_KEY        Defaults to osmDatabaseUrl
-  OSM_DATABASE_TLS_SECRET Defaults to workouts-explorer-database-tls
+  OSM_DATABASE_SECRET     Writer Secret; defaults to workouts-explorer-database
+  OSM_DATABASE_KEY        Writer URL key; defaults to osmDatabaseUrl
+  OSM_DATABASE_TLS_SECRET Writer TLS Secret; defaults to workouts-explorer-database-tls
   OSM_MAX_DOWNLOAD_BYTES  Defaults to 1073741824
   OSM_OPERATOR            Defaults to local user name
   PROMETHEUS_KUBE_CONTEXT defaults to homelab

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import maplibregl from "maplibre-gl";
 import { type ReactNode } from "react";
@@ -45,6 +45,7 @@ const emptySummary = {
     count: 0,
     duration: "0",
     distance: { value: "0", unit: "km" },
+    distanceCount: 0,
     energy: { value: "0", unit: "kcal" },
     routeCount: 0,
     routedDistance: { value: "0", unit: "km" },
@@ -1985,6 +1986,103 @@ describe("authenticated shell", () => {
       await screen.findByText("Page 1 of 3", { selector: ".pagination span" }),
     ).toBeInTheDocument();
   });
+
+  test.each(["none", "active", "latest"] as const)(
+    "clears an obsolete source-check run link with %s real-run fallback",
+    async (fallback) => {
+      const sourceId = "A".repeat(32);
+      const checkId = "D".repeat(32);
+      const runId = "E".repeat(32);
+      const run = {
+        id: runId,
+        trigger: "manual",
+        status: fallback === "active" ? "running" : "succeeded",
+        attempt: 0,
+        progress: {
+          current: 0,
+          total: 0,
+          filesDiscovered: 0,
+          filesSkipped: 0,
+          filesSucceeded: 0,
+          filesFailed: 0,
+          workoutsCreated: 0,
+          workoutsUpdated: 0,
+          workoutsUnchanged: 0,
+          workoutsRejected: 0,
+        },
+        children: [],
+        retriedByJobIds: [],
+        cancelRequested: false,
+        createdAt: "2026-08-06T12:00:00Z",
+        updatedAt: "2026-08-06T12:00:00Z",
+      };
+      const paths: string[] = [];
+      authenticatedFetch((path) => {
+        if (path === "/api/data-sync")
+          return json({
+            ...dataSync,
+            sources: [
+              {
+                id: sourceId,
+                displayName: "Synthetic iCloud source",
+                type: "health-auto-export-icloud",
+                status: "connection-failed",
+                autoSyncEnabled: true,
+                freshness: {},
+                statusCode: "source-auth-expired",
+                statusSummary: "Source authentication expired; reauthentication is required",
+              },
+            ],
+            notifications: [
+              {
+                id: "F".repeat(32),
+                type: "source-connection-failed",
+                subjectType: "source",
+                sourceId,
+                jobId: checkId,
+                severity: "error",
+                state: "unresolved",
+                title: "Source connection failed",
+                message: "The source connection could not be verified.",
+                createdAt: run.createdAt,
+                updatedAt: run.updatedAt,
+              },
+            ],
+            ...(fallback === "none" ? {} : { [`${fallback}Job`]: run }),
+          });
+        if (path === `/api/jobs/${checkId}`) {
+          paths.push(path);
+          return json({ title: "Not Found", detail: "job was not found" }, 404);
+        }
+        if (path === `/api/jobs/${runId}`) {
+          paths.push(path);
+          return json(run);
+        }
+        return undefined as never;
+      });
+      const replace = vi.spyOn(history, "replaceState");
+      renderApp(`/data-sync/jobs/${checkId}`);
+      await waitFor(() => expect(location.pathname).toBe("/data-sync"));
+      expect(replace).toHaveBeenCalledWith({}, "", "/data-sync");
+      if (fallback === "none") {
+        expect(screen.queryByRole("region", { name: "Selected run" })).not.toBeInTheDocument();
+      } else {
+        const region = await screen.findByRole("region", { name: "Selected run" });
+        expect(
+          await within(region).findByText(fallback === "active" ? "Running" : "Completed"),
+        ).toBeVisible();
+      }
+      expect(screen.queryByText("Run detail is unavailable.")).not.toBeInTheDocument();
+      const button = screen.getByRole("button", { name: "View detail" });
+      await userEvent.click(button);
+      expect(within(button.closest("article")!).getByText("source-auth-expired")).toBeVisible();
+      expect(location.pathname).toBe("/data-sync");
+      expect(paths).toEqual([
+        `/api/jobs/${checkId}`,
+        ...(fallback === "none" ? [] : [`/api/jobs/${runId}`]),
+      ]);
+    },
+  );
 
   test("loads a Data Sync deep link and the wordmark returns to Summary", async () => {
     const jobId = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";

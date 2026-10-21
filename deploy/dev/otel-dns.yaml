@@ -5,7 +5,13 @@ metadata:
   namespace: kube-system
 data:
   workouts-otel.server: |
-    observability.svc.cluster.local:1053 {
+    otel-gateway-collector.observability.svc.cluster.local:1053 {
+        errors
+        forward . 10.43.0.10
+        cache 30
+    }
+  postgresql-osm.server: |
+    postgresql-postgresql-headless.postgresql.svc.cluster.local:1053 {
         errors
         forward . 10.43.0.10
         cache 30

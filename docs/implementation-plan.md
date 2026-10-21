@@ -510,7 +510,9 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   across explorer reads. On 10/6/2026, the development-only Coverage metadata grants
   were consolidated into migration 015; the separate 021 file was removed after
   compatibility checks and coordinated xdev bookkeeping repair. Schema support
-  ends at 020 with minimum runtime 18. The next application migration ordinal is 021.
+  ended at 020 with minimum runtime 18 at that historical checkpoint. The next
+  ordinal was 021; M8 now uses it for the distinct iCloud forward migration,
+  with schema/minimum runtime 21, not a restored Coverage/tile migration.
 - ADR 010 is accepted with date-range workout buckets `1`, `2`, `3-5`, `6-10`,
   `11-25`, and `26+`, exact tile counts, paired amber and magenta sequential
   palettes, and backend-authoritative assignment. Cumulative migration 017 adds the
@@ -541,7 +543,10 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   hardened the manual update Job's pull/TLS settings, completed the dedicated
   role's metadata and account-context grants, and raised only trusted production
   route input capacity to 50,000 points while retaining the public diagnostics
-  limit. Live reconciliation then persisted path, segment, and park attribution.
+  limit. Migration 030 subsequently aligns diagnostics with production at 50,000
+  original / 12,000 sampled points through shared pipeline limits, without
+  changing request budgets or deployment policy. Live reconciliation then
+  persisted path, segment, and park attribution.
 - Migration 019 separates checked-route geometry from date-range statistics and
   focused-route coverage. Production Coverage hides raw GPS routes, renders
   checked coverage with an amber sequence, overlays focused attribution with a
@@ -696,6 +701,136 @@ not removed requirements or a production-readiness claim.
 
 ## Milestone 8: iCloud/Rclone Source
 
+### Approved Source Adoption (Requires 26)
+
+Latest migration code is **26**. The approved identity/adoption feature requires
+schema and minimum runtime **26**, with migrations 024-026 and coordinated API,
+general-worker and Coverage-worker images. Integration is still in progress;
+this documentation update is not verification of a completed integration or a
+runtime-26 release. Current deployment remains **23** until coordinated rollout.
+[Development Progress](development-progress.md) owns live-version, deployment and
+operational evidence. Historical status/results below retain their original
+schema, scope and failures; they do not establish adoption or live-cloud acceptance.
+
+The new approved contract supersedes the earlier source-scoped provider-ID rule:
+
+- Enforce uniqueness by account, provider namespace and opaque provider ID. Local
+  and iCloud transports share `health-auto-export`. Same-source unchanged content
+  records a match; changed content updates the same UUID.
+- Skip another live owner's identity without duplicate creation, payload changes
+  or ownership theft. Live means `deleted_at IS NULL`, not enabled/connected.
+  A single deleted-source orphan can be adopted under the same UUID, preserving
+  historical source/file/job provenance and applying authoritative incoming
+  header/aggregate/route content. Source deletion is a soft tombstone, not a NULL
+  workout source; API source type remains immutable. No workout wipe is needed.
+- Fail migration on legacy duplicate provider identities and fail ambiguous
+  resolution without silent merges or arbitrary UUID selection. Pending/completed
+  workout deletion tombstones prevent resurrection. ID-less fallback stays
+  conservative and source-local, without automatic cross-source adoption.
+- Retain successful checksums for all-blocked and mixed files. Any
+  `skipped_live_owner` records `ownership_blocked_epoch` captured before ownership
+  decisions. Same-epoch incremental jobs skip unchanged metadata without
+  reread/download; only a live-to-deleted source transition advances the account
+  epoch. Adoption, cookie refresh and auth/config generations must not advance it.
+- A fresh incremental job reprocesses stale ownership-blocked files despite
+  identical metadata/bytes. Same-job manifest actions remain frozen, terminal
+  file checkpoints never reopen and recovery counters/events do not double-count.
+  Deletion starts no immediate sync; the next auto-sync or a new manual job is
+  needed. Bounded manual jobs already force eligible files to reprocess.
+- Every successful source-switch adoption records a durable Coverage request in
+  the same file transaction, including unchanged content/route. Post-commit ingest
+  repair or leased reconciliation consumes the outbox, with event/lease/input
+  fencing; no fake hash or source/workout-to-Coverage lock inversion is allowed.
+  Missing map data retains a deferred obligation, not a false match result.
+- Count `adopted` as Updated and `skipped_live_owner` as Unchanged in immediate and
+  recovered progress, preserving explicit owner-private events for the difference.
+  Keep 500m Coverage CPU, two execution lanes, existing admission caps and
+  6m/10m/15m timeouts; this feature does not increase capacity or certify cloud smoke.
+
+Implementation interfaces are in
+[`024_provider_workout_identity.sql`](../api/migrations/024_provider_workout_identity.sql),
+[`025_owner_aware_source_inventory.sql`](../api/migrations/025_owner_aware_source_inventory.sql)
+and [`026_adopted_workout_coverage.sql`](../api/migrations/026_adopted_workout_coverage.sql).
+The worker uses `app.resolve_ingest_workout_identity`,
+`app.read_ingest_candidate_actions`, `app.record_successful_source_object` and
+`app.record_adopted_workout_coverage_refresh`; `replayAdoptedCoverage` consumes
+committed requests from ingest repair or leased reconciliation. Ownership epochs
+advance only for successful source deletion, never adoption or credential refresh.
+Versioned fences preserve admitted transaction authority past wall-clock expiry
+without allowing an expired lease to acquire new write authority.
+
+Verification gates, not new passing receipts:
+
+- Fresh/repeat/upgrade schema-26 migration, runtime readiness/ACL/RLS and fail-closed
+  legacy-conflict checks, preserving old UUIDs and append-only history.
+- Same-source unchanged/changed, local-to-iCloud and reverse adoption,
+  disabled/disconnected live-owner skips, fallback isolation and pending/completed
+  deletion suppression, with no provider IDs or raw payloads in diagnostics.
+- Same-epoch no-download, deletion-only epoch changes, pre-decision captured-epoch
+  races, identical-metadata reread, all-blocked/mixed files, frozen recovery
+  manifests, terminal checkpoints and no duplicate immediate/recovered counts.
+- Changed/unchanged adoption outbox atomicity, rollback, crash replay, newer-event
+  protection, missing-map deferral and normal Coverage lease/admission fencing.
+  The [Local A / Cloud B worked example](icloud-source-setup.md#worked-source-switch-example)
+  is the expected behavior, not a real-account smoke receipt.
+
+Keep real accounts, workout counts, IDs, dates/GPS, private keys and private URLs
+out of Git. Synthetic test cases do not certify upstream authentication, live
+iCloud, deployment or production acceptance. No new application test run, image
+publication or live operation is claimed by this documentation update.
+
+### Status (10/13/2026)
+
+This is a historical checkpoint; current live status is linked above.
+
+**Ready for owner review.** Implementation and synthetic verification are ready:
+ordinary verification, scoped race tests, actual disposable PostGIS M8 suites,
+local worker-image/native checks and synthetic built-UI browser flows pass within
+the scope recorded below. Owner acceptance is pending; M8 is not closed and its
+README completion row stays unchecked. No live-cloud or production validation,
+image publication or redeployment is claimed or authorized by this progress note.
+The 10/12 verification below remains historical schema-21 evidence. At this
+checkpoint, code supported schema 22/minimum runtime 21 and the deployed
+function-only repair retained schema/Goose 20/minimum runtime 18.
+As of 10/13/2026 (`America/Los_Angeles`), the
+owner-requested repair and normal failed-only retries are verified complete: all
+affected routes have current durable matches and no failed/queued repair work
+remains. Private identity and counts are omitted. M8 image builds, publication and
+deployment have not started in this phase; no release tag is selected. Owner
+review and explicit image/rollout authorization remain required. The implemented
+[OSM reader-only feature](osm-read-replicas.md) is off by default. Live headless
+DNS/TCP and a separate direct-backend TLS/authentication client are verified in
+the telemetry guide; in-pod TLS/authentication is not certified, and reader
+activation/rollout remain pending.
+
+### Accepted Decisions (10/11/2026)
+
+The source-scoped identity decision here is historical and superseded by
+[Approved Source Adoption](#approved-source-adoption-requires-26); other decisions
+and their original verification boundaries remain unchanged.
+
+- Use a job-scoped native rclone 1.75.2 CLI, not a daemon/RC service or embedded
+  library. Pin release archives and verify separate amd64/arm64 SHA-256 values.
+- Use one application flat metadata discovery per sync. Incremental skipping
+  compares remote ID, size and modification time, accepting that a same-metadata
+  overwrite is undetectable; bounded Manual Sync forces matching dates. Native
+  stat/download may list internally, so no one-listing/one-HTTP guarantee exists.
+- Require a completed external session: closed version-1 path, write-only Apple
+  ID/obscured password/full cookies/trust token, optional non-secret client ID.
+  Fix native backend/service to `iclouddrive`/`drive`; reject arbitrary profiles,
+  flags, descriptions and intermediate `_auth_session`. Source CRUD UI and in-app
+  2FA remain out of scope; owners submit whitelisted fields through Swagger/REST.
+- Persist only refreshed cookies with first-writer-wins generation/lease fencing;
+  keep independently encrypted snapshots immutable. Publish refreshed cookies and
+  successful connection-check status atomically.
+- Add immutable forward migration `021_icloud_sources.sql`, schema/minimum runtime
+  21, fencing runtime-20 claims and pre-upgrade scheduler leases. Preserve M7's
+  historical schema-20/minimum-18 evidence and the tile consolidation history.
+- Retain the default 24-hour auto-sync cadence (optionally 12 hours), independent
+  of UI polling. At this historical checkpoint, separate local/iCloud sources
+  retained separate deduplication identities; that identity policy is superseded
+  by the approved contract requiring 26. Do not silently merge or purge workouts.
+
 ### Outcome
 
 An owner can configure externally authenticated rclone/iCloud access and use the same sync workflow as local/NFS.
@@ -707,18 +842,197 @@ An owner can configure externally authenticated rclone/iCloud access and use the
 - Execute rclone without exposing secrets in arguments or logs.
 - Discover by safe relative metadata and stage one remote file per slot.
 - Persist refreshed cookies into current encrypted source configuration.
-- Detect trust-token expiry and ADP/upstream failures.
+- Distinguish known trust/auth/explicit PCS approval failures from transient upstream failure; only the former disconnect a source during ingest. Explicit checks retain the asynchronous failed-check contract.
 - Add source-specific safe diagnostics and reauthentication instructions.
 - Persist refreshed cookies only when the source generation still matches the job snapshot; discard stale refreshes after source update or deletion.
-- Remove job-scoped rclone config files on success, failure, cancellation, and startup scavenging.
+- Remove private configs, backups, endpoint caches and staged exports before terminal outcomes and on startup scavenging. A local cleanup failure blocks that attempt's terminal writes and that worker's new claims/readiness until confirmed; encryption/refresh write errors preserve recoverable work. Pod-local gates/scavenging are not distributed cleanup, lost-volume guarantees or physical erasure.
 - Keep local/NFS behavior as the supported fallback.
+
+### Implementation Present
+
+- Typed discriminated OpenAPI requests/public responses, closed canonical config
+  validation, credential-preserving PATCH, account isolation and safe redaction.
+- Linux native adapter with credential-free argv, private environment/config,
+  bounded processes/output/retries, flat metadata validation, pre/post download
+  checks, atomic staging and cleanup. Bounds: 64 MiB files, 100000 entries,
+  10000 eligible exports, 32 MiB stdout, 60-second metadata, five-minute download.
+- Worker source-check/ingest integration, local-parser parity, metadata checkpoints,
+  cookie-only encrypted refresh, safe failure classification and forward-migration
+  functions for typed snapshots, atomic check completion, refresh and runtime fencing.
+- Synthetic suites for adapter processes/metadata/cleanup, schema/PATCH/redaction,
+  API lifecycle, worker lifecycle, migration CAS/scheduler/lease races and readiness
+  faults. Passing results and their boundaries are recorded below, separately
+  from wider database-suite baseline failures.
+- [Owner setup and recovery guide](icloud-source-setup.md) and
+  [contributor verification commands](../CONTRIBUTING.md#icloud-source-verification).
+
+### Verification Results (10/12/2026)
+
+| Verification | Recorded result | Boundary |
+|---|---|---|
+| Final `make verify` | Exit 0; all-package Go tests, Go vet, generation, formatting, typecheck, Go/UI builds, Helm checks and 303 UI tests pass | Ordinary suite with database URLs unset; database-backed skips are not PostgreSQL passes |
+| Final scoped race suite | Exit 0 for `./internal/sourceconfig ./internal/rclonesource ./internal/database ./api ./worker ./worker/cmd/worker` | Database URLs unset; ordinary unit/race coverage |
+| Disposable PostgreSQL 18.6 / PostGIS 3.6.4 M8 suites | 40 worker M8 tests across normal/race receipts; 138 internal full-race tests; 32 M8 SQL/readiness/race tests; four API integration passes | Actual database-backed receipts in `m8-verify/run2`; worker M8 runs have no M8 exclusions/skips, not a blanket wider database-suite pass |
+| Migration/readiness | Fresh 001-021, repeat migration, v1 upgrade and 020-to-021 SQL paths pass; API, worker and Coverage runtime roles unready at 20 and ready at 21 | Isolated disposable database, not deployed upgrade acceptance |
+| Worker image/native | Full Buildah build passes; all seven commands compile; amd64 release checksum matches, native version is 1.75.2; Alpine UID 65532 execution passes 41 top-level tests plus 60 subtests without failures/skips | Retained locally as `localhost/workouts-worker:m8-verification`; no publication/redeployment or arm64 execution |
+| Private staging bind root | Actual UID/GID `0:65532`, mode-`2770` bind root; `ScavengeStaging` creates private child `65532:65532`, mode `2700` (setgid plus `0700` access); synthetic `Source.New` version-only setup/cleanup passes | Not full worker startup, read-only-root-filesystem/seccomp verification or a cloud call |
+| Connected browser MCP | Built UI assets with synthetic API fulfillment in new isolated contexts at 1366x900 and 768x1024 pass friendly cloud label, connected default selection, disabled expired-cloud checkbox, exact two-ID cloud/local POST excluding expired source, and task navigation; zero page errors | Synthetic frontend verification; zero real-cloud calls or deployment changes |
+
+The final status receipts are `/tmp/opencode/m8-verify-final.status` and
+`/tmp/opencode/m8-local-verify-final.status`, both `0`. Temporary receipts and the
+ignored `deploy/internal/browser-checks/m8-synthetic-check.js` browser harness are local artifacts,
+not committed acceptance artifacts or durable backup evidence. This repository
+summary records their scope without private output or payloads.
+
+After the four API integration passes, a new recovery-copy unit assertion failed
+on the wording `external` versus `externally`. Production recovery copy was fixed;
+the final API unit/race checks pass. PostgreSQL integration was **not rerun after
+that message-only fix**; database semantics did not change. Earlier database
+receipts must not be represented as a fresh post-copy-fix run.
+
+### Legacy Coverage Repair (10/13/2026)
+
+- Added forward-only `022_legacy_coverage_bootstrap.sql` for routes excluded from
+  reconciliation because they lacked coverage state. The repair uses the real
+  canonical digest, concurrent-ingest/lease fences and 50,001-point overflow
+  readers; it preserves function signatures, owners and ACLs without new grants
+  or helper fields. Campaign wakeup preserves live cursors and newer desired work.
+- Recorded disposable PostGIS verification covers 27 test cases in each mode:
+  full migration to schema 22/minimum runtime 21 and function-only schema-20
+  compatibility. Fresh schema-22 readiness passes; deployed old-runtime readiness
+  remains preserved. These receipts do not replace the 10/12 M8 test counts or
+  establish a fresh whole-suite/application-image pass.
+- The deployed repair applied only the marked five-function block and separately
+  woke only the operator-selected account. Schema/Goose remains 20/minimum runtime
+  18; no M8 source DDL, source ingestion, import/delete/purge or OSM rebuild was used.
+  Map-data readiness is resolved, but first-pass matching included timeouts.
+- Explicit owner-API failed-only retries are **verified complete**, with all
+  affected routes current and no remaining failed/queued repair work. The supplied
+  final verification receipt reports successful completion (status `0`); private
+  account identifiers, health counts and route/job inventory remain outside Git.
+  Existing per-child timeout-retry policy grants the first timeout retry six
+  minutes and the second ten with the configured three-minute base; successful children
+  are skipped. Resources, base timeout and global/account/region limits `2/2/2`
+  remain physically unchanged. This normal runtime-derived parent/child retry
+  behavior is not a concurrent-capacity benchmark or a reader-feature deployment.
+
+See the [repair runbook](coverage-legacy-route-repair.md) for the compatibility
+boundary, private receipt retention and deployment gate. External source profiles
+remain unregistered; host keyring/rclone configuration was not read for this repair.
+
+### OSM Reader Policy (10/13/2026)
+
+- The revised chart contract retains global `osm.useReadReplicasOnly: false`
+  solely as a boolean connection policy. Readers use complete `{name, key}`
+  references: `worker.osmDatabaseSecret`, `coverageWorker.osmDatabaseSecret` and
+  `api.coverageDiagnostics.databaseSecret`, each defaulting to name
+  `workouts-explorer-database` and key `osmReaderDatabaseUrl`, under either policy
+  value. Each is independent of application-database references and the other
+  readers, even with shared default names. True enforces strict standby
+  validation; false uses normal driver behavior with the same selected URL and
+  may reach the primary if an operator-chosen all-node URL permits it. The boolean
+  never chooses a Secret or overrides an endpoint. The closed schema rejects
+  removed component key-only properties without migration aliases; historical
+  source mappings and previously removed global-key cleanup are in the operator guide.
+- OSM migration/timezone-import hooks independently use
+  `osm.writerDatabaseSecret: {name: workouts-explorer-database, key: osmDatabaseUrl}`
+  and `osm.writerDatabaseTLSSecret: workouts-explorer-database-tls`. Their role
+  must be authorized for migrations/imports, not a read-only runtime login.
+  Operator Jobs keep writer environment selectors `OSM_DATABASE_SECRET`,
+  `OSM_DATABASE_KEY` and `OSM_DATABASE_TLS_SECRET` with those same defaults;
+  they are independent of Helm reader references and never inferred from private
+  Helm values. Application-database selectors remain unrelated and unchanged.
+- Existing values require operator-only conversion of all three old component
+  key-only overrides: explicitly set the new reader name and key, then remove the
+  old property. Previously borrowed application Secret names are no longer
+  inherited. Deliberately replace overrides retaining a writer member with a
+  reader member. Verify reader entries privately and provision only if absent;
+  shared Secrets can retain application, reader and writer members, or dedicated
+  OSM reader roles can use separate Secrets with existing reader TLS properties.
+  Preserve connection-pool settings and reader profiles. Use a complete freshly
+  reviewed values file, not stale `--reuse-values`; agents must not read or edit
+  private local values.
+  See [the migration guidance](osm-read-replicas.md#existing-values-and-minimal-example).
+- Configuration propagates `OSM_USE_READ_REPLICAS_ONLY`. Strict boolean/schema
+  checks reject invalid values and the reader-only/auto-add conflict; auto-add
+  stays false. New connections resolve/copy/shuffle all headless A/AAAA results,
+  preserve verified TLS/fallback order, and require standby role at connection
+  and pool checkout without primary fallback. Held transactions cannot reroute
+  or prevent mid-transaction promotion. Safe connect/acquire telemetry remains;
+  unnamed role probes avoid raw role-check traces and named prepared statements.
+- Coverage preflights before claim when no replica is usable. Missing/lower heads
+  wait under five-second snapshot attempts/two-second polling, with renewing
+  claim/slot heartbeats; genuinely newer heads supersede only after no target is
+  behind. The match budget starts after a valid snapshot. Waiting holds matcher
+  admission and can block ready matches; readiness/reconciliation can lag too.
+- Recorded focused config, protocol/TLS/privacy fixtures and
+  disposable PostGIS lag/wait integration checks pass. Simulated replica heads
+  are not streaming-replication, live DNS/authentication or capacity proof.
+  Connection shuffling does not guarantee per-job balance, and the flag does not
+  increase worker threads, replicas or matcher limits. No unexecuted benchmark
+  is marked passed; newly evaluated capacity starts at one before a separately
+  approved increase to two.
+- Revised Helm/schema verification must cover default/custom complete component
+  reader references independently of application Secrets, each other and both
+  policy values, enabled/disabled diagnostics, unchanged separate writer
+  name/key/TLS overrides and removed-property rejection without aliases.
+  Earlier key-only chart receipts do not establish this replacement contract;
+  this documentation-only update does not run chart/runtime tests.
+- The exact headless DNS forwarding artifact and reachability proof remain owned
+  by [Telemetry and monitoring](telemetry-and-monitoring.md#private-dns-and-reachability).
+  Live DNS/TCP and a separate direct-backend authentication/verified-TLS client
+  pass within that guide's scope, not in-pod TLS/authentication or mTLS proof.
+  Reader activation/rollout remain pending at this checkpoint.
+  Shared Ansible HA provisioning is unchanged. The reader-only routing feature
+  added no migration at this checkpoint: code schema/minimum was 22/21 and
+  deployed compatibility was 20/18. Review
+  README and coordinate appropriate API/worker images before any authorized
+  migration/rollout. M8 image builds/deployment have not started in this phase.
+
+### Wider Database Exceptions
+
+Three wider database failures were also reproduced on archived user HEAD
+`a82377244a1df0ee78efbd49676e08ca4dfbedd3` in an isolated schema-20 baseline:
+
+| Test | Reproduced failure |
+|---|---|
+| Migration `TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry` | RLS fixture writes to job logs lack account context |
+| API `TestJobRetryLimitAndSourceLineageIntegration` | Returns 200 where the test expects 503 |
+| Local worker `TestRunnerManualIngestPostgreSQL/golden_import_and_unchanged_reimport` | Route-summary failure |
+
+Unrelated code remains unchanged. These failures are recorded baseline exceptions,
+not passing checks or reasons to describe the entire database integration suite
+as green. M7 historical measurements and acceptance decisions remain unchanged.
+
+### Owner Review And Boundaries
+
+The image/schema-22 and reader-rollout statements below record the earlier review
+phase, not current deployment status or the runtime-26 integration gate above.
+
+- Owner acceptance and explicit milestone closeout remain pending; keep README
+  milestone 8 unchecked until authorized. Synthetic implementation verification
+  is ready, not an outstanding implementation blocker.
+- An optional owner-operated real-cloud smoke test outside CI requires separate
+  authorization. Apple authentication/approval and production behavior have not
+  been validated by synthetic receipts.
+- The owner-account repair and failed-job retries are verified; this satisfies
+  that prerequisite, not M8 acceptance or image/rollout authorization. M8 image
+  builds, publication and redeployment have not started in this phase and require
+  README review, coordinated schema-22 API/worker images, a selected release tag
+  and explicit authorization. The 10/12 local verification image is not a
+  deployed M8 release; the 10/13 SQL-only repair did not build or deploy application images.
+- Arm64 execution, read-only-root-filesystem/seccomp behavior and full worker
+  startup were not verified. The pod-local cleanup/readiness gate is not a
+  distributed cross-pod cleanup or lost-volume guarantee. Permanent permission,
+  read-only filesystem or hardware faults are not automatically repaired; no
+  immediate physical-erasure or production-hardening claim is made.
 
 ### Acceptance
 
 - Rclone source produces the same normalized ingest behavior as local source.
 - Updated cookies persist without changing an active job's snapshot.
 - Trust expiry sets connection-failed and prevents later ingest.
-- Source password, cookies, and trust token never appear in logs, process listings, Swagger responses, or telemetry.
+- Apple ID, source password, cookies and trust token never appear in logs, argv/process listings, Swagger responses or telemetry; public config has no masked secret placeholders.
 
 ### Verification focus
 

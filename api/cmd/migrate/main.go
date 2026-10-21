@@ -43,6 +43,9 @@ func run(ctx context.Context) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err
 	}
+	if err := migrations.ValidateHistory(ctx, db); err != nil {
+		return fmt.Errorf("validate migration history: %w", err)
+	}
 	if err := goose.UpContext(ctx, db, "."); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
