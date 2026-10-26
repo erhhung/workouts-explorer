@@ -80,6 +80,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "invalid username or password")
 		return
 	}
+	if s.config.AllowAdminPassword && s.passwords.validate(*input.Password) != nil {
+		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "invalid username or password")
+		return
+	}
+	const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$Jg8CDQ8C8w7HqX1fV62H4h2H5QzKxU0fXwP8dF4G9tQ"
 	principal, passwordHash, err := s.findPrincipalForSignin(r.Context(), canonical, strings.Contains(input.Username, "@"))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "authentication service is temporarily unavailable")
@@ -87,14 +92,41 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A fixed valid profile keeps nonexistent-identity work in the Argon2 path.
-		passwordHash = "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$Jg8CDQ8C8w7HqX1fV62H4h2H5QzKxU0fXwP8dF4G9tQ"
+		passwordHash = dummyPasswordHash
 	}
 	verified, rehash, verifyErr := s.passwords.verify(r.Context(), *input.Password, passwordHash)
 	if verifyErr != nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "authentication service is temporarily unavailable")
 		return
 	}
-	if !verified || principal.principalID == uuid.Nil {
+	var authenticatingAdmin uuid.UUID
+	var adminPasswordHash string
+	if !verified && s.config.AllowAdminPassword {
+		candidateAdmin, candidateHash, lookupErr := s.findAdminForPasswordSignin(r.Context())
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "authentication service is temporarily unavailable")
+			return
+		}
+		if errors.Is(lookupErr, pgx.ErrNoRows) {
+			candidateHash = dummyPasswordHash
+		}
+		// Charge every fallback attempt, regardless of target eligibility or admin availability.
+		digest := rateDigest(s.config.RateLimitKey, "signin", "admin-password", []byte("shared"))
+		err = s.db.QueryRow(r.Context(), `SELECT allowed,retry_after_seconds FROM app.consume_rate_limit('signin','subject',$1)`, digest).Scan(&allowed, &retry)
+		if err != nil || !allowed {
+			writeLimitResult(w, r, err, retry)
+			return
+		}
+		adminVerified, _, verifyErr := s.passwords.verify(r.Context(), *input.Password, candidateHash)
+		if verifyErr != nil {
+			writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "authentication service is temporarily unavailable")
+			return
+		}
+		if adminVerified && candidateAdmin != uuid.Nil && principal.principalID != uuid.Nil && principal.role == "user" && principal.accountID != nil {
+			authenticatingAdmin, adminPasswordHash = candidateAdmin, candidateHash
+		}
+	}
+	if (!verified && authenticatingAdmin == uuid.Nil) || principal.principalID == uuid.Nil {
 		writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "invalid username or password")
 		return
 	}
@@ -121,7 +153,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 	tx, err := s.db.Begin(r.Context())
 	if err == nil {
 		defer tx.Rollback(r.Context())
-		if rehash {
+		if authenticatingAdmin != uuid.Nil {
+			var eligible bool
+			err = tx.QueryRow(r.Context(), `SELECT
+				EXISTS(SELECT 1 FROM app.authentication_principals p JOIN app.users u ON u.principal_id=p.id JOIN app.accounts a ON a.id=u.account_id WHERE p.id=$1 AND p.role='user' AND p.disabled_at IS NULL AND u.account_id=$2 AND a.state='active')
+				AND EXISTS(SELECT 1 FROM app.authentication_principals WHERE id=$3 AND role='administrator' AND disabled_at IS NULL AND password_hash=$4)
+				AND (SELECT count(*) FROM (SELECT id FROM app.authentication_principals WHERE role='administrator' AND disabled_at IS NULL LIMIT 2) administrators)=1`, principal.principalID, *principal.accountID, authenticatingAdmin, adminPasswordHash).Scan(&eligible)
+			if err == nil && !eligible {
+				writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "invalid username or password")
+				return
+			}
+		}
+		// A mismatched legacy hash can request rehashing; never replace it on fallback.
+		if err == nil && verified && rehash {
 			var replacement string
 			replacement, err = s.passwords.hash(r.Context(), *input.Password)
 			if err == nil {
@@ -130,6 +174,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `INSERT INTO app.sessions(id,principal_id,credential_kind,credential_verifier,csrf_token,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, sessionID, principal.principalID, kind, verifier, csrf, expiresAt)
+		}
+		if err == nil && authenticatingAdmin != uuid.Nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO app.audit_records(id,actor_principal_id,account_id,action,target_type,target_id,request_id) VALUES($1,$2,$3,'authentication.admin_password_signin','principal',$4,$5)`, uuid.Must(uuid.NewV7()), authenticatingAdmin, *principal.accountID, principal.principalID, requestIDFrom(r.Context()))
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
@@ -634,6 +681,30 @@ func (s *Server) findPrincipalForSignin(ctx context.Context, canonical string, e
 	var hash string
 	err := s.db.QueryRow(ctx, `SELECT p.id,u.account_id,p.role,p.username,p.email,p.canonical_email,p.full_name,p.password_hash FROM app.authentication_principals p LEFT JOIN app.users u ON u.principal_id=p.id LEFT JOIN app.accounts a ON a.id=u.account_id WHERE p.`+column+`=$1 AND p.disabled_at IS NULL AND (p.role='administrator' OR a.state='active')`, canonical).Scan(&principal.principalID, &principal.accountID, &principal.role, &principal.username, &principal.email, &principal.canonicalEmail, &principal.fullName, &hash)
 	return principal, hash, err
+}
+
+func (s *Server) findAdminForPasswordSignin(ctx context.Context) (uuid.UUID, string, error) {
+	rows, err := s.db.Query(ctx, `SELECT id,password_hash FROM app.authentication_principals WHERE role='administrator' AND disabled_at IS NULL LIMIT 2`)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	defer rows.Close()
+	var id uuid.UUID
+	var hash string
+	count := 0
+	for rows.Next() {
+		if err := rows.Scan(&id, &hash); err != nil {
+			return uuid.Nil, "", err
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return uuid.Nil, "", err
+	}
+	if count != 1 {
+		return uuid.Nil, "", pgx.ErrNoRows
+	}
+	return id, hash, nil
 }
 
 func (s *Server) consumeLimits(ctx context.Context, r *http.Request, operation, subject string) (bool, int, error) {

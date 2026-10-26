@@ -12,11 +12,257 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/erhhung/workouts-explorer/api/generated"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestJobFilesRejectInvalidFailuresOnly(t *testing.T) {
+	handler := testHandler(t)
+	for _, value := range []string{"invalid", "2", "null"} {
+		path := "/api/jobs/" + compactUUID(uuid.New()) + "/files?failuresOnly=" + value
+		call := routeJobRequest(handler, http.MethodGet, path, "", "", "", false)
+		if call.recorder.Code != http.StatusBadRequest {
+			t.Fatalf("failuresOnly=%s status=%d body=%s", value, call.recorder.Code, call.recorder.Body.String())
+		}
+		validateRecordedResponse(t, http.MethodGet, path, call.recorder)
+	}
+}
+
+// Malformed failed paths are synthetic legacy read-model rows for redaction,
+// not schema-31 discovery inputs. Successful rows use real frozen candidates.
+func TestJobFailedFilePaginationIntegration(t *testing.T) {
+	databaseURL, migrationURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL")
+	if databaseURL == "" || migrationURL == "" {
+		t.Skip("API_DATABASE_URL and MIGRATION_DATABASE_URL are required")
+	}
+	ctx := context.Background()
+	apiDB, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer apiDB.Close()
+	adminDB, err := pgxpool.New(ctx, migrationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	server := integrationServer(t, apiDB, &recordingSender{})
+	routerContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	handler, err := NewHandlerContext(routerContext, server.config, apiDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, account := insertSourceTestUser(t, adminDB)
+	bearer := insertTestSession(t, apiDB, principal, "bearer", "")
+	sourceIDs := make([]string, 0, 3)
+	for _, name := range []string{"A", "B", "Empty"} {
+		source := createIntegrationSource(t, server, bearer, "File pagination "+name, "/data/workouts/file-pagination-"+name)
+		id, _ := parseCompactUUID(source.Id)
+		setIntegrationSourceStatus(t, adminDB, account, id, "connected")
+		sourceIDs = append(sourceIDs, source.Id)
+	}
+	body, err := json.Marshal(map[string]any{"sourceIds": sourceIDs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueued := routeIngest(handler, string(body), bearer, "", false)
+	var accepted generated.IngestAccepted
+	if enqueued.recorder.Code != http.StatusAccepted || json.Unmarshal(enqueued.recorder.Body.Bytes(), &accepted) != nil {
+		t.Fatalf("enqueue status=%d body=%s", enqueued.recorder.Code, enqueued.recorder.Body.String())
+	}
+	detailed := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+accepted.JobId, "", bearer, "", false)
+	var detail generated.JobDetail
+	if detailed.recorder.Code != http.StatusOK || json.Unmarshal(detailed.recorder.Body.Bytes(), &detail) != nil || len(detail.Children) != 3 {
+		t.Fatalf("detail status=%d body=%s", detailed.recorder.Code, detailed.recorder.Body.String())
+	}
+	children := make(map[string]string)
+	for _, child := range detail.Children {
+		children[child.Source.SourceId] = child.Id
+	}
+	var failedIDs []string
+	ordinal := 0
+	for index, counts := range [][2]int{{30, 3}, {1, 2}} {
+		childID, _ := parseCompactUUID(children[sourceIDs[index]])
+		sourceID, _ := parseCompactUUID(sourceIDs[index])
+		lease := uuid.New()
+		tx := integrationAccountTransaction(t, adminDB, account)
+		defer tx.Rollback(ctx)
+		var claimed bool
+		if err := tx.QueryRow(ctx, `SELECT app.claim_job($1,'failed-file-pagination',$2,interval '5 minutes')`, childID, lease).Scan(&claimed); err != nil || !claimed {
+			t.Fatalf("claim=%t err=%v", claimed, err)
+		}
+		var fenced uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'failed-file-pagination',$2,$3)`, childID, lease, database.SupportedSchemaVersion).Scan(&fenced); err != nil || fenced != sourceID {
+			t.Fatalf("fence source=%s err=%v", fenced, err)
+		}
+		names, modified := recordIngestReceiptFixtureManifest(t, ctx, tx, childID, "failed-file-pagination", lease,
+			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), counts[0])
+		for n := range counts[0] + counts[1] {
+			fileID := uuid.New()
+			state := "succeeded"
+			if n >= counts[0] {
+				state = "failed"
+				failedIDs = append(failedIDs, compactUUID(fileID))
+			}
+			created := time.Date(2026, 1, 1, 0, 0, ordinal, 0, time.UTC)
+			ordinal++
+			name := "private-directory/file-" + strconv.Itoa(ordinal) + ".json"
+			if state == "succeeded" {
+				name = names[n]
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,modified_at,state,processing_started_at,created_at)
+				VALUES($1,$2,$3,$4,$5,1,$7,'processing',$6,$6)`, fileID, account, sourceID, childID, name, created, modified); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `UPDATE app.source_files SET state=$2,processed_at=clock_timestamp(),
+				checksum_sha256=CASE WHEN $2='succeeded' THEN decode(repeat('ab',32),'hex') END,
+				failure_code=CASE WHEN $2='failed' THEN 'private-failure-code' END,
+				failure_summary=CASE WHEN $2='failed' THEN 'private failure details' END WHERE id=$1`, fileID, state); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var recorded bool
+		if err := tx.QueryRow(ctx, `SELECT app.record_ingest_progress($1,'failed-file-pagination',$2,$3,0,$4,$5,1,0,0,0)`,
+			childID, lease, counts[0]+counts[1], counts[0], counts[1]).Scan(&recorded); err != nil || !recorded {
+			t.Fatalf("record synthetic imported workout=%t err=%v", recorded, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		tx = integrationAccountTransaction(t, adminDB, account)
+		defer tx.Rollback(ctx)
+		var finished bool
+		if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'failed-file-pagination',$2,'failed','source-file-invalid','Synthetic file failures.')`, childID, lease).Scan(&finished); err != nil || !finished {
+			t.Fatalf("finish=%t err=%v", finished, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(jobID, query string, total int64, count int) generated.JobFileList {
+		t.Helper()
+		path := "/api/jobs/" + jobID + "/files" + query
+		call := routeJobRequest(handler, http.MethodGet, path, "", bearer, "", false)
+		var result generated.JobFileList
+		if call.recorder.Code != http.StatusOK || json.Unmarshal(call.recorder.Body.Bytes(), &result) != nil {
+			t.Fatalf("%s status=%d body=%s", path, call.recorder.Code, call.recorder.Body.String())
+		}
+		validateRecordedResponse(t, http.MethodGet, path, call.recorder)
+		if result.Pagination.TotalItems != total || len(result.Items) != count || result.Pagination != pagination(result.Pagination.Page, result.Pagination.PageSize, total) {
+			t.Fatalf("%s pagination=%+v count=%d, want total=%d count=%d", path, result.Pagination, len(result.Items), total, count)
+		}
+		for _, secret := range []string{"private-directory", "private-failure-code", "private failure details"} {
+			if strings.Contains(call.recorder.Body.String(), secret) {
+				t.Fatalf("%s leaks %s", path, secret)
+			}
+		}
+		return result
+	}
+	all := read(accepted.JobId, "", 36, 25)
+	for _, item := range all.Items {
+		if item.State != generated.JobFileState("succeeded") {
+			t.Fatal("fixture must put failures beyond the first unfiltered page")
+		}
+	}
+	explicitFalse := read(accepted.JobId, "?failuresOnly=false", 36, 25)
+	if !slices.EqualFunc(all.Items, explicitFalse.Items, func(a, b generated.JobFile) bool { return a.Id == b.Id }) {
+		t.Fatal("false filter changes unfiltered ordering")
+	}
+	read(accepted.JobId, "?page=2&failuresOnly=false", 36, 11)
+	read(accepted.JobId, "?page=3", 36, 0)
+	filtered := read(accepted.JobId, "?failuresOnly=true", 5, 5)
+	for index, item := range filtered.Items {
+		if item.Id != failedIDs[index] || string(item.State) != "failed" || item.FailureCode == nil || *item.FailureCode != "source-file-invalid" ||
+			item.FailureSummary == nil || *item.FailureSummary != "A source file could not be processed." {
+			t.Fatalf("unexpected safe failed file: %+v", item)
+		}
+	}
+	var pagedIDs []string
+	for page, count := range []int{2, 2, 1, 0} {
+		result := read(accepted.JobId, "?failuresOnly=true&pageSize=2&page="+strconv.Itoa(page+1), 5, count)
+		for _, item := range result.Items {
+			pagedIDs = append(pagedIDs, item.Id)
+		}
+	}
+	if !slices.Equal(pagedIDs, failedIDs) {
+		t.Fatalf("filtered pages=%v want=%v", pagedIDs, failedIDs)
+	}
+	for index, counts := range [][2]int{{33, 3}, {3, 2}, {0, 0}} {
+		child := children[sourceIDs[index]]
+		read(child, "?failuresOnly=true", int64(counts[1]), counts[1])
+		read(child, "?failuresOnly=true&page=2", int64(counts[1]), 0)
+		read(child, "?failuresOnly=false&pageSize=100", int64(counts[0]), counts[0])
+	}
+	foreignPrincipal, foreignAccount := insertSourceTestUser(t, adminDB)
+	foreignBearer := insertTestSession(t, apiDB, foreignPrincipal, "bearer", "")
+	for _, jobID := range []string{accepted.JobId, children[sourceIDs[0]], children[sourceIDs[1]], compactUUID(uuid.New())} {
+		path := "/api/jobs/" + jobID + "/files?failuresOnly=true"
+		call := routeJobRequest(handler, http.MethodGet, path, "", foreignBearer, "", false)
+		if call.recorder.Code != http.StatusNotFound {
+			t.Fatalf("foreign files status=%d body=%s", call.recorder.Code, call.recorder.Body.String())
+		}
+		id, _ := parseCompactUUID(jobID)
+		tx := integrationAccountTransaction(t, apiDB, foreignAccount)
+		var rows, total int64
+		if err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM app.read_owned_job_files($1,100,0,true)), app.count_owned_job_rows($1,'failed_file')`, id).Scan(&rows, &total); err != nil || rows != 0 || total != 0 {
+			t.Fatalf("foreign helper rows=%d total=%d err=%v", rows, total, err)
+		}
+		_ = tx.Rollback(ctx)
+	}
+	parentID, _ := parseCompactUUID(accepted.JobId)
+	tx := integrationAccountTransaction(t, apiDB, account)
+	defer tx.Rollback(ctx)
+	var legacy, unfiltered, failures, windowTotal int64
+	if err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM app.read_owned_job_files($1,100,0)),
+		(SELECT count(*) FROM app.read_owned_job_files($1,100,0,false)),
+		(SELECT count(*) FROM app.read_owned_job_files($1,100,0,true)),
+		(SELECT total_count FROM app.read_owned_job_files($1,1,4,true))`, parentID).Scan(&legacy, &unfiltered, &failures, &windowTotal); err != nil || legacy != 36 || unfiltered != 36 || failures != 5 || windowTotal != 5 {
+		t.Fatalf("read ABIs legacy=%d unfiltered=%d failures=%d windowTotal=%d err=%v", legacy, unfiltered, failures, windowTotal, err)
+	}
+	_ = tx.Rollback(ctx)
+
+	// Imported workouts must keep failed sources retryable without rerunning
+	// the successful source sibling or losing the original failure evidence.
+	emptyChildID, _ := parseCompactUUID(children[sourceIDs[2]])
+	lease := uuid.New()
+	tx = integrationAccountTransaction(t, adminDB, account)
+	var claimed, finished bool
+	if err := tx.QueryRow(ctx, `SELECT app.claim_job($1,'failed-file-pagination',$2,interval '5 minutes')`, emptyChildID, lease).Scan(&claimed); err != nil || !claimed {
+		t.Fatalf("empty source claim=%t err=%v", claimed, err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'failed-file-pagination',$2,'succeeded')`, emptyChildID, lease).Scan(&finished); err != nil || !finished {
+		t.Fatalf("empty source finish=%t err=%v", finished, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	partial := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+accepted.JobId, "", bearer, "", false)
+	var partialDetail generated.JobDetail
+	if partial.recorder.Code != http.StatusOK || json.Unmarshal(partial.recorder.Body.Bytes(), &partialDetail) != nil || string(partialDetail.Status) != "partially_succeeded" {
+		t.Fatalf("file partial parent status=%d body=%s", partial.recorder.Code, partial.recorder.Body.String())
+	}
+	retried := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/retry", `{}`, bearer, "", false)
+	var retry generated.IngestAccepted
+	if retried.recorder.Code != http.StatusAccepted || json.Unmarshal(retried.recorder.Body.Bytes(), &retry) != nil {
+		t.Fatalf("partial retry status=%d body=%s", retried.recorder.Code, retried.recorder.Body.String())
+	}
+	retryCall := routeJobRequest(handler, http.MethodGet, "/api/jobs/"+retry.JobId, "", bearer, "", false)
+	var retryDetail generated.JobDetail
+	if retryCall.recorder.Code != http.StatusOK || json.Unmarshal(retryCall.recorder.Body.Bytes(), &retryDetail) != nil || len(retryDetail.Children) != 2 {
+		t.Fatalf("partial retry children status=%d body=%s", retryCall.recorder.Code, retryCall.recorder.Body.String())
+	}
+	for _, child := range retryDetail.Children {
+		if child.Source.SourceId == sourceIDs[2] || child.RetryOfJobId == nil || *child.RetryOfJobId != children[child.Source.SourceId] {
+			t.Fatalf("partial retry includes successful source or loses child lineage: %+v", child)
+		}
+	}
+	read(accepted.JobId, "?failuresOnly=true", 5, 5)
+}
 
 func TestJobOwnerAPIsIntegration(t *testing.T) {
 	databaseURL, migrationURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL")

@@ -28,9 +28,10 @@ var (
 )
 
 type ingestRange struct {
-	mode      string
-	startDate *string
-	endDate   *string
+	mode              string
+	startDate         *string
+	endDate           *string
+	reprocessAllFiles bool
 }
 
 type ingestSource struct {
@@ -60,6 +61,10 @@ func (s *Server) CreateIngest(w http.ResponseWriter, r *http.Request, params gen
 	}
 	var input generated.IngestCreate
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.ReprocessAllFiles != nil && (input.StartDate == nil || input.EndDate == nil) {
+		writeFieldError(w, r, "reprocessAllFiles", "invalid-range", "reprocessAllFiles requires both startDate and endDate")
 		return
 	}
 	sourceIDs, valid := normalizedIngestSourceIDs(input.SourceIds)
@@ -146,7 +151,7 @@ func (s *Server) enqueueIngest(ctx context.Context, tx pgx.Tx, accountID uuid.UU
 	}
 
 	parentKind, childKind := input.trigger+"_ingest", input.trigger+"_ingest_source"
-	key := manualIngestKey(sources, input.dateRange)
+	key := ingestEnqueueKey(sources, input)
 	parentID := uuid.Must(uuid.NewV7())
 	parentParameters, err := ingestParentParameters(input.sourceIDs, input.dateRange)
 	if err != nil {
@@ -154,7 +159,7 @@ func (s *Server) enqueueIngest(ctx context.Context, tx pgx.Tx, accountID uuid.UU
 	}
 	command, err := tx.Exec(ctx, `INSERT INTO app.jobs
 		(id,account_id,kind,priority,parameters,coalescing_version,coalescing_scope,coalescing_key,originating_request_id,retry_of_job_id)
-		VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9)
+		VALUES($1,$2,$3,$4,$5,2,$6,$7,$8,$9)
 		ON CONFLICT ((CASE WHEN account_id IS NOT NULL THEN 'account' ELSE 'administrator' END),
 			(COALESCE(account_id,administrator_id)),coalescing_scope,coalescing_key)
 		WHERE status IN ('queued','running') AND coalescing_key IS NOT NULL DO NOTHING`,
@@ -165,7 +170,7 @@ func (s *Server) enqueueIngest(ctx context.Context, tx pgx.Tx, accountID uuid.UU
 	if command.RowsAffected() == 0 {
 		var result ingestEnqueueResult
 		err = tx.QueryRow(ctx, `SELECT id,status,true FROM app.jobs WHERE account_id=$1 AND parent_job_id IS NULL
-			AND coalescing_version=1 AND coalescing_scope=$2 AND coalescing_key=$3 AND status IN ('queued','running')`,
+			AND coalescing_version=2 AND coalescing_scope=$2 AND coalescing_key=$3 AND status IN ('queued','running')`,
 			accountID, manualIngestScope, key[:]).Scan(&result.parentID, &result.status, &result.reused)
 		return result, err
 	}
@@ -242,7 +247,7 @@ func normalizedUUIDs(values []uuid.UUID) []uuid.UUID {
 
 func validNormalizedIngestRange(value ingestRange) bool {
 	if value.mode == "incremental" {
-		return value.startDate == nil && value.endDate == nil
+		return value.startDate == nil && value.endDate == nil && !value.reprocessAllFiles
 	}
 	if value.mode != "bounded" || value.startDate == nil || value.endDate == nil {
 		return false
@@ -275,6 +280,9 @@ func normalizedIngestSourceIDs(values []generated.CompactUUID) ([]uuid.UUID, boo
 }
 
 func normalizedIngestRange(input generated.IngestCreate) (ingestRange, bool) {
+	if input.ReprocessAllFiles != nil && (input.StartDate == nil || input.EndDate == nil) {
+		return ingestRange{}, false
+	}
 	if input.StartDate == nil && input.EndDate == nil {
 		return ingestRange{mode: "incremental"}, true
 	}
@@ -282,7 +290,8 @@ func normalizedIngestRange(input generated.IngestCreate) (ingestRange, bool) {
 		return ingestRange{}, false
 	}
 	start, end := input.StartDate.Time.Format(time.DateOnly), input.EndDate.Time.Format(time.DateOnly)
-	return ingestRange{mode: "bounded", startDate: &start, endDate: &end}, true
+	return ingestRange{mode: "bounded", startDate: &start, endDate: &end,
+		reprocessAllFiles: input.ReprocessAllFiles != nil && *input.ReprocessAllFiles}, true
 }
 
 func lockIngestSources(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) ([]sourceRecord, error) {
@@ -309,12 +318,18 @@ func lockIngestSources(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) ([]sourc
 }
 
 func ingestParentParameters(sourceIDs []uuid.UUID, dateRange ingestRange) ([]byte, error) {
+	var reprocessAllFiles *bool
+	if dateRange.mode == "bounded" {
+		reprocessAllFiles = &dateRange.reprocessAllFiles
+	}
 	value := struct {
-		Mode      string   `json:"mode"`
-		SourceIDs []string `json:"sourceIds"`
-		StartDate *string  `json:"startDate,omitempty"`
-		EndDate   *string  `json:"endDate,omitempty"`
-	}{Mode: dateRange.mode, StartDate: dateRange.startDate, EndDate: dateRange.endDate, SourceIDs: make([]string, len(sourceIDs))}
+		Mode              string   `json:"mode"`
+		SourceIDs         []string `json:"sourceIds"`
+		StartDate         *string  `json:"startDate,omitempty"`
+		EndDate           *string  `json:"endDate,omitempty"`
+		ReprocessAllFiles *bool    `json:"reprocessAllFiles,omitempty"`
+	}{Mode: dateRange.mode, StartDate: dateRange.startDate, EndDate: dateRange.endDate,
+		SourceIDs: make([]string, len(sourceIDs)), ReprocessAllFiles: reprocessAllFiles}
 	for index, id := range sourceIDs {
 		value.SourceIDs[index] = compactUUID(id)
 	}
@@ -322,27 +337,57 @@ func ingestParentParameters(sourceIDs []uuid.UUID, dateRange ingestRange) ([]byt
 }
 
 func ingestChildParameters(sourceID uuid.UUID, generation int64, dateRange ingestRange) ([]byte, error) {
+	var reprocessAllFiles *bool
+	if dateRange.mode == "bounded" {
+		reprocessAllFiles = &dateRange.reprocessAllFiles
+	}
 	return json.Marshal(struct {
-		SourceID   string  `json:"sourceId"`
-		Generation int64   `json:"generation"`
-		Mode       string  `json:"mode"`
-		StartDate  *string `json:"startDate,omitempty"`
-		EndDate    *string `json:"endDate,omitempty"`
-	}{compactUUID(sourceID), generation, dateRange.mode, dateRange.startDate, dateRange.endDate})
+		SourceID          string  `json:"sourceId"`
+		Generation        int64   `json:"generation"`
+		Mode              string  `json:"mode"`
+		StartDate         *string `json:"startDate,omitempty"`
+		EndDate           *string `json:"endDate,omitempty"`
+		ReprocessAllFiles *bool   `json:"reprocessAllFiles,omitempty"`
+	}{compactUUID(sourceID), generation, dateRange.mode, dateRange.startDate, dateRange.endDate, reprocessAllFiles})
 }
 
 func manualIngestKey(sources []ingestSource, dateRange ingestRange) [32]byte {
+	return ingestEnqueueKey(sources, ingestEnqueueRequest{dateRange: dateRange})
+}
+
+func ingestEnqueueKey(sources []ingestSource, input ingestEnqueueRequest) [32]byte {
 	hash := sha256.New()
-	hash.Write([]byte("workouts-explorer/manual-ingest/v1\x00"))
+	hash.Write([]byte("workouts-explorer/manual-ingest/v2\x00"))
 	for _, source := range sources {
 		hash.Write(source.id[:])
 		var generation [8]byte
 		binary.BigEndian.PutUint64(generation[:], uint64(source.generation))
 		hash.Write(generation[:])
 	}
-	hash.Write([]byte("\x00" + dateRange.mode + "\x00"))
-	if dateRange.startDate != nil {
-		hash.Write([]byte(*dateRange.startDate + "\x00" + *dateRange.endDate))
+	hash.Write([]byte("\x00" + input.dateRange.mode + "\x00"))
+	if input.dateRange.startDate != nil {
+		hash.Write([]byte(*input.dateRange.startDate + "\x00" + *input.dateRange.endDate))
+	}
+	if input.dateRange.reprocessAllFiles {
+		hash.Write([]byte{1})
+	} else {
+		hash.Write([]byte{0})
+	}
+	if input.retryOfParent == nil {
+		hash.Write([]byte{0})
+	} else {
+		hash.Write([]byte{1})
+		hash.Write(input.retryOfParent[:])
+	}
+	// A direct-child retry can share its parent pointer with a different branch.
+	links := make([]uuid.UUID, 0, len(input.childRetries))
+	for sourceID := range input.childRetries {
+		links = append(links, sourceID)
+	}
+	for _, sourceID := range normalizedUUIDs(links) {
+		childID := input.childRetries[sourceID]
+		hash.Write(sourceID[:])
+		hash.Write(childID[:])
 	}
 	var result [32]byte
 	copy(result[:], hash.Sum(nil))

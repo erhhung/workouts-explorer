@@ -75,7 +75,7 @@ const STATUS_LABELS: Record<JobDisplayStatus, string> = {
   queued: "Queued",
   running: "Running",
   succeeded: "Completed",
-  partially_succeeded: "Partially completed",
+  partially_succeeded: "Partially succeeded",
   failed: "Failed",
   cancelled: "Canceled",
   superseded: "Superseded",
@@ -444,15 +444,24 @@ function ArtifactDisclosure({
   jobId,
   kind,
   preferences,
+  filesFailed = 0,
+  jobStatus,
 }: {
   jobId: string;
   kind: ArtifactKind;
   preferences: Preferences;
+  filesFailed?: number;
+  jobStatus?: JobStatus;
 }) {
+  const queryClient = useQueryClient();
+  const previousRun = useRef({ filesFailed, jobStatus });
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [showFailuresOnly, setShowFailuresOnly] = useState(false);
+  const failuresOnly = kind === "files" && filesFailed > 0 && showFailuresOnly;
   const [retainedPage, setRetainedPage] = useState<{
     page: number;
+    failuresOnly: boolean;
     data: JobFileList | JobEventList | JobLogList;
   }>();
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -464,21 +473,52 @@ function ArtifactDisclosure({
   const [resultsMinHeight, setResultsMinHeight] = useState<number>();
   const label = kind[0].toUpperCase() + kind.slice(1);
   const query = useQuery({
-    queryKey: ["job-artifacts", jobId, kind, page],
+    queryKey: failuresOnly
+      ? ["job-artifacts", jobId, kind, page, "failures-only"]
+      : ["job-artifacts", jobId, kind, page],
     queryFn: ({ signal }) =>
       api<JobFileList | JobEventList | JobLogList>(
-        `/api/jobs/${encodeURIComponent(jobId)}/${kind}?page=${page}&pageSize=${PAGE_SIZE}`,
+        `/api/jobs/${encodeURIComponent(jobId)}/${kind}?page=${page}&pageSize=${PAGE_SIZE}${failuresOnly ? "&failuresOnly=true" : ""}`,
         { signal },
       ),
     enabled: open,
     placeholderData: (previousData, previousQuery) => {
       const key = previousQuery?.queryKey;
-      return key?.[0] === "job-artifacts" && key[1] === jobId && key[2] === kind && key[3] !== page
+      return key?.[0] === "job-artifacts" &&
+        key[1] === jobId &&
+        key[2] === kind &&
+        key[3] !== page &&
+        (key[4] === "failures-only") === failuresOnly
         ? previousData
         : undefined;
     },
   });
-  const data = query.data ?? (retainedPage?.page === page ? retainedPage.data : undefined);
+  const retainedData =
+    retainedPage?.page === page && retainedPage.failuresOnly === failuresOnly
+      ? retainedPage.data
+      : undefined;
+  // Keep visible rows until a cached final page can shrink and anchor together.
+  const data =
+    retainedData &&
+    (query.isFetching || query.isError) &&
+    query.data?.pagination.page === page &&
+    (query.data.pagination.totalPages === 0 ||
+      (page === query.data.pagination.totalPages &&
+        query.data.items.length < query.data.pagination.pageSize))
+      ? retainedData
+      : (query.data ?? retainedData);
+
+  useEffect(() => {
+    const previous = previousRun.current;
+    previousRun.current = { filesFailed, jobStatus };
+    if (
+      kind === "files" &&
+      (previous.filesFailed !== filesFailed ||
+        (previous.jobStatus !== jobStatus && jobStatus && !ACTIVE_STATUSES.has(jobStatus)))
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ["job-artifacts", jobId, "files"] });
+    }
+  }, [filesFailed, jobStatus, kind, jobId, queryClient]);
 
   useLayoutEffect(
     () => () => {
@@ -530,7 +570,7 @@ function ArtifactDisclosure({
       restore: true,
     };
     reserveHeight();
-    if (data) setRetainedPage({ page: nextPage, data });
+    if (data) setRetainedPage({ page: nextPage, failuresOnly, data });
     setPage(nextPage);
   }
 
@@ -539,6 +579,8 @@ function ArtifactDisclosure({
     fullPageHeight.current = 0;
     setResultsMinHeight(undefined);
     setRetainedPage(undefined);
+    setShowFailuresOnly(false);
+    if (failuresOnly) setPage(1);
     setOpen(false);
   }
 
@@ -553,9 +595,10 @@ function ArtifactDisclosure({
     // Cached full pages need immediate anchoring; shrinking waits for fresh data.
     if (finalPartial && query.isFetching) return;
     if (!finalPartial) {
+      // Measure the rows, not the wrapper's reserved height from the previous filter.
       fullPageHeight.current = Math.max(
         fullPageHeight.current,
-        resultsRef.current?.getBoundingClientRect().height ?? 0,
+        resultsRef.current?.querySelector(".artifact-list")?.getBoundingClientRect().height ?? 0,
       );
     }
     setRetainedPage(undefined);
@@ -607,7 +650,9 @@ function ArtifactDisclosure({
                 }}
               />
             )}
-            {data && data.items.length === 0 && <p>No {kind} recorded.</p>}
+            {data && data.items.length === 0 && (
+              <p>No {failuresOnly ? "failed files" : kind} recorded.</p>
+            )}
             {data && kind === "files" && (
               <ul className="artifact-list">
                 {(data as JobFileList).items.map((file) => (
@@ -649,23 +694,45 @@ function ArtifactDisclosure({
               </ul>
             )}
           </div>
-          {data && data.pagination.totalPages > 1 && (
-            <nav className="pagination" aria-label={`${label} pages`} ref={paginationRef}>
+          {(kind === "files" || (data && data.pagination.totalPages > 1)) && (
+            <nav
+              className={`pagination${kind === "files" ? " artifact-files-pagination" : ""}`}
+              aria-label={`${label} pages`}
+              ref={paginationRef}
+            >
+              {kind === "files" && (
+                <label className="artifact-failures-filter">
+                  <input
+                    type="checkbox"
+                    checked={failuresOnly}
+                    disabled={filesFailed === 0}
+                    onChange={(event) => {
+                      changePage(1);
+                      setRetainedPage(undefined);
+                      fullPageHeight.current = 0;
+                      setShowFailuresOnly(event.target.checked);
+                    }}
+                  />
+                  Show failures only
+                </label>
+              )}
               <button
                 type="button"
                 className="secondary"
-                disabled={page <= 1 || query.isFetching || data.pagination.page !== page}
+                disabled={!data || page <= 1 || query.isFetching || data.pagination.page !== page}
                 onClick={() => changePage(page - 1)}
               >
                 Previous
               </button>
               <span>
-                Page {data.pagination.page} of {data.pagination.totalPages}
+                Page {data?.pagination.page ?? page} of{" "}
+                {Math.max(1, data?.pagination.totalPages ?? 0)}
               </span>
               <button
                 type="button"
                 className="secondary"
                 disabled={
+                  !data ||
                   page >= data.pagination.totalPages ||
                   query.isFetching ||
                   data.pagination.page !== page
@@ -928,6 +995,7 @@ function JobDetailCard({
                   </div>
                   <StatusBadge
                     status={child.status}
+                    displayStatus={child.displayStatus}
                     cancelRequested={child.cancelRequested}
                     style={{ position: "relative", top: ".2rem" }}
                   />
@@ -998,6 +1066,8 @@ function JobDetailCard({
               jobId={job.id}
               kind="files"
               preferences={preferences}
+              filesFailed={job.progress.filesFailed}
+              jobStatus={job.status}
             />
           )}
           <ArtifactDisclosure
@@ -1124,6 +1194,7 @@ export function DataSync({
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
   const selectionInitialized = useRef(false);
   const [rangeMode, setRangeMode] = useState<"incremental" | "bounded">("incremental");
+  const [reprocessAllFiles, setReprocessAllFiles] = useState(false);
   const [formError, setFormError] = useState("");
   const [formErrorArea, setFormErrorArea] = useState<"sources" | "dates" | "request" | null>(null);
   const formErrorRef = useRef<HTMLDivElement>(null);
@@ -1139,6 +1210,7 @@ export function DataSync({
   } | null>(null);
   const previousStatus = useRef<{ id: string; status: JobStatus } | undefined>(undefined);
   const formErrorId = useId();
+  const reprocessHelpId = useId();
 
   const snapshot = useQuery({
     queryKey: ["data-sync"],
@@ -1459,17 +1531,13 @@ export function DataSync({
     if (rangeMode === "bounded") {
       body.startDate = startDate;
       body.endDate = endDate;
+      body.reprocessAllFiles = reprocessAllFiles;
     }
     ingest.mutate(body);
   }
 
   const connected = snapshot.data?.sources.filter((source) => source.status === "connected") ?? [];
   const notifications = snapshot.data?.notifications ?? [];
-  const dismissibleConfirmation = [
-    "Manual sync job has been queued.",
-    "Sync started.",
-    "Existing run selected.",
-  ].includes(announcement);
   return (
     <main className="data-sync-page">
       <div className="summary-contours" aria-hidden="true" />
@@ -1490,7 +1558,7 @@ export function DataSync({
         aria-atomic="true"
       >
         {announcement && <span>{announcement}</span>}
-        {dismissibleConfirmation && (
+        {announcement && (
           <button type="button" className="secondary" onClick={() => setAnnouncement("")}>
             Dismiss
           </button>
@@ -1512,9 +1580,12 @@ export function DataSync({
         <p className="notification-truncation">More notifications are available.</p>
       )}
       {dismiss.isError && (
-        <p className="sync-inline-error" role="alert">
-          The notification could not be dismissed.
-        </p>
+        <div className="sync-feedback sync-command-feedback sync-inline-error" role="alert">
+          <span>The notification could not be dismissed.</span>
+          <button type="button" className="secondary" onClick={() => dismiss.reset()}>
+            Dismiss
+          </button>
+        </div>
       )}
 
       <div className="sync-operational-grid">
@@ -1595,14 +1666,17 @@ export function DataSync({
                 </div>
               </fieldset>
               <fieldset aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}>
-                <legend>Data range</legend>
+                <legend>Scope</legend>
                 <div className="sync-radio-options">
                   <label>
                     <input
                       type="radio"
                       name="mode"
                       checked={rangeMode === "incremental"}
-                      onChange={() => setRangeMode("incremental")}
+                      onChange={() => {
+                        setRangeMode("incremental");
+                        setReprocessAllFiles(false);
+                      }}
                     />{" "}
                     <span>
                       <strong>New data only</strong>
@@ -1618,7 +1692,7 @@ export function DataSync({
                     />{" "}
                     <span>
                       <strong>Specific date range</strong>
-                      <small>Use inclusive calendar dates.</small>
+                      <small>Import data in inclusive date range.</small>
                     </span>
                   </label>
                 </div>
@@ -1647,6 +1721,25 @@ export function DataSync({
                     />
                   </div>
                 </div>
+              )}
+              {rangeMode === "bounded" && (
+                <span className="tooltip manual-reprocess">
+                  <label className="tooltip-trigger manual-reprocess-option">
+                    <input
+                      type="checkbox"
+                      name="reprocessAllFiles"
+                      checked={reprocessAllFiles}
+                      disabled={ingest.isPending}
+                      aria-describedby={reprocessHelpId}
+                      onChange={(event) => setReprocessAllFiles(event.target.checked)}
+                    />
+                    <span>Reprocess all files in this date range</span>
+                  </label>
+                  <span className="tooltip-content" id={reprocessHelpId} role="tooltip">
+                    Download and process every eligible file in this date range, including
+                    previously successful files. This may be slow and transfer substantial data.
+                  </span>
+                </span>
               )}
               <button type="submit" className="primary" disabled={ingest.isPending}>
                 {ingest.isPending ? "Starting sync..." : "Start sync"}

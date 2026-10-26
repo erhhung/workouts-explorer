@@ -481,7 +481,7 @@ describe("Summary", () => {
       }
       throw new Error(`Unhandled ${path}`);
     });
-    renderSummary();
+    const { onDateRangeSaved } = renderSummary();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Select date range" }));
     expect(screen.queryByText("Quick ranges")).not.toBeInTheDocument();
@@ -493,6 +493,23 @@ describe("Summary", () => {
     expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
       "Last 7 days",
     );
+    const warning = screen.getByRole("status");
+    const dismiss = within(warning).getByRole("button", { name: "Dismiss date range warning" });
+    expect(dismiss).toHaveTextContent("Dismiss");
+    expect(dismiss).toHaveClass("secondary");
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+    dismiss.focus();
+    await user.keyboard("{Enter}");
+    expect(warning).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
+    expect(onDateRangeSaved).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+      "Last 7 days",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Select date range" }));
+    await user.click(screen.getByRole("menuitem", { name: "Last 7 days selected" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("continue using your selection");
 
     await user.click(screen.getByRole("button", { name: "Select date range" }));
     await user.click(screen.getByRole("menuitem", { name: /^Custom/ }));
@@ -508,6 +525,7 @@ describe("Summary", () => {
     await user.click(screen.getByRole("button", { name: "Apply" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("on or before");
+    expect(within(alert).queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
     await waitFor(() => expect(alert).toHaveFocus());
     expect(screen.getByLabelText("Start date")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("End date")).toHaveAccessibleDescription(
@@ -516,11 +534,13 @@ describe("Summary", () => {
     await user.clear(screen.getByLabelText("End date"));
     await user.type(screen.getByLabelText("End date"), "2026-08-06");
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(patches).toHaveLength(2));
+    await waitFor(() => expect(patches).toHaveLength(3));
+    await waitFor(() => expect(onDateRangeSaved).toHaveBeenCalledWith("2026-08-05/2026-08-06"));
     expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
       "Aug 5, 2026 to Aug 6, 2026",
     );
     expect(patches).toEqual([
+      { body: { dateRange: "last7Days" }, csrf: "csrf-summary" },
       { body: { dateRange: "last7Days" }, csrf: "csrf-summary" },
       { body: { dateRange: "2026-08-05/2026-08-06" }, csrf: "csrf-summary" },
     ]);
@@ -1826,6 +1846,9 @@ describe("Summary", () => {
 
   test("hides route exports without points and never creates a partial failed download", async () => {
     const createObjectURL = vi.fn();
+    const downloadClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     const unrouted = {
       ...workout,
@@ -1838,7 +1861,7 @@ describe("Summary", () => {
       if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
       if (path.startsWith("/api/workouts?"))
         return Promise.resolve(json(workoutPage(1, [workout, unrouted])));
-      if (path.endsWith("/route/points"))
+      if (path.endsWith("/route/points") || path.endsWith("/route"))
         return Promise.resolve(json({ title: "private export failure" }, 503));
       throw new Error(`Unhandled ${path}`);
     });
@@ -1859,7 +1882,146 @@ describe("Summary", () => {
     expect(alert).toHaveTextContent("Workout points could not be exported. Try again.");
     expect(alert).not.toHaveTextContent("private export failure");
     expect(createObjectURL).not.toHaveBeenCalled();
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+    await user.click(within(alert).getByRole("button", { name: "Dismiss export error" }));
+    expect(alert).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(downloadClick).not.toHaveBeenCalled();
+    expect(triggers[0]).toBeInTheDocument();
+
+    await user.click(triggers[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Export GeoJSON" }));
+    const nextAlert = await screen.findByRole("alert");
+    expect(nextAlert).toHaveTextContent("Workout GeoJSON could not be exported. Try again.");
+    await user.click(within(nextAlert).getByRole("button", { name: "Dismiss export error" }));
+    expect(nextAlert).not.toBeInTheDocument();
+
+    createObjectURL.mockReturnValue("blob:retry-export");
+    vi.mocked(fetch).mockImplementation((input) => {
+      if (String(input).endsWith("/route/points"))
+        return Promise.resolve(
+          new Response(JSON.stringify({ points: [] }), {
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Disposition": 'attachment; filename="retry-points.json"',
+            },
+          }),
+        );
+      throw new Error(`Unhandled ${input}`);
+    });
+    await user.click(triggers[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Export points" }));
+    await waitFor(() => expect(downloadClick).toHaveBeenCalledTimes(1));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Dismiss export error" })).not.toBeInTheDocument();
   });
+
+  test.each(["Dismiss date range warning", "Dismiss export error", "Dismiss deletion notice"])(
+    "dismisses combined notices independently, starting with %s",
+    async (firstDismiss) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const path = String(input);
+        if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
+        if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
+        if (path === "/api/me/preferences" && init?.method === "PATCH")
+          return Promise.resolve(json({ title: "Unavailable" }, 503));
+        if (path.endsWith("/route/points"))
+          return Promise.resolve(json({ title: "Export unavailable" }, 503));
+        if (path === `/api/workouts/${workout.id}` && init?.method === "DELETE")
+          return Promise.resolve(json({ title: "Not Found" }, 404));
+        throw new Error(`Unhandled ${path}`);
+      });
+      const onWorkoutsDeleted = vi.fn();
+      const onShowOnMap = vi.fn();
+      const { onDateRangeSaved, container, rerenderPreferences } = renderSummary(
+        {},
+        undefined,
+        onShowOnMap,
+        onWorkoutsDeleted,
+      );
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Select date range" }));
+      await user.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
+      await screen.findByRole("button", { name: "Dismiss date range warning" });
+      await user.click(
+        screen.getAllByRole("button", { name: "Actions for Running on 2026-08-05" })[0],
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Export points" }));
+      await screen.findByRole("button", { name: "Dismiss export error" });
+      await user.click(
+        screen.getAllByRole("button", { name: "Actions for Running on 2026-08-05" })[0],
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
+      await user.click(screen.getByRole("button", { name: "Yes" }));
+      await screen.findByRole("button", { name: "Dismiss deletion notice" });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(9));
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" });
+      expect(onWorkoutsDeleted).toHaveBeenCalledExactlyOnceWith({ workoutIds: [workout.id] });
+
+      const notices = [
+        "Dismiss date range warning",
+        "Dismiss export error",
+        "Dismiss deletion notice",
+      ].map((label) => ({
+        label,
+        banner: screen.getByRole("button", { name: label }).parentElement!,
+      }));
+      const main = container.querySelector("main");
+      const location = window.location.href;
+      const pushState = vi.spyOn(history, "pushState");
+      const replaceState = vi.spyOn(history, "replaceState");
+      const downloadClick = vi
+        .spyOn(HTMLAnchorElement.prototype, "click")
+        .mockImplementation(() => {});
+      const order = [
+        firstDismiss,
+        ...notices.map(({ label }) => label).filter((label) => label !== firstDismiss),
+      ];
+      for (const [index, label] of order.entries()) {
+        const dismiss = screen.getByRole("button", { name: label });
+        expect(dismiss).toHaveTextContent("Dismiss");
+        expect(dismiss).toHaveClass("secondary");
+        expect(dismiss).toHaveAttribute("type", "button");
+        await user.click(dismiss);
+        for (const notice of notices) {
+          if (order.slice(0, index + 1).includes(notice.label))
+            expect(notice.banner).not.toBeInTheDocument();
+          else expect(notice.banner).toBeInTheDocument();
+        }
+        expect(fetchMock).toHaveBeenCalledTimes(9);
+        expect(onWorkoutsDeleted).toHaveBeenCalledTimes(1);
+        expect(onDateRangeSaved).not.toHaveBeenCalled();
+        expect(onShowOnMap).not.toHaveBeenCalled();
+        expect(pushState).not.toHaveBeenCalled();
+        expect(replaceState).not.toHaveBeenCalled();
+        expect(downloadClick).not.toHaveBeenCalled();
+        expect(window.location.href).toBe(location);
+        expect(container.querySelector("main")).toBe(main);
+        expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+          "Last 7 days",
+        );
+      }
+      rerenderPreferences({ clockFormat: "24h" });
+      expect(screen.queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Actions for Running on 2026-08-05" })[0],
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
+      await user.click(screen.getByRole("button", { name: "Yes" }));
+      const nextNotice = await screen.findByRole("button", { name: "Dismiss deletion notice" });
+      expect(nextNotice.parentElement).toHaveTextContent(
+        "This workout is no longer available. Summary was refreshed.",
+      );
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(12));
+      expect(onWorkoutsDeleted).toHaveBeenCalledTimes(2);
+      await user.click(nextNotice);
+      expect(nextNotice).not.toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(12);
+      expect(onWorkoutsDeleted).toHaveBeenCalledTimes(2);
+    },
+  );
 
   test("confirms and optimistically hides an individual workout before durable deletion is accepted", async () => {
     const onWorkoutsDeleted = vi.fn();
@@ -2005,6 +2167,7 @@ describe("Summary", () => {
     await user.click(screen.getByRole("button", { name: "Yes" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Nothing was changed");
+    expect(within(alert).queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
     expect(alert).not.toHaveTextContent("private deletion detail");
     expect(onWorkoutsDeleted).not.toHaveBeenCalled();
     expect(alert).toHaveFocus();
@@ -2153,7 +2316,10 @@ describe("Summary", () => {
       );
     });
     renderSummary();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Range totals are unavailable");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Range totals are unavailable");
+    expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(within(alert).queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
     expect(screen.getByText("No workouts in this range.")).toBeInTheDocument();
     expect(screen.queryByText("private detail")).not.toBeInTheDocument();
   });

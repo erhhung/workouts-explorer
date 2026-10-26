@@ -71,6 +71,19 @@ func TestIngestCoveragePipelineReadinessPostgreSQL(t *testing.T) {
 			}
 			check(t, "", true)
 			for name, mutation := range map[string]string{
+				"receipt trigger disabled":       `ALTER TABLE app.source_files DISABLE TRIGGER source_files_receipt_before_write`,
+				"receipt constraint missing":     `ALTER TABLE app.source_files DROP CONSTRAINT source_files_success_receipt`,
+				"receipt private grant":          `REVOKE SELECT ON app.source_files FROM workouts_security_owner; REVOKE SELECT(observed_identity,ownership_blocked_epoch) ON app.source_files FROM workouts_security_owner`,
+				"receipt API exposure":           `GRANT SELECT(observed_identity) ON app.source_files TO workouts_api`,
+				"retry helper API grant":         `GRANT EXECUTE ON FUNCTION app.ingest_retry_ancestor_jobs(uuid,uuid,uuid) TO workouts_api`,
+				"receipt helper search path":     `ALTER FUNCTION app.stamp_ingest_source_file_receipt() SET search_path=app,pg_catalog`,
+				"ingest outcome grant":           `REVOKE EXECUTE ON FUNCTION app.ingest_outcome_status(text,text,bigint,bigint) FROM workouts_api`,
+				"ingest outcome public":          `GRANT EXECUTE ON FUNCTION app.ingest_outcome_status(text,text,bigint,bigint) TO PUBLIC`,
+				"ingest outcome volatility":      `ALTER FUNCTION app.ingest_outcome_status(text,text,bigint,bigint) VOLATILE`,
+				"file filter grant":              `REVOKE EXECUTE ON FUNCTION app.read_owned_job_files(uuid,integer,integer,boolean) FROM workouts_api`,
+				"file filter public":             `GRANT EXECUTE ON FUNCTION app.read_owned_job_files(uuid,integer,integer,boolean) TO PUBLIC`,
+				"file filter worker":             `GRANT EXECUTE ON FUNCTION app.read_owned_job_files(uuid,integer,integer,boolean) TO workouts_worker`,
+				"file filter search path":        `ALTER FUNCTION app.read_owned_job_files(uuid,integer,integer,boolean) SET search_path=app,pg_catalog`,
 				"old minimum":                    `UPDATE app.schema_metadata SET minimum_runtime_version=27`,
 				"policy role":                    `GRANT SELECT ON app.coverage_batch_policy TO workouts_api`,
 				"outbox RLS":                     `ALTER TABLE app.ingest_coverage_handoffs NO FORCE ROW LEVEL SECURITY`,

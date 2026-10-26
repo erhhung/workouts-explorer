@@ -123,6 +123,10 @@ const ROUTE_LAYERS = [
 const ROUTE_HOVER_DELAY_MS = 250;
 const COVERAGE_READINESS_POLL_MS = 10_000;
 const COVERAGE_HOVER_DELAY_MS = 750;
+const COVERAGE_HOVER_LOOKUP_DELAY_MS = 250;
+const COVERAGE_HOVER_CACHE_LIMIT = 128;
+const COVERAGE_HOVER_CACHE_TTL_MS = 5 * 60_000;
+const COVERAGE_DETAIL_TIMEOUT_MS = 30_000;
 export const COVERAGE_HIGHLIGHT_DURATION_MS = 3000;
 const COVERAGE_HIGHLIGHT_IDLE_FALLBACK_MS = 30000;
 const DIAGNOSTIC_HOVER_DELAY_MS = 250;
@@ -468,6 +472,37 @@ type CoverageHighlight = {
 export type MapMode = "routes" | "coverage";
 export type RoadCoverageCache = { key: string; loadedAt: number; entities: RoadCoverageEntity[] };
 
+export class CoverageDetailCache {
+  private entries = new Map<
+    string,
+    { detail: RoadCoverageDetail; bytes: number; loadedAt: number }
+  >();
+
+  get(key: string) {
+    const entry = this.entries.get(key);
+    this.entries.delete(key);
+    if (!entry || Date.now() - entry.loadedAt >= 5 * 60_000) return;
+    this.entries.set(key, entry);
+    return entry.detail;
+  }
+
+  set(key: string, detail: RoadCoverageDetail) {
+    const bytes = new TextEncoder().encode(JSON.stringify(detail)).byteLength;
+    this.entries.delete(key);
+    if (bytes > 8 * 1024 * 1024) return;
+    this.entries.set(key, { detail, bytes, loadedAt: Date.now() });
+    while (
+      this.entries.size > 8 ||
+      [...this.entries.values()].reduce((total, entry) => total + entry.bytes, 0) > 8 * 1024 * 1024
+    )
+      this.entries.delete(this.entries.keys().next().value!);
+  }
+
+  clear() {
+    this.entries.clear();
+  }
+}
+
 export function buildSegmentedRawRoute(points: RawRoutePoint[]): RawRouteFeature | undefined {
   if (points.length < 2) return undefined;
   const lines: number[][][] = [];
@@ -741,6 +776,14 @@ function MapCanvas({
   const diagnosticRef = useRef(diagnostic);
   const highlightedPortionRef = useRef(highlightedPortionOrdinal);
   const coverageHighlightRef = useRef(coverageHighlight);
+  const installedCoverageHighlightRef = useRef<
+    | {
+        source: GeoJSONSource;
+        geometry: RoadCoverageDetail["geometry"];
+      }
+    | undefined
+  >(undefined);
+  const startedCoverageHighlightKeyRef = useRef<number | undefined>(undefined);
   const styleLoadedRef = useRef(false);
   const fallbackInstalledRef = useRef(false);
   const baseMapRetryTimerRef = useRef<number | undefined>(undefined);
@@ -751,6 +794,27 @@ function MapCanvas({
   const popupLocationRef = useRef<maplibregl.LngLat | undefined>(undefined);
   const coveragePopupAbortRef = useRef<AbortController | undefined>(undefined);
   const coveragePopupEntityRef = useRef<string | undefined>(undefined);
+  const coverageHoverContext = JSON.stringify([
+    selection?.id,
+    selection?.dataGeneration,
+    selection?.coverageDisplayPolicy,
+    selection?.coverageDisplayRevision,
+    selection?.range.startDate,
+    selection?.range.endDate,
+  ]);
+  const coverageHoverContextRef = useRef(coverageHoverContext);
+  const coverageHoverCacheRef = useRef(
+    new Map<string, { entity: RoadCoverageEntity; loadedAt: number }>(),
+  );
+  const coverageHoverRequestsRef = useRef(
+    new Map<
+      string,
+      {
+        controller: AbortController;
+        result: Promise<{ entity: RoadCoverageEntity; loadedAt: number }>;
+      }
+    >(),
+  );
   const stopCoverageBlinkRef = useRef<() => void>(() => undefined);
   const fallbackStyleRef = useRef({
     version: 8 as const,
@@ -1335,13 +1399,23 @@ function MapCanvas({
     const highlight = coverageHighlightRef.current;
     const source = map.getSource(COVERAGE_HIGHLIGHT_SOURCE) as GeoJSONSource | undefined;
     if (!highlight) {
+      stopCoverageBlinkRef.current();
+      startedCoverageHighlightKeyRef.current = undefined;
+      installedCoverageHighlightRef.current = undefined;
       if (map.getLayer(COVERAGE_HIGHLIGHT_LAYER)) map.removeLayer(COVERAGE_HIGHLIGHT_LAYER);
       if (source) map.removeSource(COVERAGE_HIGHLIGHT_SOURCE);
       return;
     }
-    const feature = { type: "Feature" as const, geometry: highlight.geometry, properties: {} };
-    if (!source) map.addSource(COVERAGE_HIGHLIGHT_SOURCE, { type: "geojson", data: feature });
-    else source.setData(feature);
+    const installed = installedCoverageHighlightRef.current;
+    if (!source || installed?.source !== source || installed.geometry !== highlight.geometry) {
+      const feature = { type: "Feature" as const, geometry: highlight.geometry, properties: {} };
+      if (!source) map.addSource(COVERAGE_HIGHLIGHT_SOURCE, { type: "geojson", data: feature });
+      else source.setData(feature);
+      installedCoverageHighlightRef.current = {
+        source: map.getSource(COVERAGE_HIGHLIGHT_SOURCE) as GeoJSONSource,
+        geometry: highlight.geometry,
+      };
+    }
     if (!map.getLayer(COVERAGE_HIGHLIGHT_LAYER))
       map.addLayer({
         id: COVERAGE_HIGHLIGHT_LAYER,
@@ -1355,6 +1429,23 @@ function MapCanvas({
         },
       });
     else map.moveLayer(COVERAGE_HIGHLIGHT_LAYER);
+    if (startedCoverageHighlightKeyRef.current === highlight.key) return;
+    startedCoverageHighlightKeyRef.current = highlight.key;
+    stopCoverageBlinkRef.current();
+    map.fitBounds(
+      [
+        [highlight.fitBounds.minimumLongitude, highlight.fitBounds.minimumLatitude],
+        [highlight.fitBounds.maximumLongitude, highlight.fitBounds.maximumLatitude],
+      ],
+      { padding: fitPadding, duration: 350 },
+    );
+    stopCoverageBlinkRef.current = startCoverageHighlightBlink(
+      (value) => {
+        if (map.getLayer(COVERAGE_HIGHLIGHT_LAYER))
+          map.setPaintProperty(COVERAGE_HIGHLIGHT_LAYER, "line-opacity", value);
+      },
+      (ready) => onMapContextReady(map, ready),
+    );
   }
 
   function syncMapLayers(map: MapLibreMap) {
@@ -1408,6 +1499,11 @@ function MapCanvas({
     popupRef.current = undefined;
   }
 
+  function cancelCoverageHoverRequests() {
+    for (const request of coverageHoverRequestsRef.current.values()) request.controller.abort();
+    coverageHoverRequestsRef.current.clear();
+  }
+
   function popupContent(workout: MapSelectionWorkout) {
     const content = document.createElement("div");
     content.className = "map-route-tooltip";
@@ -1432,7 +1528,7 @@ function MapCanvas({
     return content;
   }
 
-  function coveragePopupContent(detail: RoadCoverageDetail) {
+  function coveragePopupContent(detail: RoadCoverageEntity) {
     const content = document.createElement("div");
     content.className = "map-route-tooltip map-coverage-tooltip";
     const title = document.createElement("strong");
@@ -1459,6 +1555,17 @@ function MapCanvas({
     return content;
   }
 
+  // Publish the latest intent before any layer-sync effects or style-load replay.
+  useEffect(() => {
+    coverageHighlightRef.current = coverageHighlight;
+    const map = mapRef.current;
+    if (map && styleLoadedRef.current) syncCoverageHighlight(map);
+    else {
+      stopCoverageBlinkRef.current();
+      startedCoverageHighlightKeyRef.current = undefined;
+    }
+  }, [coverageHighlight?.key]);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const map = new maplibregl.Map({
@@ -1472,6 +1579,7 @@ function MapCanvas({
       if (disposed) return;
       invalidateDirectionMarkers(map);
       styleLoadedRef.current = true;
+      installedCoverageHighlightRef.current = undefined;
       syncMapLayers(map);
       const fallbackLoaded =
         map.getStyle().layers?.some((layer) => layer.id === "fallback-background") ?? false;
@@ -1572,6 +1680,7 @@ function MapCanvas({
       }
     };
     const hover = (event: MapMouseEvent) => {
+      if (diagnosticModeRef.current) return;
       const feature = topmostFeature(
         map.queryRenderedFeatures(event.point, { layers: [ROUTES_LAYER, ROUTE_MARKERS_LAYER] }),
       );
@@ -1614,6 +1723,12 @@ function MapCanvas({
       map.getCanvas().style.cursor = "";
       removePopup();
     };
+    const leaveRoute = () => {
+      if (!diagnosticModeRef.current) leave();
+    };
+    const visibilityChanged = () => {
+      if (document.visibilityState === "hidden") leave();
+    };
     const hoverCoverage = (event: MapMouseEvent) => {
       if (!diagnosticModeRef.current || !productionCoverageEnabledRef.current) return;
       const hitBox: [[number, number], [number, number]] = [
@@ -1626,13 +1741,15 @@ function MapCanvas({
       const parkNames = new Set(
         features.flatMap((candidate) => {
           const name =
-            candidate.properties?.entityKind === "park" ? candidate.properties?.name : undefined;
+            candidate.properties?.sourceEntityKind === "park"
+              ? candidate.properties?.name
+              : undefined;
           return typeof name === "string" && name.trim() ? [name.trim()] : [];
         }),
       );
       const regionalParkPath = features.find((candidate) => {
         const locality =
-          candidate.properties?.entityKind === "path"
+          candidate.properties?.sourceEntityKind === "path"
             ? candidate.properties?.localityName
             : undefined;
         return typeof locality === "string" && parkNames.has(locality.trim());
@@ -1641,11 +1758,11 @@ function MapCanvas({
         regionalParkPath ??
         features.find(
           (candidate) =>
-            candidate.properties?.entityKind === "path" &&
+            candidate.properties?.sourceEntityKind === "path" &&
             typeof candidate.properties?.name === "string" &&
             candidate.properties.name.trim(),
         ) ??
-        features.find((candidate) => candidate.properties?.entityKind === "park") ??
+        features.find((candidate) => candidate.properties?.sourceEntityKind === "park") ??
         features[0];
       const entityID =
         typeof feature?.properties?.entityId === "string"
@@ -1662,7 +1779,9 @@ function MapCanvas({
         removePopup();
         return;
       }
-      const key = `${entityKind}:${entityID}`;
+      const activeSelection = selectionRef.current;
+      const context = coverageHoverContextRef.current;
+      const key = `${context}:${entityKind}:${entityID}`;
       popupLocationRef.current = event.lngLat;
       if (popupRef.current && coveragePopupEntityRef.current === key) {
         popupRef.current.setLngLat(event.lngLat);
@@ -1677,33 +1796,78 @@ function MapCanvas({
       coveragePopupEntityRef.current = key;
       popupTimerRef.current = setTimeout(() => {
         popupTimerRef.current = undefined;
-        const activeSelection = selectionRef.current;
-        if (!activeSelection || coveragePopupEntityRef.current !== key) return;
+        if (coverageHoverContextRef.current !== context || coveragePopupEntityRef.current !== key)
+          return;
         const controller = new AbortController();
         coveragePopupAbortRef.current = controller;
-        const loadDetail = async () => {
-          for (let attempt = 0; ; attempt++) {
-            try {
-              return await api<RoadCoverageDetail>(
-                `/api/map-selections/${encodeURIComponent(activeSelection.id)}/coverage/${entityKind}/${encodeURIComponent(entityID)}?generation=${activeSelection.dataGeneration}`,
-                { signal: controller.signal },
-              );
-            } catch (error) {
-              if (error instanceof ApiError && error.status === 404)
-                onRouteTilesUnavailableRef.current();
-              if (!(error instanceof ApiError) || error.status !== 503 || attempt > 0) throw error;
-              await new Promise((resolve) => window.setTimeout(resolve, 250));
-            }
+        const isCurrent = () =>
+          !disposed &&
+          mapRef.current === map &&
+          !controller.signal.aborted &&
+          coverageHoverContextRef.current === context &&
+          coveragePopupEntityRef.current === key;
+        const loadStats = async () => {
+          const cache = coverageHoverCacheRef.current;
+          const cached = cache.get(key);
+          cache.delete(key);
+          if (cached && Date.now() - cached.loadedAt < COVERAGE_HOVER_CACHE_TTL_MS) {
+            cache.set(key, cached);
+            return cached;
           }
+          const requests = coverageHoverRequestsRef.current;
+          const existing = requests.get(key);
+          if (existing) return existing.result;
+          // A lookup can outlive its popup, but not its selection context.
+          const requestController = new AbortController();
+          const contextIsCurrent = () =>
+            !disposed &&
+            mapRef.current === map &&
+            !requestController.signal.aborted &&
+            coverageHoverContextRef.current === context;
+          const requestStats = async () => {
+            for (let attempt = 0; ; attempt++) {
+              if (!contextIsCurrent() || (attempt > 0 && coveragePopupEntityRef.current !== key))
+                throw new DOMException("Aborted", "AbortError");
+              try {
+                return await api<RoadCoverageEntity>(
+                  `/api/map-selections/${encodeURIComponent(activeSelection.id)}/coverage/${entityKind}/${encodeURIComponent(entityID)}/stats?generation=${activeSelection.dataGeneration}`,
+                  { signal: requestController.signal },
+                );
+              } catch (error) {
+                if (!contextIsCurrent() || coveragePopupEntityRef.current !== key) throw error;
+                if (error instanceof ApiError && error.status === 404)
+                  onRouteTilesUnavailableRef.current();
+                if (!(error instanceof ApiError) || error.status !== 503 || attempt > 0)
+                  throw error;
+                await waitForDiagnosticRetry(requestController.signal, 250);
+              }
+            }
+          };
+          const result = requestStats()
+            .then((entity) => {
+              if (!contextIsCurrent()) throw new DOMException("Aborted", "AbortError");
+              const value = { entity, loadedAt: Date.now() };
+              cache.delete(key);
+              cache.set(key, value);
+              if (cache.size > COVERAGE_HOVER_CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+              return value;
+            })
+            .finally(() => {
+              if (requests.get(key)?.controller === requestController) requests.delete(key);
+            });
+          requests.set(key, { controller: requestController, result });
+          return result;
         };
-        void loadDetail()
-          .then((detail) => {
-            if (
-              controller.signal.aborted ||
-              coveragePopupEntityRef.current !== key ||
-              !popupLocationRef.current
-            )
-              return;
+        // Overlap the lookup with the remaining dwell, but never show a popup early.
+        void Promise.all([
+          loadStats(),
+          waitForDiagnosticRetry(
+            controller.signal,
+            COVERAGE_HOVER_DELAY_MS - COVERAGE_HOVER_LOOKUP_DELAY_MS,
+          ),
+        ])
+          .then(([cached]) => {
+            if (!isCurrent() || !popupLocationRef.current) return;
             popupRef.current = new maplibregl.Popup({
               closeButton: false,
               closeOnClick: false,
@@ -1712,15 +1876,15 @@ function MapCanvas({
               maxWidth: "none",
             })
               .setLngLat(popupLocationRef.current)
-              .setDOMContent(coveragePopupContent(detail))
+              .setDOMContent(coveragePopupContent(cached.entity))
               .addTo(map);
           })
-          .catch(() => undefined)
+          .catch(() => controller.abort())
           .finally(() => {
             if (coveragePopupAbortRef.current === controller)
               coveragePopupAbortRef.current = undefined;
           });
-      }, COVERAGE_HOVER_DELAY_MS);
+      }, COVERAGE_HOVER_LOOKUP_DELAY_MS);
     };
     const clickRoute = (event: MapMouseEvent) => {
       if (diagnosticModeRef.current) return;
@@ -1750,6 +1914,10 @@ function MapCanvas({
     const lockDiagnosticPortion = (event: MapMouseEvent) => {
       const ordinal = diagnosticPortionAt(event);
       if (ordinal !== undefined) onDiagnosticLock(ordinal);
+    };
+    const leaveDiagnosticPortion = () => {
+      onDiagnosticHover(undefined);
+      map.getCanvas().style.cursor = "";
     };
     const showDefaultViewport = () => {
       if (defaultViewportSetRef.current) return;
@@ -1800,17 +1968,17 @@ function MapCanvas({
     map.on("moveend", refreshDirectionMarkers);
     map.on("sourcedata", directionSourceReady);
     map.on("mousemove", ROUTES_LAYER, hover);
-    map.on("mouseleave", ROUTES_LAYER, leave);
+    map.on("mouseleave", ROUTES_LAYER, leaveRoute);
     map.on("mousemove", ROUTE_MARKERS_LAYER, hover);
-    map.on("mouseleave", ROUTE_MARKERS_LAYER, leave);
+    map.on("mouseleave", ROUTE_MARKERS_LAYER, leaveRoute);
     map.on("mousemove", hoverCoverage);
+    map.getCanvas().addEventListener("mouseleave", leave);
+    window.addEventListener("blur", leave);
+    document.addEventListener("visibilitychange", visibilityChanged);
     map.on("click", clickRoute);
     map.on("mousemove", DIAGNOSTIC_HIT_LAYER, hoverDiagnosticPortion);
     map.on("click", DIAGNOSTIC_HIT_LAYER, lockDiagnosticPortion);
-    map.on("mouseleave", DIAGNOSTIC_HIT_LAYER, () => {
-      onDiagnosticHover(undefined);
-      map.getCanvas().style.cursor = "";
-    });
+    map.on("mouseleave", DIAGNOSTIC_HIT_LAYER, leaveDiagnosticPortion);
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     styleLoadedRef.current = false;
     fallbackInstalledRef.current = false;
@@ -1834,14 +2002,20 @@ function MapCanvas({
       map.off("moveend", refreshDirectionMarkers);
       map.off("sourcedata", directionSourceReady);
       map.off("mousemove", ROUTES_LAYER, hover);
-      map.off("mouseleave", ROUTES_LAYER, leave);
+      map.off("mouseleave", ROUTES_LAYER, leaveRoute);
       map.off("mousemove", ROUTE_MARKERS_LAYER, hover);
-      map.off("mouseleave", ROUTE_MARKERS_LAYER, leave);
+      map.off("mouseleave", ROUTE_MARKERS_LAYER, leaveRoute);
       map.off("mousemove", hoverCoverage);
+      map.getCanvas().removeEventListener("mouseleave", leave);
+      window.removeEventListener("blur", leave);
+      document.removeEventListener("visibilitychange", visibilityChanged);
       map.off("click", clickRoute);
       map.off("mousemove", DIAGNOSTIC_HIT_LAYER, hoverDiagnosticPortion);
       map.off("click", DIAGNOSTIC_HIT_LAYER, lockDiagnosticPortion);
+      map.off("mouseleave", DIAGNOSTIC_HIT_LAYER, leaveDiagnosticPortion);
       removePopup();
+      cancelCoverageHoverRequests();
+      coverageHoverCacheRef.current.clear();
       for (const layer of [...DIAGNOSTIC_LAYERS].reverse())
         if (map.getLayer(layer)) map.removeLayer(layer);
       if (map.getSource(DIAGNOSTIC_SOURCE)) map.removeSource(DIAGNOSTIC_SOURCE);
@@ -1853,6 +2027,12 @@ function MapCanvas({
   }, []);
 
   useEffect(() => {
+    if (coverageHoverContextRef.current !== coverageHoverContext) {
+      removePopup();
+      cancelCoverageHoverRequests();
+      coverageHoverCacheRef.current.clear();
+      coverageHoverContextRef.current = coverageHoverContext;
+    }
     syncPrivateTileRetryURL(
       ROUTES_SOURCE,
       selection?.routeTileUrl
@@ -1877,6 +2057,7 @@ function MapCanvas({
   }, [
     preferences,
     selection?.id,
+    coverageHoverContext,
     selection?.routeTileUrl,
     selection?.coverageTileUrl,
     coverageFocus,
@@ -1891,6 +2072,7 @@ function MapCanvas({
   }, [onRouteClick]);
 
   useEffect(() => {
+    if (diagnosticModeRef.current !== diagnosticMode) removePopup();
     diagnosticEnabledRef.current = diagnosticEnabled;
     productionCoverageEnabledRef.current = productionCoverageEnabled;
     diagnosticModeRef.current = diagnosticMode;
@@ -1928,30 +2110,6 @@ function MapCanvas({
     diagnostic,
     highlightedPortionOrdinal,
   ]);
-
-  useEffect(() => {
-    coverageHighlightRef.current = coverageHighlight;
-    const map = mapRef.current;
-    if (!map || !styleLoadedRef.current) return;
-    syncCoverageHighlight(map);
-    if (!coverageHighlight) return;
-    map.fitBounds(
-      [
-        [coverageHighlight.fitBounds.minimumLongitude, coverageHighlight.fitBounds.minimumLatitude],
-        [coverageHighlight.fitBounds.maximumLongitude, coverageHighlight.fitBounds.maximumLatitude],
-      ],
-      { padding: fitPadding, duration: 350 },
-    );
-    const opacity = (value: number) => {
-      if (map.getLayer(COVERAGE_HIGHLIGHT_LAYER))
-        map.setPaintProperty(COVERAGE_HIGHLIGHT_LAYER, "line-opacity", value);
-    };
-    stopCoverageBlinkRef.current();
-    stopCoverageBlinkRef.current = startCoverageHighlightBlink(opacity, (ready) =>
-      onMapContextReady(map, ready),
-    );
-    return () => stopCoverageBlinkRef.current();
-  }, [coverageHighlight?.key]);
 
   useEffect(() => {
     if (!diagnosticMode || !diagnostic) return;
@@ -2518,7 +2676,6 @@ const ROAD_COVERAGE_COLUMNS: ReadonlyArray<{
   { field: "rangeLatest", label: "Most recent visit", initial: "desc" },
   { field: "allTimeLatest", label: "Last visit ever", initial: "desc" },
 ];
-const ROAD_COVERAGE_FETCH_PAGE_SIZE = 100;
 const TABLE_LOADING_DELAY_MS = 500;
 const ROAD_COVERAGE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -2576,7 +2733,7 @@ function RoadCoverageDialog({
   onCacheChange?: (cache?: RoadCoverageCache) => void;
   onReturnFocus: () => void;
   onSelectionUnavailable: () => void;
-  onShowEntity: (entity: RoadCoverageEntity) => Promise<void>;
+  onShowEntity: (entity: RoadCoverageEntity) => void;
   onShowWorkout: (workoutId: string) => void;
 }) {
   const searchID = useId();
@@ -2620,7 +2777,13 @@ function RoadCoverageDialog({
   }, [input]);
   useEffect(() => {
     if (!open || !selection) return;
-    const cacheKey = `${selection.range.startDate}/${selection.range.endDate}@${selection.dataGeneration}`;
+    const cacheKey = JSON.stringify([
+      selection.range.startDate,
+      selection.range.endDate,
+      selection.dataGeneration,
+      selection.coverageDisplayPolicy,
+      selection.coverageDisplayRevision,
+    ]);
     if (cache?.key === cacheKey && Date.now() - cache.loadedAt < ROAD_COVERAGE_CACHE_MAX_AGE_MS) {
       const viewportRows = Math.max(5, Math.floor((window.innerHeight - 330) / 34));
       const initialVisibleCount = cache.entities.filter(
@@ -2635,12 +2798,10 @@ function RoadCoverageDialog({
     }
     const controller = new AbortController();
     const loadingTimer = window.setTimeout(() => setShowLoading(true), TABLE_LOADING_DELAY_MS);
-    const loadPage = (requestedPage: number) => {
+    const loadBulk = () => {
       const params = new URLSearchParams({
         generation: String(selection.dataGeneration),
-        page: String(requestedPage),
-        pageSize: String(ROAD_COVERAGE_FETCH_PAGE_SIZE),
-        sort: "rangeCount:desc",
+        bulk: "true",
       });
       return api<RoadCoverageList>(
         `/api/map-selections/${encodeURIComponent(selection.id)}/coverage/paths?${params}`,
@@ -2653,17 +2814,15 @@ function RoadCoverageDialog({
     setError(undefined);
     setRowSlots(2);
     void (async () => {
-      const first = await loadPage(1);
-      const items = [...first.items];
-      for (let nextPage = 2; nextPage <= first.pagination.totalPages; nextPage += 3) {
-        const batch = await Promise.all(
-          Array.from(
-            { length: Math.min(3, first.pagination.totalPages - nextPage + 1) },
-            (_, offset) => loadPage(nextPage + offset),
-          ),
-        );
-        for (const result of batch) items.push(...result.items);
+      const result = await loadBulk();
+      if (
+        result.items.length !== result.pagination.totalItems ||
+        result.pagination.page !== 1 ||
+        result.pagination.totalPages !== (result.items.length ? 1 : 0)
+      ) {
+        throw new Error("Incomplete bulk road coverage response");
       }
+      const items = result.items;
       if (controller.signal.aborted) return;
       window.clearTimeout(loadingTimer);
       const viewportRows = Math.max(5, Math.floor((window.innerHeight - 330) / 34));
@@ -2689,7 +2848,10 @@ function RoadCoverageDialog({
       setLoading(false);
       setShowLoading(false);
       setError({
-        message: "Road coverage could not be loaded.",
+        message:
+          loadError instanceof ApiError && loadError.status === 422
+            ? "Road coverage exceeds the bulk limit of 50,000 entities or 64 MiB. Choose a smaller date range."
+            : "Road coverage could not be loaded.",
         retry: () => setLoadAttempt((value) => value + 1),
       });
     });
@@ -2697,7 +2859,17 @@ function RoadCoverageDialog({
       controller.abort();
       window.clearTimeout(loadingTimer);
     };
-  }, [cache?.key, loadAttempt, open, pageSize, selection?.dataGeneration, selection?.id]);
+  }, [
+    cache?.key,
+    loadAttempt,
+    open,
+    pageSize,
+    selection?.dataGeneration,
+    selection?.coverageDisplayPolicy,
+    selection?.coverageDisplayRevision,
+    selection?.id,
+    rangeKey,
+  ]);
   const visibleEntities = useMemo(() => {
     if (!entities) return [];
     const needle = search.toLocaleLowerCase();
@@ -2730,27 +2902,26 @@ function RoadCoverageDialog({
           return entity.allTimeLatestDate;
       }
     };
+    const collator = new Intl.Collator(undefined, { sensitivity: "base" });
     return [...filtered].sort((left, right) => {
       const leftValue = value(left),
         rightValue = value(right);
       const comparison =
         typeof leftValue === "number" && typeof rightValue === "number"
           ? leftValue - rightValue
-          : String(leftValue).localeCompare(String(rightValue), undefined, { sensitivity: "base" });
+          : collator.compare(String(leftValue), String(rightValue));
       if (comparison) return sort.direction === "asc" ? comparison : -comparison;
       if (sort.field !== "name") {
-        const nameComparison = coverageEntityName(left).localeCompare(
+        const nameComparison = collator.compare(
+          coverageEntityName(left),
           coverageEntityName(right),
-          undefined,
-          { sensitivity: "base" },
         );
         if (nameComparison) return nameComparison;
       }
       if (sort.field !== "cityOrRegion") {
-        const placeComparison = coverageEntityPlace(left).localeCompare(
+        const placeComparison = collator.compare(
+          coverageEntityPlace(left),
           coverageEntityPlace(right),
-          undefined,
-          { sensitivity: "base" },
         );
         if (placeComparison) return placeComparison;
       }
@@ -2793,23 +2964,6 @@ function RoadCoverageDialog({
     ) : (
       <span>{formatDateOnly(date)}</span>
     );
-  const showEntity = (entity: RoadCoverageEntity) => {
-    setError(undefined);
-    void onShowEntity(entity).catch((showError) => {
-      if (showError instanceof ApiError && showError.status === 404) {
-        onCacheChange?.(undefined);
-        setEntities(undefined);
-        setLoading(true);
-        setShowLoading(false);
-        setLoadAttempt((value) => value + 1);
-        return;
-      }
-      setError({
-        message: "That road coverage could not be shown on the map.",
-        retry: () => showEntity(entity),
-      });
-    });
-  };
   if (error)
     return (
       <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -2945,7 +3099,7 @@ function RoadCoverageDialog({
                         <button
                           type="button"
                           className="coverage-table-link"
-                          onClick={() => showEntity(entity)}
+                          onClick={() => onShowEntity(entity)}
                         >
                           {coverageEntityName(entity)}
                         </button>
@@ -3074,6 +3228,7 @@ export default function MapPage({
   }
   const [selection, setSelection] = useState<MapSelection>();
   const [selectionPending, setSelectionPending] = useState(true);
+  const [selectionPendingDismissed, setSelectionPendingDismissed] = useState(false);
   const [selectionError, setSelectionError] = useState("");
   const [baseMapError, setBaseMapError] = useState("");
   const [rangeError, setRangeError] = useState("");
@@ -3112,6 +3267,20 @@ export default function MapPage({
         : setLocalMapMode(mode);
   const [roadCoverageOpen, setRoadCoverageOpen] = useState(false);
   const [coverageHighlight, setCoverageHighlight] = useState<CoverageHighlight>();
+  const [coverageDetailStatus, setCoverageDetailStatus] = useState<{
+    entity: RoadCoverageEntity;
+    loading: boolean;
+    unavailable?: boolean;
+  }>();
+  const coverageDetailCacheRef = useRef(new CoverageDetailCache());
+  const coverageDetailSequenceRef = useRef(0);
+  const coverageDetailRequestRef = useRef<
+    | {
+        controller: AbortController;
+        timer: number;
+      }
+    | undefined
+  >(undefined);
   const [diagnostic, setDiagnostic] = useState<CoverageDiagnosticRun>();
   const [singleRawRoute, setSingleRawRoute] = useState<{
     workoutId: string;
@@ -3443,6 +3612,7 @@ export default function MapPage({
       }
     };
     setSelectionPending(true);
+    setSelectionPendingDismissed(false);
     setSelectionError("");
     void loadSelection()
       .then(({ created, catalog }) => {
@@ -3615,6 +3785,8 @@ export default function MapPage({
         );
         const changed =
           created.dataGeneration !== selection.dataGeneration ||
+          created.coverageDisplayPolicy !== selection.coverageDisplayPolicy ||
+          created.coverageDisplayRevision !== selection.coverageDisplayRevision ||
           normalizedWorkouts.length !== selection.workouts.length ||
           normalizedWorkouts.some(
             (workout) =>
@@ -3664,6 +3836,8 @@ export default function MapPage({
     coverageReadinessPollKey,
     selection?.id,
     selection?.dataGeneration,
+    selection?.coverageDisplayPolicy,
+    selection?.coverageDisplayRevision,
     csrfToken,
     dateRange,
     preferences.timezone,
@@ -3688,9 +3862,52 @@ export default function MapPage({
     [csrfToken],
   );
 
+  const coverageDetailSelectionKey = JSON.stringify([
+    selection?.id,
+    selection?.dataGeneration,
+    selection?.coverageDisplayPolicy,
+    selection?.coverageDisplayRevision,
+    selection?.range.startDate,
+    selection?.range.endDate,
+  ]);
+  const coverageDetailContext = JSON.stringify([
+    coverageDetailSelectionKey,
+    dateRange,
+    preferences.timezone,
+    selectedWorkoutIds?.join(",") ?? "all",
+    deletionRevision,
+    mapMode,
+    preferences.coverageDiagnosticsEnabled,
+    config.features.coverageMatcherDiagnostics,
+    selectionRefresh,
+    selectionPending,
+  ]);
+  const coverageDetailContextRef = useRef(coverageDetailContext);
+
+  function cancelCoverageDetail() {
+    coverageDetailSequenceRef.current++;
+    const request = coverageDetailRequestRef.current;
+    request?.controller.abort();
+    if (request) window.clearTimeout(request.timer);
+    coverageDetailRequestRef.current = undefined;
+  }
+
+  function changeRoadCoverageOpen(open: boolean) {
+    if (open) {
+      cancelCoverageDetail();
+      setCoverageDetailStatus(undefined);
+    }
+    setRoadCoverageOpen(open);
+    if (!open) setCanvasFocusRequest((value) => value + 1);
+  }
+
   useEffect(() => {
+    coverageDetailContextRef.current = coverageDetailContext;
+    setCoverageDetailStatus(undefined);
     setCoverageHighlight(undefined);
-  }, [dateRange, selection?.dataGeneration]);
+    coverageDetailCacheRef.current.clear();
+    return cancelCoverageDetail;
+  }, [coverageDetailContext]);
   useEffect(() => {
     if (preferences.coverageDiagnosticsEnabled) setLocalMapMode("routes");
   }, [preferences.coverageDiagnosticsEnabled]);
@@ -3834,11 +4051,22 @@ export default function MapPage({
     availableWorkouts.length > 0 &&
     availableWorkouts.every((workout) => visibleWorkoutIds.has(workout.id));
   const statusMessage =
-    rangeError || baseMapError || selectionError || (selectionPending ? "Updating routes..." : "");
-  const dismissibleStatusError = !rangeError && Boolean(baseMapError || selectionError);
-  const dismissStatusError = () => {
-    if (baseMapError) setBaseMapError("");
-    else setSelectionError("");
+    rangeError ||
+    baseMapError ||
+    selectionError ||
+    (selectionPending && !selectionPendingDismissed ? "Updating routes..." : "");
+  const coverageDetailMessage = coverageDetailStatus
+    ? coverageDetailStatus.loading
+      ? `Loading exact road coverage for ${coverageEntityName(coverageDetailStatus.entity)}...`
+      : coverageDetailStatus.unavailable
+        ? "That road coverage changed or expired. Retry to refresh the map, then choose a road again."
+        : "That road coverage could not be shown on the map."
+    : "";
+  const dismissStatusMessage = () => {
+    if (rangeError) setRangeError("");
+    else if (baseMapError) setBaseMapError("");
+    else if (selectionError) setSelectionError("");
+    else setSelectionPendingDismissed(true);
   };
 
   useEffect(() => {
@@ -4148,17 +4376,72 @@ export default function MapPage({
     }
   }
 
-  async function showCoverageEntity(entity: RoadCoverageEntity) {
-    if (!selection) throw new Error("Map selection is unavailable");
-    const detail = await api<RoadCoverageDetail>(
-      `/api/map-selections/${encodeURIComponent(selection.id)}/coverage/${entity.entityKind}/${encodeURIComponent(entity.entityId)}?generation=${selection.dataGeneration}`,
-    );
+  function showCoverageEntity(entity: RoadCoverageEntity) {
+    if (
+      !selection ||
+      selectionPending ||
+      mapMode !== "coverage" ||
+      preferences.coverageDiagnosticsEnabled
+    )
+      return;
+    cancelCoverageDetail();
+    const sequence = coverageDetailSequenceRef.current;
+    const context = coverageDetailContext;
+    const revision = deletionRevision;
+    const controller = new AbortController();
+    const isCurrent = () =>
+      !controller.signal.aborted &&
+      sequence === coverageDetailSequenceRef.current &&
+      context === coverageDetailContextRef.current &&
+      revision === (deletionRef.current?.revision ?? 0) &&
+      mapModeRef.current === "coverage";
+    const key = `${coverageDetailSelectionKey}:${entity.entityKind}:${entity.entityId}`;
+    const cached = coverageDetailCacheRef.current.get(key);
     setRoadCoverageOpen(false);
-    setCoverageHighlight((current) => ({
-      key: (current?.key ?? 0) + 1,
-      geometry: detail.geometry,
-      fitBounds: detail.fitBounds,
-    }));
+    setCanvasFocusRequest((value) => value + 1);
+    const showDetail = (detail: RoadCoverageDetail) => {
+      setCoverageDetailStatus(undefined);
+      setCoverageHighlight({
+        key: sequence,
+        geometry: detail.geometry,
+        fitBounds: detail.fitBounds,
+      });
+    };
+    if (cached) {
+      showDetail(cached);
+      return;
+    }
+    setCoverageHighlight(undefined);
+    setCoverageDetailStatus({ entity, loading: true });
+    const timer = window.setTimeout(() => {
+      if (!isCurrent()) return;
+      controller.abort();
+      setCoverageDetailStatus({ entity, loading: false });
+    }, COVERAGE_DETAIL_TIMEOUT_MS);
+    coverageDetailRequestRef.current = { controller, timer };
+    void api<RoadCoverageDetail>(
+      `/api/map-selections/${encodeURIComponent(selection.id)}/coverage/${entity.entityKind}/${encodeURIComponent(entity.entityId)}?generation=${selection.dataGeneration}`,
+      { signal: controller.signal },
+    )
+      .then((detail) => {
+        if (!isCurrent()) return;
+        coverageDetailCacheRef.current.set(key, detail);
+        showDetail(detail);
+      })
+      .catch((error) => {
+        if (!isCurrent()) return;
+        const unavailable = error instanceof ApiError && error.status === 404;
+        if (unavailable) {
+          coverageDetailCacheRef.current.clear();
+          onRoadCoverageCacheChange?.(undefined);
+        }
+        setCoverageDetailStatus({ entity, loading: false, unavailable });
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        if (coverageDetailRequestRef.current?.controller === controller)
+          coverageDetailRequestRef.current = undefined;
+      });
   }
 
   function showCoverageWorkout(workoutId: string) {
@@ -4307,17 +4590,56 @@ export default function MapPage({
         <div className="map-controls">{controls("desktop")}</div>
       </aside>
       <section className="map-stage" aria-live="polite">
-        {statusMessage && (
-          <div className="map-banner" role="status">
-            <span>{statusMessage}</span>
-            {dismissibleStatusError && (
+        {(statusMessage || coverageDetailMessage) && (
+          <div
+            className={`map-banner${coverageDetailStatus ? " map-banner--coverage-detail" : ""}`}
+            role="status"
+          >
+            <span>{[statusMessage, coverageDetailMessage].filter(Boolean).join(" ")}</span>
+            {coverageDetailStatus && (
+              <>
+                {!coverageDetailStatus.loading && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (coverageDetailStatus.unavailable) {
+                        cancelCoverageDetail();
+                        setCoverageDetailStatus(undefined);
+                        setSelection(undefined);
+                        setSelectionRefresh((value) => value + 1);
+                        setCanvasFocusRequest((value) => value + 1);
+                      } else showCoverageEntity(coverageDetailStatus.entity);
+                    }}
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    cancelCoverageDetail();
+                    setCoverageDetailStatus(undefined);
+                    setCanvasFocusRequest((value) => value + 1);
+                  }}
+                >
+                  {coverageDetailStatus.loading ? "Cancel" : "Close"}
+                </button>
+              </>
+            )}
+            {statusMessage && (
               <button
                 type="button"
                 className="map-banner-dismiss"
                 aria-label={
-                  baseMapError ? "Dismiss base map warning" : "Dismiss route preparation error"
+                  rangeError
+                    ? "Dismiss date range warning"
+                    : baseMapError
+                      ? "Dismiss base map warning"
+                      : selectionError
+                        ? "Dismiss route preparation error"
+                        : "Dismiss route update message"
                 }
-                onClick={dismissStatusError}
+                onClick={dismissStatusMessage}
               >
                 &times;
               </button>
@@ -4415,7 +4737,7 @@ export default function MapPage({
                     focusCanvas: true,
                   }));
               }}
-              onOpen={() => setRoadCoverageOpen(true)}
+              onOpen={() => changeRoadCoverageOpen(true)}
             />
           )}
         <RoadCoverageDialog
@@ -4424,10 +4746,7 @@ export default function MapPage({
           pageSize={preferences.pageSize}
           cache={roadCoverageCache}
           onCacheChange={onRoadCoverageCacheChange}
-          onOpenChange={(open) => {
-            setRoadCoverageOpen(open);
-            if (!open) setCanvasFocusRequest((value) => value + 1);
-          }}
+          onOpenChange={changeRoadCoverageOpen}
           onReturnFocus={() => setCanvasFocusRequest((value) => value + 1)}
           onSelectionUnavailable={refreshSelection}
           onShowEntity={showCoverageEntity}

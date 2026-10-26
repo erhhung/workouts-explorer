@@ -2,6 +2,25 @@
 
 ## Scope And Status
 
+The current [ingest-reprocessing contract](ingest-reprocessing.md) is deployed with
+migrations **001-032**, deployed schema/minimum runtime **32**, and marker
+**27**. New bounded sync skips unchanged successful metadata by default; the
+bounded-only **Reprocess all files in this date range** checkbox opts into force.
+Coordinated backend **42** and UI **43** are accepted; scripted deployed-browser
+verification passed. Owner acceptance/milestone and capacity remain separate.
+Source configuration is preserved with auto-sync off; this
+release made no provider checks and started no new ingest or matching. The
+folded-028 release observations below are historical, **prior to 031/032**, not
+verification of the current contract.
+
+Source-only [033 display identity](decisions/013-canonical-coverage-display-identity.md)
+requires coordinated schema/minimum runtime **33**, baseline **27**, but is not
+deployed. It changes no iCloud credentials, source configuration, ingest/retry
+rules or auto-sync setting. Adoption only needs canonical context warm/rebuild
+from retained evidence, not a provider check, new import, OSM regeneration or
+route rematch. Live backend-42/UI-43/schema-32 remains authoritative until MAIN
+cutover completes; the historical setup/recovery receipts below remain unchanged.
+
 Milestone 8 source implementation is deployed; owner-operated iCloud ingest and
 available-map Coverage recovery are verified. M8 remains unchecked pending
 explicit owner acceptance, separate from those operational results. The
@@ -22,7 +41,7 @@ See [independent closure](development-progress.md#independent-yearly-recovery-cl
 
 New folded-028 behavior (generation locking, strict eligible cohorts and mixed
 automatic retries), exact parking repair and the UI follow-up are **deployed**.
-Active source remains **001-028**, no
+At that checkpoint active source was **001-028**, no
 active 029, with `SupportedSchemaVersion=28`, schema/minimum 28 and marker 27.
 The same version number does not make old and new runtime contracts compatible.
 
@@ -100,8 +119,11 @@ This is a synthetic example, not real account or cloud activity:
 
 An already-running job keeps its frozen manifest actions across recovery, and
 completed file checkpoints never reopen or double-count results. Start a new job
-or wait for auto-sync to reconsider ownership. Bounded Manual Sync already forces
-all eligible files in its inclusive range to reprocess. Cookie refresh and
+or wait for auto-sync to reconsider ownership. New bounded Manual Sync uses the
+same owner-aware metadata skip policy in its inclusive range; only selecting
+**Reprocess all files in this date range** requests the former forced behavior
+for a fresh run. Legacy bounded jobs with an absent flag retain their original
+force policy. Cookie refresh and
 auth/config generations are separate from ownership and do not invalidate these
 ownership skips.
 
@@ -327,10 +349,33 @@ auto-sync is not a guarantee of indefinitely unattended iCloud authentication.
 - Incremental sync skips successful objects whose remote ID, size and modification
   time are unchanged in the same source inventory, unless an ownership-blocked
   epoch is stale (requires 26). Successful checksums are retained, not cleared to
-  force retry. It does not hash/download every remote file. An overwrite preserving
-  all three metadata values remains undetectable absent forced reprocessing.
-  Bounded Manual Sync forces all eligible files in the inclusive date range to
-  download and reprocess.
+  force retry. New bounded sync uses the same skip policy within its inclusive
+  export-file dates. It does not hash/download every remote file. An overwrite
+  preserving all three metadata values can go undetected; explicit bounded
+  reprocessing reads current bytes.
+- In Specific date range mode only, the unchecked **Reprocess all files in this
+  date range** checkbox sits below both date inputs and above **Start sync**.
+  Checkbox/label hover and keyboard focus reveal: **Download and process every
+  eligible file in this date range, including previously successful files. This
+  may be slow and transfer substantial data.** The API's optional boolean
+  `reprocessAllFiles` requires both valid ordered dates even when false; omission
+  on a new bounded request defaults false and persists explicitly. Incremental
+  requests must omit the field.
+- Retry always skips valid unchanged successes from its own source-child ancestor
+  path, even after force. A forced retry still processes failed, unreached or
+  changed files without that proof despite older unrelated inventory successes.
+  A non-forced retry may additionally use ordinary valid inventory skips,
+  including files the original run intentionally skipped. Private durable receipts
+  preserve ancestor identity/blocker proof independently of later inventory
+  pointers; legacy NULL receipts need sufficient current inventory/manifest proof
+  or may need a safe extra download. Frozen same-job manifests/checkpoints remain
+  unchanged. See [Ingest Reprocessing](ingest-reprocessing.md).
+- The pinned iCloud backend advertises `hash.None` and returns
+  `hash.ErrUnsupported`; it does not expose a free remote MD5. The observed
+  `v2:rclone:` hash is of source-scoped metadata, not file contents. Processed
+  files receive a local SHA-256 while parsing; skipped files do not download
+  bytes for an integrity hash. Neither metadata skipping nor stored SHA-256
+  proves byte integrity of a skipped remote object.
 - Discovery is bounded to 100000 entries, 10000 eligible exports and 32 MiB
   metadata stdout. Eligible files require ID, size and valid modification time;
   ambiguous aliases or unsafe metadata fail closed.
@@ -341,6 +386,8 @@ auto-sync is not a guarantee of indefinitely unattended iCloud authentication.
 - Parsing and normalization reuse the local pipeline. With the contract requiring
   26, provider-backed local/iCloud identities deduplicate or adopt according to
   [source ownership](#replacing-an-existing-source), not transport-specific IDs.
+  Explicit file reprocessing preserves workout/route identity and does not
+  guarantee forced Coverage or reset matching retry budgets.
 - Retain the 500m Coverage CPU, two execution lanes, existing admission caps and
   6m/10m/15m route timeout policy. Adoption does not authorize capacity changes or
   certify a real-cloud smoke test; live policy evidence stays in Development Progress.
@@ -408,9 +455,10 @@ including permanent/unknown/null-code failures, into the next latest-only attemp
 Successes never rerun; cancellations are not automatically revived. All-permanent/
 unknown parents stop. The additional automatic count defaults to 1 (0-20), durable
 per root; manual retry never resets it and normal failed-target scans cannot
-create fresh roots to bypass it. This new policy has not been deployed.
+create fresh roots to bypass it. The prior-to-031 release evidence is recorded
+in Scope And Status; this paragraph is not a new rollout receipt.
 
-Deployment verification is complete. For an owner-operated next yearly backfill, leave
+At the prior-to-031 checkpoint, deployment verification was complete. For an owner-operated next yearly backfill, leave
 `autoSyncEnabled=false`, select an inclusive January 1 through December 31 file
 range, and review ingestion and Coverage separately before the next batch. A
 completed prior batch satisfies the historical readiness gate; no extra import
@@ -480,7 +528,24 @@ behavior and full worker startup were not verified by these checks.
 
 ## Schema And Verification
 
-Active migrations are **001-028**. Migration 021 introduced iCloud, 022 legacy-route
+Current deployment uses **001-032**, schema/minimum runtime **32**,
+and `migration_baseline=27`. Source support is **33** for the separate pending
+[canonical display release](database-migrations.md#canonical-coverage-display-033-source-only),
+not yet deployed. Migration 031 defines ingest reprocessing; 032 adds
+atomically maintained coverage display precomputations without changing source
+discovery or ingest policy. Applied 001-032 are immutable. Use protected backups,
+the native migration entry point and coordinated compatible API/worker images.
+Preserve queued historical jobs, original parameters and frozen manifests.
+032 was applied through a standalone restricted native migration before the
+accepted full-values backend-42/UI-43 rollout with `--no-hooks`. Actual API/worker
+readiness and original-data/configuration preservation passed. Full pre-32 backups
+and old images remain retained; image-only rollback is unsupported. Scripted
+deployed-browser verification passed; owner acceptance/milestone and capacity
+remain separate, with no new provider or ingest verification claimed. See
+[migration requirements](database-migrations.md#coverage-display-precomputations-032).
+
+The following migration/release evidence is historical, **prior to 031**.
+At that checkpoint active migrations were **001-028**. Migration 021 introduced iCloud, 022 legacy-route
 bootstrap, 023 coordinated readers, and 024-026 provider identity, owner-aware
 inventory and adoption. Ordinary static 027 advances 26 to 27; it has no legacy
 dispatch or archived-fixture replay. New `028_ingest_coverage_pipeline.sql`
@@ -513,6 +578,9 @@ did not apply migration 021 or register iCloud sources. The recorded 10/12 resul
 below tested schema 21 and must not be relabeled as schema-22 verification.
 
 ### Verified Results (10/12/2026)
+
+These observations are **prior to 031** and retain their original scope, not a
+verification receipt for bounded defaults or retry receipts introduced in 031.
 
 | Scope | Result and boundary |
 |---|---|

@@ -9,10 +9,10 @@ import (
 )
 
 func TestDeferredGenerationRuntimeReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 28 {
-		t.Fatalf("runtime version = %d, want 28", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 33 {
+		t.Fatalf("runtime version = %d, want 33", SupportedSchemaVersion)
 	}
-	if runtimeFullReadinessSQL != "SELECT ("+runtimeReadinessSQL+") AND ("+runtimeDeferredReadinessSQL+") AND ("+runtimeCohortReadinessSQL+")" {
+	if !strings.HasPrefix(runtimeFullReadinessSQL, "SELECT ("+runtimeReadinessSQL+") AND ("+runtimeDeferredReadinessSQL+") AND ("+runtimeCohortReadinessSQL+")") {
 		t.Fatal("full readiness must require base, deferred generation and eligible-cohort contracts")
 	}
 	if strings.Contains(runtimeDeferredReadinessSQL, "$1") || strings.Contains(runtimeDeferredReadinessSQL, "schema_version") {
@@ -47,10 +47,10 @@ func TestDeferredGenerationReadinessExactTriggerContract(t *testing.T) {
 func TestDeferredGenerationReadinessProtectedBodies(t *testing.T) {
 	bodies := regexp.MustCompile(`(?s)\$body\$(.*?)\$body\$`).FindAllStringSubmatch(runtimeDeferredReadinessSQL, -1)
 	if len(bodies) != 2 {
-		t.Fatalf("expected pure counter and nonlocking helper fingerprints, got %d", len(bodies))
+		t.Fatalf("expected generation invalidator and nonlocking helper fingerprints, got %d", len(bodies))
 	}
 	for i, fixture := range []struct{ file, function string }{
-		{"009_raw_route_map.sql", "advance_account_data_generation"},
+		{"033_canonical_coverage_display.sql", "advance_account_data_generation"},
 		{"028_ingest_coverage_pipeline.sql", "lock_account_data_generation"},
 	} {
 		raw, err := migrations.Files.ReadFile(fixture.file)

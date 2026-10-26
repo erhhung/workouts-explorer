@@ -341,7 +341,7 @@ As a data owner, I want new workout exports imported automatically without daily
 
 - Given two auto-sync sources, when the cadence fires, then one parent with two source children is created.
 - Given no new file, when incremental sync completes, then the child succeeds with zero imported workouts.
-- Given one successful and one failed child, when the parent finishes, then its status is partially_succeeded.
+- Given a terminal ingest with a failed child and at least one created or updated workout, then its status is partially_succeeded; successful reads, skips and unchanged workouts alone do not qualify under schema 030.
 
 ## Feature: Run Manual Sync
 
@@ -357,16 +357,20 @@ As a data owner, I want to synchronize selected sources and historical periods o
 4. New data only is the default mode.
 5. Specific date range requires inclusive start and end dates.
 6. New-data mode discovers new or changed files and stale ownership-blocked files under the contract requiring 26.
-7. Bounded mode deliberately reprocesses every matching file, including previously processed checksums.
+7. New bounded runs default to the incremental metadata-skip policy within the inclusive export-file date range. Unchanged successful files skip unless ownership-blocked evidence is stale.
 8. The request creates one parent job and one child per selected source.
 9. Exact equivalent active work returns the existing job.
 10. Manual completion creates an info, warning, or error notification according to outcome.
+11. Only in Specific date range mode, an unchecked-by-default **Reprocess all files in this date range** checkbox appears below the Start date and End date inputs and above **Start sync**. Hovering the checkbox or label, or focusing the checkbox, shows the tooltip: **Download and process every eligible file in this date range, including previously successful files. This may be slow and transfer substantial data.** New data only mode hides the option and omits its API field.
+12. `IngestCreate.reprocessAllFiles` is an optional boolean allowed only with both valid ordered dates, even when `false`. Omission on a new bounded request means `false`; new bounded parent/child parameters persist the explicit boolean. Existing bounded jobs with an absent flag retain force semantics without history rewrites or another contract marker.
+13. Explicit `true` requests the former all-eligible-files behavior for a fresh run, without bypassing date bounds, ownership, workout deduplication or route identity, and without guaranteeing forced Coverage. Retry always skips valid same-metadata successes on its own source-child ancestor path regardless of initial force; non-forced retry may additionally use valid source inventory. Frozen same-job actions and terminal checkpoints remain unchanged. See [Ingest Reprocessing](ingest-reprocessing.md) for receipts, legacy proof and v2 coalescing.
 
 ### Validation
 
 - At least one connected source must be selected.
 - Start and end dates must both be omitted or both supplied.
 - Start date cannot follow end date.
+- Supplying `reprocessAllFiles` without both valid dates is invalid, including `false`; `null` and non-booleans are invalid.
 
 ### Failure cases
 
@@ -377,7 +381,10 @@ As a data owner, I want to synchronize selected sources and historical periods o
 ### Acceptance criteria
 
 - Given no dates, when a new Manual Sync is submitted, then new, changed or stale ownership-blocked files are processed; an equivalent active job retains its frozen manifest.
-- Given an explicit range, when Manual Sync is submitted, then every matching file is reprocessed.
+- Given an explicit range with the option unchecked or the API flag omitted, then unchanged successful files skip without download, subject to current ownership evidence.
+- Given the option checked, when a new bounded run is submitted, then every eligible file in that range is processed, including prior successes; its retry skips valid unchanged successes from its own ancestor path.
+- Given a forced retry with failed, unreached or changed files lacking valid ancestor success, then those files process even if unrelated older successful inventory exists.
+- Given a non-forced retry, then valid unchanged global source inventory may still skip files intentionally skipped by the original run; retries are not chain-only downloads.
 - Given an equivalent active request, when submitted again, then the existing parent job ID is returned.
 
 ## Feature: Process Source Files Safely
@@ -546,7 +553,7 @@ criteria are not a deployment, live-cloud smoke or acceptance receipt.
 
 ### Acceptance criteria
 
-- Given the same unchanged workout in a bounded reimport through its mapped source, when ingest finishes, then no duplicate is created and matched_unchanged provenance is appended.
+- Given the same unchanged workout in an explicitly forced bounded reimport through its mapped source, when processed, then no duplicate is created and matched_unchanged provenance is appended; file skipping alone does not append a new workout import event.
 - Given changed route content for the same provider ID through its mapped source, when reingested, then the existing workout and derived map data are updated.
 - Given the same provider identity owned by another non-deleted source, even disabled or disconnected, when imported, then no duplicate/update/adoption occurs and `skipped_live_owner` is recorded.
 - Given a single deleted-source owner, when another source imports that identity, then the UUID and history survive, incoming content becomes authoritative and `adopted` plus a durable Coverage request commit together even if bytes are unchanged.
@@ -836,7 +843,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 1. Coverage generates nearby eligible segment candidates for ordered route points and sequence-decodes connected traversals; it does not independently attribute each point to its nearest segment.
 2. All relevant path classes are candidates, including roads, trails, cycleways, unnamed paths, driveways, and parking aisles under the accepted matcher policy.
 3. Deterministic OSM-derived segments remain the match-evidence and rendered-geometry units; they are not the user-facing counting or table-row identity.
-4. Graph-connected named segments are grouped by normalized name within one attribution scope, including road/path transitions, branches, and source-way transitions. Named road segments within one scope/name also connect within 15 meters, extended to 50 meters only when both are explicitly one-way, so divided carriageways remain one attribution. The scope is the containing named park when attributed, otherwise authoritative municipality, otherwise county, otherwise provider region. For example, El Camino Real in Mountain View and El Camino Real in Sunnyvale remain separate paths.
+4. Source logical paths group graph-connected named segments by normalized name within one attribution scope, including road/path transitions, branches, and source-way transitions. Named road segments within one scope/name also connect within 15 meters, extended to 50 meters only when both are explicitly one-way, so divided carriageways remain one attribution. The scope is the containing named park when attributed, otherwise authoritative municipality, otherwise county, otherwise provider region. In a synthetic example, Example Boulevard in Example Borough and in Sample Borough remain separate source paths. Pending 033 adds display grouping over these unchanged source identities, as specified below.
 5. Segment-to-locality assignment uses imported administrative boundaries and deterministic geometry rules. Segment derivation splits at locality boundaries where needed rather than assigning a cross-boundary geometry wholly to the wrong locality.
 6. Connected unnamed segments share one logical identity within the same attribution scope and road/path class across simple two-segment continuations, even when source lineage changes. At a larger branch, one source way remains connected and the only two incident segments of one exact broad class may continue across source ways; other cross-source branches remain separate. Disconnected components always receive separate identities, including when they shared an incoming legacy ID. Driveway, parking-aisle, and parking-area logical paths remain rendered but are omitted from user-facing statistics/history.
 6a. A non-road municipality piece of at most 25 meters is treated as a municipal-boundary sliver and reassigned to county scope only when the immediately adjacent pieces of the same clipped source segment both belong to that county and preserve the same name state and exact broad class. Park-attributed pieces and road pieces never use this exception.
@@ -850,10 +857,13 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 12. Every rendered entity uses its exact date-range distinct-workout count and bucket, independent of the checked subset. Coverage ignores workout type for coloring.
 13. Fixed amber-orange-yellow count buckets represent ordinary road/path/park coverage; the focused workout's exact attributed geometry uses the corresponding purple-magenta-pink bucket.
 14. A 750-millisecond map hover shows exact date-range count, earliest and most recent date-range visits, and first and last all-time visits. The popup uses numeric `M/D/YYYY` dates.
+14a. After **250ms of stable hover**, an uncached entity requests `GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}/stats` with the current `generation`. The popup remains hidden until both the full **750ms visibility dwell** and the lookup complete. It returns `RoadCoverageEntity` identity, counts, dates, navigation workout IDs and raw bounds, without geometry or expanded fit bounds. It does not fit, blink or install a geometry highlight; clicking an entity still uses the existing full-detail endpoint. The server adds no dwell delay. Range statistics include all eligible workouts in the selection's inclusive dates, independently of the checked subset or focused workout; all-time statistics include eligible account history.
+14b. The canvas caches successful hover stats immediately on response, separately from Road Coverage table results: at most **128 least-recently-used entries**, expiring **five minutes after load**, scoped by selection ID, generation, display policy/revision, resolved dates, entity kind and ID. Cache hits still wait the full **750ms dwell** and do not extend expiry. Changing entities, leaving the canvas, window blur or a hidden document cancels pending popup visibility and removes the popup, but an already-started lookup can finish and populate the same-context cache. Returning to an entity reuses its cached result or in-flight lookup without another request. Inactive hovers cannot retry, recover a selection or restore a popup. Selection/generation/policy/revision/range changes clear the cache and abort obsolete lookups; late responses cannot affect a replacement context. Unmount aborts lookups, clears the cache and removes all listeners. Failed/aborted lookups are not cached. The existing response to server 503 remains one client retry after **250ms**; its retry budget is otherwise unchanged.
 15. Road Coverage rows show the same four dates and retain the earliest workout on a tied date as their navigation target.
 16. Unnamed entities display a type-specific fallback while retaining locality and stable identity: **Unnamed road**, **Bike path**, **Pedestrian path**, **Trail**, or **Unnamed path**. Road Coverage labels its context column **City/County/Region**. A road or path attributed to a state or national park uses that park as its display context ahead of an administrative locality; otherwise it uses municipality, county, then the authoritative user-facing region label such as `Northern California`, never a provider-qualified key such as `geofabrik:norcal`.
 17. Coverage mode shows a compact Road coverage legend with **Fit** and **Coverage by road...** actions. Fit is disabled without a focused workout; otherwise it retains the legend, fits that workout's coverage, and returns focus to the map canvas. The legend is hidden while its modal dialog is open.
-18. The dialog loads the complete date-range result in bounded pages, then provides client-side literal case-insensitive search, sortable columns, and preference-sized pagination for roads, paths, and parks. Search matches only the displayed Road/Path/Park and City/County/Region text, uses the browser-native search cancel control, and suppresses autofill background changes. Equal primary sort values use displayed Road/Path/Park name ascending, then displayed City/County/Region ascending, before an invisible stable identity tie-break. The shell caches that complete result for five minutes by resolved date range and account data generation, so tab changes, capability replacement, entity navigation, and ordinary reopen do not reload unchanged data; same-range refresh preserves search, unnamed visibility, sort, and a clamped current page. A resolved date-range change clears search, unchecks unnamed visibility, and returns to page 1. **Show unnamed roads and paths** defaults off; when enabled, type-specific fallback names participate in search. Pagination displays at least `Page 1 of 1`. A load longer than half a second shows `Loading coverage...` in the framed table body; a failed load replaces the table dialog with a compact Retry/Close error dialog.
+18. The dialog loads the complete date-range result with one bounded `bulk=true` request, not a server-page loop, then provides unchanged client-side literal case-insensitive search, sortable columns, and preference-sized pagination for roads, paths, and parks. Search matches only the displayed Road/Path/Park and City/County/Region text, uses the browser-native search cancel control, and suppresses autofill background changes. Equal primary sort values use displayed Road/Path/Park name ascending, then displayed City/County/Region ascending, before an invisible stable identity tie-break. The shell caches that complete result for five minutes by resolved date range and account data generation, so tab changes, capability replacement, entity navigation, and ordinary reopen do not reload unchanged data; same-range refresh preserves search, unnamed visibility, sort, and a clamped current page. A resolved date-range change clears search, unchecks unnamed visibility, and returns to page 1. **Show unnamed roads and paths** defaults off; when enabled, type-specific fallback names participate in search. Pagination displays at least `Page 1 of 1`. A load longer than half a second shows `Loading coverage...` in the framed table body; a failed load replaces the table dialog with a compact Retry/Close error dialog.
+18a. Bulk delivery evaluates coverage once and is limited to **50,000 entities and 64 MiB of uncompressed JSON including metadata**. Exceeding either bound returns **422 Problem Details**, field `bulk`, code `limit`, with no partial results. The dialog asks the user to choose a smaller date range and never caches an oversized, failed, aborted or incomplete response. A complete bulk response reports page 1, page size 50,000, total items equal to the returned item count, and one total page (zero for an empty result). Valid page/pageSize inputs do not slice bulk results; server search/sort remain supported. Non-bulk API clients retain ordinary pagination capped at 100 rows.
 19. Closing Road Coverage reveals the existing mounted map. The X button or Escape dismisses it.
 20. Clicking an entity name closes the dialog, fits its date-range geometry with a minimum 500-meter extent, and starts blinking it white immediately. The three-second highlight duration begins only after camera movement ends and MapLibre reports all requested base/Coverage tiles loaded; render and source events drive this check so the blink itself cannot prevent readiness, and a bounded fallback handles failed tile sources. Clicking an eligible visit date closes the dialog, selects and centers that workout in Coverage mode, and scrolls its route row into view.
 21. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
@@ -864,6 +874,111 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. These row indicators identify omitted checked workouts; a separate omission summary is not required. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable no-result workouts alone do not keep polling active. Once every checked workout has a current or stale applied result, ten-second processing polling stops. While applied results are displayed, background generation checks continue at the public polling interval clamped to 10-60 seconds (normally 30 seconds), so committed replacements renew private capabilities even when readiness labels are unchanged. Both checks pause in hidden tabs and stop outside production Coverage mode. Unchanged capabilities are discarded without replacing map sources or resetting focus/camera state.
 26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
 27. Coverage processing creates bounded account-owned parent runs with one child per eligible workout route. New ingest cohorts may mix regions, with per-route vectors authoritative. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful. See [committed-route pipelining](#feature-pipeline-committed-routes-to-coverage).
+28. Display precomputations preserve exact results for named periods, all-time history and arbitrary custom dates without separate year/month datasets. Compact qualification partials are deduplicated by display entity/workout before counts; educational grounds spanning source paths still count once. Regional-park context and park bounds remain independent of path exclusions. Metadata, workout-local dates, visibility and applied-result eligibility remain live joins. Logical deletion hides a workout before physical cleanup; failed rematching preserves prior applied coverage. Deferred, transaction-batched maintenance commits evidence and projections atomically. See the [schema-32 design](architecture.md#coverage-display-precomputations-requires-32). This implementation is deployed with released/applied 032 and coordinated backend-42/UI-43; matcher policy is unchanged. Scripted deployed-browser verification passed; owner acceptance/milestone and capacity remain separate.
+
+### Canonical Display Identity (033, Undeployed)
+
+**Source-only contract, not live behavior:** live remains backend-42/UI-43,
+schema/minimum runtime **32**, baseline **27**. Pending 033 requires coordinated
+runtime **33** and retains baseline **27**; applied **001-032 stay immutable**.
+This section supersedes source-entity display grouping and cache scope above
+only when the pending release is deployed. It applies to all accounts, not to
+particular names or routes. See [ADR 0013](decisions/013-canonical-coverage-display-identity.md).
+
+1. A named displayed entity is unique by region plus normalized actual DISPLAY
+   name and DISPLAY place. Hidden jurisdiction IDs, source kind/class, disconnected
+   components and source UUIDs must not split equal named display keys. Preserve
+   directions, accents, punctuation and suffixes. Normalize NFC/casefold/NFC under
+   PostgreSQL 18 UTF8 built-in `pg_c_utf8`, with explicitly enumerated Unicode
+   White_Space collapse/trim, not browser/session-locale rules. Versioned
+   length-prefixed UTF-8 SHA-256 UUIDv8 identities retain normalized key fields and
+   reject inconsistent collisions. Unnamed/blank sources retain kind/UUID
+   discrimination; fallback labels must never merge unrelated unnamed entities.
+2. Resolve membership using the selected date context over **all historically
+   eligible sources**. Keep all-history names/base locality, in-range park-context
+   precedence and current-range region minimum. A source with no in-range visit
+   uses historical context/region fallback. When its key matches, include its
+   entire eligible history. Union distinct workouts over all members before range
+   and all-time summaries; return only groups with an in-range visit. First/latest
+   navigation uses the date extremum, earliest start, then UUID. The same resolved
+   key keeps its ID across ranges, but changed labels may change membership.
+3. A named park and path with the same key form one group. Park-preferred
+   representative kind/class is presentation only; retain source provenance.
+   Table, hover, detail, focus and all four tile layers agree on canonical ID,
+   metadata, range count and bucket. Checked/focused workouts change rendered
+   pieces only, never membership/statistics. Detail unions all actual in-range
+   member geometry; do not invent connections across unvisited gaps.
+4. Selection creation prepares a complete ready context scoped by account,
+   generation, revision, dates, policy and locale. Required selection fields
+   `coverageDisplayPolicy` and `coverageDisplayRevision` participate in bulk,
+   hover and detail cache validity and stale-response guards. Read-only requests
+   never rebuild. Keep eight reusable unreferenced server contexts as a soft
+   limit plus all valid actively referenced contexts; deletion and rollback are
+   atomic. Existing local filtering/sorting/paging, dwell, retry and click feedback
+   remain. Server search applies after canonical grouping.
+5. Every source input, including context-only evidence, metadata, dates/deletion,
+   route/applied eligibility and region labels, defers invalidation and coalesces
+   one revision/public-generation advance per affected account/transaction.
+   Preserve both READ COMMITTED commit orders and stale Repeatable Read rejection,
+   with no early ingest generation lock or eager rebuild of every date range.
+   Coverage recomputation means warming/rebuilding this read model from existing
+   evidence, not new route jobs. There is no OSM derivation, matcher or path-policy
+   bump and **no OSM regeneration or rematching is needed**.
+
+### Unreleased Click-Highlight Follow-Up (Undeployed)
+
+**Future normative change, not deployed UI-43 behavior:** the following refines
+entity-name clicking in behavior 20 once released. Live backend-42/UI-43 and
+schema-32 release evidence does not establish this source follow-up's deployment
+or full 033 verification. This follow-up is folded into the pending canonical
+release above. Visit-date navigation and existing hover/table interactions remain;
+their cache validity additionally includes display policy/revision.
+
+1. An entity-name click must immediately close Road Coverage and focus the existing
+   map canvas, even while detail is loading. The map must remain usable. An
+   uncached load shows transient bottom-of-map feedback with **Cancel**, visible
+   on desktop and mobile, above other map overlays at z-index **7** but below
+   tooltips at **8**. A failure or **30-second** timeout shows map-level
+   **Retry / Close**, not a modal detail error. Cancel/Close dismisses feedback and
+   returns canvas focus. Detail requests have no hidden retry; Retry is manual.
+2. The camera must wait for exact detail geometry and its expanded fit bounds,
+   rather than fit approximate table/raw bounds while loading. Once available,
+   retain the minimum **500-meter** extent, **350ms** fit animation and immediate
+   white blink. The existing **three-second** highlight countdown begins only
+   after camera movement ends and requested tiles are ready, retaining the bounded
+   failed-tile fallback.
+3. Repeated clicks may reuse a separate successful-detail LRU cache, scoped by
+   selection ID, generation, resolved dates, display policy/revision, entity kind
+   and canonical ID, with at most
+   **8 entries / 8 MiB of UTF-8 serialized JSON** and a fixed **five-minute TTL
+   from load**, never extended by a hit. Serialized size is not a heap-memory
+   guarantee; oversized detail may display without caching. There must be no bulk
+   geometry prefetch. The independent hover-stats cache, complete-table bulk cache
+   and client-side paging remain unchanged.
+4. Only the latest request in the current selection/generation/range, deletion,
+   workout-subset and mode/diagnostics/refresh context may display, fit or cache
+   detail or initiate recovery. Context changes invalidate detail state/cache;
+   supersession, abort, Cancel and unmount must not surface stale UI errors or
+   cache late responses. Only successful current responses are cacheable. Reusing
+   the same installed geometry avoids redundant source `setData`, while a style
+   or source replacement must reinstall it. Reopening Road Coverage must cancel
+   pending detail work, not allow completion behind the dialog. Late 200, 503 or
+   404 responses must not fit, cache, invalidate the bulk-table cache or
+   automatically refresh the capability after reopen. Already-completed detail
+   cache entries and highlights must be preserved.
+5. A current 404 must invalidate detail and complete-table caches and leave visible
+   **Retry / Close** feedback. Retry refreshes the map capability; the user then
+   reopens Road Coverage and chooses again. It must not silently refresh and
+   replay the stale click. Other failures/timeouts allow a manual detail retry.
+
+The existing detail endpoint and response remain unchanged. The source API calls
+the six-argument stored `app.map_selection_coverage_entity_detail`, replaced by
+033 with canonical whole-group geometry gated on indexed metadata in one
+correlated `LATERAL` statement snapshot. It supersedes the earlier API-local
+source-only geometry query. The transaction stays read-only with critical
+transaction-local `SET LOCAL jit=off`. The combined release requires schema/minimum
+runtime **33**, baseline **27**, with applied **001-032 unchanged**. See the
+[source-only architecture](architecture.md#click-highlight-follow-up-unreleased-source-only).
 
 ### Matching Bounds And Diagnostic Parity
 
@@ -914,7 +1029,23 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Sequence continuity, network connectivity, reliable heading, and later observations disambiguate intersections while preserving genuine turns.
 - Account coverage cannot include another account's attribution.
 - Segment identity, logical-path identity, locality identity, derivation version, and map-data version are retained for refresh diagnostics.
-- Distinct-workout counts deduplicate by logical path after applying the active date range and workout subset.
+- Source attribution deduplicates by logical path/workout. Display statistics are
+  independent of the checked/focused workout subset; pending 033 unions distinct
+  workouts across all context-resolved canonical members before summarizing.
+- Road Coverage statistics use all eligible workouts in the resolved range,
+  independent of checked routes; display-entity/workout deduplication precedes
+  counts, including education identities combining multiple source paths.
+- Bulk completion metadata must agree before caching. Limits and incomplete or
+  failed responses never produce a partial table presented as complete.
+- Stats validate account/session/selection liveness and current generation in the
+  same database statement snapshot as the read; foreign, expired, stale or
+  unavailable selections/entities return 404. In deployed 032, park stats retain the detail
+  endpoint's requirement for canonical-text matched geometry from an eligible
+  in-range workout, even if a list row exists. Mixed noncanonical UUID-cast
+  evidence still contributes to raw bounds, not expanded fit bounds.
+- Pending 033 list/stats share ready canonical metadata and an in-range-visit gate;
+  detail separately requires actual matched geometry. A mixed park/path group's
+  representative kind must not exclude path members or their geometry/history.
 
 ### Failure cases
 
@@ -938,6 +1069,17 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 - Given named and unnamed paths wholly inside Yosemite National Park, when Coverage renders, then each path remains separately visible with `Yosemite National Park` as City/Region, unnamed paths use a type-specific fallback such as `Bike path`, and the park entity has no fabricated municipality.
 - Given the date range or workout subset changes, when path details render, then first and latest visit remain the all-time date-only extrema.
 - Given Coverage stats is open, when it is closed or Show on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
+- Given sustained Coverage hover, only the stats endpoint is requested after
+  250ms; the popup still waits 750ms, including on cached returns. Moving across
+  different entities for less than 250ms each makes no stats requests.
+  Clicking its name in Road Coverage still retrieves geometry for fit/highlight.
+- Given canvas exit or an entity change after a lookup starts, its successful
+  response is cached without showing the old popup; returning reuses a cached
+  result or in-flight lookup while restarting the full visibility dwell.
+- Given a selection, generation, policy, revision or range change, or unmount
+  during pending hover work, no late response can show a stale popup, cache stale
+  stats or trigger stale selection recovery. Cache eviction and expiry cause a
+  fresh request after the 250ms lookup delay.
 - Given coverage diagnostics is disabled, when Coverage is selected, then covered geometry and statistics aggregate all checked routes.
 - Given coverage diagnostics is enabled and one route is selected, when Coverage is selected, then only that route's diagnostic evidence and review controls appear.
 - Given ingest commits routed workouts while coverage capacity is occupied, when Routes opens, then the new raw routes are available and Coverage identifies them as pending.
@@ -1197,6 +1339,8 @@ not iPhone-sized screens; phone-focused development is explicitly out of scope.
 10. Desktop Map controls expose the same base-map style families as mobile.
 11. Map date and base-style pickers use the application's shared dropdown treatment; the desktop panel starts directly with those controls and contains no redundant Map hero.
 12. The unified workout list consumes the remaining panel height above Coverage stats and Fit on map and scrolls independently.
+13. Map legend/diagnostic cards and navigation controls share an outer inset of **0.75rem on mobile layouts and 1rem on desktop**; MapLibre's inner control margin is zero. The Road coverage legend reserves the zoom-control column and gutter rather than overlapping it on narrow maps. Existing viewport-bound map and sidebar scrolling remain unchanged.
+14. Route and Coverage tooltips are passive canvas-level popups above the legend, navigation controls and attribution. They do not intercept pointer events or interrupt hover; the map host must not trap their stacking below sibling overlays.
 
 ### Validation
 

@@ -11,6 +11,8 @@ import {
   type MapSelectionWorkout,
   type Preferences,
   type PublicConfig,
+  type RoadCoverageDetail,
+  type RoadCoverageEntity,
 } from "./api";
 import MapPage, {
   absoluteRouteTileTemplate,
@@ -18,6 +20,7 @@ import MapPage, {
   buildRawRouteEndpoints,
   buildSegmentedRawRoute,
   COVERAGE_HIGHLIGHT_DURATION_MS,
+  CoverageDetailCache,
   coverageRegionLabel,
   formatRoutePopupDetails,
   formatRoutePopupDistance,
@@ -231,6 +234,8 @@ const selection: MapSelection = {
   id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   dataGeneration: 7,
+  coverageDisplayPolicy: "coverage-display-identity-v1",
+  coverageDisplayRevision: 1,
   range: { startDate: "2026-07-10", endDate: "2026-08-08" },
   bounds: {
     minimumLongitude: -105.3,
@@ -995,6 +1000,1189 @@ describe("map contract helpers", () => {
     expect(marker.data[(1 * marker.width + 5) * 4 + 3]).toBe(255);
     expect(marker.data[13 * marker.width * 4 + 3]).toBe(0);
     expect(marker.data[(13 * marker.width + 5) * 4 + 3]).toBe(255);
+  });
+});
+
+describe("exact coverage identity intent", () => {
+  const entity: RoadCoverageEntity = {
+    entityId: "E".repeat(32),
+    entityKind: "path",
+    name: "Exact Road",
+    localityName: "Test City",
+    regionId: "colorado",
+    regionName: "Colorado",
+    broadClass: "road",
+    rangeWorkoutCount: 3,
+    rangeFirstDate: "2026-07-12",
+    rangeFirstWorkoutId: selection.workouts[1].id,
+    rangeLatestDate: "2026-08-05",
+    rangeLatestWorkoutId: selection.workouts[0].id,
+    allTimeWorkoutCount: 7,
+    allTimeFirstDate: "2026-01-01",
+    allTimeFirstWorkoutId: selection.workouts[1].id,
+    allTimeLatestDate: "2026-08-05",
+    allTimeLatestWorkoutId: selection.workouts[0].id,
+    bounds: selection.bounds!,
+  };
+  const park: RoadCoverageEntity = { ...entity, entityKind: "park", name: "Exact Park" };
+  const detail: RoadCoverageDetail = {
+    ...entity,
+    geometry: {
+      type: "LineString",
+      coordinates: [
+        [-105.2, 40],
+        [-105.199, 40.001],
+      ],
+    },
+    // Exact API fit bounds, including its minimum-span padding, not the table bounds.
+    fitBounds: {
+      minimumLongitude: -105.205,
+      minimumLatitude: 39.995,
+      maximumLongitude: -105.195,
+      maximumLatitude: 40.005,
+    },
+  };
+  const highlightSource = "private-workout-coverage-highlight";
+  const highlightLayer = "private-workout-coverage-highlight";
+
+  async function mountDetail(polling = false) {
+    let activeSelection = selection;
+    const requests: Array<{
+      path: string;
+      signal: AbortSignal;
+      resolve: (response: Response) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const lists: string[] = [];
+    const posts: string[] = [];
+    const cacheChanged = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input);
+      if (path === "/api/map-selections" && init?.method === "POST") {
+        posts.push(path);
+        return Promise.resolve(json(activeSelection));
+      }
+      if (path.includes("/coverage/paths?")) {
+        lists.push(path);
+        return Promise.resolve(
+          json({
+            pagination: { page: 1, pageSize: 50000, totalItems: 2, totalPages: 1 },
+            items: [entity, park],
+          }),
+        );
+      }
+      if (/\/coverage\/(path|park)\//.test(path))
+        return new Promise<Response>((resolve, reject) => {
+          requests.push({ path, signal: init!.signal as AbortSignal, resolve, reject });
+        });
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${path}`);
+    });
+    function Harness({ overrides = {} }: { overrides?: Partial<Parameters<typeof MapPage>[0]> }) {
+      const [cache, setCache] = useState<RoadCoverageCache>();
+      return (
+        <MapPage
+          config={config}
+          preferences={{ ...preferences, coverageDiagnosticsEnabled: false }}
+          csrfToken="csrf-map"
+          dateRange="last30Days"
+          onDateRangeSelected={vi.fn()}
+          roadCoverageCache={cache}
+          onRoadCoverageCacheChange={(next) => {
+            cacheChanged(next);
+            setCache(next);
+          }}
+          {...overrides}
+        />
+      );
+    }
+    const view = render(<Harness />);
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Coverage" })).toBeEnabled());
+    if (polling) vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+    const map = mapInstances.at(-1)!;
+    const open = async () => {
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: "Coverage by road..." })),
+      );
+      if (polling) expect(screen.getByRole("button", { name: "Exact Road" })).toBeVisible();
+      else await screen.findByRole("button", { name: "Exact Road" });
+    };
+    const choose = async (name = "Exact Road") => {
+      await open();
+      fireEvent.click(screen.getByRole("button", { name }));
+    };
+    const refresh = async (next: MapSelection) => {
+      const old = activeSelection;
+      activeSelection = next;
+      await act(async () =>
+        map.handlers.get("error")?.({
+          error: {
+            status: 404,
+            url: `${window.location.origin}${old.routeTileUrl.replace("{z}/{x}/{y}", "12/654/1583")}`,
+          },
+        }),
+      );
+    };
+    return {
+      ...view,
+      map,
+      requests,
+      lists,
+      posts,
+      cacheChanged,
+      open,
+      choose,
+      refresh,
+      nextSelection: (next: MapSelection) => {
+        activeSelection = next;
+      },
+      context: (overrides: Partial<Parameters<typeof MapPage>[0]>) =>
+        view.rerender(<Harness overrides={overrides} />),
+    };
+  }
+
+  test("dismisses and focuses immediately, shows cancellable loading, and waits for exact geometry and fit bounds", async () => {
+    const { choose, requests, map, lists } = await mountDetail();
+    const fits = map.fitBounds.mock.calls.length;
+    await choose();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(map.getCanvas()).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading exact road coverage for Exact Road...",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+    expect(map.getSource(highlightSource)).toBeUndefined();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].path).toBe(
+      `/api/map-selections/${selection.id}/coverage/path/${entity.entityId}?generation=7`,
+    );
+    await act(async () => requests[0].resolve(json(detail)));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(map.getSource(highlightSource).data.geometry).toEqual(detail.geometry);
+    expect(map.fitBounds).toHaveBeenLastCalledWith(
+      [
+        [-105.205, 39.995],
+        [-105.195, 40.005],
+      ],
+      { padding: 48, duration: 350 },
+    );
+    expect(lists).toHaveLength(1);
+  });
+
+  test("cancels loading and ignores late success without caching it", async () => {
+    const { choose, requests, map } = await mountDetail();
+    await choose();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(map.getCanvas()).toHaveFocus();
+    await act(async () => requests[0].resolve(json(detail)));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(map.getSource(highlightSource)).toBeUndefined();
+    await choose();
+    expect(requests).toHaveLength(2);
+  });
+
+  test.each([200, 503, 404])(
+    "keeps B after out-of-order A (%s), without closing a reopened table or caching A",
+    async (status) => {
+      const { choose, open, requests, map, cacheChanged, posts } = await mountDetail();
+      await choose();
+      await choose("Exact Park");
+      expect(requests[0].signal.aborted).toBe(true);
+      const b = {
+        ...detail,
+        ...park,
+        geometry: {
+          ...detail.geometry,
+          coordinates: [
+            [1, 2],
+            [3, 4],
+          ],
+        },
+      };
+      await act(async () => requests[1].resolve(json(b)));
+      const fits = map.fitBounds.mock.calls.length;
+      await open();
+      const cacheWrites = cacheChanged.mock.calls.length;
+      await act(async () =>
+        requests[0].resolve(json(status === 200 ? detail : { title: "Failed" }, status)),
+      );
+      expect(screen.getByRole("dialog", { name: "Road Coverage" })).toBeVisible();
+      expect(map.getSource(highlightSource).data.geometry).toEqual(b.geometry);
+      expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+      expect(cacheChanged).toHaveBeenCalledTimes(cacheWrites);
+      expect(posts).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Exact Road" }));
+      expect(requests).toHaveLength(3);
+    },
+  );
+
+  test.each([200, 503, 404])(
+    "reopening cancels current detail and ignores its late completion (%s) without recovering the table",
+    async (status) => {
+      const { choose, open, requests, map, cacheChanged, posts, lists } = await mountDetail();
+      await choose();
+      const fits = map.fitBounds.mock.calls.length;
+      const cacheWrites = cacheChanged.mock.calls.length;
+      const postCount = posts.length;
+      const bulkRequests = lists.length;
+      await open();
+      expect(requests[0].signal.aborted).toBe(true);
+      expect(screen.queryByText(/Loading exact road coverage/)).not.toBeInTheDocument();
+      await act(async () =>
+        requests[0].resolve(json(status === 200 ? detail : { title: "Failed" }, status)),
+      );
+      expect(screen.getByRole("dialog", { name: "Road Coverage" })).toBeVisible();
+      expect(screen.getByRole("table")).toBeVisible();
+      expect(screen.queryByText(/That road coverage/)).not.toBeInTheDocument();
+      expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+      expect(map.getSource(highlightSource)).toBeUndefined();
+      expect(cacheChanged).toHaveBeenCalledTimes(cacheWrites);
+      expect(posts).toHaveLength(postCount);
+      expect(lists).toHaveLength(bulkRequests);
+      fireEvent.click(screen.getByRole("button", { name: "Exact Road" }));
+      expect(requests).toHaveLength(2);
+      expect(requests[1].path).toBe(requests[0].path);
+      expect(requests[1].signal.aborted).toBe(false);
+      expect(screen.getByRole("status")).toHaveTextContent("Loading exact road coverage");
+    },
+  );
+
+  test("reopening dismisses an existing detail error without recovering the table", async () => {
+    const { choose, open, requests, cacheChanged, posts, lists } = await mountDetail();
+    await choose();
+    await act(async () => requests[0].resolve(json({ title: "Failed" }, 503)));
+    expect(screen.getByRole("status")).toHaveTextContent("could not be shown on the map");
+    const cacheWrites = cacheChanged.mock.calls.length;
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Close Road Coverage" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(cacheChanged).toHaveBeenCalledTimes(cacheWrites);
+    expect(posts).toHaveLength(1);
+    expect(lists).toHaveLength(1);
+  });
+
+  test.each(
+    [
+      "selection",
+      "generation",
+      "policy",
+      "display revision",
+      "resolved dates",
+      "requested dates",
+      "deletion",
+      "mode",
+      "diagnostics",
+      "feature",
+      "unmount",
+    ].flatMap((change) => [200, 404].map((status) => [change, status] as const)),
+  )("aborts on %s and ignores late response %s", async (change, status) => {
+    const { choose, requests, map, context, refresh, unmount, posts, cacheChanged } =
+      await mountDetail();
+    await choose();
+    if (change === "selection") await refresh({ ...selection, id: "D".repeat(32) });
+    else if (change === "generation") await refresh({ ...selection, dataGeneration: 8 });
+    else if (change === "policy")
+      await refresh({ ...selection, coverageDisplayPolicy: "coverage-display-identity-v2" });
+    else if (change === "display revision")
+      await refresh({ ...selection, coverageDisplayRevision: 2 });
+    else if (change === "resolved dates")
+      await refresh({ ...selection, range: { startDate: "2026-07-11", endDate: "2026-08-07" } });
+    else if (change === "requested dates") context({ dateRange: "last7Days" });
+    else if (change === "deletion") context({ deletions: { revision: 1, events: [] } });
+    else if (change === "mode") fireEvent.click(screen.getByRole("button", { name: "Routes" }));
+    else if (change === "diagnostics") context({ preferences });
+    else if (change === "feature")
+      context({ config: { ...config, features: { coverageMatcherDiagnostics: true } } });
+    else unmount();
+    expect(requests[0].signal.aborted).toBe(true);
+    const fits = map.fitBounds.mock.calls.length;
+    const postCount = posts.length;
+    const writes = cacheChanged.mock.calls.length;
+    await act(async () =>
+      requests[0].resolve(json(status === 200 ? detail : { title: "Missing" }, status)),
+    );
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+    expect(map.getSource(highlightSource)).toBeUndefined();
+    expect(screen.queryByText(/That road coverage/)).not.toBeInTheDocument();
+    expect(posts).toHaveLength(postCount);
+    expect(cacheChanged).toHaveBeenCalledTimes(writes);
+  });
+
+  test.each([503, "network", "timeout"] as const)(
+    "shows a bounded map error for %s with manual Retry and Close, never caching failures",
+    async (failure) => {
+      const { choose, open, requests, map } = await mountDetail();
+      await open();
+      if (failure === "timeout") vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Exact Road" }));
+      if (failure === "timeout") {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(requests[0].signal.aborted).toBe(true);
+        await act(async () => requests[0].resolve(json(detail)));
+        vi.useRealTimers();
+      } else
+        await act(async () => {
+          if (failure === "network") requests[0].reject(new Error("Offline"));
+          else requests[0].resolve(json({ title: "Unavailable" }, failure));
+        });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "That road coverage could not be shown on the map.",
+      );
+      expect(requests).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(requests).toHaveLength(2);
+      await act(async () => requests[1].resolve(json({ title: "Unavailable" }, 503)));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(map.getCanvas()).toHaveFocus();
+      await choose();
+      expect(requests).toHaveLength(3);
+    },
+  );
+
+  test("reuses exact detail but restarts the same entity blink without repeated source uploads", async () => {
+    const { choose, open, requests, map, lists } = await mountDetail();
+    await choose();
+    vi.useFakeTimers();
+    await act(async () => requests[0].resolve(json(detail)));
+    const source = map.getSource(highlightSource);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3001);
+    });
+    expect(map.getLayer(highlightLayer).paint["line-opacity"]).toBe(0);
+    vi.useRealTimers();
+    const fits = map.fitBounds.mock.calls.length;
+    await open();
+    expect(map.getSource(highlightSource)).toBe(source);
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+    fireEvent.click(screen.getByRole("button", { name: "Exact Road" }));
+    expect(requests).toHaveLength(1);
+    expect(lists).toHaveLength(1);
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits + 1);
+    expect(map.getLayer(highlightLayer).paint["line-opacity"]).toBe(1);
+    expect(source.setData).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+    fireEvent.keyUp(window, { key: " ", code: "Space" });
+    expect(source.setData).not.toHaveBeenCalled();
+    await choose("Exact Park");
+    expect(requests).toHaveLength(2);
+    expect(requests[1].path).toContain(`/coverage/park/${entity.entityId}?`);
+  });
+
+  test("a current 404 invalidates both caches and offers a visible capability refresh without silently reopening the table", async () => {
+    const { choose, requests, lists, posts, cacheChanged, nextSelection } = await mountDetail();
+    await choose();
+    await act(async () => requests[0].resolve(json(detail)));
+    await choose("Exact Park");
+    await act(async () => requests[1].resolve(json({ title: "Missing" }, 404)));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("changed or expired");
+    expect(cacheChanged).toHaveBeenLastCalledWith(undefined);
+    expect(posts).toHaveLength(1);
+    const fresh = { ...selection, id: "D".repeat(32), dataGeneration: 8 };
+    nextSelection(fresh);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("button", { name: "Coverage by road..." });
+    expect(posts).toHaveLength(2);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await choose();
+    expect(lists).toHaveLength(2);
+    expect(lists[1]).toContain(`/map-selections/${fresh.id}/coverage/paths?generation=8`);
+    expect(requests).toHaveLength(3);
+    expect(requests[2].path).toContain(
+      `/map-selections/${fresh.id}/coverage/path/${entity.entityId}?generation=8`,
+    );
+  });
+
+  test.each(["generation", "policy", "display revision", "dates", "deletion"])(
+    "does not reuse completed detail across a %s change",
+    async (change) => {
+      const { choose, requests, refresh, context } = await mountDetail();
+      await choose();
+      await act(async () => requests[0].resolve(json(detail)));
+      if (change === "generation") await refresh({ ...selection, dataGeneration: 8 });
+      else if (change === "policy")
+        await refresh({ ...selection, coverageDisplayPolicy: "coverage-display-identity-v2" });
+      else if (change === "display revision")
+        await refresh({ ...selection, coverageDisplayRevision: 2 });
+      else if (change === "dates")
+        await refresh({ ...selection, range: { ...selection.range, startDate: "2026-07-11" } });
+      else context({ deletions: { revision: 1, events: [] } });
+      await screen.findByRole("button", { name: "Coverage by road..." });
+      await choose();
+      expect(requests).toHaveLength(2);
+      if (change === "generation") expect(requests[1].path).toContain("generation=8");
+    },
+  );
+
+  test.each([
+    ["policy", { coverageDisplayPolicy: "coverage-display-identity-v2" }],
+    ["revision", { coverageDisplayRevision: 2 }],
+  ] as const)(
+    "automatically refreshes bulk and exact detail caches when only display %s changes",
+    async (_name, metadata) => {
+      const { choose, open, requests, lists, posts, cacheChanged, nextSelection } =
+        await mountDetail(true);
+      await choose();
+      await act(async () => requests[0].resolve(json(detail)));
+      await open();
+      expect(lists).toHaveLength(1);
+      const previousKey = cacheChanged.mock.calls.at(-1)![0].key;
+      nextSelection({ ...selection, ...metadata });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(posts).toHaveLength(2);
+      expect(lists).toHaveLength(2);
+      expect(cacheChanged.mock.calls.at(-1)![0].key).not.toBe(previousKey);
+      fireEvent.click(screen.getByRole("button", { name: "Exact Road" }));
+      expect(requests).toHaveLength(2);
+      expect(requests[1].path).toBe(requests[0].path);
+    },
+  );
+
+  test.each([
+    ["policy", { coverageDisplayPolicy: "coverage-display-identity-v2" }],
+    ["revision", { coverageDisplayRevision: 2 }],
+  ] as const)(
+    "aborts pending detail on an automatic display %s refresh and ignores late success",
+    async (_name, metadata) => {
+      const { choose, requests, map, posts, nextSelection } = await mountDetail(true);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      await choose();
+      nextSelection({ ...selection, ...metadata });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_000);
+      });
+      expect(posts).toHaveLength(2);
+      expect(requests[0].signal.aborted).toBe(true);
+      const fits = map.fitBounds.mock.calls.length;
+      await act(async () => requests[0].resolve(json(detail)));
+      expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+      expect(map.getSource(highlightSource)).toBeUndefined();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    },
+  );
+
+  test("replays exact fit and blink after delayed style load, reinstalls changed sources, and preserves the readiness countdown", async () => {
+    mapBehavior.emitSetStyleLoad = false;
+    mapBehavior.moving = true;
+    mapBehavior.tilesLoaded = false;
+    const { choose, requests, map } = await mountDetail();
+    await choose();
+    const fits = map.fitBounds.mock.calls.length;
+    await act(async () => requests[0].resolve(json(detail)));
+    expect(map.getSource(highlightSource)).toBeUndefined();
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+    vi.useFakeTimers();
+    act(() => map.handlers.get("style.load")?.());
+    expect(map.getSource(highlightSource).data.geometry).toEqual(detail.geometry);
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits + 1);
+    const source = map.getSource(highlightSource);
+    act(() => map.handlers.get("style.load")?.());
+    expect(source.setData).toHaveBeenCalledOnce();
+    map.sources.delete(highlightSource);
+    map.layers.delete(highlightLayer);
+    act(() => map.handlers.get("style.load")?.());
+    expect(map.getSource(highlightSource)).not.toBe(source);
+    expect(map.getSource(highlightSource).data.geometry).toEqual(detail.geometry);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    map.setPaintProperty.mockClear();
+    mapBehavior.moving = false;
+    act(() => map.handlers.get("render")?.());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(
+      map.setPaintProperty.mock.calls.filter(([id]: string[]) => id === highlightLayer).length,
+    ).toBeGreaterThan(5);
+    mapBehavior.tilesLoaded = true;
+    act(() => map.handlers.get("render")?.());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(map.getLayer(highlightLayer).paint["line-opacity"]).toBe(0);
+    map.setPaintProperty.mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(
+      map.setPaintProperty.mock.calls.filter(([id]: string[]) => id === highlightLayer),
+    ).toHaveLength(0);
+  });
+
+  test("shares the existing banner with base-map warnings and dismisses each independently", async () => {
+    mapBehavior.emitSetStyleLoad = false;
+    const { choose, requests, map } = await mountDetail();
+    act(() => map.handlers.get("error")?.({ error: { status: 503 } }));
+    await choose();
+    expect(document.querySelectorAll(".map-banner")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The public base map could not be loaded.",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading exact road coverage");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss base map warning" }));
+    expect(requests[0].signal.aborted).toBe(false);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading exact road coverage");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  test("bounds exact detail to eight LRU entries with a fixed five-minute TTL", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const cache = new CoverageDetailCache();
+    for (let i = 0; i < 8; i++) cache.set(String(i), detail);
+    expect(cache.get("0")).toBe(detail);
+    cache.set("8", detail);
+    expect(cache.get("1")).toBeUndefined();
+    now.mockReturnValue(299_999);
+    expect(cache.get("0")).toBe(detail);
+    now.mockReturnValue(300_000);
+    expect(cache.get("0")).toBeUndefined();
+    cache.clear();
+    expect(cache.get("8")).toBeUndefined();
+  });
+
+  test("bounds retained JSON to eight MiB using UTF-8 bytes and skips oversized details", () => {
+    const cache = new CoverageDetailCache();
+    const large = { ...detail, name: "\u00e9".repeat(3 * 1024 * 1024) };
+    cache.set("large", large);
+    expect(cache.get("large")).toBe(large);
+    cache.set("next", { ...detail, name: "a".repeat(3 * 1024 * 1024) });
+    expect(cache.get("large")).toBeUndefined();
+    cache.set("oversized", { ...detail, name: "a".repeat(8 * 1024 * 1024) });
+    expect(cache.get("oversized")).toBeUndefined();
+    expect(cache.get("next")).toBeDefined();
+  });
+});
+
+describe("coverage hover stats", () => {
+  const entity: RoadCoverageEntity = {
+    entityId: "E".repeat(32),
+    entityKind: "path",
+    name: "Hover Road",
+    localityName: "Test City",
+    regionId: "colorado",
+    regionName: "Colorado",
+    broadClass: "road",
+    rangeWorkoutCount: 3,
+    rangeFirstDate: "2026-07-12",
+    rangeFirstWorkoutId: selection.workouts[1].id,
+    rangeLatestDate: "2026-08-05",
+    rangeLatestWorkoutId: selection.workouts[0].id,
+    allTimeWorkoutCount: 7,
+    allTimeFirstDate: "2026-01-01",
+    allTimeFirstWorkoutId: selection.workouts[1].id,
+    allTimeLatestDate: "2026-08-05",
+    allTimeLatestWorkoutId: selection.workouts[0].id,
+    bounds: selection.bounds!,
+  };
+
+  async function mountHover(response?: (path: string) => Promise<Response>) {
+    let activeSelection = selection;
+    const stats: Array<{ path: string; signal: AbortSignal }> = [];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input);
+      if (path === "/api/map-selections" && init?.method === "POST")
+        return Promise.resolve(json(activeSelection));
+      if (path.includes("/stats?")) {
+        stats.push({ path, signal: init!.signal as AbortSignal });
+        return response ? response(path) : Promise.resolve(json(entity));
+      }
+      if (path.includes("/coverage/paths?"))
+        return Promise.resolve(
+          json({
+            pagination: { page: 1, pageSize: 50000, totalItems: 1, totalPages: 1 },
+            items: [entity],
+          }),
+        );
+      if (path.includes(`/coverage/path/${entity.entityId}?`))
+        return Promise.resolve(
+          json({
+            ...entity,
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-105.2, 40],
+                [-105.19, 40.01],
+              ],
+            },
+            fitBounds: entity.bounds,
+          }),
+        );
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${path}`);
+    });
+    const view = render(
+      <MapPage
+        config={config}
+        preferences={{ ...preferences, coverageDiagnosticsEnabled: false }}
+        csrfToken="csrf-map"
+        dateRange="last30Days"
+        onDateRangeSelected={vi.fn()}
+      />,
+    );
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
+    const map = mapInstances.at(-1)!;
+    vi.useFakeTimers();
+    const move = (id = entity.entityId, kind = entity.entityKind) => {
+      map.queryRenderedFeatures.mockImplementation(
+        (_point: unknown, options: { layers: string[] }) =>
+          options.layers.includes("private-workout-coverage")
+            ? [
+                {
+                  properties: {
+                    entityId: id.toLowerCase(),
+                    entityKind: kind,
+                    name: entity.name,
+                    sourceEntityKind: kind,
+                    sourceEntityId: id.toLowerCase(),
+                  },
+                },
+              ]
+            : [],
+      );
+      act(() =>
+        map.handlers.get("mousemove")?.({
+          point: { x: 50, y: 50 },
+          lngLat: { lng: -105.2, lat: 40 },
+        }),
+      );
+    };
+    const leave = () => fireEvent.mouseLeave(map.getCanvas());
+    const advance = async (ms = 750) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+    const refresh = async (next: MapSelection) => {
+      const old = activeSelection;
+      activeSelection = next;
+      await act(async () => {
+        map.handlers.get("error")?.({
+          sourceId: "private-workout-routes",
+          error: {
+            status: 404,
+            url: `${window.location.origin}${old.routeTileUrl.replace("{z}/{x}/{y}", "12/654/1583")}`,
+          },
+        });
+      });
+    };
+    return { ...view, map, stats, fetch, move, leave, advance, refresh };
+  }
+
+  test("fetches after 250ms, shows only after 750ms even when cached, and reserves detail for highlighting", async () => {
+    const { move, leave, advance, stats, map, fetch, unmount } = await mountHover();
+    const fits = map.fitBounds.mock.calls.length;
+    move();
+    await advance(249);
+    expect(stats).toHaveLength(0);
+    await advance(1);
+    expect(stats.map(({ path }) => path)).toEqual([
+      `/api/map-selections/${selection.id}/coverage/path/${entity.entityId}/stats?generation=7`,
+    ]);
+    expect(popupInstances).toHaveLength(0);
+    move();
+    await advance(499);
+    expect(stats).toHaveLength(1);
+    expect(popupInstances).toHaveLength(0);
+    await advance(1);
+    expect(popupInstances).toHaveLength(1);
+    expect(popupInstances[0].content).toHaveTextContent("Hover Road");
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits);
+    expect(map.getSource("private-workout-coverage-highlight")).toBeUndefined();
+    expect(
+      map.queryRenderedFeatures.mock.calls.some(([, options]: [unknown, { layers: string[] }]) =>
+        options.layers.includes("private-workout-routes"),
+      ),
+    ).toBe(false);
+    leave();
+    expect(popupInstances[0].remove).toHaveBeenCalledOnce();
+    move();
+    await advance(749);
+    expect(popupInstances).toHaveLength(1);
+    await advance(1);
+    expect(popupInstances).toHaveLength(2);
+    expect(stats).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+    await advance(0);
+    fireEvent.click(screen.getByRole("button", { name: "Hover Road" }));
+    await advance(0);
+    expect(
+      fetch.mock.calls.filter(([path]) =>
+        String(path).includes(`/coverage/path/${entity.entityId}?`),
+      ),
+    ).toHaveLength(1);
+    expect(map.getSource("private-workout-coverage-highlight")).toBeDefined();
+    expect(stats).toHaveLength(1);
+    unmount();
+  });
+
+  test("does not fetch while sweeping across identities for less than 250ms each", async () => {
+    const { move, leave, advance, stats, unmount } = await mountHover();
+    for (const id of ["A", "B", "C"]) {
+      move(id.repeat(32));
+      await advance(249);
+      expect(stats).toHaveLength(0);
+    }
+    leave();
+    await advance(1000);
+    expect(stats).toHaveLength(0);
+    expect(popupInstances).toHaveLength(0);
+    unmount();
+  });
+
+  test("shows a slow response immediately when it arrives after the visibility dwell", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>((done) => {
+      resolve = done;
+    });
+    const { move, advance, stats, unmount } = await mountHover(() => pending);
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await advance(750);
+    expect(popupInstances).toHaveLength(0);
+    await act(async () => resolve(json(entity)));
+    expect(popupInstances).toHaveLength(1);
+    unmount();
+  });
+
+  test.each(["mouseleave", "blur", "hidden", "unmount"])(
+    "keeps completed prefetches without showing a popup after %s",
+    async (change) => {
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { move, leave, advance, stats, unmount } = await mountHover();
+      move();
+      await advance(250);
+      expect(stats).toHaveLength(1);
+      expect(popupInstances).toHaveLength(0);
+      if (change === "mouseleave") leave();
+      else if (change === "blur") fireEvent(window, new Event("blur"));
+      else if (change === "hidden") {
+        visibility.mockReturnValue("hidden");
+        fireEvent(document, new Event("visibilitychange"));
+      } else unmount();
+      expect(stats[0].signal.aborted).toBe(false);
+      await advance(1000);
+      expect(popupInstances).toHaveLength(0);
+      if (change !== "unmount") {
+        visibility.mockReturnValue("visible");
+        move();
+        await advance(250);
+        expect(stats).toHaveLength(1);
+        await advance(500);
+        expect(popupInstances).toHaveLength(1);
+        unmount();
+      }
+    },
+  );
+
+  test.each(["mouseleave", "identity", "blur", "hidden"])(
+    "caches a late successful response after %s without restoring the popup",
+    async (change) => {
+      let resolve!: (response: Response) => void;
+      const pending = new Promise<Response>((done) => {
+        resolve = done;
+      });
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { move, leave, advance, stats, unmount } = await mountHover(() => pending);
+      move();
+      await advance(250);
+      if (change === "mouseleave") leave();
+      else if (change === "identity") move("D".repeat(32));
+      else if (change === "blur") fireEvent(window, new Event("blur"));
+      else {
+        visibility.mockReturnValue("hidden");
+        fireEvent(document, new Event("visibilitychange"));
+      }
+      expect(stats[0].signal.aborted).toBe(false);
+      await act(async () => resolve(json(entity)));
+      if (change === "identity") leave();
+      await advance(1000);
+      expect(popupInstances).toHaveLength(0);
+      visibility.mockReturnValue("visible");
+      move();
+      await advance(749);
+      expect(stats).toHaveLength(1);
+      expect(popupInstances).toHaveLength(0);
+      await advance(1);
+      expect(popupInstances).toHaveLength(1);
+      unmount();
+    },
+  );
+
+  test("reuses an in-flight request on return but restarts the full visibility dwell", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>((done) => {
+      resolve = done;
+    });
+    const { move, leave, advance, stats, unmount } = await mountHover(() => pending);
+    move();
+    await advance(250);
+    leave();
+    await advance(100);
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await act(async () => resolve(json(entity)));
+    await advance(499);
+    expect(popupInstances).toHaveLength(0);
+    await advance(1);
+    expect(popupInstances).toHaveLength(1);
+    expect(stats).toHaveLength(1);
+    unmount();
+  });
+
+  test("overlaps a successful busy retry without showing before 750ms", async () => {
+    let attempts = 0;
+    const { move, advance, stats, unmount } = await mountHover(() =>
+      Promise.resolve(++attempts === 1 ? json({ title: "Busy" }, 503) : json(entity)),
+    );
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await advance(249);
+    expect(stats).toHaveLength(1);
+    await advance(1);
+    expect(stats).toHaveLength(2);
+    expect(popupInstances).toHaveLength(0);
+    await advance(249);
+    expect(popupInstances).toHaveLength(0);
+    await advance(1);
+    expect(popupInstances).toHaveLength(1);
+    unmount();
+  });
+
+  test("keeps an old identity's prefetch and restarts both deadlines for its replacement", async () => {
+    const { move, leave, advance, stats, unmount } = await mountHover();
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await advance(100);
+    move("D".repeat(32));
+    expect(stats[0].signal.aborted).toBe(false);
+    await advance(249);
+    expect(stats).toHaveLength(1);
+    await advance(1);
+    expect(stats).toHaveLength(2);
+    expect(stats[1].path).toContain(`/coverage/path/${"D".repeat(32)}/stats?`);
+    await advance(499);
+    expect(popupInstances).toHaveLength(0);
+    await advance(1);
+    expect(popupInstances).toHaveLength(1);
+    leave();
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(2);
+    unmount();
+  });
+
+  test.each([
+    ["selection", { ...selection, id: "D".repeat(32) }],
+    ["generation", { ...selection, dataGeneration: selection.dataGeneration + 1 }],
+    ["policy", { ...selection, coverageDisplayPolicy: "coverage-display-identity-v2" }],
+    ["display revision", { ...selection, coverageDisplayRevision: 2 }],
+    ["dates", { ...selection, range: { startDate: "2026-07-11", endDate: "2026-08-08" } }],
+  ])("invalidates cache and removes visible popups on %s changes", async (_name, next) => {
+    const { move, advance, refresh, stats, unmount } = await mountHover();
+    move();
+    await advance();
+    await refresh(next);
+    expect(popupInstances[0].remove).toHaveBeenCalledOnce();
+    move();
+    await advance();
+    expect(stats).toHaveLength(2);
+    expect(stats[1].path).toBe(
+      `/api/map-selections/${next.id}/coverage/path/${entity.entityId}/stats?generation=${next.dataGeneration}`,
+    );
+    unmount();
+  });
+
+  test.each(["selection", "generation", "policy", "display revision", "dates", "unmount"])(
+    "cancels pending stats and ignores late success after %s",
+    async (change) => {
+      let resolve!: (response: Response) => void;
+      const pending = new Promise<Response>((done) => {
+        resolve = done;
+      });
+      const { move, leave, advance, refresh, stats, unmount } = await mountHover(() => pending);
+      move();
+      await advance(250);
+      expect(stats).toHaveLength(1);
+      leave();
+      expect(stats[0].signal.aborted).toBe(false);
+      if (change === "unmount") unmount();
+      else
+        await refresh({
+          ...selection,
+          ...(change === "selection"
+            ? { id: "D".repeat(32) }
+            : change === "generation"
+              ? { dataGeneration: 8 }
+              : change === "policy"
+                ? { coverageDisplayPolicy: "coverage-display-identity-v2" }
+                : change === "display revision"
+                  ? { coverageDisplayRevision: 2 }
+                  : { range: { startDate: "2026-07-11", endDate: "2026-08-08" } }),
+        });
+      expect(stats[0].signal.aborted).toBe(true);
+      await act(async () => resolve(json(entity)));
+      expect(popupInstances).toHaveLength(0);
+      if (change !== "unmount") {
+        move();
+        await advance();
+        expect(stats).toHaveLength(2);
+        unmount();
+      }
+    },
+  );
+
+  test.each(["named path", "regional park path"])(
+    "prioritizes the source %s but requests its canonical park identity",
+    async (priority) => {
+      const { map, advance, stats, unmount } = await mountHover();
+      const canonicalID = "C".repeat(32);
+      const sourceID = "9".repeat(32);
+      const features = [
+        {
+          properties: {
+            entityKind: "park",
+            entityId: "D".repeat(32),
+            sourceEntityKind: "park",
+            sourceEntityId: "B".repeat(32),
+            name: "Regional Park",
+          },
+        },
+        {
+          properties: {
+            entityKind: "park",
+            entityId: canonicalID.toLowerCase(),
+            sourceEntityKind: "path",
+            sourceEntityId: sourceID,
+            name: priority === "named path" ? "Shared Place" : null,
+            localityName: priority === "regional park path" ? "Regional Park" : "Test City",
+          },
+        },
+      ];
+      map.queryRenderedFeatures.mockImplementation(
+        (_point: unknown, options: { layers: string[] }) =>
+          options.layers.includes("private-workout-coverage") ? features : [],
+      );
+      act(() =>
+        map.handlers.get("mousemove")?.({
+          point: { x: 50, y: 50 },
+          lngLat: { lng: -105.2, lat: 40 },
+        }),
+      );
+      await advance();
+      expect(stats.map(({ path }) => path)).toEqual([
+        `/api/map-selections/${selection.id}/coverage/park/${canonicalID}/stats?generation=7`,
+      ]);
+      expect(stats[0].path).not.toContain(sourceID);
+      unmount();
+    },
+  );
+
+  test.each(["blur", "hidden"])(
+    "cancels dwell and removes visible popups on %s without discarding valid cached stats",
+    async (change) => {
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { move, advance, stats, unmount } = await mountHover();
+      const cancel = () => {
+        if (change === "blur") fireEvent(window, new Event("blur"));
+        else {
+          visibility.mockReturnValue("hidden");
+          fireEvent(document, new Event("visibilitychange"));
+        }
+      };
+      move();
+      await advance(249);
+      cancel();
+      await advance(1000);
+      expect(stats).toHaveLength(0);
+      expect(popupInstances).toHaveLength(0);
+      visibility.mockReturnValue("visible");
+      move();
+      await advance();
+      expect(stats).toHaveLength(1);
+      expect(popupInstances).toHaveLength(1);
+      fireEvent(document, new Event("visibilitychange"));
+      expect(popupInstances[0].remove).not.toHaveBeenCalled();
+      cancel();
+      expect(popupInstances[0].remove).toHaveBeenCalledOnce();
+      visibility.mockReturnValue("visible");
+      move();
+      await advance(749);
+      expect(popupInstances).toHaveLength(1);
+      await advance(1);
+      expect(popupInstances).toHaveLength(2);
+      expect(stats).toHaveLength(1);
+      unmount();
+    },
+  );
+
+  test("cancels the busy retry when hidden and cleans up focus and visibility listeners", async () => {
+    const addWindowListener = vi.spyOn(window, "addEventListener");
+    const addDocumentListener = vi.spyOn(document, "addEventListener");
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const { move, advance, stats, map, unmount } = await mountHover(() =>
+      Promise.resolve(json({ title: "Busy" }, 503)),
+    );
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await advance(249);
+    visibility.mockReturnValue("hidden");
+    fireEvent(document, new Event("visibilitychange"));
+    await advance(1000);
+    expect(stats).toHaveLength(1);
+    expect(popupInstances).toHaveLength(0);
+    const removeWindowListener = vi.spyOn(window, "removeEventListener");
+    const removeDocumentListener = vi.spyOn(document, "removeEventListener");
+    const mapListeners = [...map.on.mock.calls];
+    unmount();
+    expect(removeWindowListener).toHaveBeenCalledWith(
+      "blur",
+      addWindowListener.mock.calls.find(([event]) => event === "blur")![1],
+    );
+    expect(removeDocumentListener).toHaveBeenCalledWith(
+      "visibilitychange",
+      addDocumentListener.mock.calls.find(([event]) => event === "visibilitychange")![1],
+    );
+    for (const args of mapListeners) expect(map.off).toHaveBeenCalledWith(...args);
+  });
+
+  test("cancels dwell and retry timers on canvas exit without leaking its listener", async () => {
+    const addListener = vi.spyOn(HTMLCanvasElement.prototype, "addEventListener");
+    const { move, leave, advance, stats, map, unmount } = await mountHover(() =>
+      Promise.resolve(json({ title: "Busy" }, 503)),
+    );
+    move();
+    await advance(249);
+    leave();
+    await advance(1);
+    expect(stats).toHaveLength(0);
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    leave();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    const removeListener = vi.spyOn(map.getCanvas(), "removeEventListener");
+    unmount();
+    expect(removeListener).toHaveBeenCalledWith(
+      "mouseleave",
+      addListener.mock.calls.find(([event]) => event === "mouseleave")![1],
+    );
+    expect(popupInstances).toHaveLength(0);
+  });
+
+  test("bounds busy retries to one at 250ms and does not cache failures", async () => {
+    const { move, leave, advance, stats, unmount } = await mountHover(() =>
+      Promise.resolve(json({ title: "Busy" }, 503)),
+    );
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(1);
+    await advance(249);
+    expect(stats).toHaveLength(1);
+    await advance(1);
+    expect(stats).toHaveLength(2);
+    await advance(1000);
+    expect(stats).toHaveLength(2);
+    expect(popupInstances).toHaveLength(0);
+    leave();
+    move();
+    await advance(250);
+    expect(stats).toHaveLength(3);
+    unmount();
+  });
+
+  test("refreshes the selection on a current 404 but ignores a late 404 after exit", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>((done) => {
+      resolve = done;
+    });
+    let attempts = 0;
+    const { move, leave, advance, stats, fetch, unmount } = await mountHover(() =>
+      ++attempts === 1 ? pending : Promise.resolve(json({ title: "Missing" }, 404)),
+    );
+    const posts = () =>
+      fetch.mock.calls.filter(
+        ([path, init]) => path === "/api/map-selections" && init?.method === "POST",
+      ).length;
+    move();
+    await advance();
+    leave();
+    await act(async () => resolve(json({ title: "Missing" }, 404)));
+    expect(posts()).toBe(1);
+    move();
+    await advance();
+    expect(stats).toHaveLength(2);
+    expect(posts()).toBe(2);
+    expect(popupInstances).toHaveLength(0);
+    unmount();
+  });
+
+  test("expires stats after five minutes without extending TTL on cache hits", async () => {
+    const { move, leave, advance, stats, unmount } = await mountHover();
+    move();
+    await advance();
+    leave();
+    await advance(4 * 60_000);
+    move();
+    await advance();
+    expect(stats).toHaveLength(1);
+    leave();
+    await advance(60_000);
+    move();
+    await advance();
+    expect(stats).toHaveLength(2);
+    unmount();
+  });
+
+  test("bounds the cache to 128 LRU entries and distinguishes entity kinds", async () => {
+    const { move, leave, advance, stats, unmount } = await mountHover();
+    const id = (index: number) => index.toString(16).padStart(32, "0").toUpperCase();
+    for (let index = 0; index < 128; index++) {
+      move(id(index));
+      await advance();
+      leave();
+    }
+    expect(stats).toHaveLength(128);
+    move(id(0));
+    await advance();
+    leave();
+    move(id(128));
+    await advance();
+    leave();
+    move(id(0));
+    await advance();
+    leave();
+    expect(stats).toHaveLength(129);
+    move(id(1));
+    await advance();
+    leave();
+    expect(stats).toHaveLength(130);
+    move(id(1), "park");
+    await advance();
+    expect(stats).toHaveLength(131);
+    expect(stats.at(-1)!.path).toContain(`/coverage/park/${id(1)}/stats?`);
+    unmount();
   });
 });
 
@@ -3050,11 +4238,13 @@ describe("MapPage", () => {
       if (path === "/api/map-selections" && method === "POST")
         return Promise.resolve(json(selection));
       if (path.startsWith(`/api/map-selections/${selection.id}/coverage/paths?`)) {
-        const requestedPage = Number(new URL(path, "https://test").searchParams.get("page"));
+        expect(new URL(path, "https://test").searchParams).toEqual(
+          new URLSearchParams({ generation: String(selection.dataGeneration), bulk: "true" }),
+        );
         return Promise.resolve(
           json({
-            pagination: { page: requestedPage, pageSize: 100, totalItems: 3, totalPages: 2 },
-            items: requestedPage === 1 ? [coverageEntity] : [secondEntity, unnamedEntity],
+            pagination: { page: 1, pageSize: 50000, totalItems: 3, totalPages: 1 },
+            items: [coverageEntity, secondEntity, unnamedEntity],
           }),
         );
       }
@@ -3127,7 +4317,7 @@ describe("MapPage", () => {
     const coverageRequestCount = vi
       .mocked(globalThis.fetch)
       .mock.calls.filter(([input]) => String(input).includes("/coverage/paths?")).length;
-    expect(coverageRequestCount).toBe(2);
+    expect(coverageRequestCount).toBe(1);
     await userEvent.click(screen.getByRole("button", { name: /City\/County\/Region/ }));
     expect(screen.getByRole("columnheader", { name: /City\/County\/Region/ })).toHaveAttribute(
       "aria-sort",
@@ -3802,11 +4992,11 @@ describe("MapPage", () => {
     expect(new URL(window.location.href).searchParams.get("workoutId")).toBe("D".repeat(32));
   });
 
-  test("shows delayed exact road coverage details after one transient failure without exposing a raw focused route", async () => {
+  test("shows delayed exact road coverage stats after one transient failure without exposing a raw focused route", async () => {
     const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
     const focusedSelection = { ...selection, focusedWorkoutId: selection.workouts[0].id };
     const entityID = "E".repeat(32);
-    let detailAttempts = 0;
+    let statsAttempts = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input);
       const method = init?.method ?? "GET";
@@ -3814,10 +5004,10 @@ describe("MapPage", () => {
         return Promise.resolve(json(focusedSelection));
       if (
         path ===
-        `/api/map-selections/${selection.id}/coverage/path/${entityID}?generation=${selection.dataGeneration}`
+        `/api/map-selections/${selection.id}/coverage/path/${entityID}/stats?generation=${selection.dataGeneration}`
       ) {
-        detailAttempts++;
-        if (detailAttempts === 1)
+        statsAttempts++;
+        if (statsAttempts === 1)
           return Promise.resolve(json({ title: "Service Unavailable" }, 503));
         return Promise.resolve(
           json({
@@ -3839,14 +5029,6 @@ describe("MapPage", () => {
             allTimeLatestDate: "2026-08-05",
             allTimeLatestWorkoutId: selection.workouts[0].id,
             bounds: selection.bounds,
-            fitBounds: selection.bounds,
-            geometry: {
-              type: "LineString",
-              coordinates: [
-                [-105.2, 40],
-                [-105.19, 40.01],
-              ],
-            },
           }),
         );
       }
@@ -3875,6 +5057,8 @@ describe("MapPage", () => {
                 properties: {
                   entityId: "D".repeat(32),
                   entityKind: "park",
+                  sourceEntityKind: "park",
+                  sourceEntityId: "B".repeat(32),
                   name: "Yosemite National Park",
                 },
               },
@@ -3882,6 +5066,8 @@ describe("MapPage", () => {
                 properties: {
                   entityId: entityID,
                   entityKind: "path",
+                  sourceEntityKind: "path",
+                  sourceEntityId: "A".repeat(32),
                   name: null,
                   localityName: "Yosemite National Park",
                 },
@@ -3917,7 +5103,7 @@ describe("MapPage", () => {
       await Promise.resolve();
     });
     expect(popupInstances).toHaveLength(1);
-    expect(detailAttempts).toBe(2);
+    expect(statsAttempts).toBe(2);
     expect(popupInstances[0].content).toHaveTextContent(
       "Bike pathYosemite National ParkWorkouts3Earliest visit10/25/2025First visit ever4/2/2024Most recent visit8/5/2026Last visit ever8/5/2026",
     );
@@ -3942,43 +5128,89 @@ describe("MapPage", () => {
     await waitFor(() => expect(popupInstances[0].remove).toHaveBeenCalled());
   });
 
-  test("replaces a failed Road Coverage table with a compact retryable error dialog", async () => {
-    const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
-    let coverageRequests = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const path = String(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/map-selections" && method === "POST")
-        return Promise.resolve(json(selection));
-      if (path.includes("/coverage/paths?")) {
-        coverageRequests++;
-        return Promise.resolve(json({ title: "Service Unavailable" }, 503));
+  test.each([503, 422, "incomplete"] as const)(
+    "does not cache failed bulk coverage (%s), then caches a complete retry",
+    async (failure) => {
+      const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
+      let coverageRequests = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const path = String(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/map-selections" && method === "POST")
+          return Promise.resolve(json(selection));
+        if (path.includes("/coverage/paths?")) {
+          coverageRequests++;
+          expect(new URL(path, "https://test").searchParams.get("bulk")).toBe("true");
+          return Promise.resolve(
+            coverageRequests > 1
+              ? json({
+                  pagination: { page: 1, pageSize: 50000, totalItems: 0, totalPages: 0 },
+                  items: [],
+                })
+              : failure === "incomplete"
+                ? json({
+                    pagination: { page: 1, pageSize: 100, totalItems: 101, totalPages: 2 },
+                    items: [],
+                  })
+                : json({ title: "Failed" }, failure),
+          );
+        }
+        if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+        throw new Error(`Unexpected request ${method} ${path}`);
+      });
+      const cacheChanged = vi.fn();
+      function CachedCoverageMap() {
+        const [cache, setCache] = useState<RoadCoverageCache>();
+        return (
+          <MapPage
+            config={config}
+            preferences={productionPreferences}
+            csrfToken="csrf-map"
+            dateRange="last30Days"
+            onDateRangeSelected={vi.fn()}
+            persistedFocusedWorkoutId={selection.workouts[0].id}
+            onFocusedWorkoutChange={vi.fn()}
+            roadCoverageCache={cache}
+            onRoadCoverageCacheChange={(next) => {
+              cacheChanged(next);
+              setCache(next);
+            }}
+          />
+        );
       }
-      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
-      throw new Error(`Unexpected request ${method} ${path}`);
-    });
-    render(
-      <MapPage
-        config={config}
-        preferences={productionPreferences}
-        csrfToken="csrf-map"
-        dateRange="last30Days"
-        onDateRangeSelected={vi.fn()}
-        persistedFocusedWorkoutId={selection.workouts[0].id}
-        onFocusedWorkoutChange={vi.fn()}
-      />,
-    );
-    await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
-    await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
-    const dialog = await screen.findByRole("dialog", { name: "Road Coverage" });
-    expect(dialog).toHaveTextContent("Road coverage could not be loaded.");
-    expect(within(dialog).queryByRole("table")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("searchbox")).not.toBeInTheDocument();
-    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(coverageRequests).toBe(2));
-    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument();
-  });
+      render(<CachedCoverageMap />);
+      await userEvent.click(await screen.findByRole("button", { name: "Coverage" }));
+      await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+      const dialog = await screen.findByRole("dialog", { name: "Road Coverage" });
+      expect(dialog).toHaveTextContent(
+        failure === 422
+          ? "Road coverage exceeds the bulk limit of 50,000 entities or 64 MiB. Choose a smaller date range."
+          : "Road coverage could not be loaded.",
+      );
+      expect(cacheChanged).not.toHaveBeenCalled();
+      expect(within(dialog).queryByRole("table")).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("searchbox")).not.toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(coverageRequests).toBe(2));
+      await waitFor(() => expect(cacheChanged).toHaveBeenCalledTimes(1));
+      expect(cacheChanged).toHaveBeenCalledWith({
+        key: JSON.stringify([
+          selection.range.startDate,
+          selection.range.endDate,
+          selection.dataGeneration,
+          selection.coverageDisplayPolicy,
+          selection.coverageDisplayRevision,
+        ]),
+        loadedAt: expect.any(Number),
+        entities: [],
+      });
+      await userEvent.click(within(dialog).getByRole("button", { name: "Close Road Coverage" }));
+      expect(screen.queryByRole("dialog", { name: "Road Coverage" })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
+      expect(await screen.findByRole("table")).toBeVisible();
+      expect(coverageRequests).toBe(2);
+    },
+  );
 
   test("refreshes a stale map selection and resumes Road Coverage loading after a 404", async () => {
     const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };
@@ -4023,7 +5255,7 @@ describe("MapPage", () => {
           coverageRequests === 1
             ? json({ title: "Not Found" }, 404)
             : json({
-                pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 },
+                pagination: { page: 1, pageSize: 50000, totalItems: 1, totalPages: 1 },
                 items: [coverageEntity],
               }),
         );
@@ -4085,7 +5317,7 @@ describe("MapPage", () => {
         listRequests++;
         return Promise.resolve(
           json({
-            pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 },
+            pagination: { page: 1, pageSize: 50000, totalItems: 1, totalPages: 1 },
             items: listRequests === 1 ? [staleEntity] : [replacement],
           }),
         );
@@ -4108,6 +5340,11 @@ describe("MapPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }));
     await userEvent.click(await screen.findByRole("button", { name: "Pedestrian path" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("changed or expired");
+    expect(listRequests).toBe(1);
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Coverage by road..." }));
     expect(await screen.findByRole("button", { name: "Replacement Path" })).toBeVisible();
     expect(listRequests).toBe(2);
     expect(
@@ -4144,6 +5381,7 @@ describe("MapPage", () => {
       }) as const;
     const high = entity("E", "High Road", 2),
       low = entity("F", "Low Road", 1);
+    let coverageRequests = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = String(input),
         method = init?.method ?? "GET";
@@ -4161,13 +5399,15 @@ describe("MapPage", () => {
           ),
         );
       }
-      if (path.includes("/coverage/paths?"))
+      if (path.includes("/coverage/paths?")) {
+        coverageRequests++;
         return Promise.resolve(
           json({
-            pagination: { page: 1, pageSize: 100, totalItems: 2, totalPages: 1 },
+            pagination: { page: 1, pageSize: 50000, totalItems: 2, totalPages: 1 },
             items: [high, low],
           }),
         );
+      }
       if (method === "DELETE") return Promise.resolve(json(undefined, 204));
       throw new Error(`Unexpected request ${method} ${path}`);
     });
@@ -4207,6 +5447,7 @@ describe("MapPage", () => {
     expect(screen.getByRole("searchbox")).toHaveValue("High");
     expect(screen.getByRole("checkbox", { name: "Show unnamed roads and paths" })).toBeChecked();
     expect(screen.getByRole("button", { name: "High Road" })).toBeVisible();
+    expect(coverageRequests).toBe(1);
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     expect(screen.getByRole("searchbox")).toHaveValue("");
     await waitFor(() => expect(screen.getByText("Page 1 of 2")).toBeVisible(), { timeout: 1000 });
@@ -4218,6 +5459,7 @@ describe("MapPage", () => {
     expect(
       screen.getByRole("checkbox", { name: "Show unnamed roads and paths" }),
     ).not.toBeChecked();
+    await waitFor(() => expect(coverageRequests).toBe(2));
   });
 
   test("uses a two-row loading body before locking Road Coverage to the loaded result height", async () => {
@@ -4256,7 +5498,7 @@ describe("MapPage", () => {
     ).toHaveAttribute("role", "status");
     resolveCoverage(
       json({
-        pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 },
+        pagination: { page: 1, pageSize: 50000, totalItems: 1, totalPages: 1 },
         items: [
           {
             entityId: "E".repeat(32),
@@ -4405,6 +5647,67 @@ describe("MapPage", () => {
     expect(await screen.findByRole("button", { name: "Select date range" })).toHaveTextContent(
       "Mar 6, 2026 to Mar 20, 2026",
     );
+  });
+
+  test("dismisses a date range save warning without changing the applied map range", async () => {
+    const posted: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/map-selections" && method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        posted.push(body);
+        return Promise.resolve(
+          json({
+            ...selection,
+            workouts:
+              body.dateRangeEnum === "last7Days" ? [selection.workouts[0]] : selection.workouts,
+          }),
+        );
+      }
+      if (path === "/api/me/preferences" && method === "PATCH")
+        return Promise.reject(new Error("preference save failed"));
+      if (method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    function Harness() {
+      const [range, setRange] = useState<DateRangePreference>("last30Days");
+      return (
+        <MapPage
+          config={config}
+          preferences={preferences}
+          csrfToken="csrf-map"
+          dateRange={range}
+          onDateRangeSelected={setRange}
+        />
+      );
+    }
+    render(<Harness />);
+    await screen.findByRole("checkbox", { name: /Show Hiking/ });
+    await userEvent.click(screen.getByRole("button", { name: "Select date range" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Last 7 days" }));
+    const warning = await screen.findByText(
+      "Your default date range was not saved. This map will continue using your selection.",
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("checkbox", { name: /Show Hiking/ })).not.toBeInTheDocument(),
+    );
+    const map = mapInstances.at(-1)!;
+    const source = map.getSource("private-workout-routes");
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss date range warning" }));
+    expect(warning).not.toBeInTheDocument();
+    expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+      "Last 7 days",
+    );
+    expect(screen.getByRole("checkbox", { name: /Show Running/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Show Hiking/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fit routes" })).toBeEnabled();
+    expect(map.getSource("private-workout-routes")).toBe(source);
+    expect(posted).toEqual([
+      { dateRangeEnum: "last30Days", tz: "America/Denver" },
+      { dateRangeEnum: "last7Days", tz: "America/Denver" },
+    ]);
   });
 
   test("replaces the private selection when a workout route is filtered", async () => {
@@ -5239,6 +6542,100 @@ describe("MapPage", () => {
       screen.queryByText("Routes could not be prepared for this map."),
     ).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("private provider detail");
+  });
+
+  test.each([false, true])(
+    "dismisses route progress without cancelling preparation and shows the next request (previous pending: %s)",
+    async (previousPending) => {
+      const requests: Array<{
+        signal: AbortSignal;
+        resolve: (response: Response) => void;
+      }> = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        if (String(input) === "/api/map-selections" && init?.method === "POST")
+          return new Promise<Response>((resolve) => {
+            requests.push({ signal: init.signal as AbortSignal, resolve });
+          });
+        if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+        throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+      });
+      const props = {
+        config,
+        preferences: { ...preferences, coverageDiagnosticsEnabled: false },
+        csrfToken: "csrf-map",
+        onDateRangeSelected: vi.fn(),
+      };
+      const view = render(<MapPage {...props} dateRange="last30Days" />);
+      await userEvent.click(screen.getByRole("button", { name: "Dismiss route update message" }));
+      expect(screen.queryByText("Updating routes...")).not.toBeInTheDocument();
+      expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].signal.aborted).toBe(false);
+      expect(screen.getByRole("button", { name: "Fit routes" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Coverage" })).toBeDisabled();
+      if (!previousPending) {
+        await act(async () => requests[0].resolve(json(selection)));
+        expect(await screen.findByRole("checkbox", { name: /Show Running/ })).toBeChecked();
+        expect(screen.getByRole("button", { name: "Fit routes" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Coverage" })).toBeEnabled();
+        expect(requests[0].signal.aborted).toBe(false);
+        expect(mapInstances.at(-1)!.getSource("private-workout-routes")).toBeTruthy();
+      }
+
+      view.rerender(<MapPage {...props} dateRange="last7Days" />);
+      expect(screen.getByText("Updating routes...")).toBeInTheDocument();
+      expect(requests).toHaveLength(2);
+      await userEvent.click(screen.getByRole("button", { name: "Dismiss route update message" }));
+      expect(screen.queryByText("Updating routes...")).not.toBeInTheDocument();
+      expect(requests[1].signal.aborted).toBe(false);
+      await act(async () => requests[1].resolve(json(selection)));
+      expect(await screen.findByRole("checkbox", { name: /Show Running/ })).toBeChecked();
+      expect(screen.getByRole("button", { name: "Fit routes" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Coverage" })).toBeEnabled();
+      expect(mapInstances.at(-1)!.getSource("private-workout-routes")).toBeTruthy();
+      expect(requests[1].signal.aborted).toBe(false);
+      expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+    },
+  );
+
+  test("shows errors after dismissed progress and dismisses only the visible warning in priority order", async () => {
+    mapBehavior.emitInitialStyleLoad = false;
+    mapBehavior.emitSetStyleLoad = false;
+    mapBehavior.styleLoaded = false;
+    let rejectSelection!: (error: Error) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/map-selections" && init?.method === "POST")
+        return new Promise<Response>((_resolve, reject) => {
+          rejectSelection = reject;
+        });
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+    const props = { config, preferences, csrfToken: "csrf-map", onDateRangeSelected: vi.fn() };
+    const view = render(<MapPage {...props} dateRange="last30Days" />);
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss route update message" }));
+    await act(async () => rejectSelection(new Error("private provider detail")));
+    expect(await screen.findByText("Routes could not be prepared for this map.")).toBeVisible();
+    act(() => mapInstances.at(-1)!.handlers.get("error")?.());
+    expect(screen.getByText(/The public base map could not be loaded/)).toBeVisible();
+    expect(
+      screen.queryByText("Routes could not be prepared for this map."),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss base map warning" }));
+    expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
+    expect(screen.getByText("Routes could not be prepared for this map.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss route preparation error" }));
+    expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("private provider detail");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    view.rerender(<MapPage {...props} dateRange="last7Days" />);
+    expect(screen.getByText("Updating routes...")).toBeVisible();
+    await act(async () => rejectSelection(new Error("another private detail")));
+    expect(await screen.findByText("Routes could not be prepared for this map.")).toBeVisible();
+    const requestsBeforeDismiss = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss route preparation error" }));
+    expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(requestsBeforeDismiss);
   });
 
   test("retries transient map selection failures while retaining the updating state", async () => {

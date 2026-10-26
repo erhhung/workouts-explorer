@@ -131,7 +131,7 @@ literals in SQL or embedded query strings to the human-readable date format.
 
 This repository formats PostgreSQL, PostGIS, PL/pgSQL, Goose migrations, and
 psql pipeline scripts manually. Apply these rules to SQL under
-`api/migrations/`, `internal/osm/migrations/`, and `osm/`.
+`api/migrations/sql/`, `internal/osm/migrations/`, and `osm/`.
 
 ### Formatter Policy
 
@@ -258,7 +258,7 @@ $function$;
 After changing SQL, run:
 
 ```sh
-go test ./api/migrations ./internal/osm/migrations ./internal/osm
+go test ./api/migrations/tests ./internal/osm/migrations ./internal/osm
 go test ./...
 git diff --check
 ```
@@ -266,7 +266,7 @@ git diff --check
 Confirm anonymous procedural delimiters were not introduced:
 
 ```sh
-rg 'AS \$\$|DO \$\$' api/migrations internal/osm/migrations osm
+rg 'AS \$\$|DO \$\$' api/migrations/sql internal/osm/migrations osm
 ```
 
 For migration or pipeline behavior changes, also execute the affected scripts

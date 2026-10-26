@@ -56,7 +56,7 @@ Each user owns one personal workout account. Users cannot access another account
 1. The user creates a source through the authenticated REST API.
 2. A high-priority connection check validates the source asynchronously.
 3. Scheduled sync discovers and imports new or changed files from all auto-sync sources.
-4. The user can run Manual Sync for a selected set of sources and an optional explicit date range.
+4. The user can run Manual Sync for selected sources and an optional inclusive date range. Bounded runs skip unchanged successful files by default; an unchecked bounded-only option explicitly requests reprocessing.
 5. The Data Sync menu reports source freshness, active work, warnings, and failures.
 6. Manual completion and failure notifications link to job details and security-redacted diagnostics.
 
@@ -90,7 +90,7 @@ Each user owns one personal workout account. Users cannot access another account
 - Per-source `autoSyncEnabled` behavior
 - High-priority asynchronous connection checks
 - Scheduled incremental sync of new or changed files, default daily with an operator-configurable cadence independent of UI polling
-- Manual incremental or bounded historical sync
+- Manual incremental or bounded historical sync, with metadata skipping by default and opt-in **Reprocess all files in this date range**
 - Parent ingest jobs with one child per selected source
 - Server-side deduplication of equivalent active jobs
 - File-at-a-time private staging with cleanup-gated terminal transitions, bounded retries and pod-scoped crash recovery
@@ -100,16 +100,30 @@ Each user owns one personal workout account. Users cannot access another account
 
 The 10/11/2026 M8 decisions accept remote ID/size/modification-time incremental
 skipping rather than downloading unchanged files to hash them. A content overwrite
-preserving all metadata is undetectable; bounded Manual Sync forces the selected
-dates to reprocess. Sync performs one application discovery, not necessarily one
+preserving all metadata can go undetected; new bounded Manual Sync uses the same
+metadata skip policy within the selected dates. The bounded-only checkbox below
+the date inputs and above Start sync defaults unchecked; explicit selection
+requests the former forced behavior. Rclone iCloud v1.75.2 exposes no remote
+hashes/free MD5; processed files receive local SHA-256 while parsing, not as proof
+of skipped remote bytes. Sync performs one application discovery, not necessarily one
 native listing or HTTP request. iCloud uses externally completed Apple 2FA/approval,
 full cookies and a trust token; no host config is automatically read/uploaded.
 Only version, path and optional client identity are returned, never Apple ID or
 masked credentials. See [iCloud setup](icloud-source-setup.md).
 
-Deduplication is source-scoped: importing identical exports through separate
-local and iCloud sources creates separate workouts. Transport changes never
-silently migrate or purge an existing archive. M8 implementation and synthetic
+Provider-backed identity is account-wide across local/iCloud transports under
+the shared provider namespace. Reprocessing preserves workout/route identity,
+live-owner blockers, eligible deleted-source adoption and deletion suppression;
+it does not promise forced Coverage. ID-less fallback remains source-local.
+Retries skip valid unchanged successes on their own source-child ancestor path
+even after force; ordinary non-forced retries may also use valid source inventory.
+See [Ingest Reprocessing](ingest-reprocessing.md) for the API, legacy bounded-job
+compatibility and coordinated schema/minimum-runtime-31 rollout, with marker 27.
+The requested implementation/deployment is not claimed complete here; the
+separate pending all-popups **Dismiss** requirement belongs to the UI release,
+outside the ingest design.
+
+At the historical checkpoint **prior to 031**, M8 implementation and synthetic
 verification are ready for owner review as of 10/12/2026; its completion checkbox
 remains unchecked pending owner acceptance. [Verification results](implementation-plan.md#verification-results-10122026)
 distinguish passing M8 PostGIS suites from ordinary checks with database skips

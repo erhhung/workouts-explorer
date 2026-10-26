@@ -361,7 +361,7 @@ lease fences. It intentionally does not fall back to application database URLs.
 
 ```sh
 ICLOUD_TEST_DISPOSABLE=1 ICLOUD_TEST_DATABASE_URL="$SCRATCH_ADMIN_URL" \
-  go test ./api/migrations -run '^TestICloudMigrationIntegration$' -count=1
+  go test ./api/migrations/tests -run '^TestICloudMigrationIntegration$' -count=1
 ICLOUD_TEST_DISPOSABLE=1 ICLOUD_READINESS_TEST_DATABASE_URL="$SCRATCH_ADMIN_URL" \
   go test ./internal/database -run '^TestICloudReadinessIntegration$' -count=1
 ```

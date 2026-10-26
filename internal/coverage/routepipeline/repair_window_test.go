@@ -94,7 +94,7 @@ func TestAdaptiveSeamBoundsAndDuplicateContexts(t *testing.T) {
 		{"left biased", 192, 2, 3, []fixtureWindow{{0, 192}, {42, 128}, {85, 64}, {106, 32}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bounds := seamWindowBounds(256, 127, tc.left, tc.total)
+			bounds := seamWindowBounds(0, 256, 127, tc.left, tc.total)
 			index := 0
 			for _, size := range []int{tc.initial, 128, 64, 32} {
 				if tc.initial == 128 && index == 1 && size == 128 {
@@ -110,7 +110,7 @@ func TestAdaptiveSeamBoundsAndDuplicateContexts(t *testing.T) {
 				snapshot := &windowSnapshot{fail: func([]osm.MatcherObservation) error {
 					return &coverage.OSMEvaluationLimitError{Field: "graph node", Limit: 2048}
 				}}
-				_, _, _, err := matchAdaptiveWindow(context.Background(), snapshot, fixtureObservations(count), coverage.ExperimentalRules(), repairOptions(), tc.initial, seamWindowBounds(count, count/2, tc.left, tc.total))
+				_, _, _, err := matchAdaptiveWindow(context.Background(), snapshot, fixtureObservations(count), coverage.ExperimentalRules(), repairOptions(), tc.initial, seamWindowBounds(0, count, count/2, tc.left, tc.total))
 				if err == nil || len(snapshot.calls) != 1 {
 					t.Fatalf("repeated actual context: count=%d calls=%v err=%v", count, snapshot.calls, err)
 				}
@@ -143,7 +143,7 @@ func TestSupplementalAdaptiveRepairs(t *testing.T) {
 							repair = replaceCrossWindowRoadTangents
 							initial = 192
 						}
-						got, stats, err := repair(context.Background(), snapshot, points, []int{0, seam}, portions, coverage.ExperimentalRules(), repairOptions())
+						got, stats, err := repair(context.Background(), snapshot, points, []matchingWindow{{0, 0, len(points)}, {seam, 0, len(points)}}, portions, coverage.ExperimentalRules(), repairOptions())
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -292,7 +292,12 @@ func TestSupplementalAdaptiveNoFalseContinuity(t *testing.T) {
 					if kind == "tangent" {
 						repair = replaceCrossWindowRoadTangents
 					}
-					got, stats, err := repair(context.Background(), snapshot, points, []int{0, seam}, portions, coverage.ExperimentalRules(), repairOptions())
+					windows := []matchingWindow{{0, 0, len(points)}, {seam, 0, len(points)}}
+					if failure == "temporal" || failure == "spatial" {
+						windows[0].legEnd = gap
+						windows[1].legStart = gap
+					}
+					got, stats, err := repair(context.Background(), snapshot, points, windows, portions, coverage.ExperimentalRules(), repairOptions())
 					if failure == "exhausted" {
 						if err == nil || got != nil || stats.windows != 0 {
 							t.Fatalf("exhaustion swallowed: got=%+v stats=%+v err=%v", got, stats, err)
@@ -302,8 +307,117 @@ func TestSupplementalAdaptiveNoFalseContinuity(t *testing.T) {
 					if err != nil || !reflect.DeepEqual(got, original) {
 						t.Fatalf("false continuity: got=%+v want=%+v stats=%+v err=%v", got, original, stats, err)
 					}
+					if (failure == "temporal" || failure == "spatial") && (len(snapshot.calls) != 0 || stats.windows != 0) {
+						t.Fatalf("cross-leg supplemental query: calls=%v stats=%+v", snapshot.calls, stats)
+					}
 				})
 			}
 		}
+	}
+}
+
+func TestSupplementalFallbacksStayInsideSameLeg(t *testing.T) {
+	for _, kind := range []string{"turn", "tangent"} {
+		for _, seam := range []int{63, 193} {
+			t.Run(fmt.Sprintf("%s/seam=%d", kind, seam), func(t *testing.T) {
+				factory := turnFixture
+				repair := completeCrossWindowConnectedRoadTurns
+				if kind == "tangent" {
+					factory, repair = tangentFixture, replaceCrossWindowRoadTangents
+				}
+				snapshot, points, portions := factory(false, seam)
+				const legStart, legEnd = 40, 216
+				indexes := make(map[[2]float64]int, len(points))
+				for i := range points {
+					// Distinguish stationary synthetic samples without changing support.
+					points[i].Latitude += float64(i) * 1e-9 / fixtureMetersPerDegree
+					indexes[[2]float64{points[i].Longitude, points[i].Latitude}] = i
+				}
+				for i := range portions {
+					portions[i].window++
+				}
+				original := append([]matchedPortion(nil), portions...)
+				var attempts []fixtureWindow
+				snapshot.fail = func(query []osm.MatcherObservation) error {
+					start, ok := indexes[[2]float64{query[0].Longitude, query[0].Latitude}]
+					if !ok || start < legStart || start+len(query) > legEnd {
+						t.Fatalf("supplemental escaped leg: start=%d size=%d", start, len(query))
+					}
+					for i, observation := range query {
+						if index := indexes[[2]float64{observation.Longitude, observation.Latitude}]; index != start+i {
+							t.Fatalf("noncontiguous supplemental context: start=%d offset=%d index=%d", start, i, index)
+						}
+					}
+					attempts = append(attempts, fixtureWindow{start, len(query)})
+					if len(query) > 32 {
+						return &coverage.OSMEvaluationLimitError{Field: "graph node", Limit: 2048}
+					}
+					return nil
+				}
+				windows := []matchingWindow{{0, 0, legStart}, {legStart, legStart, legEnd}, {seam, legStart, legEnd}, {legEnd, legEnd, len(points)}}
+				got, stats, err := repair(context.Background(), snapshot, points, windows, portions, coverage.ExperimentalRules(), repairOptions())
+				want := []fixtureWindow{{40, 128}, {40, 64}, {47, 32}}
+				if seam == 193 {
+					want = []fixtureWindow{{88, 128}, {152, 64}, {177, 32}}
+				}
+				if kind == "tangent" {
+					want = []fixtureWindow{{40, 176}, {40, 128}, {40, 64}, {42, 32}}
+					if seam == 193 {
+						want = []fixtureWindow{{40, 176}, {88, 128}, {151, 64}, {172, 32}}
+					}
+				}
+				if err != nil || stats.windows != 1 || !reflect.DeepEqual(attempts, want) || reflect.DeepEqual(got, original) {
+					t.Fatalf("same-leg repair: got=%+v stats=%+v attempts=%v want=%v err=%v", got, stats, attempts, want, err)
+				}
+				for _, portion := range got {
+					if portion.window < 1 || portion.window > 2 || portion.firstTraversedAt != points[portion.routeOrder].Time {
+						t.Fatalf("lost global window/order provenance: %+v", portion)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestTangentPresentSegmentsAreLegScoped(t *testing.T) {
+	for _, otherLeg := range []bool{false, true} {
+		t.Run(fmt.Sprint(otherLeg), func(t *testing.T) {
+			const seam = 127
+			snapshot, points, portions := tangentFixture(false, seam)
+			for i := range portions {
+				portions[i].window++
+			}
+			// An earlier visit to one of the supported middle segments may only
+			// suppress replacement when it belongs to this same leg.
+			window, order := 1, 40
+			if otherLeg {
+				window, order = 0, 5
+			}
+			earlier := fixturePortion(snapshot.roads[1], 0, 1, coverage.SegmentForward, window, order, points)
+			portions = append([]matchedPortion{earlier}, portions...)
+			original := append([]matchedPortion(nil), portions...)
+			windows := []matchingWindow{{0, 0, 32}, {32, 32, len(points)}, {seam, 32, len(points)}}
+			got, stats, err := replaceCrossWindowRoadTangents(context.Background(), snapshot, points, windows, portions, coverage.ExperimentalRules(), repairOptions())
+			wantLength := len(original)
+			if otherLeg {
+				wantLength++
+			}
+			if err != nil || len(got) != wantLength || stats.windows != 1 {
+				t.Fatalf("leg-scoped presence: got=%+v stats=%+v err=%v", got, stats, err)
+			}
+			if !otherLeg && !reflect.DeepEqual(got, original) {
+				t.Fatal("same-leg present segment no longer suppresses repair")
+			}
+			if otherLeg {
+				if got[0] != earlier {
+					t.Fatal("repair altered earlier-leg evidence")
+				}
+				for _, replacement := range got[2:4] {
+					if replacement.window != 2 || replacement.routeOrder != original[2].routeOrder || replacement.firstTraversedAt != original[2].firstTraversedAt {
+						t.Fatalf("replacement reset global provenance: %+v", replacement)
+					}
+				}
+			}
+		})
 	}
 }

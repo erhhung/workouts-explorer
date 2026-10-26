@@ -33,7 +33,7 @@ with no state row. An account scan could therefore appear complete while those
 routes remained unprocessed. The API mapped missing state to pending, leaving a
 spinner without work queued to resolve it.
 
-Forward-only [migration 022](../api/migrations/022_legacy_coverage_bootstrap.sql)
+Forward-only [migration 022](../api/migrations/sql/022_legacy_coverage_bootstrap.sql)
 replaces five functions: `read_coverage_reconciliation_routes`,
 `read_coverage_reconciliation_route`, `repair_coverage_reconciliation_input`,
 `read_coverage_route` and `advance_coverage_reconciliation` in `app`.

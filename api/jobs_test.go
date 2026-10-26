@@ -97,7 +97,7 @@ func TestJobRequestsAreValidatedByActualRouter(t *testing.T) {
 
 func TestRetryParametersAndFailureRedaction(t *testing.T) {
 	rangeValue, err := decodeRetryIngestRange([]byte(`{"sourceId":"018F8E7D7A4C7C03A1C23D4E5F607182","generation":4,"mode":"bounded","startDate":"2026-01-01","endDate":"2026-01-02"}`))
-	if err != nil || rangeValue.mode != "bounded" || rangeValue.startDate == nil || *rangeValue.startDate != "2026-01-01" {
+	if err != nil || rangeValue.mode != "bounded" || rangeValue.startDate == nil || *rangeValue.startDate != "2026-01-01" || !rangeValue.reprocessAllFiles {
 		t.Fatalf("range=%#v err=%v", rangeValue, err)
 	}
 	if _, err := decodeRetryIngestRange([]byte(`{"sourceId":"018F8E7D7A4C7C03A1C23D4E5F607182","generation":4,"mode":"incremental","path":"/private/leak"}`)); err == nil {
@@ -107,6 +107,46 @@ func TestRetryParametersAndFailureRedaction(t *testing.T) {
 	code, summary := safeJobFailure(&hostile)
 	if code == nil || summary == nil || strings.Contains(*code+*summary, hostile) {
 		t.Fatalf("hostile failure was not redacted: %v %v", code, summary)
+	}
+}
+
+func TestRetryIngestReprocessingCompatibility(t *testing.T) {
+	const source = `"sourceId":"018F8E7D7A4C7C03A1C23D4E5F607182","generation":4,`
+	const bounded = source + `"mode":"bounded","startDate":"2026-01-01","endDate":"2026-01-02"`
+	for _, test := range []struct {
+		name, fields string
+		valid, force bool
+	}{
+		{"legacy bounded", bounded, true, true},
+		{"explicit false", bounded + `,"reprocessAllFiles":false`, true, false},
+		{"explicit true", bounded + `,"reprocessAllFiles":true`, true, true},
+		{"null", bounded + `,"reprocessAllFiles":null`, false, false},
+		{"string", bounded + `,"reprocessAllFiles":"false"`, false, false},
+		{"number", bounded + `,"reprocessAllFiles":1`, false, false},
+		{"unknown", bounded + `,"unexpected":false`, false, false},
+		{"unsupported schema 6", bounded + `,"legacySchema6":true`, false, false},
+		{"schema 6 with false", bounded + `,"legacySchema6":true,"reprocessAllFiles":false`, false, false},
+		{"schema 6 with true", bounded + `,"legacySchema6":true,"reprocessAllFiles":true`, false, false},
+		{"incremental unchanged", source + `"mode":"incremental"`, true, false},
+		{"incremental false", source + `"mode":"incremental","reprocessAllFiles":false`, false, false},
+		{"incremental true", source + `"mode":"incremental","reprocessAllFiles":true`, false, false},
+		{"incremental null", source + `"mode":"incremental","reprocessAllFiles":null`, false, false},
+		{"missing end", source + `"mode":"bounded","startDate":"2026-01-01","reprocessAllFiles":false`, false, false},
+		{"missing start", source + `"mode":"bounded","endDate":"2026-01-02","reprocessAllFiles":false`, false, false},
+		{"zero generation", `"generation":0,"mode":"incremental"`, false, false},
+		{"schema 5", source + `"legacySchema6":true`, false, false},
+		{"bad date", source + `"mode":"bounded","startDate":"2026-02-30","endDate":"2026-03-01"`, false, false},
+		{"reversed", source + `"mode":"bounded","startDate":"2026-01-02","endDate":"2026-01-01"`, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := decodeRetryIngestRange([]byte(`{` + test.fields + `}`))
+			if (err == nil) != test.valid || value.reprocessAllFiles != test.force {
+				t.Fatalf("range=%+v err=%v", value, err)
+			}
+		})
+	}
+	if _, err := decodeRetryIngestRange([]byte(`{` + bounded + `} {}`)); err == nil {
+		t.Fatal("trailing JSON accepted")
 	}
 }
 

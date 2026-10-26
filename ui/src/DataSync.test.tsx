@@ -378,6 +378,172 @@ describe("DataSync", () => {
     expect(await screen.findByText("Existing run selected.")).toBeInTheDocument();
   });
 
+  test("shows an unchecked reprocess option only between bounded date inputs and submit", async () => {
+    baseFetch();
+    renderDataSync();
+    const user = userEvent.setup();
+    await screen.findByRole("checkbox", { name: /Phone exports/ });
+    const name = "Reprocess all files in this date range";
+    expect(screen.queryByRole("checkbox", { name })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Sources" })).toBeInTheDocument();
+    await user.click(
+      within(screen.getByRole("group", { name: "Scope" })).getByRole("radio", {
+        name: "Specific date range Import data in inclusive date range.",
+      }),
+    );
+    const checkbox = screen.getByRole("checkbox", { name });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toHaveAttribute("type", "checkbox");
+    expect(checkbox).toHaveAttribute("name", "reprocessAllFiles");
+    const form = checkbox.closest("form")!;
+    expect([
+      ...form.querySelectorAll(
+        'input[type="date"], input[name="reprocessAllFiles"], button[type="submit"]',
+      ),
+    ]).toEqual([
+      screen.getByLabelText("Start date"),
+      screen.getByLabelText("End date"),
+      checkbox,
+      screen.getByRole("button", { name: "Start sync" }),
+    ]);
+    await user.click(screen.getByRole("radio", { name: /New data only/ }));
+    expect(screen.queryByRole("checkbox", { name })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Start date")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("End date")).not.toBeInTheDocument();
+  });
+
+  test.each([true, false])(
+    "submits explicit reprocessAllFiles %s for a bounded range after toggling",
+    async (checked) => {
+      let request: { body: unknown; csrf: string | null } | undefined;
+      baseFetch((path, init) => {
+        if (path !== "/api/ingest") return undefined;
+        request = {
+          body: JSON.parse(String(init?.body)),
+          csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+        };
+        return json({ jobId: JOB_ID, status: "queued", reused: false }, 202);
+      });
+      renderDataSync();
+      const user = userEvent.setup();
+      await screen.findByRole("checkbox", { name: /Phone exports/ });
+      await user.click(screen.getByRole("checkbox", { name: /Watch archive/ }));
+      await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
+      fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-08-01" } });
+      fireEvent.change(screen.getByLabelText("End date"), { target: { value: "2026-08-07" } });
+      const checkbox = screen.getByRole("checkbox", {
+        name: "Reprocess all files in this date range",
+      });
+      await user.click(checkbox);
+      expect(checkbox).toBeChecked();
+      if (!checked) await user.click(checkbox);
+      await user.click(screen.getByRole("button", { name: "Start sync" }));
+      await waitFor(() =>
+        expect(request).toEqual({
+          body: {
+            sourceIds: [SOURCE_A, SOURCE_B],
+            startDate: "2026-08-01",
+            endDate: "2026-08-07",
+            reprocessAllFiles: checked,
+          },
+          csrf: "csrf-data-sync",
+        }),
+      );
+    },
+  );
+
+  test("clears reprocessing on range-mode changes and omits it from incremental requests", async () => {
+    let body: unknown;
+    baseFetch((path, init) => {
+      if (path !== "/api/ingest") return undefined;
+      body = JSON.parse(String(init?.body));
+      return json({ jobId: JOB_ID, status: "queued", reused: false }, 202);
+    });
+    renderDataSync();
+    const user = userEvent.setup();
+    await screen.findByRole("checkbox", { name: /Phone exports/ });
+    const bounded = screen.getByRole("radio", { name: /Specific date range/ });
+    const incremental = screen.getByRole("radio", { name: /New data only/ });
+    const name = "Reprocess all files in this date range";
+    await user.click(bounded);
+    await user.click(screen.getByRole("checkbox", { name }));
+    expect(screen.getByRole("checkbox", { name })).toBeChecked();
+    await user.click(incremental);
+    expect(screen.queryByRole("checkbox", { name })).not.toBeInTheDocument();
+    await user.click(bounded);
+    expect(screen.getByRole("checkbox", { name })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name }));
+    await user.click(incremental);
+    await user.click(screen.getByRole("button", { name: "Start sync" }));
+    await waitFor(() => expect(body).toEqual({ sourceIds: [SOURCE_A] }));
+  });
+
+  test("associates reprocess help with the native checkbox and preserves one Tab stop and Space toggling", async () => {
+    baseFetch();
+    renderDataSync();
+    const user = userEvent.setup();
+    await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
+    const name = "Reprocess all files in this date range";
+    const checkbox = screen.getByRole("checkbox", { name });
+    const label = screen.getByText(name).closest("label")!;
+    const wrapper = label.parentElement!;
+    const help = document.getElementById(checkbox.getAttribute("aria-describedby")!)!;
+    const content =
+      "Download and process every eligible file in this date range, including previously successful files. This may be slow and transfer substantial data.";
+    expect(checkbox).toHaveAccessibleDescription(content);
+    expect(help).toHaveAttribute("role", "tooltip");
+    expect(help).toHaveClass("tooltip-content");
+    expect(help).toHaveTextContent(content);
+    expect(wrapper).toHaveClass("tooltip", "manual-reprocess");
+    expect(label).toHaveClass("tooltip-trigger");
+    expect(label.nextElementSibling).toBe(help);
+    expect(label).not.toHaveAttribute("tabindex");
+    expect(wrapper).not.toHaveAttribute("tabindex");
+    expect(checkbox).not.toHaveAttribute("tabindex");
+    expect(within(wrapper).queryByRole("button")).not.toBeInTheDocument();
+    await user.hover(checkbox);
+    expect(checkbox.closest(".manual-reprocess")).toBe(wrapper);
+    await user.unhover(checkbox);
+    await user.hover(label);
+    expect(checkbox).toHaveAccessibleDescription(content);
+    await user.unhover(label);
+    await user.click(screen.getByLabelText("End date"));
+    await user.tab();
+    expect(checkbox).toHaveFocus();
+    expect(checkbox).toHaveAccessibleDescription(content);
+    await user.keyboard(" ");
+    expect(checkbox).toBeChecked();
+    await user.keyboard(" ");
+    expect(checkbox).not.toBeChecked();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Start sync" })).toHaveFocus();
+  });
+
+  test.each([
+    ["", "", "Enter both inclusive dates."],
+    ["2026-08-07", "", "Enter both inclusive dates."],
+    ["2026-08-07", "2026-08-06", "Start date must be on or before end date."],
+  ])("still validates dates with reprocessing enabled: %s / %s", async (start, end, message) => {
+    const fetchMock = baseFetch();
+    renderDataSync();
+    const user = userEvent.setup();
+    await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Reprocess all files in this date range" }),
+    );
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: start } });
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: end } });
+    await user.click(screen.getByRole("button", { name: "Start sync" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(message);
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(screen.getByLabelText("Start date")).toHaveAccessibleDescription(message);
+    expect(screen.getByLabelText("End date")).toHaveAttribute("aria-invalid", "true");
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/ingest")).toHaveLength(0);
+  });
+
   test("fills an empty end date only when the start date loses focus and submits that day", async () => {
     let body: unknown;
     baseFetch((path, init) => {
@@ -405,6 +571,7 @@ describe("DataSync", () => {
         sourceIds: [SOURCE_A],
         startDate: "2026-08-06",
         endDate: "2026-08-06",
+        reprocessAllFiles: false,
       }),
     );
   });
@@ -483,6 +650,7 @@ describe("DataSync", () => {
         sourceIds: [SOURCE_A],
         startDate: "2026-08-07",
         endDate: "2026-08-07",
+        reprocessAllFiles: false,
       }),
     );
   });
@@ -530,17 +698,27 @@ describe("DataSync", () => {
       const form = button.closest("form")!;
       const feedback = screen.getByRole("status", { name: "Sync feedback" });
       expect(button).toBeDisabled();
+      const reprocess = screen.getByRole("checkbox", {
+        name: "Reprocess all files in this date range",
+      });
+      expect(reprocess).toBeDisabled();
+      await userEvent.click(reprocess);
+      expect(reprocess).not.toBeChecked();
       expect(form).toHaveAttribute("aria-busy", "true");
       expect(feedback).toHaveClass("sync-feedback");
       expect(feedback).not.toHaveClass("visually-hidden");
       expect(feedback).toHaveTextContent("Starting sync...");
-      expect(within(feedback).queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+      await userEvent.click(within(feedback).getByRole("button", { name: "Dismiss" }));
+      expect(feedback).toBeEmptyDOMElement();
+      expect(button).toBeDisabled();
+      expect(form).toHaveAttribute("aria-busy", "true");
       fireEvent.submit(form);
       expect(posts).toBe(1);
       expect(body).toEqual({
         sourceIds: [SOURCE_A],
         startDate: "2022-01-01",
         endDate: "2022-12-31",
+        reprocessAllFiles: false,
       });
 
       await act(async () => resolvePost(json({ jobId: JOB_ID, status, reused }, 202)));
@@ -550,6 +728,7 @@ describe("DataSync", () => {
       view.rerenderJob(JOB_ID);
       expect(screen.getByText("Loading run detail...")).toBeVisible();
       expect(button).toBeDisabled();
+      expect(reprocess).toBeDisabled();
       expect(form).toHaveAttribute("aria-busy", "true");
       fireEvent.submit(form);
       await userEvent.click(button);
@@ -563,6 +742,7 @@ describe("DataSync", () => {
         }),
       ).toBeVisible();
       await waitFor(() => expect(screen.getByRole("button", { name: "Start sync" })).toBeEnabled());
+      expect(reprocess).toBeEnabled();
       expect(form).toHaveAttribute("aria-busy", "false");
       expect(feedback).toHaveTextContent(confirmation);
       expect(detailReads).toBe(1);
@@ -781,7 +961,7 @@ describe("DataSync", () => {
     );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
-    expect(await within(region).findByText("Partially completed")).toBeInTheDocument();
+    expect(await within(region).findByText("Partially succeeded")).toBeInTheDocument();
     expect(within(region).getByRole("progressbar")).toHaveAttribute("value", "2");
     expect(within(region).getByText("2 of 4 files")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/logs?"))).toBe(false);
@@ -792,6 +972,296 @@ describe("DataSync", () => {
         ([input]) => String(input) === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`,
       ),
     ).toBe(true);
+  });
+
+  test.each([
+    ["manual", 4, 0],
+    ["manual", 0, 4],
+    ["scheduled", 4, 0],
+    ["scheduled", 0, 4],
+  ] as const)(
+    "renders API-projected historical %s partial success with %i imported and %i updated workouts",
+    async (trigger, workoutsCreated, workoutsUpdated) => {
+      const counters = { ...progress, workoutsCreated, workoutsUpdated };
+      const run: JobDetail = {
+        ...detail,
+        operation: "data_sync",
+        trigger,
+        status: "failed",
+        displayStatus: "partially_succeeded",
+        progress: counters,
+        results: counters,
+        createdAt: "2024-03-01T12:00:00Z",
+        updatedAt: "2024-03-01T12:05:00Z",
+        terminalAt: "2024-03-01T12:05:00Z",
+      };
+      run.children = [
+        {
+          ...run,
+          id: "F".repeat(32),
+          parentJobId: JOB_ID,
+          source: {
+            sourceId: SOURCE_A,
+            generation: 1,
+            displayName: "Historical exports",
+            sourceType: "health-auto-export-local",
+          },
+          children: [],
+        },
+      ];
+      const warning = {
+        ...snapshot.notifications[0],
+        type: "ingest-partially-succeeded",
+        severity: "warning" as const,
+        state: "unresolved" as const,
+        subjectType: "job" as const,
+        sourceId: undefined,
+        jobId: JOB_ID,
+        title: "Sync partially succeeded",
+        message: "The sync partially succeeded. Some workouts were saved, but some files failed.",
+      };
+      const retryJobId = "1".repeat(32);
+      let retry: { body: string; csrf: string | null } | undefined;
+      baseFetch((path, init) => {
+        if (path === `/api/jobs/${JOB_ID}`) return json(run);
+        if (path === "/api/data-sync") return json({ ...snapshot, notifications: [warning] });
+        if (path === "/api/jobs?page=1&pageSize=25")
+          return json({
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+            items: [run],
+          });
+        if (path === `/api/jobs/${JOB_ID}/retry`) {
+          retry = {
+            body: String(init?.body),
+            csrf: new Headers(init?.headers).get("X-CSRF-Token"),
+          };
+          return json({ jobId: retryJobId, status: "queued", reused: false }, 202);
+        }
+        return undefined;
+      });
+      const { client, navigate } = renderDataSync(JOB_ID);
+      const region = await screen.findByRole("region", { name: "Selected run" });
+      const parentBadge = await within(region).findByText("Partially succeeded", {
+        selector: ".job-detail-card > .sync-card-heading .sync-status",
+      });
+      expect(parentBadge).toHaveClass("sync-status--partially_succeeded");
+      const child = region.querySelector<HTMLElement>(".source-run")!;
+      expect(within(child).getByText("Partially succeeded")).toHaveClass(
+        "sync-status--partially_succeeded",
+      );
+      expect(region.querySelector(".sync-status--failed, .sync-status--succeeded")).toBeNull();
+      expect(within(region).getByText(trigger === "manual" ? "Manual" : "Scheduled")).toBeVisible();
+      for (const label of ["Workouts Imported", "Workouts Updated"]) {
+        const count = label === "Workouts Imported" ? workoutsCreated : workoutsUpdated;
+        for (const node of within(region).getAllByText(label)) {
+          expect(node.nextElementSibling).toHaveTextContent(String(count));
+        }
+      }
+      await screen.findAllByText("Partially succeeded", { selector: ".sync-status-text" });
+      for (const selector of [".sync-history-table", ".sync-history-cards"]) {
+        const container = document.querySelector(selector)!;
+        expect(container.querySelector(".sync-status-text--partially_succeeded")).toHaveTextContent(
+          "Partially succeeded",
+        );
+        expect(
+          container.querySelector(".sync-status-text--failed, .sync-status-text--succeeded"),
+        ).toBeNull();
+      }
+      const message = await screen.findByText(warning.message);
+      expect(message.closest("article")).toHaveClass("sync-notification--warning");
+      expect(message.closest("article")).not.toHaveClass("sync-notification--error");
+      expect(
+        screen.queryByText("Completed", { selector: ".sync-status, .sync-status-text" }),
+      ).toBeNull();
+      expect(client.getQueryData<JobDetail>(["job", JOB_ID])?.status).toBe("failed");
+      const retryButton = within(region).getByRole("button", { name: "Retry run" });
+      expect(retryButton).toBeEnabled();
+      await userEvent.click(retryButton);
+      await waitFor(() => expect(retry).toEqual({ body: "{}", csrf: "csrf-data-sync" }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${retryJobId}`));
+    },
+  );
+
+  test.each([
+    ["failed", "failed", 0, 0, "Failed"],
+    ["succeeded", "succeeded", 0, 0, "Completed"],
+    ["failed", undefined, 4, 0, "Failed"],
+    ["failed", undefined, 0, 4, "Failed"],
+  ] as const)(
+    "keeps stored %s with display status %s, %i imported and %i updated workouts labeled %s",
+    async (status, displayStatus, workoutsCreated, workoutsUpdated, label) => {
+      const counters: JobProgress = {
+        current: 0,
+        total: 0,
+        filesDiscovered: 0,
+        filesSkipped: 0,
+        filesSucceeded: 0,
+        filesFailed: 0,
+        workoutsCreated,
+        workoutsUpdated,
+        workoutsUnchanged: 0,
+        workoutsRejected: 0,
+      };
+      const run: JobDetail = {
+        ...detail,
+        status,
+        displayStatus,
+        progress: counters,
+        results: counters,
+      };
+      run.children = [{ ...run, id: "F".repeat(32), parentJobId: JOB_ID, children: [] }];
+      baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}`) return json(run);
+        if (path === "/api/jobs?page=1&pageSize=25")
+          return json({
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+            items: [run],
+          });
+        return undefined;
+      });
+      renderDataSync(JOB_ID);
+      const region = await screen.findByRole("region", { name: "Selected run" });
+      const badges = await within(region).findAllByText(label, { selector: ".sync-status" });
+      expect(badges).toHaveLength(2);
+      for (const badge of badges) expect(badge).toHaveClass(`sync-status--${status}`);
+      await screen.findAllByText(label, { selector: ".sync-status-text" });
+      for (const selector of [".sync-history-table", ".sync-history-cards"]) {
+        expect(
+          document.querySelector(`${selector} .sync-status-text--${status}`),
+        ).toHaveTextContent(label);
+      }
+      expect(document.querySelector(".sync-status--partially_succeeded")).toBeNull();
+      expect(document.querySelector(".sync-status-text--partially_succeeded")).toBeNull();
+      if (status === "failed") {
+        expect(within(region).getByRole("button", { name: "Retry run" })).toBeEnabled();
+        expect(
+          document.querySelector(".sync-status--succeeded, .sync-status-text--succeeded"),
+        ).toBeNull();
+      } else {
+        expect(within(region).getAllByText("No new data.")).toHaveLength(2);
+        expect(within(region).queryByRole("button", { name: "Retry run" })).toBeNull();
+      }
+    },
+  );
+
+  test.each([false, true])(
+    "dismisses retry acceptance feedback (reused: %s) without repeating the command",
+    async (reused) => {
+      const retryId = "F".repeat(32);
+      let retries = 0;
+      baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}/retry`) {
+          retries++;
+          return json({ jobId: retryId, status: "queued", reused }, 202);
+        }
+        return undefined;
+      });
+      const { client, navigate } = renderDataSync(JOB_ID);
+      const retry = await screen.findByRole("button", { name: "Retry run" });
+      await userEvent.click(retry);
+      const feedback = screen.getByRole("status", { name: "Sync feedback" });
+      const message = reused ? "Existing retry selected." : "Retry accepted.";
+      await waitFor(() => expect(feedback).toHaveTextContent(message));
+      expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${retryId}`);
+      await userEvent.click(within(feedback).getByRole("button", { name: "Dismiss" }));
+      expect(feedback).toBeEmptyDOMElement();
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["data-sync"] });
+        await client.refetchQueries({ queryKey: ["jobs"] });
+        await client.refetchQueries({ queryKey: ["job", JOB_ID] });
+      });
+      expect(feedback).toBeEmptyDOMElement();
+      expect(retries).toBe(1);
+      await waitFor(() => expect(retry).toBeEnabled());
+      await userEvent.click(retry);
+      await waitFor(() => expect(feedback).toHaveTextContent(message));
+      expect(within(feedback).getByRole("button", { name: "Dismiss" })).toBeEnabled();
+      expect(retries).toBe(2);
+    },
+  );
+
+  test.each([
+    [
+      "retry",
+      409,
+      "The retry was not started. Review the refreshed run details for retry availability.",
+    ],
+    ["retry", 503, "The retry could not be started."],
+    ["cancellation", 409, "The run changed before cancellation could be requested."],
+    ["cancellation", 503, "Cancellation could not be requested."],
+  ] as const)("dismisses %s %i action feedback locally", async (command, status, message) => {
+    let posts = 0;
+    baseFetch((path) => {
+      if (path === `/api/jobs/${JOB_ID}` && command === "cancellation")
+        return json({ ...detail, status: "running", terminalAt: undefined });
+      if (path === `/api/jobs/${JOB_ID}/${command}`) {
+        posts++;
+        return json({ title: "Request failed" }, status);
+      }
+      return undefined;
+    });
+    const { client } = renderDataSync(JOB_ID);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: command === "retry" ? "Retry run" : "Cancel run",
+      }),
+    );
+    const feedback = screen.getByRole("status", { name: "Sync feedback" });
+    await waitFor(() => expect(feedback).toHaveTextContent(message));
+    await userEvent.click(within(feedback).getByRole("button", { name: "Dismiss" }));
+    expect(feedback).toBeEmptyDOMElement();
+    await act(async () => client.refetchQueries({ queryKey: ["job", JOB_ID] }));
+    expect(feedback).toBeEmptyDOMElement();
+    expect(posts).toBe(1);
+  });
+
+  test("dismisses completion feedback without hiding the completed run or restoring the message on polling", async () => {
+    let completed = false;
+    baseFetch((path) =>
+      path === `/api/jobs/${JOB_ID}`
+        ? json({ ...detail, status: completed ? "succeeded" : "running" })
+        : undefined,
+    );
+    const { client } = renderDataSync(JOB_ID);
+    await screen.findByRole("button", { name: "Cancel run" });
+    completed = true;
+    await act(async () => client.refetchQueries({ queryKey: ["job", JOB_ID] }));
+    const feedback = screen.getByRole("status", { name: "Sync feedback" });
+    await waitFor(() => expect(feedback).toHaveTextContent("Run completed."));
+    await userEvent.click(within(feedback).getByRole("button", { name: "Dismiss" }));
+    expect(feedback).toBeEmptyDOMElement();
+    expect(
+      within(screen.getByRole("region", { name: "Selected run" })).getByText("Completed", {
+        selector: ".sync-status",
+      }),
+    ).toBeVisible();
+    await act(async () => client.refetchQueries({ queryKey: ["job", JOB_ID] }));
+    expect(feedback).toBeEmptyDOMElement();
+  });
+
+  test("dismisses notification-dismissal errors without dismissing or retrying the notification", async () => {
+    let posts = 0;
+    baseFetch((path) => {
+      if (path.endsWith("/dismissal")) {
+        posts++;
+        return json({ title: "Service Unavailable" }, 503);
+      }
+      return undefined;
+    });
+    renderDataSync();
+    const notice = (await screen.findByText("Export is stale")).closest("article")!;
+    await userEvent.click(within(notice).getByRole("button", { name: "Dismiss" }));
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent("The notification could not be dismissed.");
+    await userEvent.click(within(error).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Export is stale")).toBeVisible();
+    expect(posts).toBe(1);
+    await userEvent.click(within(notice).getByRole("button", { name: "Dismiss" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The notification could not be dismissed.",
+    );
+    expect(posts).toBe(2);
   });
 
   test("dismisses reminders with an empty body and server pagination stays authoritative", async () => {
@@ -827,6 +1297,8 @@ describe("DataSync", () => {
     });
     renderDataSync();
     expect(await screen.findByText("Export is stale")).toBeInTheDocument();
+    expect(await screen.findAllByText("Partially succeeded")).toHaveLength(2);
+    expect(screen.queryByText("Partially completed")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(dismissal).toEqual({ body: "{}", csrf: "csrf-data-sync" }));
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -1314,8 +1786,12 @@ describe("DataSync", () => {
     expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
     expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
     const routeRun = region.querySelector(".coverage-route-run")!;
+    const routeDate = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeZone: "UTC",
+    }).format(new Date("2026-08-05T00:00:00Z"));
     expect(routeRun.querySelector(".coverage-route-title")).toHaveTextContent(
-      "Outdoor Run (2026 M08 5)",
+      `Outdoor Run (${routeDate})`,
     );
     const generations = within(routeRun as HTMLElement).getByRole("table", {
       name: "OSM generations",
@@ -1547,7 +2023,7 @@ describe("DataSync", () => {
     });
     const view = renderDataSync(JOB_ID);
     const firstRegion = await screen.findByRole("region", { name: "Selected run" });
-    await within(firstRegion).findByText("Partially completed");
+    await within(firstRegion).findByText("Partially succeeded");
     await userEvent.click(within(firstRegion).getByRole("button", { name: /Logs/ }));
     await within(firstRegion).findByText("No logs recorded.");
     view.rerenderJob(nextJob);
@@ -1558,6 +2034,403 @@ describe("DataSync", () => {
       "false",
     );
     expect(logRequests).toEqual([`/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`]);
+  });
+
+  describe("Files failure filter", () => {
+    function failedPage(page: number, count = 25, totalPages = 2): JobFileList {
+      const data = artifactPage("files", page, count, totalPages) as JobFileList;
+      return {
+        ...data,
+        items: data.items.map((file) => ({
+          ...file,
+          basename: `failed-${file.basename}`,
+          state: "failed",
+          failureSummary: "Invalid export",
+        })),
+      };
+    }
+
+    test.each(["manual", "scheduled"] as const)(
+      "filters %s files on the server, resets page one, and keeps filtered pagination and caches separate",
+      async (trigger) => {
+        let resolveFiltered!: (response: Response) => void;
+        const filtered = new Promise<Response>((resolve) => {
+          resolveFiltered = resolve;
+        });
+        const fetchMock = baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}`)
+            return json({ ...detail, trigger, progress: { ...progress, filesFailed: 30 } });
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`)
+            return filtered;
+          if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25&failuresOnly=true`)
+            return json(failedPage(2, 5));
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+            return json(artifactPage("files", 1));
+          if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25`)
+            return json(artifactPage("files", 2));
+          if (path === `/api/jobs/${JOB_ID}/events?page=1&pageSize=25`)
+            return json(artifactPage("events", 1));
+          if (path === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`)
+            return json(artifactPage("logs", 1));
+          return undefined;
+        });
+        const { client } = renderDataSync(JOB_ID);
+        await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+        await screen.findByText("files-page-1-row-0.json");
+        const checkbox = screen.getByRole("checkbox", { name: "Show failures only" });
+        const nav = screen.getByRole("navigation", { name: "Files pages" });
+        const panel = nav.parentElement!;
+        const results = panel.querySelector<HTMLElement>(".artifact-results")!;
+        vi.spyOn(results, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 900, 500));
+        expect(nav).toContainElement(checkbox);
+        expect(checkbox).toBeEnabled();
+        expect(checkbox).not.toBeChecked();
+        const next = within(nav).getByRole("button", { name: "Next" });
+        const previous = within(nav).getByRole("button", { name: "Previous" });
+        await userEvent.click(next);
+        await screen.findByText("files-page-2-row-0.json");
+        await userEvent.click(checkbox);
+        expect(checkbox).toBeChecked();
+        expect(panel).toHaveAttribute("aria-busy", "true");
+        expect(within(panel).getByText("Loading files...")).toBeVisible();
+        expect(within(panel).queryByRole("listitem")).not.toBeInTheDocument();
+        expect(within(panel).queryByText("No failed files recorded.")).not.toBeInTheDocument();
+        expect(results).toHaveStyle({ minHeight: "500px" });
+        expect(within(nav).getByRole("button", { name: "Next" })).toBe(next);
+        expect(next).toBeDisabled();
+        expect(previous).toBeDisabled();
+        await act(async () => resolveFiltered(json(failedPage(1))));
+        await screen.findByText("failed-files-page-1-row-0.json");
+        expect(nav).toHaveTextContent("Page 1 of 2");
+        expect(within(panel).getAllByRole("listitem")).toHaveLength(25);
+        expect(previous).toBeDisabled();
+        await userEvent.click(next);
+        await screen.findByText("failed-files-page-2-row-0.json");
+        expect(nav).toHaveTextContent("Page 2 of 2");
+        expect(within(panel).getAllByRole("listitem")).toHaveLength(5);
+        expect(next).toBeDisabled();
+        expect(checkbox).toBeChecked();
+        expect(client.getQueryData(["job-artifacts", JOB_ID, "files", 1])).toEqual(
+          artifactPage("files", 1),
+        );
+        expect(client.getQueryData(["job-artifacts", JOB_ID, "files", 1, "failures-only"])).toEqual(
+          failedPage(1),
+        );
+        await userEvent.click(checkbox);
+        await screen.findByText("files-page-1-row-0.json");
+        expect(nav).toHaveTextContent("Page 1 of 3");
+        expect(checkbox).not.toBeChecked();
+        expect(screen.queryByText("failed-files-page-2-row-0.json")).not.toBeInTheDocument();
+        for (const label of ["Events", "Logs"]) {
+          await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}`) }));
+          const records = screen.getByRole("navigation", { name: `${label} pages` }).parentElement!;
+          expect(within(records).queryByRole("checkbox")).not.toBeInTheDocument();
+        }
+        expect(
+          fetchMock.mock.calls.filter(([path]) => String(path).includes("failuresOnly")),
+        ).toHaveLength(2);
+        expect(
+          fetchMock.mock.calls.some(([path]) => String(path).includes("failuresOnly=false")),
+        ).toBe(false);
+      },
+    );
+
+    test.each([
+      ["empty run", "partially_succeeded", 0, 0],
+      ["completed successful run", "succeeded", 1, 1],
+      ["source connection failure with no files", "failed", 0, 0],
+    ] as const)(
+      "disables the unchecked filter for a %s",
+      async (_label, status, count, totalPages) => {
+        const fetchMock = baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}`)
+            return json({
+              ...detail,
+              status,
+              progress: { ...progress, filesFailed: 0 },
+              results: {},
+              failureSummary: status === "failed" ? "Source connection failed" : undefined,
+            });
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+            return json(artifactPage("files", 1, count, totalPages));
+          return undefined;
+        });
+        renderDataSync(JOB_ID);
+        await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+        await waitFor(() =>
+          expect(
+            screen.getByRole("navigation", { name: "Files pages" }).parentElement,
+          ).toHaveAttribute("aria-busy", "false"),
+        );
+        const checkbox = screen.getByRole("checkbox", { name: "Show failures only" });
+        expect(checkbox).toBeDisabled();
+        expect(checkbox).not.toBeChecked();
+        expect(screen.getByRole("navigation", { name: "Files pages" })).toContainElement(checkbox);
+        await userEvent.click(checkbox);
+        expect(fetchMock.mock.calls.some(([path]) => String(path).includes("failuresOnly"))).toBe(
+          false,
+        );
+      },
+    );
+
+    test("enables the filter when a running run's global failed count updates, not from page rows or terminal status", async () => {
+      let run: JobDetail = {
+        ...detail,
+        status: "running",
+        progress: { ...progress, filesFailed: 0 },
+        results: undefined,
+      };
+      baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}`) return json(run);
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+          return json(artifactPage("files", 1, 1, 1));
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`)
+          return json(failedPage(1, 1, 1));
+        return undefined;
+      });
+      const { client } = renderDataSync(JOB_ID);
+      await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+      await screen.findByText("files-page-1-row-0.json");
+      const checkbox = screen.getByRole("checkbox", { name: "Show failures only" });
+      expect(checkbox).toBeDisabled();
+      run = { ...run, progress: { ...run.progress, filesFailed: 1 } };
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["job", JOB_ID] });
+      });
+      await waitFor(() => expect(checkbox).toBeEnabled());
+      expect(checkbox).not.toBeChecked();
+      await userEvent.click(checkbox);
+      await screen.findByText("failed-files-page-1-row-0.json");
+      expect(checkbox).toBeChecked();
+    });
+
+    test("refreshes loaded failure pagination as a running run grows from 25 to 26 failures", async () => {
+      let run: JobDetail = {
+        ...detail,
+        status: "running",
+        progress: { ...progress, filesFailed: 25 },
+        results: undefined,
+      };
+      const fetchMock = baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}`) return json(run);
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+          return json(artifactPage("files", 1));
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`) {
+          const data = failedPage(1, 25, run.progress.filesFailed === 25 ? 1 : 2);
+          data.pagination.totalItems = run.progress.filesFailed;
+          return json(data);
+        }
+        if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25&failuresOnly=true`)
+          return json(failedPage(2, 1));
+        if (path === `/api/jobs/${JOB_ID}/events?page=1&pageSize=25`)
+          return json(artifactPage("events", 1));
+        if (path === `/api/jobs/${JOB_ID}/logs?page=1&pageSize=25`)
+          return json(artifactPage("logs", 1));
+        return undefined;
+      });
+      const { client } = renderDataSync(JOB_ID);
+      for (const label of ["Files", "Events", "Logs"]) {
+        await userEvent.click(await screen.findByRole("button", { name: new RegExp(`^${label}`) }));
+      }
+      await screen.findByText("files-page-1-row-0.json");
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      await screen.findByText("failed-files-page-1-row-0.json");
+      const nav = screen.getByRole("navigation", { name: "Files pages" });
+      const next = within(nav).getByRole("button", { name: "Next" });
+      expect(nav).toHaveTextContent("Page 1 of 1");
+      expect(next).toBeDisabled();
+      expect(
+        fetchMock.mock.calls.filter(([path]) => String(path).includes("/files?")),
+      ).toHaveLength(2);
+
+      run = { ...run, progress: { ...run.progress, filesFailed: 26 } };
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["job", JOB_ID] });
+      });
+      await waitFor(() => expect(next).toBeEnabled());
+      expect(nav).toHaveTextContent("Page 1 of 2");
+      expect(
+        client.getQueryData<JobFileList>(["job-artifacts", JOB_ID, "files", 1, "failures-only"])
+          ?.pagination.totalItems,
+      ).toBe(26);
+      expect(client.getQueryState(["job-artifacts", JOB_ID, "files", 1])?.isInvalidated).toBe(true);
+      await userEvent.click(next);
+      await screen.findByText("failed-files-page-2-row-0.json");
+      expect(nav).toHaveTextContent("Page 2 of 2");
+      expect(within(nav.parentElement!).getAllByRole("listitem")).toHaveLength(1);
+      expect(screen.getByRole("checkbox", { name: "Show failures only" })).toBeChecked();
+      expect(fetchMock.mock.calls.filter(([path]) => String(path).includes("/files?"))).toEqual([
+        [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25`, expect.anything()],
+        [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`, expect.anything()],
+        [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`, expect.anything()],
+        [`/api/jobs/${JOB_ID}/files?page=2&pageSize=25&failuresOnly=true`, expect.anything()],
+      ]);
+      for (const kind of ["events", "logs"]) {
+        expect(
+          fetchMock.mock.calls.filter(([path]) => String(path).includes(`/${kind}?`)),
+        ).toHaveLength(1);
+      }
+    });
+
+    test.each([false, true])(
+      "refreshes files on terminal transition with unchanged failed count (filtered: %s)",
+      async (filtered) => {
+        let run: JobDetail = {
+          ...detail,
+          status: "running",
+          progress: { ...progress, filesFailed: 1 },
+          results: undefined,
+        };
+        const filesUrl = `/api/jobs/${JOB_ID}/files?page=1&pageSize=25${filtered ? "&failuresOnly=true" : ""}`;
+        const fetchMock = baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}`) return json(run);
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25` || path === filesUrl) {
+            const data =
+              filtered && path === filesUrl ? failedPage(1, 1, 1) : artifactPage("files", 1, 1, 1);
+            data.items[0] = {
+              ...data.items[0],
+              basename: run.status === "running" ? "in-progress-export.json" : "final-export.json",
+            };
+            return json(data);
+          }
+          return undefined;
+        });
+        const { client } = renderDataSync(JOB_ID);
+        await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+        await screen.findByText("in-progress-export.json");
+        if (filtered) {
+          await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+          await waitFor(() =>
+            expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(1),
+          );
+          await waitFor(() =>
+            expect(
+              screen.getByRole("navigation", { name: "Files pages" }).parentElement,
+            ).toHaveAttribute("aria-busy", "false"),
+          );
+        }
+        run = { ...run, status: "partially_succeeded" };
+        await act(async () => {
+          await client.refetchQueries({ queryKey: ["job", JOB_ID] });
+        });
+        await screen.findByText("final-export.json");
+        expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toEqual([
+          [filesUrl, expect.anything()],
+          [filesUrl, expect.anything()],
+        ]);
+        await act(async () => {
+          await client.refetchQueries({ queryKey: ["job", JOB_ID] });
+        });
+        expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(2);
+      },
+    );
+
+    test("does not retain unfiltered rows or false empty results after a filtered request fails, and retries the filter", async () => {
+      let resolveFiltered!: (response: Response) => void;
+      let resolveUnfiltered!: (response: Response) => void;
+      const unfiltered = new Promise<Response>((resolve) => {
+        resolveUnfiltered = resolve;
+      });
+      const filtered = new Promise<Response>((resolve) => {
+        resolveFiltered = resolve;
+      });
+      let reads = 0;
+      baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+          return json(artifactPage("files", 1));
+        if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25`) return unfiltered;
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`)
+          return ++reads === 1 ? filtered : json(failedPage(1, 0, 0));
+        return undefined;
+      });
+      renderDataSync(JOB_ID);
+      await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+      await screen.findByText("files-page-1-row-0.json");
+      await userEvent.click(
+        within(screen.getByRole("navigation", { name: "Files pages" })).getByRole("button", {
+          name: "Next",
+        }),
+      );
+      expect(screen.getByText("files-page-1-row-0.json")).toBeVisible();
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      expect(screen.getByText("Loading files...")).toBeVisible();
+      expect(screen.queryByText("files-page-1-row-0.json")).not.toBeInTheDocument();
+      await act(async () => resolveFiltered(json({ title: "Service Unavailable" }, 503)));
+      await screen.findByText("Files are unavailable.");
+      await act(async () => resolveUnfiltered(json(artifactPage("files", 2))));
+      expect(screen.queryByText("files-page-1-row-0.json")).not.toBeInTheDocument();
+      expect(screen.queryByText("files-page-2-row-0.json")).not.toBeInTheDocument();
+      expect(screen.queryByText(/No (failed )?files recorded/)).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Show failures only" })).toBeChecked();
+      await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await screen.findByText("No failed files recorded.");
+      expect(reads).toBe(2);
+    });
+
+    test("resets on close and run switch, and discards late responses from another filter or run", async () => {
+      const nextJob = "1".repeat(32);
+      let resolveOld!: (response: Response) => void;
+      let resolveOther!: (response: Response) => void;
+      let oldSignal: AbortSignal | null | undefined;
+      const old = new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+      const other = new Promise<Response>((resolve) => {
+        resolveOther = resolve;
+      });
+      let filteredReads = 0;
+      const fetchMock = baseFetch((path, init) => {
+        if (path === `/api/jobs/${nextJob}`) return json({ ...detail, id: nextJob });
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+          return json(artifactPage("files", 1));
+        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`) {
+          if (++filteredReads === 1) {
+            oldSignal = init?.signal;
+            return old;
+          }
+          return json(failedPage(1, 1, 1));
+        }
+        if (path === `/api/jobs/${nextJob}/files?page=1&pageSize=25`) return other;
+        return undefined;
+      });
+      const view = renderDataSync(JOB_ID);
+      const trigger = await screen.findByRole("button", { name: /^Files/ });
+      await userEvent.click(trigger);
+      await screen.findByText("files-page-1-row-0.json");
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      await screen.findByText("files-page-1-row-0.json");
+      expect(oldSignal?.aborted).toBe(true);
+      await act(async () => resolveOld(json(failedPage(1))));
+      expect(screen.queryByText("failed-files-page-1-row-0.json")).not.toBeInTheDocument();
+      expect(view.client.getQueryData(["job-artifacts", JOB_ID, "files", 1])).toEqual(
+        artifactPage("files", 1),
+      );
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      await screen.findByText("failed-files-page-1-row-0.json");
+      fireEvent.keyDown(trigger.closest(".artifact-disclosure")!, { key: "Escape" });
+      await userEvent.click(trigger);
+      await screen.findByText("files-page-1-row-0.json");
+      expect(screen.getByRole("checkbox", { name: "Show failures only" })).not.toBeChecked();
+      await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+      await screen.findByText("failed-files-page-1-row-0.json");
+      view.rerenderJob(nextJob);
+      const nextTrigger = await screen.findByRole("button", { name: /^Files/ });
+      expect(nextTrigger).toHaveAttribute("aria-expanded", "false");
+      await userEvent.click(nextTrigger);
+      expect(screen.getByRole("checkbox", { name: "Show failures only" })).not.toBeChecked();
+      expect(screen.getByText("Loading files...")).toBeVisible();
+      expect(screen.queryByText("failed-files-page-1-row-0.json")).not.toBeInTheDocument();
+      await act(async () => resolveOther(json(artifactPage("files", 1, 1, 1, nextJob))));
+      await screen.findByText("files-page-1-row-0.json");
+      expect(
+        fetchMock.mock.calls.some(
+          ([path]) =>
+            String(path).startsWith(`/api/jobs/${nextJob}/files?`) &&
+            String(path).includes("failuresOnly"),
+        ),
+      ).toBe(false);
+    });
   });
 
   describe("artifact pagination", () => {
@@ -1571,7 +2444,8 @@ describe("DataSync", () => {
       vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
         this: HTMLElement,
       ) {
-        return this.classList.contains("artifact-results")
+        return this.classList.contains("artifact-results") ||
+          this.classList.contains("artifact-list")
           ? new DOMRect(0, 0, 900, height)
           : originalRect.call(this);
       });
@@ -1588,6 +2462,110 @@ describe("DataSync", () => {
     });
 
     afterEach(() => vi.unstubAllGlobals());
+
+    test.each([
+      ["full", "cached"],
+      ["full", "uncached"],
+      ["cached partial", "cached"],
+      ["cached partial", "uncached"],
+    ] as const)(
+      "releases taller filtered rows when returning from a %s failure page to %s unfiltered rows",
+      async (lastPage, normalCache) => {
+        let resolveLast!: (response: Response) => void;
+        let resolveNormal!: (response: Response) => void;
+        const last = new Promise<Response>((resolve) => {
+          resolveLast = resolve;
+        });
+        const normal = new Promise<Response>((resolve) => {
+          resolveNormal = resolve;
+        });
+        const failed = (page: number, count = 25): JobFileList => {
+          const data = artifactPage("files", page, count, 2) as JobFileList;
+          return {
+            ...data,
+            items: data.items.map((file) => ({
+              ...file,
+              state: "failed",
+              failureSummary: "Source file is unavailable",
+            })),
+          };
+        };
+        let normalReads = 0;
+        let lastReads = 0;
+        baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+            return ++normalReads === 1 ? json(artifactPage("files", 1)) : normal;
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`)
+            return json(failed(1));
+          if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25&failuresOnly=true`) {
+            lastReads++;
+            return lastPage === "full" ? json(failed(2)) : last;
+          }
+          return undefined;
+        });
+        vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+          this: HTMLElement,
+        ) {
+          if (this.classList.contains("artifact-list")) {
+            const rowHeight = this.querySelector(".failure-copy") ? 36 : 20;
+            return new DOMRect(0, 0, 900, this.children.length * rowHeight);
+          }
+          if (this.classList.contains("artifact-results")) {
+            const natural =
+              this.querySelector(".artifact-list")?.getBoundingClientRect().height ?? 0;
+            return new DOMRect(0, 0, 900, Math.max(natural, parseFloat(this.style.minHeight) || 0));
+          }
+          return new DOMRect();
+        });
+        const { client } = renderDataSync(JOB_ID);
+        await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+        await screen.findByText("files-page-1-row-0.json");
+        const nav = screen.getByRole("navigation", { name: "Files pages" });
+        const results = nav.parentElement!.querySelector<HTMLElement>(".artifact-results")!;
+        const checkbox = screen.getByRole("checkbox", { name: "Show failures only" });
+        await userEvent.click(checkbox);
+        await waitFor(() => expect(results.querySelectorAll(".failure-copy")).toHaveLength(25));
+        expect(results.getBoundingClientRect().height).toBe(900);
+        if (lastPage === "cached partial") {
+          act(() => {
+            client.setQueryData(
+              ["job-artifacts", JOB_ID, "files", 2, "failures-only"],
+              failed(2, 4),
+            );
+          });
+        }
+        await userEvent.click(within(nav).getByRole("button", { name: "Next" }));
+        await waitFor(() => expect(lastReads).toBe(1));
+        await screen.findByText(
+          lastPage === "full" ? "files-page-2-row-0.json" : "files-page-1-row-0.json",
+        );
+        expect(results.querySelectorAll("li")).toHaveLength(25);
+        expect(results.style.minHeight).toBe("900px");
+        if (normalCache === "uncached") {
+          act(() =>
+            client.removeQueries({ queryKey: ["job-artifacts", JOB_ID, "files", 1], exact: true }),
+          );
+        }
+        await userEvent.click(checkbox);
+        await waitFor(() => expect(normalReads).toBe(2));
+        if (normalCache === "cached") {
+          expect(results.querySelectorAll("li")).toHaveLength(25);
+          expect(results.querySelectorAll(".failure-copy")).toHaveLength(0);
+          expect(results.getBoundingClientRect().height).toBe(500);
+        } else {
+          expect(results.style.minHeight).toBe("900px");
+        }
+        await act(async () => resolveNormal(json(artifactPage("files", 1))));
+        await waitFor(() => expect(results.closest("[aria-busy='true']")).toBeNull());
+        expect(nav).toHaveTextContent("Page 1 of 3");
+        expect(checkbox).not.toBeChecked();
+        expect(results.querySelectorAll("li")).toHaveLength(25);
+        expect(results.style.minHeight).toBe("500px");
+        expect(results.getBoundingClientRect().height).toBe(500);
+        await act(async () => resolveLast(json(failed(2, 4))));
+        expect(results.getBoundingClientRect().height).toBe(500);
+      },
+    );
 
     test.each(["files", "events", "logs"] as const)(
       "keeps %s rows and navigation mounted, reserves full-page height, and releases only the loaded last partial page",
@@ -1851,57 +2829,116 @@ describe("DataSync", () => {
       expect(results.closest("[aria-busy='true']")).toBeNull();
     });
 
-    test("keeps the full-page frame for a cached final partial page until its fresh response arrives", async () => {
-      let resolvePartial!: (response: Response) => void;
-      const partial = new Promise<Response>((resolve) => {
-        resolvePartial = resolve;
-      });
-      let partialReads = 0;
-      baseFetch((path) => {
-        if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
-          return json(artifactPage("files", 1, 25, 2));
-        if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25`)
-          return ++partialReads === 1 ? json(artifactPage("files", 2, 5, 2)) : partial;
-        return undefined;
-      });
-      const { client } = renderDataSync(JOB_ID);
-      await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
-      const nav = await screen.findByRole("navigation", { name: "Files pages" });
-      const results = nav.parentElement!.querySelector<HTMLElement>(".artifact-results")!;
-      const next = within(nav).getByRole("button", { name: "Next" });
-      const previous = within(nav).getByRole("button", { name: "Previous" });
-      await userEvent.click(next);
-      await waitFor(() => expect(nav).toHaveTextContent("Page 2 of 2"));
-      expect(results.style.minHeight).toBe("");
-      await userEvent.click(previous);
-      await waitFor(() => expect(next).toBeEnabled());
-      expect(nav).toHaveTextContent("Page 1 of 2");
-      expect(results.style.minHeight).toBe("500px");
-      act(() => frames.get(frames.size)!(0));
-      const frameCount = frames.size;
-      const scrollCount = vi.mocked(window.scrollTo).mock.calls.length;
-      height = 420;
-      await userEvent.click(next);
-      await waitFor(() => expect(partialReads).toBe(2));
-      expect(client.getQueryState(["job-artifacts", JOB_ID, "files", 2])?.fetchStatus).toBe(
-        "fetching",
-      );
-      expect(nav).toHaveTextContent("Page 2 of 2");
-      expect(within(results).getAllByRole("listitem")).toHaveLength(5);
-      expect(results.style.minHeight).toBe("500px");
-      expect(next).toBeDisabled();
-      expect(previous).toBeDisabled();
-      expect(frames.size).toBe(frameCount);
-      expect(window.scrollTo).toHaveBeenCalledTimes(scrollCount);
-      height = 100;
-      await act(async () => resolvePartial(json(artifactPage("files", 2, 5, 2))));
-      await waitFor(() => expect(previous).toBeEnabled());
-      expect(results.style.minHeight).toBe("");
-      await waitFor(() => expect(frames.size).toBe(frameCount + 1));
-      act(() => frames.get(frames.size)!(0));
-      expect(window.scrollTo).toHaveBeenCalledTimes(scrollCount + 1);
-      expect(window.scrollTo).toHaveBeenLastCalledWith(37, 900);
-    });
+    test.each([
+      [false, false],
+      [false, true],
+      [true, false],
+      [true, true],
+    ])(
+      "retains visible rows on cached partial Next (filtered: %s, refetch fails: %s)",
+      async (filtered, fails) => {
+        let resolvePartial!: (response: Response) => void;
+        let resolveRetry!: (response: Response) => void;
+        const partial = new Promise<Response>((resolve) => {
+          resolvePartial = resolve;
+        });
+        const retry = new Promise<Response>((resolve) => {
+          resolveRetry = resolve;
+        });
+        const filePage = (page: number, count = 25): JobFileList => {
+          const data = artifactPage("files", page, count, 2) as JobFileList;
+          return filtered
+            ? {
+                ...data,
+                items: data.items.map((file) => ({
+                  ...file,
+                  state: "failed",
+                  failureSummary: "Invalid export",
+                })),
+              }
+            : data;
+        };
+        const suffix = filtered ? "&failuresOnly=true" : "";
+        let partialReads = 0;
+        baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25`)
+            return json(artifactPage("files", 1, 25, 2));
+          if (path === `/api/jobs/${JOB_ID}/files?page=1&pageSize=25${suffix}`)
+            return json(filePage(1));
+          if (path === `/api/jobs/${JOB_ID}/files?page=2&pageSize=25${suffix}`)
+            return ++partialReads === 1
+              ? json(filePage(2, 4))
+              : partialReads === 2
+                ? partial
+                : retry;
+          return undefined;
+        });
+        const { client } = renderDataSync(JOB_ID);
+        await userEvent.click(await screen.findByRole("button", { name: /^Files/ }));
+        await screen.findByText("files-page-1-row-0.json");
+        if (filtered) {
+          await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+          await waitFor(() =>
+            expect(screen.getByText("files-page-1-row-0.json").closest("li")).toHaveTextContent(
+              "Invalid export",
+            ),
+          );
+        }
+        const nav = await screen.findByRole("navigation", { name: "Files pages" });
+        const results = nav.parentElement!.querySelector<HTMLElement>(".artifact-results")!;
+        const next = within(nav).getByRole("button", { name: "Next" });
+        const previous = within(nav).getByRole("button", { name: "Previous" });
+        await userEvent.click(next);
+        await waitFor(() => expect(nav).toHaveTextContent("Page 2 of 2"));
+        expect(results.style.minHeight).toBe("");
+        await userEvent.click(previous);
+        await waitFor(() => expect(next).toBeEnabled());
+        expect(nav).toHaveTextContent("Page 1 of 2");
+        expect(results.style.minHeight).toBe("500px");
+        act(() => frames.get(frames.size)!(0));
+        const frameCount = frames.size;
+        const scrollCount = vi.mocked(window.scrollTo).mock.calls.length;
+        const list = within(results).getByRole("list");
+        const rows = within(list).getAllByRole("listitem");
+        height = 420;
+        await userEvent.click(next);
+        await waitFor(() => expect(partialReads).toBe(2));
+        const key = ["job-artifacts", JOB_ID, "files", 2, ...(filtered ? ["failures-only"] : [])];
+        expect(client.getQueryState(key)?.fetchStatus).toBe("fetching");
+        expect(nav).toHaveTextContent("Page 1 of 2");
+        expect(within(results).getByRole("list")).toBe(list);
+        expect(within(list).getAllByRole("listitem")).toEqual(rows);
+        expect(results.style.minHeight).toBe("500px");
+        expect(next).toBeDisabled();
+        expect(previous).toBeDisabled();
+        expect(frames.size).toBe(frameCount);
+        expect(window.scrollTo).toHaveBeenCalledTimes(scrollCount);
+        if (fails) {
+          await act(async () => resolvePartial(json({ title: "Service Unavailable" }, 503)));
+          const error = await within(results).findByRole("alert");
+          expect(error).toHaveTextContent("Files are unavailable.");
+          expect(within(results).getByRole("list")).toBe(list);
+          expect(within(list).getAllByRole("listitem")).toEqual(rows);
+          expect(next).toBeDisabled();
+          expect(previous).toBeDisabled();
+          await userEvent.click(within(error).getByRole("button", { name: "Try again" }));
+          await waitFor(() => expect(partialReads).toBe(3));
+          expect(within(list).getAllByRole("listitem")).toEqual(rows);
+        }
+        height = 100;
+        await act(async () => (fails ? resolveRetry : resolvePartial)(json(filePage(2, 4))));
+        await waitFor(() => expect(previous).toBeEnabled());
+        expect(nav).toHaveTextContent("Page 2 of 2");
+        expect(within(results).getByRole("list")).toBe(list);
+        expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+        expect(within(results).queryByRole("alert")).not.toBeInTheDocument();
+        expect(results.style.minHeight).toBe("");
+        await waitFor(() => expect(frames.size).toBe(frameCount + 1));
+        act(() => frames.get(frames.size)!(0));
+        expect(window.scrollTo).toHaveBeenCalledTimes(scrollCount + 1);
+        expect(window.scrollTo).toHaveBeenLastCalledWith(37, 900);
+      },
+    );
 
     test("keeps the measured error frame and restores the requested page after Try again succeeds", async () => {
       let resolveSecond!: (response: Response) => void;
@@ -2846,7 +3883,7 @@ describe("DataSync", () => {
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
     expect(
-      await within(region).findByText("Partially completed", { selector: ".sync-status" }),
+      await within(region).findByText("Partially succeeded", { selector: ".sync-status" }),
     ).toBeVisible();
     expect(within(region).getByRole("button", { name: "Retry run" })).toBeEnabled();
     expect(within(region).queryByText("Superseded")).not.toBeInTheDocument();

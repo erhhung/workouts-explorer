@@ -625,6 +625,135 @@ describe("public authentication", () => {
 });
 
 describe("authenticated shell", () => {
+  test("switching accounts reloads profile labels and uses a different avatar cache URL", async () => {
+    const nextSession = {
+      ...session,
+      id: "F".repeat(32),
+      csrfToken: "next-session-csrf",
+      identity: {
+        ...session.identity,
+        id: "E".repeat(32),
+        username: "ridgewalker",
+        fullName: "Morgan Vale",
+      },
+    };
+    let currentSession: typeof session | null = session;
+    authenticatedFetch((path, method) => {
+      if (path === "/api/session" && method === "GET")
+        return currentSession ? json(currentSession) : json({ title: "Unauthorized" }, 401);
+      if (path === "/api/session" && method === "DELETE") {
+        currentSession = null;
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/api/session" && method === "POST") {
+        currentSession = nextSession;
+        return json(nextSession, 201);
+      }
+      if (path === "/api/me" && currentSession === nextSession)
+        return json({ ...profile, ...nextSession.identity, email: "morgan@example.test" });
+      return undefined as never;
+    });
+    const { client } = renderApp();
+    const user = userEvent.setup();
+    const original = await screen.findByRole("button", {
+      name: `Open account menu for ${profile.fullName}`,
+    });
+    const oldURL = original.querySelector("img")!.getAttribute("src");
+    await user.click(original);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    await user.type(await screen.findByLabelText("Username"), nextSession.identity.username);
+    await user.type(screen.getByLabelText("Password"), "test password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    const next = await screen.findByRole("button", {
+      name: `Open account menu for ${nextSession.identity.fullName}`,
+    });
+    expect(next.querySelector("img")).not.toHaveAttribute("src", oldURL);
+    expect(next.querySelector("img")).toHaveAttribute(
+      "src",
+      `/api/me/avatar?v=2&identity=${nextSession.identity.id}`,
+    );
+    expect(client.getQueryData(["session"])).toEqual(nextSession);
+    await user.click(next);
+    expect(screen.getByText(`@${nextSession.identity.username}`)).toBeInTheDocument();
+    expect(screen.queryByText(`@${profile.username}`)).not.toBeInTheDocument();
+    expect(screen.queryByText(profile.fullName)).not.toBeInTheDocument();
+  });
+
+  test("logout cancels a background session query before clearing the signed-in identity", async () => {
+    let checks = 0;
+    let resolveOld!: (response: Response) => void;
+    let oldSignal: AbortSignal | undefined;
+    authenticatedFetch((path, method, init) => {
+      if (path === "/api/session" && method === "GET" && ++checks > 1) {
+        oldSignal = init?.signal ?? undefined;
+        return new Promise((resolve) => {
+          resolveOld = resolve;
+        });
+      }
+      if (path === "/api/session" && method === "DELETE")
+        return new Response(null, { status: 204 });
+      return undefined as never;
+    });
+    const { client } = renderApp();
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: /Open account menu/ });
+    act(() => {
+      void client.refetchQueries({ queryKey: ["session"], exact: true });
+    });
+    await waitFor(() => expect(checks).toBe(2));
+    await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => resolveOld(json(session)));
+    expect(client.getQueryData(["session"])).toBeNull();
+    expect(screen.queryByRole("button", { name: /Open account menu/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  test("login cancels an older session query so its late response cannot replace the new identity", async () => {
+    const nextSession = {
+      ...session,
+      id: "F".repeat(32),
+      identity: {
+        ...session.identity,
+        id: "E".repeat(32),
+        username: "ridgewalker",
+        fullName: "Morgan Vale",
+      },
+    };
+    let resolveOld!: (response: Response) => void;
+    let oldSignal: AbortSignal | undefined;
+    routeFetch((path, method, init) => {
+      if (path === "/api/session" && method === "GET") {
+        oldSignal = init?.signal ?? undefined;
+        return new Promise((resolve) => {
+          resolveOld = resolve;
+        });
+      }
+      if (path === "/api/session" && method === "POST") return json(nextSession, 201);
+      if (path === "/api/me") return json({ ...profile, ...nextSession.identity });
+      if (path === "/api/me/preferences") return json(preferences);
+      return undefined as never;
+    });
+    const { client } = renderApp("/login");
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Username"), nextSession.identity.username);
+    await user.type(screen.getByLabelText("Password"), "test password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("button", {
+      name: `Open account menu for ${nextSession.identity.fullName}`,
+    });
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => resolveOld(json(session)));
+    expect(client.getQueryData(["session"])).toEqual(nextSession);
+    expect(
+      screen.getByRole("button", {
+        name: `Open account menu for ${nextSession.identity.fullName}`,
+      }),
+    ).toBeInTheDocument();
+  });
+
   test.each(["same principal", "different principal", "different principal with same session ID"])(
     "installs a confirmed replacement for %s and resets private Shell state",
     async (replacement) => {
@@ -2622,7 +2751,10 @@ describe("authenticated shell", () => {
     authenticatedFetch();
     const view = renderApp();
     const avatar = await screen.findByRole("button", { name: /Open account menu/ });
-    expect(avatar.querySelector("img")).toHaveAttribute("src", "/api/me/avatar?v=2");
+    expect(avatar.querySelector("img")).toHaveAttribute(
+      "src",
+      `/api/me/avatar?v=2&identity=${session.identity.id}`,
+    );
     expect(view.container.innerHTML).not.toMatch(/gravatar/i);
     expect(JSON.stringify(profile)).not.toMatch(/gravatar/i);
   });

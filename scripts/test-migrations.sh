@@ -8,4 +8,4 @@ set -eu
 
 go run ./api/cmd/migrate
 go run ./api/cmd/migrate
-go test ./api/migrations -count=1
+go test ./api/migrations/tests -count=1

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,18 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
+	// The rollback-only 028 proof predates 033's coalescing invalidator body.
+	raw, err = migrations.Files.ReadFile("009_raw_route_map.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := regexp.MustCompile(`(?s)FUNCTION app\.advance_account_data_generation\s*\(\s*\).*?AS \$function\$(.*?)\$function\$;`).FindStringSubmatch(string(raw))
+	current := regexp.MustCompile(`(?s)\$body\$.*?\$body\$`).FindString(runtimeDeferredReadinessSQL)
+	if len(body) != 2 || current == "" {
+		t.Fatal("missing historical generation readiness body")
+	}
+	historicalDeferred := strings.Replace(runtimeDeferredReadinessSQL, current, "$body$"+body[1]+"$body$", 1)
+	historicalReadiness := "SELECT (" + runtimeReadinessSQL + ") AND (" + historicalDeferred + ") AND (" + runtimeCohortReadinessSQL + ")"
 	var original string
 	if err := bootstrap.QueryRow(ctx, `SELECT pg_get_functiondef('app.fence_ingest_job(uuid,text,uuid,integer)'::regprocedure)`).Scan(&original); err != nil {
 		t.Fatal(err)
@@ -132,7 +145,7 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 						t.Fatal(err)
 					}
 					var ready bool
-					if err := tx.QueryRow(ctx, runtimeFullReadinessSQL, 28).Scan(&ready); err != nil || !ready {
+					if err := tx.QueryRow(ctx, historicalReadiness, 28).Scan(&ready); err != nil || !ready {
 						t.Fatalf("formatted fence readiness %s: %t %v", role, ready, err)
 					}
 				}
@@ -192,7 +205,7 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 			CREATE CONSTRAINT TRIGGER accounts_data_generation_after_insert AFTER INSERT ON app.accounts
 			DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.seed_account_data_generation()`,
 		"counter body": `DO $block$ BEGIN EXECUTE replace(pg_get_functiondef('app.advance_account_data_generation()'::regprocedure),
-			'generation + 1','generation + 2'); END $block$`,
+			'PERFORM app.enqueue_coverage_display_invalidations(ARRAY[old_account, new_account]);','PERFORM 1;'); END $block$`,
 		"counter invoker": `ALTER FUNCTION app.advance_account_data_generation() SECURITY INVOKER`,
 		"counter public":  `GRANT EXECUTE ON FUNCTION app.advance_account_data_generation() TO PUBLIC`,
 		"counter worker":  `GRANT EXECUTE ON FUNCTION app.advance_account_data_generation() TO workouts_worker`,
@@ -221,7 +234,7 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 		"API counter column update": `GRANT UPDATE(generation) ON app.account_data_generations TO workouts_api`,
 		"worker counter update":     `GRANT UPDATE ON app.account_data_generations TO workouts_worker`,
 		"counter owner update":      `REVOKE UPDATE ON app.account_data_generations FROM workouts_security_owner`,
-		"minimum raised":            `UPDATE app.schema_metadata SET minimum_runtime_version=30,schema_version=30`,
+		"minimum raised":            fmt.Sprintf(`UPDATE app.schema_metadata SET minimum_runtime_version=%d,schema_version=%d`, SupportedSchemaVersion+1, SupportedSchemaVersion+1),
 	}
 	for _, role := range []string{"workouts_api", "workouts_worker", "workouts_coverage_worker"} {
 		t.Run(role, func(t *testing.T) {
@@ -249,7 +262,7 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 				}
 			}
 			check(t, "", true)
-			check(t, `UPDATE app.schema_metadata SET schema_version=30`, true)
+			check(t, fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d`, SupportedSchemaVersion+1), true)
 			for name, mutation := range mutations {
 				t.Run(name, func(t *testing.T) { check(t, mutation, false) })
 			}

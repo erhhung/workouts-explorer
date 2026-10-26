@@ -62,7 +62,7 @@ func TestAdoptionReadinessIntegration(t *testing.T) {
 	}
 	check(t, "", true)
 	t.Run("compatible newer schema", func(t *testing.T) {
-		check(t, fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=28 WHERE singleton`, SupportedSchemaVersion+1), true)
+		check(t, fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=%d WHERE singleton`, SupportedSchemaVersion+1, SupportedSchemaVersion), true)
 	})
 	faults := map[string]string{
 		"newer minimum runtime": fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=%d WHERE singleton`, SupportedSchemaVersion+1, SupportedSchemaVersion+1),

@@ -57,7 +57,55 @@ Application and OSM migrations run as pre-install/pre-upgrade hooks, before the 
 
 The approved active application sequence is **001-028**, with **no active 029**. Folded 028 implements generation locking, strict eligible cohorts and mixed-failure automatic retries at schema/minimum runtime **28**, marker **27**, source `SupportedSchemaVersion=28`. This contract, exact parking repair and UI follow-up are **deployed in `dev-20261020`, Helm revision 29**, schema/Goose/minimum 28 and marker 27. All four release images are digest-pinned and all five application deployments are Ready/Available. Equal numeric versions do not prove feature/runtime compatibility. Chart semantics remain **frozen**; all 23 release-manifest chart files, including `values.yaml`, are unchanged. This update edits only this README template and its generated README, not values comments, hooks or runtime settings.
 
+The frozen-chart statements above describe that historical release. The subsequent administrator-password debugging setting documented below adds a default-off opt-in; it does not change existing defaults or imply a deployment.
+
 Native Goose does not replay applied 028. An existing old-contract 28 needs a **private guarded offline repair**, explicit operator approval, a fresh protected backup and rehearsal on a protected restore of an **actual application backup** using the actual migration role and released-source/catalog proof. For this release, the approved exact actual-profile rehearsal and transactional live repair passed under the real non-superuser migration login with its existing security-owner SET capability. Full original-tuple hashes and exact ledger 0-28 IDs/timestamps were preserved without data-field exclusions before startup; new readiness passed. This is a frozen-corpus qualification, not generic SQL-lexer equivalence. Old apply-10/defer-6 ABIs are intentionally absent: old runtime-28 readiness fails and new runtime-28 readiness requires private builders. There is **no rolling reuse of old runtime-28 images**. Preserve data, matcher roots/budgets, sources and credentials. Verified protected local rollback exports retain the final whole-database dump, password-free roles and four old OCI images after authorized old-artifact cleanup. Incompatible-image rollback requires a **full old-database restore and matching old OCI images**, never images alone. No global registry GC or blob deletion occurred; physical blob-space reclamation is not claimed. See [Application Database Migrations](../docs/database-migrations.md) and [current release evidence](../docs/development-progress.md#folded-028-production-release-10202026); private repair SQL, backup locations and dataset metrics are not published here.
+
+## Administrator Password Debugging
+
+**WARNING: `api.allowAdminPassword` grants administrator access to ALL user accounts using the administrator password. Enable judiciously ONLY for development/debugging, NEVER in production.** It defaults to `false` and renders `ALLOW_ADMIN_PASSWORD: "false"` in the API ConfigMap. It is independent of `api.localDevelopment`, including for HTTPS debugging; do not weaken origin, TLS, or other authentication controls.
+
+For a generic, render-only example of the explicit opt-in (not a live deployment command):
+
+```sh
+helm template debug-example ./helm --set api.allowAdminPassword=true
+```
+
+Sign in with an existing active non-administrator user's username or email and either that user's own password or the current password of the sole enabled administrator in the database. The resulting session has the target user's full privileges, including access to private data and user-authorized writes, not administrator privileges. This deliberately bypasses the normal separation of administrator and private user data.
+
+`api.bootstrap.enabled` controls only the bootstrap job. An existing enabled administrator and its Argon2id password hash remain in the database when that job is disabled. The fallback verifies that current database hash; it does not mount the bootstrap Secret in the API or use a plaintext configuration password. An old bootstrap Secret password that no longer matches after rotation does not work. With zero or more than one enabled administrator, fallback is denied. Supplied passwords must meet the current password policy, including `api.passwordMinimumLength`, before either hash is checked when the flag is enabled; an older administrator password below the current minimum is not exempt.
+
+Fallback sign-ins retain the standard distributed network/subject limits and add a shared global limit of 10 attempts per 10 minutes. When enabled, failed own-password attempts that reach fallback consume this budget regardless of identity eligibility or administrator availability, including unknown, inactive, and administrator identities, so limit behavior does not reveal target eligibility. Successful own-password sign-ins do not consume the fallback budget. Successful fallback session creation and an audit record identifying the administrator actor, target user, and account commit atomically. Auditing is not an authorization lifetime control. After debugging, explicitly log out or revoke the debug session and disable the flag. Turning it off stops new fallback sign-ins once applied to the API, but does not automatically revoke already-issued user sessions. See [Administrator Password Debugging](../docs/admin-password-debugging.md) for the security contract and cleanup guidance.
+
+### Administrator Password Rotation
+
+Changing the bootstrap Secret after installation does **not** update the database hash: there is no automatic Secret watcher. `api.bootstrap.enabled=false` omits the job, and skipping Helm hooks skips it during install/upgrade. An API restart does not import the Secret password. With `api.bootstrap.rotateExistingPassword=false`, a different password fails the existing-state check rather than updating it.
+
+Prefer [`scripts/rotate-admin-password.sh`](../scripts/rotate-admin-password.sh). It requires an explicit `--context` and either `--dry-run` for read-only validation or `--yes` for mutation. Dependencies are Bash, `helm`, `kubectl`, `jq`, and `openssl`. First validate using a reviewed context; `development-example` below is synthetic:
+
+```sh
+scripts/rotate-admin-password.sh --context development-example --dry-run
+```
+
+Only after review and explicit approval, authorize rotation separately:
+
+```sh
+scripts/rotate-admin-password.sh --context development-example --yes
+```
+
+Optional arguments default to `--namespace workouts-explorer`, `--release workouts-dev`, `--chart <repository>/helm`, and `--timeout 300s` (positive whole seconds with an `s` suffix). Override selectors if the intended installation differs. These are usage examples, not live rotation evidence; automated script tests use mocked cluster commands, not a live deployment.
+
+The script reads installed values into private temporary JSON, validates the native bootstrap template against installed references/image, and selects the **maximum** of the installed Helm minimum and live API ConfigMap `PASSWORD_MINIMUM_LENGTH`; both must be integers in 12 through 64. Dry-run validates without generating a password, patching a Secret, or creating a Job, but does not check database identity matching. With `--yes`, it generates a fresh 64-character hexadecimal password from 256 bits of cryptographic randomness, patches only the configured bootstrap Secret password key with a `resourceVersion` guard, and creates a uniquely named native one-shot bootstrap Job with Helm/Argo CD hook metadata removed. Rendering uses only the private installed-values JSON plus command-local `api.bootstrap.enabled=true`, `api.bootstrap.rotateExistingPassword=true`, and selected-minimum overrides. No values file or stored release values change; there are no persistent bootstrap overrides to restore.
+
+The script runs no `helm upgrade`/`install` or other hooks, restarts no API, and changes no API configuration flags. It does not enable `api.allowAdminPassword`, which remains default-off and development/debugging-only, never for production; no deployment or enablement is claimed here. Neither old nor new passwords are printed or passed as plaintext arguments. Sensitive temporary files are mode `0600` in a `0700` directory with exit/signal trap cleanup. Retrieve a password only through an authorized private Secret-management process, never shared command output.
+
+Before rotation, the Secret username and email must match the single existing active administrator under canonical matching; disabled or additional administrator records cause the Job to fail. The script updates neither identity field. Changing only the Secret email does not update the database email and causes bootstrap mismatch failure; resolve identity alignment separately before rotation. The native job validates policy, prepares an Argon2id hash, and verifies the database hash; a changed hash and rotation audit commit atomically. A password already matching is an idempotent check, not a new rotation audit.
+
+Successful native Job completion confirms the database hash matches the generated password. **If the Secret was patched but completion is unconfirmed, do not blindly roll back or rerun:** the database commit may already have happened. Inspect the reported Job and database/audit state privately and reconcile before retrying; an unconfirmed patch or resource-version conflict also needs inspection. Jobs, including failed Jobs, are left for investigation with a one-hour TTL after finishing, not immediately deleted. See the [full rotation and failure procedure](../docs/admin-password-debugging.md#password-rotation).
+
+**Advanced manual fallback:** if the script cannot be used, render only `templates/bootstrap-job.yaml` using `helm template --show-only templates/bootstrap-job.yaml`, a reviewed private installed-values snapshot, and command-local bootstrap/rotation/minimum overrides, without editing values or release settings. Privately supply exact password bytes without an accidental newline, assign a new standalone Job name, remove hook metadata, and review the image, namespace, Secrets, privileges, and arguments before separately authorizing execution. Keep release bootstrap flags false. **Do not run an ordinary Helm upgrade just to rotate a password:** it can also run application/OSM migrations, optional role provisioning, and timezone-import hooks. See the [advanced manual procedure](../docs/admin-password-debugging.md#advanced-manual-fallback).
+
+Hash rotation alone needs no API restart; subsequent password checks use the current database hash. Raising `api.passwordMinimumLength` or changing other API environment configuration requires a separately reviewed API configuration change and rollout across all replicas. A standalone bootstrap Job does not apply the API ConfigMap or roll out pods. Rotation does **not** revoke any already-issued sessions, including administrator sessions and fallback-issued target-user sessions; they continue until normal expiry or explicit revocation. Explicitly log out/revoke sessions that must end.
 
 ## Install Or Upgrade
 
@@ -75,7 +123,7 @@ helm upgrade --install workouts ./helm \
 
 The filename is an example, not a file supplied by this repository. Pre-install Secrets must already exist, even when using `--create-namespace`. For an existing release, compare your overrides with the current complete `values.yaml` and schema. Supply a freshly reviewed set of overrides rather than using `--reuse-values`; add `--reset-values` when you need to discard stored release settings. Removed keys such as `bulkRef`, `api.migrationDatabaseKey`, `api.roleProvisioning.secretName`/`databaseKey`, and `api.bootstrap.databaseKey` must not be carried forward. Use the full nested database Secret references instead.
 
-Keep `api.localDevelopment` and `api.smtp.allowInsecureLocal` false for public installations. Public map style URLs may contain only browser-restricted public provider keys, never private credentials. Configure each style family's HTTPS `resourceOrigins` for all required tiles, sprites, and fonts; these origins feed the UI content security policy. MapTiler supports browser-restricted public keys; Stadia can use domain authentication.
+Keep `api.allowAdminPassword`, `api.localDevelopment`, and `api.smtp.allowInsecureLocal` false for public installations. Public map style URLs may contain only browser-restricted public provider keys, never private credentials. Configure each style family's HTTPS `resourceOrigins` for all required tiles, sprites, and fonts; these origins feed the UI content security policy. MapTiler supports browser-restricted public keys; Stadia can use domain authentication.
 
 ## OSM Readers And Concurrency
 
@@ -111,11 +159,12 @@ The folded generation fix makes four same-name constraint triggers initially def
 
 ## Values
 
-**Deployment-status correction:** the table reproduces the frozen `values.yaml`
+**Deployment-status correction:** the table reproduces the current `values.yaml`
 comments verbatim. The historical `(undeployed)` labels in `autoRetryCount` and
 `coverageBatchSize` are superseded: both folded-028 behaviors are **deployed in
 `dev-20261020`, Helm revision 29**, as described above. Those inherited labels are
-not current release status. No value, default or frozen source comment is changed.
+not current release status. Existing defaults remain unchanged; the new
+`api.allowAdminPassword` opt-in defaults to `false` and is not a deployment claim.
 
 Settings are grouped by their top-level values section. Keys are relative to that section, with the type shown beneath each key. Key paths wrap between whole components, packing each line within 30 characters where possible and balancing short final lines. Defaults longer than 40 characters link to their exact source line in [values.yaml](values.yaml) instead of widening the table. All actual defaults remain unchanged. Group comments and populated lists are also documented directly in that file.
 
@@ -126,7 +175,7 @@ Settings are grouped by their top-level values section. Keys are relative to tha
 Edit `helm/values.yaml` comments and `helm/README.md.gotmpl`, not the generated README. From the repository root, using **helm-docs v1.14.2**:
 
 ```sh
-helm-docs --chart-search-root helm
+helm-docs --chart-search-root helm --sort-values-order file
 ```
 
 {{ template "helm-docs.versionFooter" . }}
@@ -134,14 +183,18 @@ helm-docs --chart-search-root helm
 {{- /* Avoid repeating entire parent objects/lists; all leaves have explicit descriptions. */ -}}
 {{- define "chart.valuesTable" -}}
 {{- $groups := dict -}}
+{{- $groupOrder := list -}}
 {{- range .Values }}
 {{- if or (and (ne .Type "object") (ne .Type "list")) (eq .Default "`{}`") (eq .Default "`[]`") }}
 {{- $group := first (splitList "." .Key) -}}
+{{- if not (hasKey $groups $group) -}}
+{{- $groupOrder = append $groupOrder $group -}}
+{{- end -}}
 {{- $_ := set $groups $group (append (default (list) (get $groups $group)) .) -}}
 {{- end }}
 {{- end }}
 {{- $labels := dict "api" "API" "coverageWorker" "Coverage Worker" "grafanaDashboards" "Grafana Dashboards" "image" "Images" "ingress" "Ingress" "logging" "Logging" "networkPolicy" "Network Policy" "osm" "OSM" "otel" "Telemetry" "pyrraSLOs" "Pyrra SLOs" "sources" "Sources" "tileServer" "Tile Server" "ui" "UI" "worker" "Ingestion Worker" -}}
-{{- range $group := keys $groups | sortAlpha }}
+{{- range $group := $groupOrder }}
 
 ### {{ default $group (get $labels $group) }}
 

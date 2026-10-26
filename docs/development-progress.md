@@ -13,17 +13,21 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | M8 source implementation | Implemented and deployed; owner iCloud ingest and available-map Coverage recovery verified; explicit milestone acceptance remains separate |
 | Committed-route Coverage pipeline | Folded-028 contract deployed in `dev-20261020`, Helm revision 29; exact eligible cohorts and mixed-failure automatic recovery active |
 | Concurrent coverage and reader coordination | Deployed and focused verification complete; one coverage pod runs two jobs with shared least-active reader assignment |
-| Deployed application database | Contiguous schema/Goose 28, minimum runtime 28, migration baseline marker 27 |
-| New folded-028 contract | Active 001-028, no active 029; source support/schema/minimum 28, marker 27; generation locking, strict eligible cohorts and mixed automatic policy deployed |
+| Deployed application database | Contiguous Goose ledger 0-32, schema/minimum runtime 32, migration baseline marker 27; applied 001-032 immutable |
+| Folded-028 foundation and forward upgrades | Folded-028 generation locking, eligible cohorts and mixed automatic policy remain deployed; ordinary forward migrations 029-032 add ingest outcomes, filtering, explicit reprocessing and coverage display precomputations without rebasing history |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
 | UI follow-up | Deployed with the current pinned UI image; earlier source-only and test-count checkpoints are historical |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; owner milestone acceptance remains separate |
-| Chart semantics | Frozen; all 23 release-manifest chart files unchanged; only Helm README template/generated documentation updated here |
+| Chart semantics | Full-values backend-42/UI-43 renders preserve normal resource/configuration semantics; coordinated rollout used `--no-hooks` after standalone native migration |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | `dev-20261020`, Helm revision 32; UI-only Run detail pagination fix deployed, with API/worker/OSM pins and protected pods unchanged; all five deployments healthy |
+| Release | `dev-20261020`, coordinated backend revision 42 and UI revision 43 accepted; all four application images rebuilt/published, runtime deployments healthy; separate Martin unchanged |
+| Unreleased source follow-up | Click-highlight improvements folded into source-only 033 canonical display release; focused current MapPage suite passes 219 tests; full new-release verification and deployment pending |
+| Canonical display identity | Policy `coverage-display-identity-v1` implemented in source with migration 033 and coordinated API/UI; source support/schema/minimum 33, baseline 27; live remains backend-42/UI-43/schema-32 until MAIN cutover completion |
 | Summary aggregates | Measured-distance totals/averages include route-less types; Workouts pairs the total with a right-aligned GPS-route count |
 | Latest performance comparison | Corrected graph statistics resolved the observed regression under fixed inputs and matching contracts; measurements remain private, not capacity certification |
+| Early hard-gap matcher correction | Implemented, verified and deployed; selective failed-target recovery verified privately; existing bounds and successful Coverage preserved |
+| Coverage display optimization | Implemented and deployed with released/applied 032, bounded bulk loading, targeted hover stats/cache and shared overlay layout; scripted deployed-browser verification passed; owner acceptance/milestone and capacity remain separate |
 
 Runtime deployment and the earlier authorized legacy-account repair are complete.
 This does not close M8: owner acceptance remains separate from release and
@@ -35,6 +39,297 @@ earlier undeployed, pending-repair and old-live-contract wording. Dated checkpoi
 below retain their original evidence boundaries. The
 [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Canonical Display Identity (033, Source Only)
+
+**Implemented in source, undeployed.** Live remains accepted backend revision
+**42**, UI revision **43**, schema/minimum runtime **32**, baseline **27** and
+ledger **0-32**. Source support and migration 033 require schema/minimum runtime
+**33**, retaining baseline **27**; applied **001-032 stay immutable**. Do not
+interpret implementation, disposable tests or documentation as a MAIN deployment
+receipt. [ADR 0013](decisions/013-canonical-coverage-display-identity.md) is the
+generally applicable policy, not an account/data-specific code patch.
+
+Named display identity uses region + normalized actual DISPLAY name/place,
+excluding kind/class/components and internal jurisdiction IDs. PostgreSQL 18 UTF8
+`pg_c_utf8` pins NFC/casefold and explicit White_Space normalization; directions,
+accents and punctuation survive. Length-prefixed versioned SHA-256 UUIDv8 keys
+retain normalized fields for collision rejection; unnamed sources remain
+kind/UUID-distinct. Mixed named park/path members share one canonical group with
+park-preferred presentation and retained source provenance.
+
+Date-context membership resolves all historically eligible sources, including
+history-only fallback. Distinct-workout union precedes range/all-time summaries;
+only in-range-visited groups are returned. List, point stats, stored whole-group
+detail, focus and all four tile layers share ready context IDs/metadata/counts
+and actual matched geometry, never invented bridges. Selection JSON and all UI
+cache guards carry policy/revision. Server contexts are scoped by account,
+generation, revision, dates, policy and locale, with eight soft unreferenced
+contexts plus active pins. All source inputs defer/coalesce revision and public
+generation once per account/transaction, preserving rollback/deletion and both
+READ COMMITTED commit orders / Repeatable Read serialization rejection.
+
+The older source-only click-highlight follow-up below is folded into this pending
+release. Its **521 UI tests** receipt remains an earlier checkpoint, not a full
+033 pass. In this documentation pass, `npx vitest run src/MapPage.test.tsx`
+passes **219 tests**, including display policy/revision cache invalidation and
+mixed-source hit provenance. Full new-release verification, database-backed
+migration/concurrency/readiness proof and deployed desktop/mobile browser checks
+are **not established by that focused run**. No new full-suite pass is claimed.
+
+Pending operations: complete source verification; protected actual-backup native
+032-to-033 migration/preservation/actual-role-readiness and database/image rollback
+rehearsal; fresh backups and old image retention; explicitly authorized coordinated
+MAIN cutover; then deployed role readiness, ledger **0-33**, context warming and
+browser validation. Keep all dumps/archives in the approved `~/nfs-share/.temp/`
+NFS tree linked from the private `deploy/internal` release bundle. Regularly monitor
+workspace, `/tmp`, NFS and application-PG space/inodes; application-PG capacity
+must be checked operationally before migration/rehearsal. Preserve TLS, migration
+and Martin flags/identity, OSM replica policy, auto-sync, admin-password debug,
+resources/concurrency/timeouts and retry budgets. This source-only status does
+not authorize live mutation.
+
+This is not an OSM derivation/matcher/path-policy bump: **no OSM regeneration,
+download or route rematching is needed**. Coverage recomputation here means
+canonical read-model context warm/rebuild from existing evidence, not new route
+jobs. See [architecture](architecture.md#canonical-display-identity-requires-33-source-only),
+[functional contract](functional-spec.md#canonical-display-identity-033-undeployed),
+[migration gates](database-migrations.md#canonical-coverage-display-033-source-only)
+and [pending plan](implementation-plan.md#canonical-display-identity-033-pending-release).
+
+## Unreleased Source Follow-Up
+
+**Undeployed click-highlight follow-up after live backend-42/UI-43 and schema 32.**
+The Release field records the accepted deployment, not this newer source behavior.
+The earlier click-only checkpoint was verified without a migration; it is now
+folded into the **pending 033 release** above and has not been deployed. Applied
+**001-032 remain unchanged**. Live schema/minimum runtime stays **32** and baseline
+**27**, while the combined source contract requires schema/minimum **33**.
+
+Latest [MapPage source](../ui/src/MapPage.tsx) closes Road Coverage and focuses the
+mounted canvas immediately on entity-click intent. Uncached detail shows transient
+loading/**Cancel** feedback in a bottom map banner, visible on desktop and mobile
+at **z-index 7**, below tooltips at **8**. Errors and the **30-second** request
+timeout show map-level **Retry / Close**, with manual Retry and no hidden detail
+retry. Exact geometry and expanded fit bounds arrive before any fit; the existing
+**350ms** camera animation and immediate white blink are retained. The existing
+**three-second** highlight countdown waits for camera/tiles readiness, retaining
+the bounded fallback.
+
+The existing detail endpoint in [the map API](../api/maps.go) retains its response
+and six query arguments. Current source calls the stored
+`app.map_selection_coverage_entity_detail`, replaced in 033 with canonical
+whole-group geometry, rather than the earlier API-local source-only query.
+Metadata gates geometry through the correlated `LATERAL`/`OFFSET 0` barrier in
+one statement snapshot; denied metadata cannot start geometry work. The
+transaction remains read-only with critical `SET LOCAL jit=off`, not a global
+setting change. This stored-reader replacement belongs to the combined 033 release.
+
+The independent successful-detail LRU cache is limited to **8 entries / 8 MiB of
+UTF-8 serialized JSON**, with a fixed **five-minute TTL from load** and no hit
+extension. This is serialized accounting, not a heap guarantee; oversized detail
+is displayed without caching. No bulk geometry prefetch is added. Latest-request
+and selection/generation/range, deletion, subset and mode/diagnostics/refresh
+guards isolate results, now including display policy/revision. Context changes
+clear detail state/cache; stale work,
+abort, Cancel and unmount cannot surface late UI errors, cache late responses or
+trigger recovery. The same installed geometry avoids redundant source `setData`;
+style/source replacement reinstalls it. Reopening Road Coverage cancels pending
+detail rather than allowing completion behind the dialog. Late 200, 503 or 404
+responses cannot fit, cache, invalidate the bulk-table cache or automatically
+refresh the capability after reopen. Already-completed detail cache entries and
+highlights are preserved. A current 404 invalidates detail/table caches and leaves
+visible Retry feedback. Manual Retry refreshes the capability;
+the user reopens the table and chooses again, without replaying the stale click.
+The separate hover-stats cache and bulk-table cache/client-side paging are unchanged.
+
+At the earlier click-only checkpoint, focused verification passed **203 MapPage
+tests**, covering the click flow, cache bounds/TTL, context/cancellation and reopen guards,
+and highlight source lifecycle. API regression coverage includes query/geometry
+parity and authorization checks. Final `make verify` and full uncached Go race
+checks passed, with all **521 UI tests** passing. This is not a full 033 receipt.
+Separate restricted-role PostgreSQL integration runs passed query/geometry/fit parity and denied-query
+execution checks under race detection; database-gated skips in broad suites are
+not counted as integration passes. Real MapLibre checks covered immediate dismissal,
+pointer-accessible loading/Cancel/Retry/Close feedback, cache reuse, style replay,
+and late-response isolation on desktop and narrow layouts. Earlier deployed-browser
+receipts below retain their original scope and do not establish deployment of this
+follow-up. No owner-specific data or
+operational measurements are included. See the
+[future functional contract](functional-spec.md#unreleased-click-highlight-follow-up-undeployed)
+and [source-only architecture](architecture.md#click-highlight-follow-up-unreleased-source-only).
+
+## Coverage Display Optimization
+
+Released and applied migration [032_coverage_display_precomputations.sql](../api/migrations/sql/032_coverage_display_precomputations.sql) extends the active sequence
+through **001-032**, sets schema/minimum runtime **32** and retains baseline marker
+**27**. Targeted hover statistics shipped in this same released 032, not in 033.
+The separate **pending source-only 033** is described above. Applied **001-032
+stay immutable** and 032 is forward-only.
+
+All four application images (API, shared worker, UI and OSM) were rebuilt with
+native artifacts and published with strict TLS verification. A standalone native
+`/app/migrate` Job applied 032 under the actual restricted migration login while
+incompatible runtimes were paused. Coordinated backend revision **42**, followed
+by UI revision **43**, completed with full values and `--no-hooks`; the separate
+external Martin image and workload were preserved.
+
+Accepted read-only receipts verify the contiguous Goose ledger **0-32**, marker
+**27**, schema/minimum runtime **32**, actual API/general-worker/Coverage-worker
+role readiness and healthy workloads. While paused, all **82 original business
+tables** were verified unchanged by original-column hashes, with the prior ledger
+prefix and unrelated relations/roles/functions preserved. All **14 configuration
+objects** were preserved; resources, concurrency, timeouts, matcher/retry budgets
+and source configuration remain unchanged, with source auto-sync off. This rollout
+started no new ingest or matching work and made no provider checks. Strict TLS
+publication/HTTPS checks do not claim application-database TLS or a new OSM mTLS
+handshake.
+
+Full protected pre-32 database/role backups and matching old image exports remain
+retained. **Image-only rollback is unsupported**: recovery requires the matching
+pre-32 database restore and old images together. Technical implementation is now
+deployed; scripted deployed-browser verification passed. Owner acceptance/milestone
+and capacity remain separate. Private owner data and actual performance
+measurements stay private.
+
+Scripted verification used real deployed responses, not mocked browser data. One
+bulk request loaded the complete result; returning to the cached dialog restored
+the same page without additional HTTP requests. Actual hover popups used targeted
+stats without geometry, and cached revisits needed no further stats request.
+Desktop and two mobile layouts passed inset alignment within one-pixel tolerance,
+with zero observed alignment delta, and popup stacking above the legend,
+navigation and attribution. Strict-HTTPS entry checks passed, and loaded asset
+bytes matched the final image. Logout invalidated the verification session while
+existing principals, passwords and sessions remained unchanged. These are scripted
+deployed-browser results, not explicit owner milestone acceptance or capacity
+certification.
+
+The list reader uses normalized compact workout/path/entity qualification
+partials, independent regional-park context and independent park bounds. It
+deduplicates display-entity/workout visits before counting and retains live
+metadata, visibility, date and applied-result joins. One dataset serves named and
+custom ranges and all-time history, not separate year/month materializations.
+Logical deletion is visible before physical cleanup, and failed rematching retains
+the prior applied result.
+
+Transaction-local dirty keys coalesce evidence changes and old/new segment-source
+invalidation. The deferred flush serializes per account before expanding segment
+keys to workouts, then rebuilds affected projections once as a set. Evidence and
+projections commit atomically; maintenance/serialization failures propagate rather
+than publishing partial replacements. Existing generation-increment policy stays
+unchanged.
+
+The API and map client use one bounded `bulk=true` load with one coverage-function
+evaluation, limited to **50,000 entities / 64 MiB uncompressed JSON including
+metadata**. Overflow returns 422 `bulk`/`limit`, with no partial results or partial
+cache. Client-side search, unnamed filtering, sorting/tie-breaks, preference-sized
+paging and the five-minute range/generation cache remain unchanged. Default API
+pagination is retained. The [architecture](architecture.md#coverage-display-precomputations-requires-32)
+and [migration requirements](database-migrations.md#coverage-display-precomputations-032)
+define the deployed contract and verification boundaries, not live measurements.
+
+Hover now calls the targeted
+`GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}/stats`
+reader and receives `RoadCoverageEntity` without geometry or expanded fit bounds.
+Click highlights still fetch full detail. Compact facts are restricted by entity
+before aggregation, with entity-first indexes inside account scope. Candidate
+workout IDs also bound the live eligibility work, without dropping independent
+context-only or bounds-only contributors. Live
+eligibility, education deduplication, counts/dates/navigation ties and the detail
+reader's canonical park-geometry availability are preserved. The API-only
+security-definer reader has a fixed search path and `jit=off`; structural readiness
+checks exact body fingerprints, catalog definitions, ownership and ACLs rather
+than trusting the schema number alone. The compact list reader also disables JIT.
+
+The existing **750ms dwell** and **one 250ms retry on server 503** remain. A separate
+canvas-local **128-entry LRU / five-minute** cache includes selection ID,
+generation, resolved dates, entity kind and ID; cache hits still dwell and do not
+extend TTL. Context changes clear cached stats and cancel stale work. Entity
+changes/canvas exit cancel pending work and remove popups. Window blur and a
+hidden document also cancel hover work without discarding valid cached stats;
+unmount clears the cache and removes all listeners. Late results/errors cannot affect a new
+context. The shell's complete-result bulk cache remains unchanged.
+
+Shared overlay insets are **0.75rem on mobile layouts / 1rem on desktop**, with
+MapLibre inner control margins zero. Legend width reserves the zoom column/gutter.
+Passive canvas-level tooltips stack above legend/navigation/attribution without
+host stacking-context traps and use `pointer-events: none`. Existing map sizing,
+sidebar scrolling and bulk-dialog layout are preserved.
+
+Source verification passes normal project checks and the Go race suite. Disposable
+PostgreSQL checks cover full-row parity against the original reader, populated
+031-to-032 backfill, atomic migration rollback, logical deletion and account
+cascades, savepoints, concurrent source changes in either commit order and stale
+Repeatable Read rejection. Catalog mutation tests verify runtime readiness and
+private projection ownership/ACLs. A synthetic browser check with added request
+latency confirms one complete load and no further coverage requests while paging,
+sorting or filtering; it is not a measurement of the owner's connection.
+
+The subsequent source checkpoint includes **164 MapPage tests**, with all **482
+UI tests** passing. The combined projection/stats database race run passes
+**three repetitions**, with full **21-field** metadata parity against original
+list/detail readers, excluding only geometry and expanded fit bounds. Coverage
+includes live metadata/eligibility and date edits, education deduplication,
+canonical/mixed park evidence, subset independence and authorization boundaries.
+UI regressions cover dwell, bounded retry, LRU/TTL, context invalidation,
+cancellation/late responses, canvas-leave/blur/visibility cleanup and geometry-only
+click highlighting. Actual query-plan checks show unrelated account history does
+not expand target eligibility. Real MapLibre browser checks confirm responsive
+control alignment, popup stacking and geometry-free hover requests. These are
+synthetic source-verification results, not owner-data measurements or capacity
+acceptance; deployment is established separately by the accepted rollout receipts.
+
+Relevant source checks are
+[MapPage tests](../ui/src/MapPage.test.tsx),
+[map CSS guard](../ui/scripts/check-map-css.mjs),
+[stats contract tests](../api/migrations/tests/coverage_entity_stats_test.go),
+[stats database integration tests](../api/migrations/tests/coverage_entity_stats_integration_test.go),
+[API integration tests](../api/maps_integration_test.go), and
+[catalog readiness mutation tests](../internal/database/coverage_display_precomputations_readiness_integration_test.go).
+These public contracts apply to all users' data; account-specific names, dates,
+counts, timings and operational receipts remain private.
+
+Migration sources now live in `api/migrations/sql/` and their contract/integration
+tests in `api/migrations/tests/`. The runtime package and embedded SQL basenames
+are unchanged. Native and physical-SQL migration commands, historical migration
+paths and idempotent reruns pass after the move. The accepted backend-42/UI-43
+rollout deployed the new runtime and migration. Its build/full-verification receipt
+predates this docs-only update; no build verification was rerun or receipt retaken.
+
+## Early Hard-Gap Release Work
+
+The approved matcher correction partitions the once-sampled route into continuous
+legs **before** window/candidate/graph work, not in a new ingest stage. Original
+and sampled sequences remain unchanged. Each leg retains primary 128-point and
+typed graph-exhaustion 64/32 windows, with leg-local seam/turn/tangent scopes.
+One route-level `Result` retains global order/provenance, global clipping and
+`Prepare` union/deduplication; minimum traversal remains per decoded chunk, never
+aggregate acceptance of subthreshold chunks. Existing strict hard-gap thresholds
+remain unchanged. See the [design and verification](coverage-matcher-evaluation.md#early-hard-gap-partitioning-design).
+
+Current-source synthetic, normal and race verification passed, including the
+existing 204-case matcher golden and 27 full-result/Prepare continuous-route
+goldens against the pre-fix implementation. Revision 41 deployed only API and
+shared-worker images, and selective failed-target recovery was verified. This is
+not a new performance/capacity benchmark; historical measurements retain their
+original scope. Real-case inputs, measurements and operational receipts remain
+private. Existing resources, bounds, concurrency, deadlines and 6m/10m/15m timeout
+policy remain unchanged.
+
+Path policy v82, sampling v1, rules v1 and `coverage-production-v1` remain fixed
+because this restores intended hard-gap handling. No database/minimum-runtime
+change is required; the existing schema-31 contract is independent, not introduced
+or deployed by this matcher work. There is no global cache buster or recompute.
+Previously successful disjoint routes are not universally output-equivalent:
+leg-local window alignment can change evidence. Existing `acceptedCoverage`
+remains authoritative unless explicitly rerun.
+
+Only after the new deployment is verified may the authorized failed-route retry
+use the direct API against the latest parent, requiring exactly one authoritative
+failed target at submission. Otherwise stop; do not broaden the retry or rerun
+successes/ingestion. Automatic allowance and the shared root budget, including
+manual retries, are unchanged and never reset. This docs-only work performs no
+live infrastructure, credential/provider reads, replay, deployment or retry.
 
 ## Deferred Generation Fix (Source Only)
 

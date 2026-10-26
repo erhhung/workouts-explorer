@@ -448,10 +448,21 @@ paths:
     get:
       operationId: listJobFiles
       description: >-
-        Lists paginated, redacted file-processing results for an owned ingest job. `jobId` is required; optional `page` and `pageSize` control pagination.
+        Lists paginated, redacted file-processing results for an owned ingest job,
+        including all source children for a parent job or only the requested source child.
+        `jobId` is required; optional `page` and `pageSize` control pagination.
+        When `failuresOnly` is true, only failed files are included, filtered before
+        pagination and totals are calculated. False or absent includes all files.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
-      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/PageSize'}]
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/PageSize'}
+        - name: failuresOnly
+          in: query
+          required: false
+          description: Include only failed files before pagination and total calculation; false or absent includes all files.
+          schema: {type: boolean}
       responses:
         '200': {description: Safe ingest file results, content: {application/json: {schema: {$ref: '#/components/schemas/JobFileList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
@@ -625,21 +636,33 @@ paths:
     parameters: [{$ref: '#/components/parameters/MapSelectionID'}]
     get:
       operationId: listMapSelectionCoveragePaths
-      description: Returns exact, paginated road and park coverage for all current routed workouts in the map selection date range.
+      description: >-
+        Returns canonical display groups for road and park coverage in the map selection date range.
+        Groups and distinct-workout counts include all resolved source members, independent of the checked workout subset.
+        Cross-kind named groups use kind park when any member is a park; entityId is the canonical display identity.
+        Generation validation and coverage rows share one repeatable-read snapshot.
+        By default results are paginated, with pageSize capped at 100. With bulk=true, returns the complete
+        matching result from one coverage function evaluation, with pagination.page=1, pageSize=50000,
+        totalItems equal to items.length, and totalPages=1 (0 when empty). In bulk mode page and pageSize
+        are ignored, while search and sort still apply. Bulk delivery is bounded to 50000 entities and
+        67108864 bytes (64 MiB) of uncompressed JSON, including metadata. Exceeding either bound returns
+        422 Problem Details with a bulk/limit validation error and no partial results; choose a smaller date range.
       tags: [maps]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
         - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: bulk, in: query, description: Opt in to bounded complete-result delivery instead of pagination., schema: {type: boolean, default: false}}
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
         - {name: search, in: query, schema: {type: string, maxLength: 256}}
         - {name: sort, in: query, schema: {type: string, enum: [rangeCount:desc, rangeCount:asc, name:asc, name:desc, cityOrRegion:asc, cityOrRegion:desc, rangeFirst:asc, rangeFirst:desc, allTimeFirst:asc, allTimeFirst:desc, rangeLatest:asc, rangeLatest:desc, allTimeLatest:asc, allTimeLatest:desc], default: 'rangeCount:desc'}}
       responses:
-        '200': {description: Paginated road coverage entities, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageList'}}}}
+        '200': {description: Paginated or explicitly bounded complete road coverage entities, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
         '401': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
   /api/map-selections/{mapSelectionId}/coverage-focus/{workoutId}:
     parameters:
@@ -666,13 +689,41 @@ paths:
       - {name: entityId, in: path, required: true, schema: {$ref: '#/components/schemas/UUIDInput'}}
     get:
       operationId: getMapSelectionCoverageEntity
-      description: Returns exact date-range coverage geometry, identity, statistics, raw bounds, and server-expanded fit bounds for one path or park.
+      description: Returns exact date-range coverage geometry across all source members, identity, distinct-workout statistics, raw bounds, and server-expanded fit bounds for one canonical display group. Use the canonical entityKind/entityId returned by the list or coverage tiles.
       tags: [maps]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
         - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
       responses:
         '200': {description: Exact road coverage entity detail, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageDetail'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}/stats:
+    parameters:
+      - {$ref: '#/components/parameters/MapSelectionID'}
+      - {name: entityKind, in: path, required: true, schema: {type: string, enum: [path, park]}}
+      - {name: entityId, in: path, required: true, schema: {$ref: '#/components/schemas/UUIDInput'}}
+    get:
+      operationId: getMapSelectionCoverageEntityStats
+      description: >-
+        Returns identity, visit counts and dates, and raw bounds for one available path or park, without
+        geometry or expanded fit bounds. Intended for hover statistics after client-side dwell; the server
+        applies no dwell delay. Range statistics cover all eligible routed workouts in the selection's
+        inclusive date range, independently of its focused workout or explicit workout subset. All-time
+        statistics cover all eligible routed workouts in the account. One targeted SQL statement validates
+        account, session, selection expiry, current generation, and entity availability while reading the
+        statistics from the same snapshot. An unavailable entity or selection, including a stale generation
+        or a selection belonging to another session or account, returns 404. Use the existing entity detail
+        endpoint for click highlights that require geometry and fit bounds.
+      tags: [maps]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {name: generation, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      responses:
+        '200': {description: Road or park coverage statistics without geometry, content: {application/json: {schema: {$ref: '#/components/schemas/RoadCoverageEntity'}}}}
         '400': {$ref: '#/components/responses/Problem'}
         '401': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
@@ -1303,6 +1354,13 @@ components:
         sourceIds: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {$ref: '#/components/schemas/CompactUUID'}}
         startDate: {type: string, format: date}
         endDate: {type: string, format: date}
+        reprocessAllFiles:
+          type: boolean
+          description: >-
+            Reprocess all files in the inclusive date range, even if previously imported.
+            Optional and false when omitted. May only be supplied when both startDate and
+            endDate are supplied, including when false. Unchanged successful files in the
+            same retry chain remain skipped.
     IngestAccepted:
       type: object
       additionalProperties: false
@@ -1316,7 +1374,14 @@ components:
       enum: [queued, running, succeeded, partially_succeeded, failed, cancelled]
     JobDisplayStatus:
       type: string
-      description: Presentation only, never a persisted execution transition. Superseded applies only to top-level failed or partially succeeded coverage attempts whose retry eligibility reason is already_current; route attempts keep their execution status.
+      description: >-
+        Presentation only, emitted when it differs from status, never a persisted execution transition.
+        For current and historical ingest parents and source children with failed or partially_succeeded execution status,
+        displays partially_succeeded only when workoutsCreated or workoutsUpdated is positive, otherwise failed.
+        Successful files, skips, and unchanged workouts alone do not count as imported data.
+        Succeeded ingest jobs, including empty syncs, and queued, running, or cancelled jobs keep their execution status.
+        Superseded applies only to top-level failed or partially succeeded coverage attempts whose retry eligibility
+        reason is already_current; route attempts keep their execution status. Workout deletion is unchanged.
       enum: [queued, running, succeeded, partially_succeeded, failed, cancelled, superseded]
     JobTrigger:
       type: string
@@ -1765,7 +1830,7 @@ components:
     MapSelection:
       type: object
       additionalProperties: false
-      required: [id, expiresAt, dataGeneration, range, bounds, workouts, focusedWorkoutId, routeTileUrl, coverageTileUrl]
+      required: [id, expiresAt, dataGeneration, coverageDisplayPolicy, coverageDisplayRevision, range, bounds, workouts, focusedWorkoutId, routeTileUrl, coverageTileUrl]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         expiresAt: {type: string, format: date-time}
@@ -1776,6 +1841,13 @@ components:
         focusedWorkoutId: {allOf: [{$ref: '#/components/schemas/CompactUUID'}], nullable: true}
         routeTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/route-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
         coverageTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/coverage-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
+        coverageDisplayPolicy:
+          type: string
+          description: Versioned canonical coverage display identity policy bound to this selection.
+        coverageDisplayRevision:
+          type: integer
+          format: int64
+          description: Account coverage display revision bound to this selection.
     ExactMetric:
       type: object
       additionalProperties: false

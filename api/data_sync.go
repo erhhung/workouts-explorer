@@ -129,6 +129,10 @@ func readDataSyncJob(ctx context.Context, tx pgx.Tx, active bool) (*generated.Jo
 		return nil, err
 	}
 	item.Id, item.Trigger = compactUUID(id), jobTrigger(kind)
+	if display := ingestPresentationStatus(kind, string(item.Status), item.Progress); display != string(item.Status) {
+		value := generated.JobDisplayStatus(display)
+		item.DisplayStatus = &value
+	}
 	return &item, nil
 }
 

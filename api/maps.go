@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,9 +27,13 @@ import (
 )
 
 const (
-	mapSelectionLifetime = 30 * time.Minute
-	maximumTileBytes     = 5 << 20
+	mapSelectionLifetime        = 30 * time.Minute
+	maximumTileBytes            = 5 << 20
+	maximumBulkCoverageEntities = 50000
+	maximumBulkCoverageBytes    = 64 << 20
 )
+
+var errBulkCoverageLimit = errors.New("bulk road coverage exceeds 50000 entities or 64 MiB of JSON; select a smaller date range")
 
 func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, params generated.CreateMapSelectionParams) {
 	session, ok := s.requireSession(w, r, "user")
@@ -122,11 +128,22 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 			return
 		}
 	}
+	var contextID uuid.UUID
+	var displayRevision int64
+	var policyVersion string
+	if err := tx.QueryRow(r.Context(), `SELECT context_id,display_revision,policy_version
+		FROM app.prepare_coverage_display_context($1,$2,$3,$4)`, accountID, session.sessionID, selectionID, generation).
+		Scan(&contextID, &displayRevision, &policyVersion); err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
 	response, err := readMapSelection(r.Context(), tx, accountID, selectionID, generation, expiresAt, resolved, focusedWorkoutID)
 	if err != nil {
 		writeMapUnavailable(w, r)
 		return
 	}
+	response.CoverageDisplayPolicy = policyVersion
+	response.CoverageDisplayRevision = displayRevision
 	if err := tx.Commit(r.Context()); err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) {
@@ -394,7 +411,8 @@ func (s *Server) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "coverage path sort is invalid")
 		return
 	}
-	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{})
+	// Keep generation validation and coverage reads on the same snapshot.
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		writeMapUnavailable(w, r)
 		return
@@ -417,6 +435,23 @@ func (s *Server) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Re
 	if params.Search != nil && *params.Search != "" {
 		value := *params.Search
 		search = &value
+	}
+	if params.Bulk != nil && *params.Bulk {
+		body, err := queryBulkRoadCoveragePaths(r.Context(), tx,
+			[]any{*session.accountID, session.sessionID, id, params.Generation, search}, orderBy)
+		if errors.Is(err, errBulkCoverageLimit) {
+			writeValidationProblem(w, r, http.StatusUnprocessableEntity, err.Error(),
+				generated.ValidationError{Field: "bulk", Code: "limit"})
+			return
+		}
+		if err != nil || tx.Commit(r.Context()) != nil {
+			writeMapUnavailable(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+		return
 	}
 	arguments := []any{*session.accountID, session.sessionID, id, params.Generation, search, pageSize, (page - 1) * pageSize}
 	var total int64
@@ -448,6 +483,58 @@ func (s *Server) ListMapSelectionCoveragePaths(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, generated.RoadCoverageList{Items: items, Pagination: pagination(page, pageSize, total)})
+}
+
+func queryBulkRoadCoveragePaths(ctx context.Context, tx pgx.Tx, arguments []any, orderBy string) ([]byte, error) {
+	// The extra row detects overflow without a separate count/function evaluation.
+	rows, err := tx.Query(ctx, `SELECT entity_id,entity_kind,broad_class,name,locality_name,region_id,region_name,
+		range_workout_count,range_first_date,range_first_workout_id,range_latest_date,range_latest_workout_id,
+		all_time_workout_count,all_time_first_date,all_time_first_workout_id,all_time_latest_date,all_time_latest_workout_id,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude
+		FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5) ORDER BY `+orderBy+` LIMIT $6`,
+		append(arguments, maximumBulkCoverageEntities+1)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var body bytes.Buffer
+	body.WriteString(`{"items":[`)
+	total := int64(0)
+	for rows.Next() {
+		if total == maximumBulkCoverageEntities {
+			return nil, errBulkCoverageLimit
+		}
+		var value roadCoverageRow
+		if err := rows.Scan(value.scanDestinations()...); err != nil {
+			return nil, err
+		}
+		item, err := json.Marshal(value.entity())
+		if err != nil {
+			return nil, err
+		}
+		if body.Len()+len(item)+1 > maximumBulkCoverageBytes {
+			return nil, errBulkCoverageLimit
+		}
+		if total > 0 {
+			body.WriteByte(',')
+		}
+		body.Write(item)
+		total++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	metadata, err := json.Marshal(pagination(1, maximumBulkCoverageEntities, total))
+	if err != nil {
+		return nil, err
+	}
+	body.WriteString(`],"pagination":`)
+	body.Write(metadata)
+	body.WriteByte('}')
+	if body.Len() > maximumBulkCoverageBytes {
+		return nil, errBulkCoverageLimit
+	}
+	return body.Bytes(), nil
 }
 
 type roadCoverageRow struct {
@@ -494,6 +581,49 @@ func setNullableString(target interface {
 	}
 }
 
+func (s *Server) GetMapSelectionCoverageEntityStats(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, entityKind string, entityIDInput generated.UUIDInput, params generated.GetMapSelectionCoverageEntityStatsParams) {
+	session, ok := s.requireSession(w, r, "user")
+	if !ok {
+		return
+	}
+	selectionID, selectionValid := parseCompactUUID(string(mapSelectionID))
+	entityID, entityValid := parseCompactUUID(string(entityIDInput))
+	if !selectionValid || !entityValid || entityKind != "path" && entityKind != "park" || params.Generation < 1 {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "coverage entity identifier or generation is invalid")
+		return
+	}
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	entity, err := queryRoadCoverageEntityStats(r.Context(), tx, *session.accountID, session.sessionID, selectionID, params.Generation, entityKind, entityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "coverage entity is unavailable")
+		return
+	}
+	if err != nil || tx.Commit(r.Context()) != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, entity)
+}
+
+func queryRoadCoverageEntityStats(ctx context.Context, tx pgx.Tx, accountID, sessionID, selectionID uuid.UUID, generation int64, entityKind string, entityID uuid.UUID) (generated.RoadCoverageEntity, error) {
+	var value roadCoverageRow
+	err := tx.QueryRow(ctx, `SELECT entity_id,entity_kind,broad_class,name,locality_name,region_id,region_name,
+		range_workout_count,range_first_date,range_first_workout_id,range_latest_date,range_latest_workout_id,
+		all_time_workout_count,all_time_first_date,all_time_first_workout_id,all_time_latest_date,all_time_latest_workout_id,
+		minimum_longitude,minimum_latitude,maximum_longitude,maximum_latitude
+		FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,$5,$6)`,
+		accountID, sessionID, selectionID, generation, entityKind, entityID).Scan(value.scanDestinations()...)
+	if err != nil {
+		return generated.RoadCoverageEntity{}, err
+	}
+	return value.entity(), nil
+}
+
 func (s *Server) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, entityKind string, entityIDInput generated.UUIDInput, params generated.GetMapSelectionCoverageEntityParams) {
 	session, ok := s.requireSession(w, r, "user")
 	if !ok {
@@ -505,25 +635,38 @@ func (s *Server) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "coverage entity identifier is invalid")
 		return
 	}
-	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{})
+	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		writeMapUnavailable(w, r)
 		return
 	}
 	defer tx.Rollback(r.Context())
+	detail, err := queryRoadCoverageEntityDetail(r.Context(), tx, *session.accountID, session.sessionID, selectionID, params.Generation, entityKind, entityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "coverage entity is unavailable")
+		return
+	}
+	if err != nil || tx.Commit(r.Context()) != nil {
+		writeMapUnavailable(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+const coverageEntityDetailSQL = `SELECT * FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)`
+
+func queryRoadCoverageEntityDetail(ctx context.Context, tx pgx.Tx, accountID, sessionID, selectionID uuid.UUID, generation int64, entityKind string, entityID uuid.UUID) (generated.RoadCoverageDetail, error) {
+	// This gated plan otherwise spends more time compiling JIT than executing.
+	if _, err := tx.Exec(ctx, `SET LOCAL jit=off`); err != nil {
+		return generated.RoadCoverageDetail{}, err
+	}
 	var value roadCoverageRow
 	var geometry []byte
 	var fit generated.RouteBounds
 	destinations := append(value.scanDestinations(), &geometry, &fit.MinimumLongitude, &fit.MinimumLatitude, &fit.MaximumLongitude, &fit.MaximumLatitude)
-	err = tx.QueryRow(r.Context(), `SELECT * FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)`,
-		*session.accountID, session.sessionID, selectionID, params.Generation, entityKind, entityID).Scan(destinations...)
-	if err == pgx.ErrNoRows {
-		writeProblem(w, r, http.StatusNotFound, "Not Found", "coverage entity is unavailable")
-		return
-	}
+	err := tx.QueryRow(ctx, coverageEntityDetailSQL, accountID, sessionID, selectionID, generation, entityKind, entityID).Scan(destinations...)
 	if err != nil {
-		writeMapUnavailable(w, r)
-		return
+		return generated.RoadCoverageDetail{}, err
 	}
 	entity := value.entity()
 	detail := generated.RoadCoverageDetail{
@@ -536,11 +679,10 @@ func (s *Server) GetMapSelectionCoverageEntity(w http.ResponseWriter, r *http.Re
 		AllTimeFirstWorkoutId: entity.AllTimeFirstWorkoutId, AllTimeLatestDate: entity.AllTimeLatestDate,
 		AllTimeLatestWorkoutId: entity.AllTimeLatestWorkoutId, Bounds: entity.Bounds, FitBounds: fit,
 	}
-	if err := detail.Geometry.UnmarshalJSON(geometry); err != nil || tx.Commit(r.Context()) != nil {
-		writeMapUnavailable(w, r)
-		return
+	if err := detail.Geometry.UnmarshalJSON(geometry); err != nil {
+		return generated.RoadCoverageDetail{}, err
 	}
-	writeJSON(w, http.StatusOK, detail)
+	return detail, nil
 }
 
 func (s *Server) GetMapSelectionRouteTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int) {

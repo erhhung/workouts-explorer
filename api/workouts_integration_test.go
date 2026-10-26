@@ -560,7 +560,8 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 		err = tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, jobID, childLease, database.SupportedSchemaVersion).Scan(&fenced)
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at) VALUES($1,$2,$3,$4,'archive/fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, fileID, accountID, sourceID, jobID, hash[:])
+		// Owner reads are valid during import; completed files require a receipt manifest.
+		_, err = tx.Exec(ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at) VALUES($1,$2,$3,$4,'archive/fixture.json',1,$5,'processing',transaction_timestamp())`, fileID, accountID, sourceID, jobID, hash[:])
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,'cycling','Cycling'),($3,$2,'running','Running')`, cyclingID, accountID, runningID)

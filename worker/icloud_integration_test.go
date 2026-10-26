@@ -153,10 +153,10 @@ func TestICloudWorkerPostgreSQL(t *testing.T) {
 			defer rollbackICloudTestTx(tx)
 			assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.source_files WHERE job_id=$1 AND relative_name='HealthAutoExport-2026-08-01.json' AND state='failed' AND failure_code=$2`, job.childID, failureCode)
 			assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.source_files WHERE job_id=$1 AND relative_name='HealthAutoExport-2026-08-02.json' AND state='succeeded'`, job.childID)
-			assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.job_progress WHERE job_id=$1 AND files_discovered=2 AND files_failed=1 AND files_succeeded=1`, job.childID)
+			assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.job_progress WHERE job_id=$1 AND files_discovered=2 AND files_failed=1 AND files_succeeded=1 AND workouts_created>0`, job.childID)
 			assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.sources WHERE id=$1 AND status='connected' AND generation=1`, fixture.sourceID)
 			assertCountQuery(t, tx, 0, `SELECT count(*) FROM app.ingest_file_slots WHERE job_id=$1`, job.childID)
-			assertTerminalIngest(t, tx, job, "failed", "failed")
+			assertTerminalIngest(t, tx, job, "failed", "partially_succeeded")
 		})
 	}
 
@@ -599,6 +599,11 @@ func readICloudWorkerConfig(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.K
 
 func enqueueICloudWorkerJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture, mode ingestMode) ingestJobFixture {
 	t.Helper()
+	return enqueueICloudWorkerPolicyJob(t, db, keys, fixture, mode, nil, nil)
+}
+
+func enqueueICloudWorkerPolicyJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture, mode ingestMode, reprocessAllFiles *bool, retryOf *ingestJobFixture) ingestJobFixture {
+	t.Helper()
 	config, generation := readICloudWorkerConfig(t, db, keys, fixture)
 	_, canonical, _ := sourceconfig.CanonicalizeICloud(config)
 	job := ingestJobFixture{parentID: uuid.New(), childID: uuid.New()}
@@ -616,16 +621,27 @@ func enqueueICloudWorkerJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.K
 		if mode == ingestBounded {
 			parameters["startDate"], parameters["endDate"] = "0001-01-01", "9999-12-31"
 		}
-		if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,account_id,kind,priority) VALUES($1,$2,'manual_ingest',80)`, job.parentID, fixture.accountID); err != nil {
+		if reprocessAllFiles != nil {
+			parameters["reprocessAllFiles"] = *reprocessAllFiles
+		}
+		var priorParent any
+		if retryOf != nil {
+			priorParent = retryOf.parentID
+		}
+		if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,account_id,kind,priority,retry_of_job_id) VALUES($1,$2,'manual_ingest',80,$3)`, job.parentID, fixture.accountID, priorParent); err != nil {
 			t.Fatal(err)
 		}
 	}
 	encoded, _ := json.Marshal(parameters)
 	var parent any
+	var priorChild any
 	if mode != "" {
 		parent = job.parentID
 	}
-	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,account_id,parent_job_id,kind,priority,parameters) VALUES($1,$2,$3,$4,80,$5)`, job.childID, fixture.accountID, parent, kind, encoded); err != nil {
+	if retryOf != nil {
+		priorChild = retryOf.childID
+	}
+	if _, err := tx.Exec(context.Background(), `INSERT INTO app.jobs(id,account_id,parent_job_id,kind,priority,parameters,retry_of_job_id) VALUES($1,$2,$3,$4,80,$5,$6)`, job.childID, fixture.accountID, parent, kind, encoded, priorChild); err != nil {
 		t.Fatal(err)
 	}
 	if mode != "" {

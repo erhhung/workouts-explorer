@@ -399,7 +399,7 @@ func TestAdaptiveRecoversActualGraphExpansionLimits(t *testing.T) {
 			points := fixtureObservations(128)
 			snapshot := &windowSnapshot{}
 			for i := range points {
-				x := 10 + float64(i)*1000
+				x := 10 + float64(i)*100
 				points[i].Longitude = x / fixtureMetersPerDegree
 				for j := 0; j < 16; j++ {
 					name := fmt.Sprintf("dense/%d/%d", i, j)

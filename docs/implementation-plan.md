@@ -29,6 +29,114 @@ A milestone is complete when:
 - Helm and runtime configuration changes are documented.
 - No source secrets, health values, or GPS coordinates appear in logs or traces.
 
+## Canonical Display Identity (033, Pending Release)
+
+[ADR 0013](decisions/013-canonical-coverage-display-identity.md) is accepted and
+implemented in source, **undeployed**. Live remains backend-42/UI-43, schema/minimum
+runtime **32**, baseline **27**, ledger **0-32**. Source support/schema/minimum
+runtime are **33**, baseline **27**. Applied **001-032 remain immutable**. The older
+click-highlight follow-up is folded into this pending release, not independently
+deployed. The earlier 521-test UI receipt is historical; a focused current run
+passes **219 MapPage tests**, not full new-release verification.
+
+- Verify the generally applicable display key, pinned Unicode policy/UUIDv8 and
+  collision rejection, unnamed nonmerging, mixed park/path presentation and source
+  provenance with synthetic fixtures only. Cover all historical membership,
+  history-only fallback, distinct-workout union, date ties and actual gap-preserving
+  geometry consistently across list/stats/detail/focus/all four tile layers.
+- Verify preparation and cache policy/revision guards, eight soft unreferenced
+  contexts plus active pins, deletion, rollback, deferred all-input invalidation,
+  one revision/generation advance per account/transaction, both READ COMMITTED
+  commit orders and stale Repeatable Read `40001`. Complete full source/race,
+  database-backed readiness and desktop/mobile browser verification separately.
+- Monitor workspace, `/tmp`, NFS and application-PG filesystems/inodes regularly.
+  Keep all dumps/archives under `~/nfs-share/.temp/`, symlinked from the matching
+  private `deploy/internal` bundle, not on constrained workspace storage. Rehearse
+  native migration, preservation, actual-role readiness and matching database/image
+  rollback on a protected actual-backup restore before any live mutation.
+- Retain fresh protected backups and old images, drain incompatible runtimes and
+  coordinate schema/minimum runtime 33 with compatible API/general-worker/Coverage-
+  worker and UI. Explicit MAIN cutover completion and read-only deployed validation
+  are still pending. Preserve TLS/migration/Martin flags/identity, replica policy,
+  auto-sync, admin-password debug, resources, concurrency, timeouts and retries.
+- Warm/rebuild canonical contexts from retained evidence for validation. This is
+  Coverage read-model recomputation, **not new route jobs**: no OSM derivation,
+  matcher or path-policy bump, and **no OSM regeneration/download/rematch needed**.
+  Do not start imports, provider checks or OSM work to adopt the display policy.
+
+See [pending progress](development-progress.md#canonical-display-identity-033-source-only)
+and [migration gates](database-migrations.md#canonical-coverage-display-033-source-only).
+
+## Coverage Display Optimization (032)
+
+The current approved optimization retains all Road Coverage filtering, sorting and
+pagination in the browser. One bounded bulk request replaces the repeated page
+fetches and duplicate full-result counts. Migration 032 precomputes compact
+matched-evidence partials, independent regional context and park bounds; live
+eligibility/metadata joins and entity/workout deduplication precede summarization
+for arbitrary date ranges. Dirty-key maintenance batches replacement work at
+transaction commit, including underlying evidence and segment updates.
+
+Implementation and synthetic verification pass; the technical implementation is
+now deployed with released/applied immutable 032, schema/minimum runtime **32**,
+marker **27** and ledger **0-32**. All four application images were rebuilt with
+native artifacts and published with strict TLS verification. A standalone
+restricted native migration preceded coordinated backend **42** and UI **43**,
+using full values and `--no-hooks` while preserving separate Martin, original data
+and configuration. Full pre-32 backups and old images remain retained; image-only
+rollback is unsupported. Scripted deployed-browser verification passed; owner
+acceptance/milestone and capacity remain separate. See
+[architecture](architecture.md#coverage-display-precomputations-requires-32) and
+[current progress](development-progress.md#coverage-display-optimization).
+
+## Ingest Reprocessing Follow-Up (031)
+
+The preceding approved follow-up covers implementation and coordinated deployment of
+[Ingest Reprocessing](ingest-reprocessing.md), not design-only exploration.
+The compatible API/worker/UI implementation is now deployed at schema/minimum
+runtime **32** in the accepted backend-42/UI-43 release. The original 031 contract
+requirements below retain their introduction scope; they are not instructions to
+downgrade the current runtime. Scripted deployed-browser verification passed;
+owner acceptance/milestone and capacity remain separate. The separate all-popups
+**Dismiss** requirement is outside this ingest design scope and is not accepted
+by the deployment receipt.
+
+- Default new bounded jobs to metadata skipping within inclusive export-file
+  dates; retain existing incremental, ownership-epoch and account/source rules.
+- Add the bounded-only unchecked **Reprocess all files in this date range**
+  checkbox below both date inputs and above Start sync, with the exact hover/focus
+  tooltip in the contract. `IngestCreate.reprocessAllFiles` is an optional boolean
+  only with both valid ordered dates; even false presence is invalid incrementally.
+- Persist explicit false/true on new bounded parents/children. Keep absent flags
+  on existing bounded jobs as force, without another contract marker, parameter
+  backfill or frozen-manifest rewrite. Preserve queued historical compatibility.
+- Use API coalescing v2 to separate force, dates, sorted sources/generations and
+  fresh roots/retry parent/source-child ancestry, with existing sorted source-row
+  locks and active uniqueness, not a new lock.
+- Always check valid same-file/metadata ancestor-path success before force on
+  retry; exclude siblings/other branches. Forced retries process failed, unreached
+  or changed files despite unrelated older inventory. Non-forced retries retain
+  valid inventory skips, including original intentional skips.
+- Protect private per-file `observed_identity`/`ownership_blocked_epoch` receipts
+  stamped from the admitted commit capability and exact frozen manifest. Ancestor
+  proof must survive later inventory-pointer/blocker changes; legacy NULL receipts
+  require sufficient current inventory/manifest proof or a safe extra download.
+  Retain immutable terminal checkpoints and no-double-count recovery.
+- Preserve workout deduplication and route identity; force is not guaranteed
+  Coverage rematching. Keep metadata fingerprints distinct from parsed-byte local
+  SHA-256. Pinned rclone iCloud 1.75.2 has no remote hashes/free MD5; unchanged
+  ID/size/mtime overwrites can go undetected without explicit reprocessing.
+- Verify omitted/false/true inputs, invalid presence/type/dates, isolated coalescing,
+  both retry policies, durable/legacy proof, stale blockers, frozen recovery,
+  counter restoration, identity preservation and checkbox hover/keyboard access
+  with synthetic January 2025 inputs. Preserve schema 030 outcomes: an unsuccessful
+  zero-created/zero-updated run stays Failed even with zero failed files.
+- Take backups, use native migration 031 with applied 001-030 immutable, and
+  coordinate compatible API/general-worker/Coverage-worker images and matching UI.
+  Source support/schema/minimum runtime become 31, marker stays 27. Verify history,
+  role readiness and queued-job compatibility; do not claim live success from
+  disposable tests or attempt an incompatible image-only rollback.
+
 ## Architecture Decision Milestones
 
 Architecture decisions are accepted at the last responsible moment, before the
@@ -192,7 +300,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 ### Vertical slice
 
 - Expand `/api/ingest` to selected source sets and parent/child aggregation.
-- Implement incremental and bounded reprocessing semantics.
+- Implement incremental and bounded metadata skipping, with explicit bounded reprocessing under the 031 follow-up contract.
 - Coalesce equivalent active jobs by normalized parameters.
 - Implement per-account, per-worker, and PostgreSQL-coordinated global file limits.
 - Expand snapshot cancellation, lease-recovery, and startup-scavenging behavior
@@ -208,8 +316,8 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 
 - A three-source account never processes more than two files concurrently by default.
 - A bounded range does not stage all files at once.
-- Incremental sync skips unchanged files; bounded Manual Sync reprocesses them.
-- One failed source yields partially_succeeded when another succeeds.
+- Incremental and new bounded sync skip unchanged successful metadata; explicit bounded reprocessing opts into the old force behavior, subject to valid ancestor-success skips on retry.
+- An unsuccessful ingest yields partially_succeeded only with created or updated workouts under schema 030; reads/skips/unchanged workouts do not qualify.
 - Parent retry includes only failed children.
 - Source update does not affect an active job snapshot.
 - Source deletion cancels affected jobs and clears snapshots.
@@ -225,6 +333,10 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 - Diagnostic redaction tests using deliberately hostile upstream errors
 
 ### Completion evidence (8/6/2026)
+
+These are historical observations **prior to 031**. In particular, the bounded
+one-day reprocessing observation retains the original force default; it does not
+describe the new default or become a synthetic replacement observation.
 
 - Schema 1-to-6 migration, upgrade, tenant isolation, job-state, scheduler, file-slot, recovery, API, worker, and UI suites pass against PostgreSQL 18.
 - The `xdev` deployment completed a two-source parent sync, reused an equivalent active request, and persisted independent source-child progress and diagnostics.
@@ -703,6 +815,10 @@ not removed requirements or a production-readiness claim.
 
 ### Approved Source Adoption (Requires 26)
 
+The implementation/deployment-status paragraph below is a historical checkpoint
+**prior to 031**. The current [031 follow-up](#ingest-reprocessing-follow-up-031)
+supersedes its version/status statements, not its recorded verification boundaries.
+
 Latest migration code is **26**. The approved identity/adoption feature requires
 schema and minimum runtime **26**, with migrations 024-026 and coordinated API,
 general-worker and Coverage-worker images. Integration is still in progress;
@@ -736,7 +852,8 @@ The new approved contract supersedes the earlier source-scoped provider-ID rule:
   identical metadata/bytes. Same-job manifest actions remain frozen, terminal
   file checkpoints never reopen and recovery counters/events do not double-count.
   Deletion starts no immediate sync; the next auto-sync or a new manual job is
-  needed. Bounded manual jobs already force eligible files to reprocess.
+  needed. Prior to 031, bounded manual jobs already forced eligible files to
+  reprocess; new bounded defaults now use metadata skipping, with force opt-in.
 - Every successful source-switch adoption records a durable Coverage request in
   the same file transaction, including unchanged content/route. Post-commit ingest
   repair or leased reconciliation consumes the outbox, with event/lease/input
@@ -748,9 +865,9 @@ The new approved contract supersedes the earlier source-scoped provider-ID rule:
   6m/10m/15m timeouts; this feature does not increase capacity or certify cloud smoke.
 
 Implementation interfaces are in
-[`024_provider_workout_identity.sql`](../api/migrations/024_provider_workout_identity.sql),
-[`025_owner_aware_source_inventory.sql`](../api/migrations/025_owner_aware_source_inventory.sql)
-and [`026_adopted_workout_coverage.sql`](../api/migrations/026_adopted_workout_coverage.sql).
+[`024_provider_workout_identity.sql`](../api/migrations/sql/024_provider_workout_identity.sql),
+[`025_owner_aware_source_inventory.sql`](../api/migrations/sql/025_owner_aware_source_inventory.sql)
+and [`026_adopted_workout_coverage.sql`](../api/migrations/sql/026_adopted_workout_coverage.sql).
 The worker uses `app.resolve_ingest_workout_identity`,
 `app.read_ingest_candidate_actions`, `app.record_successful_source_object` and
 `app.record_adopted_workout_coverage_refresh`; `replayAdoptedCoverage` consumes
@@ -806,8 +923,10 @@ activation/rollout remain pending.
 ### Accepted Decisions (10/11/2026)
 
 The source-scoped identity decision here is historical and superseded by
-[Approved Source Adoption](#approved-source-adoption-requires-26); other decisions
-and their original verification boundaries remain unchanged.
+[Approved Source Adoption](#approved-source-adoption-requires-26). These decisions
+are **prior to 031**: its bounded-force default is superseded by the opt-in policy
+in [Ingest Reprocessing](ingest-reprocessing.md). The observations and original
+verification boundaries remain historical evidence, not new verification.
 
 - Use a job-scoped native rclone 1.75.2 CLI, not a daemon/RC service or embedded
   library. Pin release archives and verify separate amd64/arm64 SHA-256 values.

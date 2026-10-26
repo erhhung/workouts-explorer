@@ -44,6 +44,7 @@ type API struct {
 	TileServerURL          string
 	SessionLifetime        time.Duration
 	PasswordMinimum        int
+	AllowAdminPassword     bool
 	PageSizeMaximum        int
 	RateLimitKey           []byte
 	TrustedProxyCIDRs      []*net.IPNet
@@ -140,6 +141,10 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	allowAdminPassword, err := boolean("ALLOW_ADMIN_PASSWORD", false)
+	if err != nil {
+		return API{}, err
+	}
 	pageMaximum, err := integerRange("PAGE_SIZE_MAXIMUM", 100, 25, 1000)
 	if err != nil {
 		return API{}, err
@@ -227,6 +232,7 @@ func LoadAPI() (API, error) {
 		TileServerURL:          env("TILE_SERVER_URL", "http://127.0.0.1:3000"),
 		SessionLifetime:        sessionLifetime,
 		PasswordMinimum:        passwordMinimum,
+		AllowAdminPassword:     allowAdminPassword,
 		PageSizeMaximum:        pageMaximum,
 		RateLimitKey:           rateKey,
 		TrustedProxyCIDRs:      trustedProxies,

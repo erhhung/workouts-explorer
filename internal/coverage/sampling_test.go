@@ -62,3 +62,37 @@ func metersLongitude(meters float64) float64 {
 	return meters / earthRadiusMeters * 180 / 3.141592653589793
 }
 func metersLatitude(meters float64) float64 { return metersLongitude(meters) }
+
+func TestGeographicGapReason(t *testing.T) {
+	start := time.Unix(1, 0).UTC()
+	a := GeographicObservation{Time: start}
+	for _, tc := range []struct {
+		name string
+		a, b GeographicObservation
+		want SplitReason
+	}{
+		{"below 200 meters", a, GeographicObservation{Longitude: metersLongitude(199.999)}, ""},
+		{"exactly 200 meters", a, GeographicObservation{Longitude: metersLongitude(200)}, ""},
+		{"above 200 meters", a, GeographicObservation{Longitude: metersLongitude(200.001)}, SplitSpatial},
+		{"exactly 30 seconds", a, GeographicObservation{Time: start.Add(30 * time.Second)}, ""},
+		{"above 30 seconds", a, GeographicObservation{Time: start.Add(30*time.Second + time.Nanosecond)}, SplitTemporal},
+		{"backwards", a, GeographicObservation{Time: start.Add(-time.Nanosecond)}, SplitTemporal},
+		{"equal", a, a, ""},
+		{"missing first time", GeographicObservation{}, GeographicObservation{Time: start.Add(time.Hour)}, ""},
+		{"missing second time", a, GeographicObservation{}, ""},
+		{"both times missing", GeographicObservation{}, GeographicObservation{}, ""},
+		{"missing time still spatial", a, GeographicObservation{Longitude: metersLongitude(201)}, SplitSpatial},
+		{"temporal first", a, GeographicObservation{Time: start.Add(time.Hour), Longitude: metersLongitude(201)}, SplitTemporal},
+		{"backwards first", a, GeographicObservation{Time: start.Add(-time.Second), Longitude: metersLongitude(201)}, SplitTemporal},
+		{"antimeridian east", GeographicObservation{Longitude: 179.9999}, GeographicObservation{Longitude: -179.9999}, ""},
+		{"antimeridian west", GeographicObservation{Longitude: -179.9999}, GeographicObservation{Longitude: 179.9999}, ""},
+		{"antimeridian gap", GeographicObservation{Longitude: 179.998}, GeographicObservation{Longitude: -179.998}, SplitSpatial},
+		{"pair local latitude", GeographicObservation{Latitude: 80}, GeographicObservation{Latitude: 80, Longitude: metersLongitude(1000)}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GeographicGapReason(tc.a, tc.b, ExperimentalRules()); got != tc.want {
+				t.Fatalf("reason=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}

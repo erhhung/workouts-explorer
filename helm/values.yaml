@@ -89,6 +89,8 @@ api:
     key: ca.crt
   # -- Minimum password length, including for the optional bootstrap administrator.
   passwordMinimumLength: 12
+  # -- WARNING: Grants administrator access to ALL user accounts using the administrator password. Enable judiciously ONLY for development/debugging, NEVER in production; independent of api.localDevelopment. Disable afterward and explicitly log out/revoke debug sessions.
+  allowAdminPassword: false
   # -- Authentication session lifetime as a Go duration.
   sessionLifetime: 6h
   # -- Maximum API pagination page size.

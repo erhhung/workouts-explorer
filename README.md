@@ -15,15 +15,15 @@ and local or network Health Auto Export imports. Imported workouts appear
 in a responsive summary with consistent details while repeat imports avoid
 duplicates.
 
-![Workout history and activity summaries](images/workouts-log1.png)
+![Workout history and activity log](images/workout-log1.png)
 
-![Workout routes on the interactive map](images/routes-mode1.png)
+![Workout routes on interactive map](images/routes-map1.png)
 
-![Road and trail coverage map](images/coverage-mode1.png)
+![Road coverage on interactive map](images/coverage-map1.png)
 
-![Detailed coverage map](images/coverage-mode2.png)
+![Searchable roads and statistics](images/road-coverage1.png)
 
-![Road coverage statistics](images/road-coverage1.png)
+![Manual and automated data sync](images/data-sync1.png)
 
 Contributor setup, database verification, and packaging guidance are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -41,7 +41,7 @@ For development status, see [Development Progress](docs/development-progress.md)
 | ✅ | 5  | Import history; route and point downloads; safe individual workout and date-range deletions |
 | ✅ | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
 | ✅ | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
-| 🔳 | 8  | Private iCloud setup; remote workout imports; clear prompts when access expires |
+| ✅ | 8  | Private iCloud setup; remote workout imports; clear prompts when access expires |
 | 🔳 | 9  | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
 | 🔳 | 10 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
 | 🔳 | 11 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |

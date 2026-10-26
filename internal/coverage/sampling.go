@@ -40,7 +40,7 @@ func SampleGeographicObservations(input []GeographicObservation, rules SamplingR
 			headingQualityBand(input[i-1].HeadingAccuracy) != headingQualityBand(input[i].HeadingAccuracy) {
 			keep = true
 		}
-		if geographicGap(input[i-1], input[i], matcherRules) || geographicGap(input[i], input[i+1], matcherRules) {
+		if GeographicGapReason(input[i-1], input[i], matcherRules) != "" || GeographicGapReason(input[i], input[i+1], matcherRules) != "" {
 			keep = true
 		}
 		if geographicTurn(input[i-1], input[i], input[i+1], rules) {
@@ -60,11 +60,16 @@ func geographicDistance(a, b GeographicObservation) float64 {
 	return distance(Point{}, localPoint(origin, b.Longitude, b.Latitude))
 }
 
-func geographicGap(a, b GeographicObservation, rules Rules) bool {
+// GeographicGapReason uses the sampling predicate's pair-local projection and
+// gives temporal gaps precedence over spatial gaps.
+func GeographicGapReason(a, b GeographicObservation, rules Rules) SplitReason {
 	if !a.Time.IsZero() && !b.Time.IsZero() && (b.Time.Before(a.Time) || b.Time.Sub(a.Time).Seconds() > rules.MaxTemporalGap) {
-		return true
+		return SplitTemporal
 	}
-	return geographicDistance(a, b) > rules.MaxSpatialGapMeters
+	if geographicDistance(a, b) > rules.MaxSpatialGapMeters {
+		return SplitSpatial
+	}
+	return ""
 }
 
 func geographicTurn(a, b, c GeographicObservation, rules SamplingRules) bool {

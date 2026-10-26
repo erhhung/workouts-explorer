@@ -10,6 +10,21 @@ for (const declaration of ["position: absolute", "inset: 0", "width: 100%", "hei
   if (!mapHost.includes(declaration))
     throw new Error(`Map host must declare ${declaration} with greater specificity than MapLibre`);
 
+if (!/\.map-stage\s*\{[^}]*position:\s*relative/.test(css))
+  throw new Error("Map overlays must be positioned relative to the map stage");
+for (const [, declarations] of css.matchAll(
+  /(?:\.map-stage|\.map-stage\s*>\s*\.map-canvas\.maplibregl-map)\s*\{([^}]*)\}/g,
+))
+  if (
+    /(?:^|;)\s*z-index:\s*(?!auto\s*(?:;|$))/.test(declarations) ||
+    /(?:^|;)\s*(?:isolation|transform|translate|rotate|scale|filter|backdrop-filter|perspective|contain|will-change|opacity):/.test(
+      declarations,
+    )
+  )
+    throw new Error(
+      "Map stage and canvas host must not trap popup stacking below sibling overlays",
+    );
+
 if (
   !/\.map-page\s*\{[^}]*height:\s*calc\(100dvh\s*-\s*4\.75rem\)[^}]*min-height:\s*0[^}]*overflow:\s*hidden/.test(
     css,
@@ -106,14 +121,47 @@ if (
   !/@media \(min-width:\s*48rem\)[\s\S]*\.map-sidebar\s*\{[^}]*padding:\s*var\(--space-4\)/.test(
     css,
   ) ||
-  !/@media \(min-width:\s*48rem\)[\s\S]*\.coverage-diagnostic-card\s*\{[^}]*top:\s*var\(--space-4\)[^}]*left:\s*var\(--space-4\)/.test(
+  !/\.map-stage\s*\{[^}]*--map-overlay-inset:\s*var\(--space-3\)/.test(css) ||
+  !/@media \(min-width:\s*48rem\)[\s\S]*\.map-stage\s*\{[^}]*--map-overlay-inset:\s*var\(--space-4\)/.test(
     css,
   ) ||
-  !/@media \(min-width:\s*48rem\)[\s\S]*\.coverage-overview-card\s*\{[^}]*top:\s*var\(--space-4\)[^}]*left:\s*var\(--space-4\)/.test(
+  !/\.coverage-diagnostic-card\s*\{[^}]*top:\s*var\(--map-overlay-inset\)[^}]*left:\s*var\(--map-overlay-inset\)/.test(
+    css,
+  ) ||
+  !/\.coverage-overview-card\s*\{[^}]*top:\s*var\(--map-overlay-inset\)[^}]*left:\s*var\(--map-overlay-inset\)/.test(
+    css,
+  ) ||
+  !/\.map-canvas \.maplibregl-ctrl-top-right\s*\{[^}]*margin:\s*var\(--map-overlay-inset\)/.test(
+    css,
+  ) ||
+  !/\.map-canvas \.maplibregl-ctrl-top-right \.maplibregl-ctrl\s*\{[^}]*margin:\s*0\s*;/.test(css)
+)
+  throw new Error(
+    "Map cards and zoom controls must share responsive insets without MapLibre's inner margin",
+  );
+if (
+  !/\.coverage-overview-card\s*\{[^}]*width:\s*min\(25rem,\s*calc\(100%\s*-\s*2\s*\*\s*var\(--map-overlay-inset\)\s*-\s*2\.65rem\s*-\s*var\(--space-2\)\)\)/.test(
     css,
   )
 )
-  throw new Error("Map overlay cards must share the desktop control-panel inset");
+  throw new Error(
+    "Coverage overview must reserve the zoom button column and a gutter on narrow maps",
+  );
+if (
+  !/\.map-route-popup\s*\{[^}]*z-index:\s*8\s*;[^}]*pointer-events:\s*none/.test(css) ||
+  !/\.map-route-popup \.maplibregl-popup-content\s*\{[^}]*pointer-events:\s*none/.test(css)
+)
+  throw new Error(
+    "Route and coverage popup roots must sit above map overlays without intercepting hover",
+  );
+if (
+  !/\.map-banner--coverage-detail\s*\{[^}]*z-index:\s*7\s*;[^}]*top:\s*auto\s*;[^}]*bottom:\s*calc\(6rem\s*\+\s*env\(safe-area-inset-bottom\)\)/.test(
+    css,
+  )
+)
+  throw new Error(
+    "Coverage detail feedback must remain above the legend and clear the bottom map controls",
+  );
 if (
   !/\.road-coverage-error-dialog\s*\{[^}]*--road-coverage-error-inset:\s*var\(--space-5\)/.test(
     css,
@@ -177,4 +225,4 @@ if (
 if (!/\.mark\s*\{[^}]*contain:\s*paint[^}]*translateZ\(0\)/.test(css))
   throw new Error("Header mark must keep a stable compositor layer over the WebGL map");
 
-console.log("MapLibre host dimensions verified");
+console.log("MapLibre host dimensions, overlay spacing, and popup stacking verified");

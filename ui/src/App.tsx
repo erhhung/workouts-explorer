@@ -346,7 +346,8 @@ function Login({ returnTo = "/" }: { returnTo?: string }) {
   const mutation = useMutation({
     mutationFn: (credentials: { username: string; password: string }) =>
       api<Session>("/api/session", { method: "POST", body: JSON.stringify(credentials) }),
-    onSuccess: (session) => {
+    onSuccess: async (session) => {
+      await queryClient.cancelQueries({ queryKey: ["session"], exact: true });
       queryClient.setQueryData(["session"], session);
       navigate(returnTo, true);
     },
@@ -1123,7 +1124,8 @@ function Shell({
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const signout = useMutation({
     mutationFn: () => api<void>("/api/session", { method: "DELETE" }, session.csrfToken),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.cancelQueries({ queryKey: ["session"], exact: true });
       queryClient.setQueryData(["session"], null);
       queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
       navigate("/login");
@@ -1207,7 +1209,11 @@ function Shell({
   const avatar = (
     <span className="avatar">
       {!avatarFailed && (
-        <img src="/api/me/avatar?v=2" alt="" onError={() => setAvatarFailed(true)} />
+        <img
+          src={`/api/me/avatar?v=2&identity=${encodeURIComponent(session.identity.id)}`}
+          alt=""
+          onError={() => setAvatarFailed(true)}
+        />
       )}
       <span>{initials}</span>
     </span>
@@ -1431,10 +1437,10 @@ export function App() {
   const expirationHandled = useRef(false);
   const session = useQuery({
     queryKey: ["session"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const cached = queryClient.getQueryData<Session | null>(["session"]);
       try {
-        return await api<Session>("/api/session");
+        return await api<Session>("/api/session", { signal });
       } catch (error) {
         if (
           cached &&

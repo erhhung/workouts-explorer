@@ -242,6 +242,99 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		}
 	})
 
+	t.Run("mixed files retain successes and retry failures", func(t *testing.T) {
+		root := t.TempDir()
+		firstName := "HealthAutoExport-2026-08-01.json"
+		badName := "HealthAutoExport-2026-08-02.json"
+		lastName := "HealthAutoExport-2026-08-03.json"
+		writeSyntheticExport(t, filepath.Join(root, firstName), "60", 2)
+		if err := os.WriteFile(filepath.Join(root, badName), []byte(`{"data":{"workouts":[`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		lastPath := filepath.Join(root, lastName)
+		writeSyntheticExport(t, lastPath, "90", 3)
+		contents, err := os.ReadFile(lastPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(lastPath, bytes.ReplaceAll(contents, []byte("synthetic-provider"), []byte("synthetic-provider-after-failure")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fixture := insertIngestSource(t, setupDB, root)
+		var logs bytes.Buffer
+		runner := testRunner(workerDB, keys, root, &logs)
+		for _, run := range []struct {
+			name         string
+			incremental  bool
+			metadataSkip bool
+			succeeded    int
+			skipped      int
+			eventKind    string
+			ingested     int
+		}{
+			{name: "initial", succeeded: 2, eventKind: "created", ingested: 2},
+			{name: "incremental retries only failed file", incremental: true, skipped: 2},
+			{name: "bounded reprocesses without duplicates", succeeded: 2, eventKind: "matched_unchanged"},
+			{name: "bounded false retries only failed file", metadataSkip: true, skipped: 2},
+		} {
+			t.Run(run.name, func(t *testing.T) {
+				var job ingestJobFixture
+				if run.incremental {
+					job = enqueueIncrementalIngestJob(t, setupDB, keys, fixture)
+				} else if run.metadataSkip {
+					job = enqueueBoundedIngestPolicyJob(t, setupDB, keys, fixture, false)
+				} else {
+					job = enqueueIngestJob(t, setupDB, keys, fixture)
+				}
+				logs.Reset()
+				var processed []string
+				runner.beforeProcessFile = func(file sourceFile) { processed = append(processed, file.name) }
+				assertRanIngest(t, runner, ctx)
+				wantProcessed := []string{firstName, badName, lastName}
+				if run.incremental || run.metadataSkip {
+					wantProcessed = []string{badName}
+				}
+				if !slices.Equal(processed, wantProcessed) {
+					t.Fatalf("processed files=%v, want %v", processed, wantProcessed)
+				}
+				assertIngestLogResults(t, logs.String(), run.succeeded+1, run.succeeded, run.ingested, []string{badName})
+
+				tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+				defer tx.Rollback(ctx)
+				parentStatus, severity, title := "failed", "error", "Data sync failed"
+				message := "Data sync could not be completed because source files could not be processed. You can retry this sync."
+				if run.ingested > 0 {
+					parentStatus, severity, title = "partially_succeeded", "warning", "Data sync partially completed"
+					message = "Data sync partially completed. Some source files could not be processed. Successfully imported data has been kept. You can retry this sync."
+				}
+				assertTerminalIngest(t, tx, job, "failed", parentStatus)
+				assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.jobs WHERE id=$1 AND failure_code='source-file-invalid'`, job.childID)
+				assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.job_progress WHERE job_id=$1
+					AND files_discovered=3 AND files_succeeded=$2 AND files_skipped=$3 AND files_failed=1
+					AND workouts_created+workouts_updated=$4`, job.childID, run.succeeded, run.skipped, run.ingested)
+				assertCountQuery(t, tx, run.succeeded+1, `SELECT count(*) FROM app.source_files WHERE job_id=$1`, job.childID)
+				assertCountQuery(t, tx, run.succeeded, `SELECT count(*) FROM app.source_files WHERE job_id=$1
+					AND state='succeeded' AND relative_name=ANY($2::text[])`, job.childID, []string{firstName, lastName})
+				assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.source_files WHERE job_id=$1
+					AND relative_name=$2 AND state='failed' AND failure_code='source-file-invalid'`, job.childID, badName)
+				assertCountQuery(t, tx, run.succeeded, `SELECT count(*) FROM app.workout_import_events WHERE job_id=$1`, job.childID)
+				assertCountQuery(t, tx, run.succeeded, `SELECT count(*) FROM app.workout_import_events WHERE job_id=$1 AND kind=$2`, job.childID, run.eventKind)
+				assertCountQuery(t, tx, 2, `SELECT count(*) FROM app.workouts WHERE source_id=$1`, fixture.sourceID)
+				assertCountQuery(t, tx, 2, `SELECT count(*) FROM app.workouts WHERE source_id=$1 AND (
+					(provider_id='synthetic-provider' AND provider_duration=60) OR
+					(provider_id='synthetic-provider-after-failure' AND provider_duration=90))`, fixture.sourceID)
+				assertCountQuery(t, tx, 5, `SELECT count(*) FROM app.workout_route_points point JOIN app.workouts workout
+					ON workout.id=point.workout_id AND workout.account_id=point.account_id WHERE workout.source_id=$1`, fixture.sourceID)
+				assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.notifications WHERE job_id=$1`, job.parentID)
+				assertCountQuery(t, tx, 1, `SELECT count(*) FROM app.notifications WHERE job_id=$1
+					AND type='ingest-terminal' AND severity=$2 AND title=$3
+					AND message=$4 AND condition_key='job:'||$1::uuid::text AND subject_type='job' AND subject_id=$1`,
+					job.parentID, severity, title, message)
+				assertCountQuery(t, tx, 0, `SELECT count(*) FROM app.notifications WHERE job_id=$1`, job.childID)
+			})
+		}
+	})
+
 	t.Run("source update does not change child snapshot", func(t *testing.T) {
 		originalRoot := t.TempDir()
 		writeSyntheticExport(t, filepath.Join(originalRoot, "HealthAutoExport-2026-10-01.json"), "60", 1)
@@ -466,6 +559,13 @@ func enqueueIngestJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring
 func enqueueIncrementalIngestJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture) ingestJobFixture {
 	parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1,"mode":"incremental"}`,
 		strings.ToUpper(strings.ReplaceAll(fixture.sourceID.String(), "-", "")))
+	return enqueueIngestJobWithParameters(t, db, keys, fixture, "manual_ingest", "manual_ingest_source", parameters)
+}
+
+func enqueueBoundedIngestPolicyJob(t *testing.T, db *pgxpool.Pool, keys *sourcecrypto.Keyring, fixture ingestSourceFixture, reprocessAllFiles bool) ingestJobFixture {
+	t.Helper()
+	parameters := fmt.Sprintf(`{"sourceId":"%s","generation":1,"mode":"bounded","startDate":"0001-01-01","endDate":"9999-12-31","reprocessAllFiles":%t}`,
+		strings.ToUpper(strings.ReplaceAll(fixture.sourceID.String(), "-", "")), reprocessAllFiles)
 	return enqueueIngestJobWithParameters(t, db, keys, fixture, "manual_ingest", "manual_ingest_source", parameters)
 }
 

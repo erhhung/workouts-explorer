@@ -17,6 +17,7 @@ if ! flock -n 9; then
   [ -r $lock_owner ] && yq < $lock_owner || \
     echo "(workspace information not available)"
   echo
+  sleep 5
   exit 75 # EX_TEMPFAIL
 fi
 

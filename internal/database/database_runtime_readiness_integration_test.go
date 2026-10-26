@@ -450,8 +450,22 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 	if _, err := provider.UpTo(ctx, SupportedSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=28 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
+	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=33 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("current schema metadata: %t %v", preserved, err)
+	}
+	for _, runtime := range []int{30, 31, 32} {
+		t.Run(fmt.Sprintf("current schema rejects obsolete runtime %d", runtime), func(t *testing.T) {
+			tx := begin(t, "workouts_worker", live.account)
+			defer tx.Rollback(ctx)
+			var ready bool
+			if err := tx.QueryRow(ctx, runtimeReadinessSQL, runtime).Scan(&ready); err != nil || ready {
+				t.Fatalf("runtime%d readiness=%t err=%v", runtime, ready, err)
+			}
+			var rejected *pgconn.PgError
+			if err := fence(t, tx, runtime); !errors.As(err, &rejected) || rejected.Code != "55000" {
+				t.Fatalf("runtime%d bypassed min33: %v", runtime, err)
+			}
+		})
 	}
 	t.Run("pipeline minimum borrows current and future fenced runtimes only", func(t *testing.T) {
 		for _, runtime := range []int{SupportedSchemaVersion, SupportedSchemaVersion + 1} {
@@ -469,7 +483,7 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 		_, err := actions(tx, live.job, live.lease, "runtime-capability-worker")
 		var rejected *pgconn.PgError
 		if !errors.As(err, &rejected) || rejected.Code != "55000" {
-			t.Fatalf("standalone26 bypassed min28: %v", err)
+			t.Fatalf("standalone26 bypassed min33: %v", err)
 		}
 	})
 	check := func(t *testing.T, fault string, want bool) {
@@ -513,7 +527,7 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 		}
 	})
 	t.Run("compatible newer schema", func(t *testing.T) {
-		check(t, fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=28 WHERE singleton`, SupportedSchemaVersion+1), true)
+		check(t, fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=%d WHERE singleton`, SupportedSchemaVersion+1, SupportedSchemaVersion), true)
 	})
 	faults := map[string]string{
 		"old schema":               `UPDATE app.schema_metadata SET schema_version=25,minimum_runtime_version=25 WHERE singleton`,

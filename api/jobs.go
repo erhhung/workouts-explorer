@@ -131,7 +131,7 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		}
 		item := generated.JobSummary{Id: compactUUID(*id), Trigger: jobTrigger(kind), Status: generated.JobStatus(jobStatus),
 			Operation: &operation, Progress: progress, StartedAt: started, TerminalAt: terminal, CreatedAt: *created, UpdatedAt: *updated}
-		if displayStatus != nil && *displayStatus == generated.JobDisplayStatusSuperseded {
+		if displayStatus != nil && string(*displayStatus) != jobStatus {
 			item.DisplayStatus = displayStatus
 		}
 		if kind == "coverage_update" {
@@ -444,16 +444,32 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 
 func decodeRetryIngestRange(raw []byte) (ingestRange, error) {
 	var value struct {
-		SourceID   string  `json:"sourceId"`
-		Generation int64   `json:"generation"`
-		Mode       string  `json:"mode"`
-		StartDate  *string `json:"startDate"`
-		EndDate    *string `json:"endDate"`
+		SourceID          string          `json:"sourceId"`
+		Generation        int64           `json:"generation"`
+		Mode              string          `json:"mode"`
+		StartDate         *string         `json:"startDate"`
+		EndDate           *string         `json:"endDate"`
+		ReprocessAllFiles json.RawMessage `json:"reprocessAllFiles"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil || decoder.Decode(&struct{}{}) != io.EOF || value.Generation < 1 {
 		return ingestRange{}, errors.New("invalid ingest parameters")
+	}
+	// Missing on persisted bounded jobs means the original all-files policy,
+	// unlike omission on a new API request, which means false.
+	reprocessAllFiles := true
+	if len(value.ReprocessAllFiles) > 0 {
+		switch string(bytes.TrimSpace(value.ReprocessAllFiles)) {
+		case "true":
+		case "false":
+			reprocessAllFiles = false
+		default:
+			return ingestRange{}, errors.New("invalid ingest parameters")
+		}
+		if value.Mode != "bounded" {
+			return ingestRange{}, errors.New("invalid ingest parameters")
+		}
 	}
 	if value.Mode == "incremental" && value.StartDate == nil && value.EndDate == nil {
 		return ingestRange{mode: "incremental"}, nil
@@ -466,11 +482,12 @@ func decodeRetryIngestRange(raw []byte) (ingestRange, error) {
 	if startErr != nil || endErr != nil || end.Before(start) {
 		return ingestRange{}, errors.New("invalid ingest parameters")
 	}
-	return ingestRange{mode: "bounded", startDate: value.StartDate, endDate: value.EndDate}, nil
+	return ingestRange{mode: "bounded", startDate: value.StartDate, endDate: value.EndDate, reprocessAllFiles: reprocessAllFiles}, nil
 }
 
 func sameIngestRange(left, right ingestRange) bool {
-	if left.mode != right.mode || (left.startDate == nil) != (right.startDate == nil) {
+	if left.mode != right.mode || left.reprocessAllFiles != right.reprocessAllFiles ||
+		(left.startDate == nil) != (right.startDate == nil) || (left.endDate == nil) != (right.endDate == nil) {
 		return false
 	}
 	return left.startDate == nil || (*left.startDate == *right.startDate && *left.endDate == *right.endDate)
@@ -501,14 +518,19 @@ func (s *Server) ListJobFiles(w http.ResponseWriter, r *http.Request, jobID gene
 		return
 	}
 	var total int64
-	err = tx.QueryRow(r.Context(), `SELECT app.count_owned_job_rows($1,'file')`, id).Scan(&total)
+	failuresOnly := params.FailuresOnly != nil && *params.FailuresOnly
+	rowKind := "file"
+	if failuresOnly {
+		rowKind = "failed_file"
+	}
+	err = tx.QueryRow(r.Context(), `SELECT app.count_owned_job_rows($1,$2)`, id, rowKind).Scan(&total)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
 	}
 	rows, err := tx.Query(r.Context(), `SELECT total_count,id,job_id,source_id,source_generation,display_name,source_type,basename,
 		state,size_bytes,processing_started_at,processed_at,failure_code,failure_summary,created_at,updated_at
-		FROM app.read_owned_job_files($1,$2,$3)`, id, pageSize, (page-1)*pageSize)
+		FROM app.read_owned_job_files($1,$2,$3,$4)`, id, pageSize, (page-1)*pageSize, failuresOnly)
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -662,6 +684,21 @@ func requireOwnedIngestJob(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 func coverageParentPresentationStatus(status string, runningChildren int) string {
 	if status == "running" && runningChildren == 0 {
 		return "queued"
+	}
+	return status
+}
+
+// Keep this projection in sync with app.ingest_outcome_status; execution status
+// remains evidence for retries, including failed source children with imports.
+func ingestPresentationStatus(kind, status string, progress generated.JobProgress) string {
+	switch kind {
+	case "manual_ingest", "scheduled_ingest", "manual_ingest_source", "scheduled_ingest_source":
+		if status == "failed" || status == "partially_succeeded" {
+			if progress.WorkoutsCreated > 0 || progress.WorkoutsUpdated > 0 {
+				return "partially_succeeded"
+			}
+			return "failed"
+		}
 	}
 	return status
 }
@@ -1036,6 +1073,10 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 		status = coverageParentPresentationStatus(status, routeStats.Running)
 	}
 	detail.Id, detail.Status, detail.Trigger = compactUUID(id), generated.JobStatus(status), jobTrigger(kind)
+	if display := ingestPresentationStatus(kind, status, progress); display != status {
+		value := generated.JobDisplayStatus(display)
+		detail.DisplayStatus = &value
+	}
 	operation := generated.JobDetailOperationDataSync
 	if kind == "workout_deletion" {
 		operation = generated.JobDetailOperationWorkoutDeletion

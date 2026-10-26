@@ -18,6 +18,23 @@ const checks = [
     /\.info-tip\.is-open > \.tooltip-content[^}]+transition-delay: 0s/.test(styles),
   ],
   ["Data Sync overflow", /\.data-sync-page\s*\{[^}]+overflow: visible/.test(styles)],
+  [
+    "matching Manual sync label gaps",
+    /\.field\s*\{[^}]+gap: var\(--space-2\)/.test(styles) &&
+      /\.manual-card legend\s*\{[^}]+margin-bottom: var\(--space-2\)/.test(styles),
+  ],
+  [
+    "compact reprocess spacing with retained hit area",
+    /\.manual-card form\s*\{[^}]+gap: var\(--space-5\)/.test(styles) &&
+      /\.manual-reprocess\s*\{[^}]+margin-block: calc\(var\(--space-2\) - var\(--space-5\)\) calc\(var\(--sync-card-padding\) - var\(--space-5\)\)/.test(
+        styles,
+      ) &&
+      /\.manual-reprocess-option\s*\{[^}]+min-height: var\(--space-5\)/.test(styles) &&
+      /\.manual-reprocess-option::before\s*\{[^}]+min-height: 2\.75rem/.test(styles) &&
+      styles.includes("padding: var(--sync-card-padding)") &&
+      styles.includes("--sync-card-padding: var(--space-4)") &&
+      styles.includes("--sync-card-padding: var(--space-5)"),
+  ],
   ["narrow schedule layout", styles.includes("@media (max-width: 30rem)")],
   [
     "viewport tooltip width",

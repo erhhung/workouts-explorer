@@ -225,6 +225,8 @@ export interface MapSelection {
   id: string;
   expiresAt: string;
   dataGeneration: number;
+  coverageDisplayPolicy: string;
+  coverageDisplayRevision: number;
   range: { startDate: string; endDate: string };
   bounds: null | {
     minimumLongitude: number;
@@ -678,6 +680,7 @@ export interface IngestCreate {
   sourceIds: string[];
   startDate?: string;
   endDate?: string;
+  reprocessAllFiles?: boolean;
 }
 
 export interface IngestAccepted {

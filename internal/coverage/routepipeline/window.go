@@ -70,10 +70,14 @@ func matchAdaptiveWindow(ctx context.Context, snapshot Snapshot, points []covera
 	return coverage.Result{}, coverage.OSMEvaluationStats{}, 0, lastErr
 }
 
-func seamWindowBounds(count, seam, left, total int) func(int) (int, int) {
+type matchingWindow struct {
+	start, legStart, legEnd int
+}
+
+func seamWindowBounds(legStart, legEnd, seam, left, total int) func(int) (int, int) {
 	return func(size int) (int, int) {
-		start := max(0, seam-size*left/total)
-		end := min(count, start+size)
-		return max(0, end-size), end
+		start := max(legStart, seam-size*left/total)
+		end := min(legEnd, start+size)
+		return max(legStart, end-size), end
 	}
 }

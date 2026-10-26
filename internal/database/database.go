@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 28
+const SupportedSchemaVersion = 33
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)
@@ -502,7 +502,10 @@ const runtimeReadinessSQL = `
 		       AND has_column_privilege(current_user, 'app.job_config_snapshots', 'source_id', 'SELECT')
 		       AND NOT has_column_privilege(current_user, 'app.job_config_snapshots', 'config_envelope', 'SELECT')
 		       AND NOT has_column_privilege(current_user, 'app.job_config_snapshots', 'created_at', 'SELECT')
-		       AND has_table_privilege(current_user, 'app.source_files', 'SELECT')
+		       AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY['id','account_id','source_id','job_id','relative_name',
+		           'size_bytes','modified_at','checksum_sha256','state','failure_code','failure_summary',
+		           'processing_started_at','processed_at','created_at','updated_at']) column_name
+		           WHERE NOT has_column_privilege(current_user,'app.source_files',column_name,'SELECT'))
 		       AND has_function_privilege(current_user, 'app.read_owned_job_files(uuid,integer,integer)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.read_owned_job_logs(uuid,integer,integer)', 'EXECUTE')
 		       AND has_function_privilege(current_user, 'app.count_owned_job_rows(uuid,text)', 'EXECUTE')
@@ -1118,6 +1121,71 @@ const runtimeReadinessSQL = `
 		       AND pg_get_userbyid(c.relowner)='workouts_security_owner')
 		   AND has_column_privilege('workouts_security_owner','app.coverage_job_contexts','parent_batch_size','SELECT,INSERT')
 		   AND has_column_privilege('workouts_security_owner','app.coverage_reconciliation_accounts','lease_runtime_version','SELECT,UPDATE')
+		   AND ($1 < 29 OR EXISTS (
+		       SELECT 1 FROM pg_proc p
+		       WHERE p.oid=to_regprocedure('app.read_owned_job_files(uuid,integer,integer,boolean)')
+		         AND pg_get_userbyid(p.proowner)='workouts_security_owner'
+		         AND p.prosecdef AND p.provolatile='v' AND p.pronargdefaults=0
+		         AND p.proconfig=ARRAY['search_path=pg_catalog, app']
+		         AND pg_get_function_result(p.oid)='TABLE(total_count bigint, id uuid, job_id uuid, source_id uuid, source_generation bigint, display_name text, source_type text, basename text, state text, size_bytes bigint, processing_started_at timestamp with time zone, processed_at timestamp with time zone, failure_code text, failure_summary text, created_at timestamp with time zone, updated_at timestamp with time zone)'
+		         AND has_function_privilege('workouts_api',p.oid,'EXECUTE')
+		         AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+		             WHERE acl.privilege_type='EXECUTE' AND acl.grantee<>p.proowner
+		               AND (acl.is_grantable OR acl.grantee<>'workouts_api'::regrole::oid))
+		   ))
+		   AND ($1 < 30 OR EXISTS (
+		       SELECT 1 FROM pg_proc p
+		       WHERE p.oid=to_regprocedure('app.ingest_outcome_status(text,text,bigint,bigint)')
+		         AND pg_get_userbyid(p.proowner)='workouts_security_owner'
+		         AND NOT p.prosecdef AND p.provolatile='i' AND p.pronargdefaults=0
+		         AND p.proconfig=ARRAY['search_path=pg_catalog']
+		         AND pg_get_function_result(p.oid)='text'
+		         AND has_function_privilege('workouts_api',p.oid,'EXECUTE')
+		         AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+		             WHERE acl.privilege_type='EXECUTE' AND acl.grantee<>p.proowner
+		               AND (acl.is_grantable OR acl.grantee<>'workouts_api'::regrole::oid))
+		   ))
+		   AND ($1 < 31 OR (
+		       (SELECT minimum_runtime_version >= 31 FROM app.schema_metadata WHERE singleton)
+		       AND (SELECT count(*)=2 FROM pg_attribute a
+		           WHERE a.attrelid='app.source_files'::regclass AND NOT a.attisdropped
+		             AND NOT a.attnotnull AND a.attgenerated=''
+		             AND ((a.attname='observed_identity' AND a.atttypid='text'::regtype)
+		               OR (a.attname='ownership_blocked_epoch' AND a.atttypid='bigint'::regtype))
+		             AND has_column_privilege('workouts_security_owner',a.attrelid,a.attname,'SELECT')
+		             AND NOT EXISTS (SELECT 1 FROM pg_roles r
+		                 WHERE r.rolname IN ('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')
+		                   AND has_column_privilege(r.oid,a.attrelid,a.attname,'SELECT')))
+		       AND EXISTS (SELECT 1 FROM pg_constraint c
+		           WHERE c.conrelid='app.source_files'::regclass AND c.conname='source_files_success_receipt'
+		             AND c.contype='c' AND c.convalidated
+		             AND position('observed_identity' IN pg_get_constraintdef(c.oid))>0
+		             AND position('ownership_blocked_epoch' IN pg_get_constraintdef(c.oid))>0)
+		       AND (SELECT count(*)=2 FROM pg_proc p
+		           WHERE p.oid IN (to_regprocedure('app.ingest_retry_ancestor_jobs(uuid,uuid,uuid)'),
+		                           to_regprocedure('app.stamp_ingest_source_file_receipt()'))
+		             AND p.prosecdef AND p.provolatile='v' AND p.pronargdefaults=0
+		             AND pg_get_userbyid(p.proowner)='workouts_security_owner'
+		             AND p.proconfig=ARRAY['search_path=pg_catalog, app']
+		             AND ((p.oid=to_regprocedure('app.ingest_retry_ancestor_jobs(uuid,uuid,uuid)') AND pg_get_function_result(p.oid)='uuid[]')
+		               OR (p.oid=to_regprocedure('app.stamp_ingest_source_file_receipt()') AND pg_get_function_result(p.oid)='trigger'))
+		             AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+		                 WHERE acl.privilege_type='EXECUTE' AND (acl.grantee<>p.proowner OR acl.is_grantable)))
+		       AND EXISTS (SELECT 1 FROM pg_trigger t
+		           WHERE t.tgrelid='app.source_files'::regclass AND t.tgname='source_files_receipt_before_write'
+		             AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgtype=23
+		             AND t.tgfoid=to_regprocedure('app.stamp_ingest_source_file_receipt()')
+		             AND t.tgqual IS NULL AND t.tgattr::text='' AND t.tgnargs=0)
+		       AND EXISTS (SELECT 1 FROM pg_proc p
+		           WHERE p.oid='app.valid_ingest_child_parameters(jsonb)'::regprocedure
+		             AND NOT p.prosecdef AND p.provolatile='i'
+		             AND p.proconfig=ARRAY['search_path=pg_catalog']
+		             AND pg_get_function_result(p.oid)='boolean'
+		             AND has_function_privilege('workouts_api',p.oid,'EXECUTE')
+		             AND has_function_privilege('workouts_security_owner',p.oid,'EXECUTE')
+		             AND position('reprocessAllFiles' IN p.prosrc)>0
+		             AND position('legacySchema6' IN p.prosrc)>0)
+		   ))
 		   AND EXISTS (
 		       SELECT 1 FROM app.schema_metadata
 		       WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1
@@ -1161,14 +1229,14 @@ const runtimeDeferredReadinessSQL = `
 	AND NOT EXISTS (
 		SELECT 1 FROM (VALUES
 			('app.advance_account_data_generation()',false,'trigger',$body$
-DECLARE
-    target_account_id uuid;
+DECLARE old_account uuid; new_account uuid;
 BEGIN
-    IF TG_OP = 'DELETE' THEN target_account_id := OLD.account_id; ELSE target_account_id := NEW.account_id; END IF;
-    UPDATE app.account_data_generations SET
-        generation = CASE WHEN generation = 9223372036854775807 THEN 1 ELSE generation + 1 END,
-        updated_at = transaction_timestamp()
-     WHERE account_id = target_account_id;
+    IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP <> 'INSERT' THEN old_account := OLD.account_id; END IF;
+    IF TG_OP <> 'DELETE' THEN new_account := NEW.account_id; END IF;
+    PERFORM app.enqueue_coverage_display_invalidations(ARRAY[old_account, new_account]);
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END;
@@ -1342,7 +1410,365 @@ const runtimeCohortReadinessSQL = `
 	AND (SELECT p.prosrc !~ 'app[.]workout_import_events' FROM pg_proc p
 		WHERE p.oid=to_regprocedure('app.ingest_coverage_candidates(uuid,uuid)'))`
 
-const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `)`
+// Exact body fingerprints pin the flush barrier, post-barrier key expansion,
+// source facts to 032 and replaced callbacks/readers to 033, including all whitespace.
+const runtimeCoverageDisplayReadinessSQL = `
+	SELECT $1 < 32 OR (
+		WITH relations(name,columns,definitions) AS (VALUES
+			('workout_path_display_partials', ARRAY[
+				'account_id:uuid:true','workout_id:uuid:true','entity_id:uuid:true','logical_path_id:uuid:true',
+				'qualifies_without_name:boolean:true','region_id:text:true','education_key_present:boolean:true',
+				'education_name:text:false','minimum_longitude:double precision:true','minimum_latitude:double precision:true',
+				'maximum_longitude:double precision:true','maximum_latitude:double precision:true'], ARRAY[
+				'PRIMARY KEY (account_id, workout_id, entity_id, logical_path_id, qualifies_without_name)',
+				'FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts(id, account_id) ON DELETE CASCADE']),
+			('workout_path_display_context', ARRAY[
+				'account_id:uuid:true','workout_id:uuid:true','entity_id:uuid:true','locality_name:text:true'], ARRAY[
+				'PRIMARY KEY (account_id, workout_id, entity_id)',
+				'FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts(id, account_id) ON DELETE CASCADE']),
+			('workout_park_display_bounds', ARRAY[
+				'account_id:uuid:true','workout_id:uuid:true','park_id:uuid:true','region_id:text:false',
+				'minimum_longitude:double precision:true','minimum_latitude:double precision:true',
+				'maximum_longitude:double precision:true','maximum_latitude:double precision:true'], ARRAY[
+				'PRIMARY KEY (account_id, workout_id, park_id)',
+				'FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts(id, account_id) ON DELETE CASCADE']),
+			('coverage_display_dirty', ARRAY[
+				'transaction_id:bigint:true','account_id:uuid:true','scope:text:true','workout_id:uuid:false',
+				'region_id:text:false','generation_id:bigint:false','physical_segment_id:uuid:false'], ARRAY[
+				'UNIQUE NULLS NOT DISTINCT (transaction_id, account_id, scope, workout_id, region_id, generation_id, physical_segment_id)',
+				'CHECK ((scope = ANY (ARRAY[''account''::text, ''workout''::text, ''segment''::text])))',
+				'CHECK ((((scope = ''account''::text) AND (workout_id IS NULL) AND (region_id IS NULL) AND (generation_id IS NULL) AND (physical_segment_id IS NULL)) OR ((scope = ''workout''::text) AND (workout_id IS NOT NULL) AND (region_id IS NULL) AND (generation_id IS NULL) AND (physical_segment_id IS NULL)) OR ((scope = ''segment''::text) AND (workout_id IS NULL) AND (region_id IS NOT NULL) AND (generation_id IS NOT NULL) AND (physical_segment_id IS NOT NULL))))'])
+		)
+		SELECT (SELECT minimum_runtime_version >= 32 FROM app.schema_metadata WHERE singleton)
+		AND NOT EXISTS (
+			SELECT 1 FROM relations expected LEFT JOIN pg_class c ON c.oid=to_regclass('app.'||expected.name)
+			WHERE c.oid IS NULL OR c.relkind<>'r' OR c.relpersistence<>'p'
+				OR pg_get_userbyid(c.relowner)<>'workouts_security_owner'
+				OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+				OR (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid)<>1
+				OR NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid
+					AND p.polname=expected.name||'_owner_policy' AND p.polcmd='*' AND p.polpermissive
+					AND p.polroles=ARRAY['workouts_security_owner'::regrole::oid]
+					AND pg_get_expr(p.polqual,p.polrelid)='true' AND pg_get_expr(p.polwithcheck,p.polrelid)='true')
+				OR ARRAY(SELECT a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::text
+					FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+					ORDER BY a.attnum) IS DISTINCT FROM expected.columns
+				OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+					AND (a.atthasdef OR a.attgenerated<>'' OR a.attidentity<>''))
+				OR (SELECT count(*) FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype IN ('p','u','f','c'))<>cardinality(expected.definitions)
+				OR EXISTS (SELECT 1 FROM unnest(expected.definitions) definition
+					WHERE NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid=c.oid
+						AND k.contype IN ('p','u','f','c') AND k.convalidated AND NOT k.condeferrable AND NOT k.condeferred
+						AND pg_get_constraintdef(k.oid)=definition))
+				OR EXISTS (SELECT 1 FROM pg_constraint k LEFT JOIN pg_index i ON i.indexrelid=k.conindid
+					LEFT JOIN pg_class idx ON idx.oid=i.indexrelid LEFT JOIN pg_am am ON am.oid=idx.relam
+					WHERE k.conrelid=c.oid AND k.contype IN ('p','u')
+						AND (i.indexrelid IS NULL OR i.indrelid<>c.oid OR NOT i.indisunique OR NOT i.indisvalid
+							OR NOT i.indisready OR NOT i.indislive OR NOT i.indimmediate OR am.amname<>'btree'
+							OR i.indisprimary<>(k.contype='p') OR i.indnullsnotdistinct<>(k.contype='u')
+							OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indnatts<>cardinality(k.conkey)
+							OR i.indnkeyatts<>cardinality(k.conkey) OR i.indkey::text<>array_to_string(k.conkey,' ')))
+				OR EXISTS (SELECT 1 FROM aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) acl
+					WHERE acl.grantee<>c.relowner)
+				OR EXISTS (SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl
+					WHERE a.attrelid=c.oid AND NOT a.attisdropped AND acl.grantee<>c.relowner)
+				OR EXISTS (SELECT 1 FROM pg_roles r
+					WHERE r.rolname IN ('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')
+						AND (has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+							OR has_any_column_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM (VALUES
+				('app.workout_path_display_partials_entity_idx','app.workout_path_display_partials',ARRAY['account_id','entity_id','workout_id']),
+				('app.workout_path_display_context_entity_idx','app.workout_path_display_context',ARRAY['account_id','entity_id','workout_id']),
+				('app.workout_park_display_bounds_park_idx','app.workout_park_display_bounds',ARRAY['account_id','park_id','workout_id'])
+			) expected(name,relation,columns)
+			LEFT JOIN pg_class c ON c.oid=to_regclass(expected.name)
+			LEFT JOIN pg_index i ON i.indexrelid=c.oid LEFT JOIN pg_am am ON am.oid=c.relam
+			WHERE c.oid IS NULL OR c.relkind<>'i' OR c.relpersistence<>'p'
+				OR pg_get_userbyid(c.relowner)<>'workouts_security_owner' OR am.amname<>'btree'
+				OR i.indexrelid IS NULL OR i.indrelid IS DISTINCT FROM to_regclass(expected.relation)
+				OR NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR NOT i.indimmediate
+				OR i.indisunique OR i.indisprimary OR i.indisexclusion OR i.indnullsnotdistinct
+				OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indnatts<>3 OR i.indnkeyatts<>3
+				OR i.indoption::text<>'0 0 0'
+				OR ARRAY(SELECT pg_get_indexdef(i.indexrelid,n,true) FROM generate_series(1,i.indnkeyatts) n ORDER BY n)
+					IS DISTINCT FROM expected.columns
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM (VALUES
+				('app.rebuild_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
+					ARRAY['search_path=pg_catalog, app, public'],'1cfd2b870d0cc3094724628e1d22882e'),
+				('app.flush_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
+					ARRAY['search_path=pg_catalog, app'],'1a724480f69901dc05a310b9603e489f'),
+				('app.mark_coverage_display_dirty()','plpgsql','v',false,0,'trigger',
+					ARRAY['search_path=pg_catalog, app'],'4e1c86a9fcd6b98e1212ea7c3ee62321'),
+				('app.flush_coverage_display_dirty_account()','plpgsql','v',false,0,'trigger',
+					ARRAY['search_path=pg_catalog, app'],'161cdfcbdf66983795719394c6b48c67'),
+				('app.map_selection_coverage_entities(uuid,uuid,uuid,bigint,text)','plpgsql','s',true,1,
+					'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
+					ARRAY['search_path=pg_catalog, app','jit=off'],'d243719d05988f76a2d7ab6d345ba0aa'),
+				('app.map_selection_coverage_entity_stats(uuid,uuid,uuid,bigint,text,uuid)','plpgsql','s',true,0,
+					'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
+					ARRAY['search_path=pg_catalog, app','jit=off'],'9b72e5e84d28b03dbbd22b529de1882d')
+			) expected(signature,language,volatility,api,defaults,result,config,body_hash)
+			LEFT JOIN pg_proc p ON p.oid=to_regprocedure(expected.signature)
+			WHERE p.oid IS NULL OR pg_get_userbyid(p.proowner)<>'workouts_security_owner'
+				OR NOT p.prosecdef OR p.prokind<>'f' OR p.provolatile::text<>expected.volatility
+				OR p.prolang<>(SELECT oid FROM pg_language WHERE lanname=expected.language)
+				OR p.proisstrict OR p.proretset<>expected.api OR p.pronargdefaults<>expected.defaults
+				OR (expected.defaults>0 AND pg_get_expr(p.proargdefaults,0) IS DISTINCT FROM 'NULL::text')
+				OR p.proconfig IS DISTINCT FROM expected.config OR pg_get_function_result(p.oid)<>expected.result
+				OR md5(p.prosrc)<>expected.body_hash
+				OR has_function_privilege('workouts_api',p.oid,'EXECUTE')<>expected.api
+				OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('workouts_worker','workouts_coverage_worker','workouts_tiles')
+					AND has_function_privilege(r.oid,p.oid,'EXECUTE'))
+				OR EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+					WHERE acl.grantee<>p.proowner AND (NOT expected.api OR acl.grantee<>'workouts_api'::regrole::oid OR acl.is_grantable))
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM (VALUES
+				('app.workout_segment_matches','workout_segment_matches_display_dirty_after_write',29,false,
+					'app.mark_coverage_display_dirty()',NULL::text),
+				('app.path_segments','path_segments_display_dirty_after_change',25,false,
+					'app.mark_coverage_display_dirty()',NULL::text),
+				('app.coverage_display_dirty','coverage_display_dirty_account_flush',5,true,
+					'app.flush_coverage_display_dirty_account()','(new.scope = ''account''::text)')
+			) expected(relation,name,events,deferred,function,qual)
+			LEFT JOIN pg_trigger t ON t.tgrelid=to_regclass(expected.relation) AND t.tgname=expected.name
+			LEFT JOIN pg_constraint c ON c.oid=t.tgconstraint
+			WHERE t.oid IS NULL OR t.tgisinternal OR t.tgenabled<>'O' OR t.tgtype<>expected.events
+				OR t.tgfoid IS DISTINCT FROM to_regprocedure(expected.function)
+				OR t.tgattr::text<>'' OR t.tgnargs<>0 OR t.tgargs<>''::bytea
+				OR t.tgdeferrable<>expected.deferred OR t.tginitdeferred<>expected.deferred
+				OR (t.tgconstraint<>0)<>expected.deferred
+				OR (expected.deferred AND (c.oid IS NULL OR c.contype<>'t' OR c.conname<>expected.name
+					OR c.conrelid<>t.tgrelid OR NOT c.condeferrable OR NOT c.condeferred))
+				OR (t.tgqual IS NULL) IS DISTINCT FROM (expected.qual IS NULL)
+				OR substring(pg_get_triggerdef(t.oid) FROM ' WHEN \((.*)\) EXECUTE FUNCTION ') IS DISTINCT FROM expected.qual
+		)
+		AND (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+			AND tgfoid=to_regprocedure('app.mark_coverage_display_dirty()'))=2
+		AND (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+			AND tgfoid=to_regprocedure('app.flush_coverage_display_dirty_account()'))=1
+	)`
+
+// Catalog-only checks run as restricted runtime logins, without private-table grants.
+// Exact prosrc hashes must be updated with the corresponding embedded migration.
+const runtimeCanonicalCoverageDisplayReadinessSQL = `
+	SELECT $1 < 33 OR (
+		WITH relations(name,columns,definitions) AS (VALUES
+			('coverage_display_revisions',ARRAY['account_id:uuid:true','revision:bigint:true','last_invalidated_transaction_id:bigint:false'],ARRAY[
+				'PRIMARY KEY (account_id)',
+				'FOREIGN KEY (account_id) REFERENCES app.accounts(id) ON DELETE CASCADE',
+				'CHECK ((revision > 0))']),
+			('coverage_display_contexts',ARRAY['account_id:uuid:true','id:uuid:true','generation:bigint:true','revision:bigint:true',
+				'start_date:date:true','end_date:date:true','policy_version:text:true','label_locale:text:true','ready:boolean:true',
+				'created_at:timestamp with time zone:true','last_used_at:timestamp with time zone:true'],ARRAY[
+				'PRIMARY KEY (account_id, id)',
+				'FOREIGN KEY (account_id) REFERENCES app.accounts(id) ON DELETE CASCADE',
+				'UNIQUE (account_id, generation, revision, start_date, end_date, policy_version, label_locale)',
+				'CHECK ((policy_version = ''coverage-display-identity-v1''::text))',
+				'CHECK ((label_locale = ''en''::text))','CHECK ((start_date <= end_date))']),
+			('coverage_display_members',ARRAY['account_id:uuid:true','context_id:uuid:true','source_kind:text:true','source_id:uuid:true',
+				'canonical_id:uuid:true','broad_class:text:false','name:text:false','locality_name:text:false','region_id:text:false',
+				'region_name:text:false','key_region:text:true','normalized_name:text:true','normalized_locality:text:true','key_discriminator:text:true',
+				'range_minimum_longitude:double precision:false','range_minimum_latitude:double precision:false',
+				'range_maximum_longitude:double precision:false','range_maximum_latitude:double precision:false'],ARRAY[
+				'PRIMARY KEY (account_id, context_id, source_kind, source_id)',
+				'FOREIGN KEY (account_id, context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE CASCADE',
+				'CHECK ((source_kind = ANY (ARRAY[''path''::text, ''park''::text])))']),
+			('coverage_display_visits',ARRAY['account_id:uuid:true','context_id:uuid:true','canonical_id:uuid:true','workout_id:uuid:true',
+				'local_start_date:date:true','started_at:timestamp with time zone:true','minimum_longitude:double precision:false',
+				'minimum_latitude:double precision:false','maximum_longitude:double precision:false','maximum_latitude:double precision:false'],ARRAY[
+				'PRIMARY KEY (account_id, context_id, canonical_id, workout_id)',
+				'FOREIGN KEY (account_id, context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE CASCADE']),
+			('coverage_display_entities',ARRAY['account_id:uuid:true','context_id:uuid:true','canonical_id:uuid:true','entity_id:uuid:false',
+				'entity_kind:text:true','broad_class:text:false','name:text:false','locality_name:text:false','region_id:text:false','region_name:text:false',
+				'range_workout_count:bigint:true','range_first_date:date:false','range_first_workout_id:uuid:false','range_latest_date:date:false',
+				'range_latest_workout_id:uuid:false','all_time_workout_count:bigint:true','all_time_first_date:date:false','all_time_first_workout_id:uuid:false',
+				'all_time_latest_date:date:false','all_time_latest_workout_id:uuid:false','minimum_longitude:double precision:false',
+				'minimum_latitude:double precision:false','maximum_longitude:double precision:false','maximum_latitude:double precision:false'],ARRAY[
+				'PRIMARY KEY (account_id, context_id, canonical_id)',
+				'FOREIGN KEY (account_id, context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE CASCADE',
+				'CHECK ((entity_kind = ANY (ARRAY[''path''::text, ''park''::text])))',
+				'CHECK (((range_workout_count >= 0) AND (all_time_workout_count >= range_workout_count)))']),
+			('coverage_display_invalidations',ARRAY['txid:bigint:true','account_id:uuid:true'],ARRAY['PRIMARY KEY (txid, account_id)'])
+		), functions(signature,language,volatility,definer,strict,parallel,returns_set,defaults,result,config,api,tiles,body_hash) AS (VALUES
+			('app.coverage_display_normalize(text)','sql','i',false,true,'s',false,0,'text',ARRAY['search_path=pg_catalog'],false,false,'f9b737c67fbf910ef932ddd4f8af727b'),
+			('app.coverage_display_identity(text,text,text,text)','plpgsql','i',false,true,'s',false,0,'uuid',ARRAY['search_path=pg_catalog'],false,false,'528503a039e38e7c00894fdf42755fb6'),
+			('app.coverage_display_source_visits(uuid,date,date)','sql','s',true,false,'u',true,0,
+				'TABLE(source_kind text, source_id uuid, workout_id uuid, local_start_date date, started_at timestamp with time zone, broad_class text, name text, locality_name text, region_id text, region_name text, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, range_minimum_longitude double precision, range_minimum_latitude double precision, range_maximum_longitude double precision, range_maximum_latitude double precision)',
+				ARRAY['search_path=pg_catalog, app','jit=off'],false,false,'2eaba9321e59962a8c01bd30a3684497'),
+			('app.enqueue_coverage_display_invalidations(uuid[])','sql','v',true,false,'u',false,0,'void',ARRAY['search_path=pg_catalog, app'],false,false,'1ef60d0526acf6d35d98e1c37042cbd4'),
+			('app.advance_account_data_generation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'e23dd0a699cdeef1541efa1fa9920bfa'),
+			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'4e1c86a9fcd6b98e1212ea7c3ee62321'),
+			('app.queue_coverage_display_source_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'fa05dcd935285a1265b9633fc1edc9ae'),
+			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c992a3bfae462a8be1f45e4e5a03d5fe'),
+			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'bbf3ded872ca3205e81305eb26207dc5'),
+			('app.seed_coverage_display_revision()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'eebad7997cf527699c48dade43c3e348'),
+			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2538af856c9bea2a1219c8ddbe12f0ca'),
+			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2c883759bf98b433aff57f66fc576d10'),
+			('app.coverage_display_selection_scope(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',true,0,
+				'TABLE(start_date date, end_date date, revision bigint, bound_context_id uuid)',ARRAY['search_path=pg_catalog, app'],false,false,'9371cd17c0320f9edfe3515e787cc6dd'),
+			('app.coverage_display_authorized_context(uuid,uuid,uuid,bigint)','plpgsql','s',true,false,'u',false,0,'uuid',ARRAY['search_path=pg_catalog, app'],false,false,'5214b99b7492208640f05f89e460057b'),
+			('app.prepare_coverage_display_context(uuid,uuid,uuid,bigint)','plpgsql','v',true,false,'u',true,0,
+				'TABLE(context_id uuid, display_revision bigint, policy_version text)',ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'6f29c0f5528f602a0ed49088a4081616'),
+			('app.map_selection_coverage_entities(uuid,uuid,uuid,bigint,text)','plpgsql','s',true,false,'u',true,1,
+				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
+				ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'d243719d05988f76a2d7ab6d345ba0aa'),
+			('app.map_selection_coverage_entity_stats(uuid,uuid,uuid,bigint,text,uuid)','plpgsql','s',true,false,'u',true,0,
+				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
+				ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'9b72e5e84d28b03dbbd22b529de1882d'),
+			('app.map_selection_coverage_entity_members(uuid,uuid,uuid,bigint,text,uuid)','plpgsql','s',true,false,'u',true,0,
+				'TABLE(source_kind text, source_id uuid)',ARRAY['search_path=pg_catalog, app'],true,false,'04862cedaf0cbdcd472a57f867081996'),
+			('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)','sql','s',true,false,'u',true,0,
+				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, geometry jsonb, fit_minimum_longitude double precision, fit_minimum_latitude double precision, fit_maximum_longitude double precision, fit_maximum_latitude double precision)',
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'8b532de5af2b4ff065715cd6eb562872'),
+			('app.coverage_mvt(integer,integer,integer,json)','plpgsql','s',true,false,'u',false,1,'bytea',
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],false,true,'cbd622ec20197b0b87611083b121fe46'),
+			('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)','plpgsql','s',true,false,'u',false,0,'jsonb',
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'639f6f1f0554094dfc4bc6c52e4dd93a')
+		)
+		SELECT (SELECT schema_version>=33 AND minimum_runtime_version>=33 AND migration_baseline=27
+			FROM app.schema_metadata WHERE singleton)
+		AND current_setting('server_version_num')::integer BETWEEN 180000 AND 189999
+		AND current_setting('server_encoding')='UTF8'
+		AND EXISTS (SELECT 1 FROM pg_collation WHERE oid=to_regcollation('pg_catalog.pg_c_utf8')
+			AND collprovider='b' AND collencoding=pg_char_to_encoding('UTF8'))
+		AND NOT EXISTS (
+			SELECT 1 FROM relations expected LEFT JOIN pg_class c ON c.oid=to_regclass('app.'||expected.name)
+			WHERE c.oid IS NULL OR c.relkind<>'r' OR c.relpersistence<>'p'
+				OR pg_get_userbyid(c.relowner)<>'workouts_security_owner' OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+				OR (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid)<>1
+				OR NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid
+					AND p.polname=expected.name||'_owner_policy' AND p.polcmd='*' AND p.polpermissive
+					AND p.polroles=ARRAY['workouts_security_owner'::regrole::oid]
+					AND pg_get_expr(p.polqual,p.polrelid)='true' AND pg_get_expr(p.polwithcheck,p.polrelid)='true')
+				OR ARRAY(SELECT a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::text
+					FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum)
+					IS DISTINCT FROM expected.columns
+				OR EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_type typ ON typ.oid=a.atttypid
+					LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+					WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped AND (
+						a.attidentity<>'' OR a.attgenerated::text<>CASE WHEN expected.name='coverage_display_entities' AND a.attname='entity_id' THEN 's' ELSE '' END
+						OR a.atthasdef<>(d.oid IS NOT NULL)
+						OR pg_get_expr(d.adbin,d.adrelid) IS DISTINCT FROM CASE
+							WHEN expected.name='coverage_display_entities' AND a.attname='entity_id' THEN 'canonical_id'
+							WHEN expected.name='coverage_display_revisions' AND a.attname='revision' THEN '1'
+							WHEN expected.name='coverage_display_contexts' THEN CASE a.attname
+								WHEN 'id' THEN 'gen_random_uuid()' WHEN 'policy_version' THEN '''coverage-display-identity-v1''::text'
+								WHEN 'label_locale' THEN '''en''::text' WHEN 'ready' THEN 'false'
+								WHEN 'created_at' THEN 'transaction_timestamp()' WHEN 'last_used_at' THEN 'transaction_timestamp()' END END
+						OR a.attcollation<>CASE WHEN expected.name='coverage_display_members'
+							AND a.attname IN ('key_region','normalized_name','normalized_locality','key_discriminator')
+							THEN 'pg_catalog."C"'::regcollation::oid ELSE typ.typcollation END))
+				OR (SELECT count(*) FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype IN ('p','u','f','c'))<>cardinality(expected.definitions)
+				OR EXISTS (SELECT 1 FROM unnest(expected.definitions) definition WHERE NOT EXISTS (
+					SELECT 1 FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype IN ('p','u','f','c')
+						AND k.convalidated AND k.conenforced AND NOT k.condeferrable AND NOT k.condeferred AND pg_get_constraintdef(k.oid)=definition))
+				OR EXISTS (SELECT 1 FROM pg_constraint k LEFT JOIN pg_index i ON i.indexrelid=k.conindid
+					LEFT JOIN pg_class idx ON idx.oid=i.indexrelid LEFT JOIN pg_am am ON am.oid=idx.relam
+					WHERE k.conrelid=c.oid AND k.contype IN ('p','u') AND (i.indexrelid IS NULL OR i.indrelid<>c.oid
+						OR NOT i.indisunique OR NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR NOT i.indimmediate
+						OR am.amname<>'btree' OR pg_get_userbyid(idx.relowner)<>'workouts_security_owner'
+						OR i.indisprimary<>(k.contype='p') OR i.indisexclusion OR i.indnullsnotdistinct
+						OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indnatts<>cardinality(k.conkey)
+						OR i.indnkeyatts<>cardinality(k.conkey) OR i.indkey::text<>array_to_string(k.conkey,' ')
+						OR i.indcollation::text IS DISTINCT FROM (SELECT string_agg(a.attcollation::text,' ' ORDER BY key.ordinality)
+							FROM unnest(k.conkey) WITH ORDINALITY key(num,ordinality) JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=key.num)
+						OR EXISTS (SELECT 1 FROM unnest(i.indoption) option WHERE option<>0)
+						OR EXISTS (SELECT 1 FROM unnest(i.indclass) opclass JOIN pg_opclass op ON op.oid=opclass
+							WHERE NOT op.opcdefault OR op.opcnamespace<>'pg_catalog'::regnamespace)))
+				OR EXISTS (SELECT 1 FROM aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) acl WHERE acl.grantee<>c.relowner)
+				OR EXISTS (SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl
+					WHERE a.attrelid=c.oid AND NOT a.attisdropped AND acl.grantee<>c.relowner)
+				OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')
+					AND (has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+						OR has_any_column_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+		)
+		AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=to_regclass('app.map_selections')
+			AND a.attname='coverage_display_context_id' AND a.atttypid='uuid'::regtype AND a.atttypmod=-1
+			AND NOT a.attisdropped AND NOT a.attnotnull AND NOT a.atthasdef AND a.attgenerated='' AND a.attidentity=''
+			AND has_column_privilege('workouts_security_owner',a.attrelid,a.attnum,'UPDATE')
+			AND NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')
+				AND has_column_privilege(r.oid,a.attrelid,a.attnum,'UPDATE')))
+		AND EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid=to_regclass('app.map_selections')
+			AND k.conname='map_selections_coverage_display_context_fk' AND k.contype='f' AND k.convalidated AND k.conenforced
+			AND NOT k.condeferrable AND NOT k.condeferred
+			AND pg_get_constraintdef(k.oid)='FOREIGN KEY (account_id, coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE SET NULL (coverage_display_context_id)')
+		AND (SELECT count(*) FROM pg_constraint k JOIN pg_attribute a ON a.attrelid=k.conrelid
+			AND a.attname='coverage_display_context_id' AND NOT a.attisdropped
+			WHERE k.conrelid=to_regclass('app.map_selections') AND k.contype='f' AND a.attnum=ANY(k.conkey))=1
+		AND NOT EXISTS (
+			SELECT 1 FROM (VALUES
+				('app.coverage_display_contexts_gc_idx','app.coverage_display_contexts',ARRAY['account_id','last_used_at','id'],NULL::text),
+				('app.coverage_display_members_canonical_idx','app.coverage_display_members',ARRAY['account_id','context_id','canonical_id','source_kind','source_id'],NULL::text),
+				('app.coverage_display_members_collision_idx','app.coverage_display_members',ARRAY['account_id','canonical_id'],NULL::text),
+				('app.coverage_display_visits_date_idx','app.coverage_display_visits',ARRAY['account_id','context_id','canonical_id','local_start_date','started_at','workout_id'],NULL::text),
+				('app.coverage_display_entities_visible_idx','app.coverage_display_entities',ARRAY['account_id','context_id','canonical_id'],'(range_workout_count > 0)'),
+				('app.map_selections_coverage_display_context_idx','app.map_selections',ARRAY['account_id','coverage_display_context_id','expires_at'],NULL::text)
+			) expected(name,relation,columns,predicate)
+			LEFT JOIN pg_class c ON c.oid=to_regclass(expected.name)
+			LEFT JOIN pg_index i ON i.indexrelid=c.oid LEFT JOIN pg_am am ON am.oid=c.relam
+			WHERE c.oid IS NULL OR c.relkind<>'i' OR c.relpersistence<>'p' OR am.amname<>'btree'
+				OR c.relowner IS DISTINCT FROM (SELECT relowner FROM pg_class WHERE oid=to_regclass(expected.relation))
+				OR i.indexrelid IS NULL OR i.indrelid IS DISTINCT FROM to_regclass(expected.relation)
+				OR NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive OR NOT i.indimmediate
+				OR i.indisunique OR i.indisprimary OR i.indisexclusion OR i.indnullsnotdistinct
+				OR pg_get_expr(i.indpred,i.indrelid) IS DISTINCT FROM expected.predicate OR i.indexprs IS NOT NULL
+				OR i.indnatts<>cardinality(expected.columns) OR i.indnkeyatts<>cardinality(expected.columns)
+				OR EXISTS (SELECT 1 FROM unnest(i.indoption) option WHERE option<>0)
+				OR EXISTS (SELECT 1 FROM unnest(i.indclass) opclass JOIN pg_opclass op ON op.oid=opclass
+					WHERE NOT op.opcdefault OR op.opcnamespace<>'pg_catalog'::regnamespace)
+				OR ARRAY(SELECT pg_get_indexdef(i.indexrelid,n,true) FROM generate_series(1,i.indnkeyatts) n ORDER BY n) IS DISTINCT FROM expected.columns
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM functions expected LEFT JOIN pg_proc p ON p.oid=to_regprocedure(expected.signature)
+			WHERE p.oid IS NULL OR pg_get_userbyid(p.proowner)<>'workouts_security_owner' OR p.prokind<>'f'
+				OR p.prosecdef<>expected.definer OR p.proisstrict<>expected.strict OR p.proparallel::text<>expected.parallel
+				OR p.provolatile::text<>expected.volatility OR p.prolang<>(SELECT oid FROM pg_language WHERE lanname=expected.language)
+				OR p.proretset<>expected.returns_set OR p.pronargdefaults<>expected.defaults OR p.proleakproof
+				OR pg_get_expr(p.proargdefaults,0) IS DISTINCT FROM CASE WHEN expected.defaults=1 THEN
+					CASE WHEN expected.tiles THEN '''{}''::json' ELSE 'NULL::text' END END
+				OR pg_get_function_result(p.oid)<>expected.result OR p.proconfig IS DISTINCT FROM expected.config
+				OR md5(p.prosrc)<>expected.body_hash
+				OR has_function_privilege('workouts_api',p.oid,'EXECUTE')<>expected.api
+				OR has_function_privilege('workouts_tiles',p.oid,'EXECUTE')<>expected.tiles
+				OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('workouts_worker','workouts_coverage_worker') AND has_function_privilege(r.oid,p.oid,'EXECUTE'))
+				OR EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl WHERE acl.grantee<>p.proowner
+					AND (acl.is_grantable OR NOT ((expected.api AND acl.grantee='workouts_api'::regrole::oid)
+						OR (expected.tiles AND acl.grantee='workouts_tiles'::regrole::oid))))
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM (VALUES
+				('app.coverage_display_dirty','coverage_display_dirty_canonical_after_insert',5,false,'app.queue_coverage_display_source_invalidation()', '(new.scope = ''account''::text)'),
+				('app.coverage_paths','coverage_paths_canonical_after_write',29,false,'app.queue_coverage_display_metadata_invalidation()',NULL::text),
+				('app.coverage_parks','coverage_parks_canonical_after_write',29,false,'app.queue_coverage_display_metadata_invalidation()',NULL::text),
+				('app.workout_park_attributions','workout_park_attributions_canonical_after_write',29,false,'app.queue_coverage_display_metadata_invalidation()',NULL::text),
+				('app.workout_coverage_states','workout_coverage_states_canonical_after_write',29,false,'app.queue_coverage_display_metadata_invalidation()',NULL::text),
+				('app.coverage_region_catalog','coverage_region_catalog_canonical_after_write',29,false,'app.queue_coverage_display_metadata_invalidation()',NULL::text),
+				('app.coverage_display_invalidations','coverage_display_invalidations_flush',5,true,'app.flush_coverage_display_invalidations()',NULL::text),
+				('app.accounts','accounts_coverage_display_revision_after_insert',5,false,'app.seed_coverage_display_revision()',NULL::text),
+				('app.map_selections','map_selections_validate_before_write',23,false,'app.validate_map_selection()',NULL::text),
+				('app.map_selections','map_selections_focus_validate_after_write',21,true,'app.validate_map_selection_focus()',NULL::text)
+			) expected(relation,name,events,deferred,function,qual)
+			LEFT JOIN pg_trigger t ON t.tgrelid=to_regclass(expected.relation) AND t.tgname=expected.name
+			LEFT JOIN pg_constraint c ON c.oid=t.tgconstraint
+			WHERE t.oid IS NULL OR t.tgisinternal OR t.tgenabled<>'O' OR t.tgtype<>expected.events
+				OR t.tgfoid IS DISTINCT FROM to_regprocedure(expected.function) OR t.tgattr::text<>'' OR t.tgnargs<>0 OR t.tgargs<>''::bytea
+				OR t.tgdeferrable<>expected.deferred OR t.tginitdeferred<>expected.deferred OR (t.tgconstraint<>0)<>expected.deferred
+				OR (expected.deferred AND (c.oid IS NULL OR c.contype<>'t' OR c.conname<>expected.name OR c.conrelid<>t.tgrelid OR NOT c.condeferrable OR NOT c.condeferred))
+				OR (t.tgqual IS NULL) IS DISTINCT FROM (expected.qual IS NULL)
+				OR substring(pg_get_triggerdef(t.oid) FROM ' WHEN \((.*)\) EXECUTE FUNCTION ') IS DISTINCT FROM expected.qual
+		)
+		AND NOT EXISTS (SELECT 1 FROM (VALUES ('app.queue_coverage_display_source_invalidation()',1),
+			('app.queue_coverage_display_metadata_invalidation()',5),('app.flush_coverage_display_invalidations()',1),
+			('app.seed_coverage_display_revision()',1),('app.validate_map_selection()',1),('app.validate_map_selection_focus()',1)) expected(signature,callbacks)
+			WHERE (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid=to_regprocedure(expected.signature))<>expected.callbacks)
+	)`
+
+const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `)`
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool

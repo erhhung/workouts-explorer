@@ -13,9 +13,36 @@ marked planned, optional or deferred. Capacity targets are design requirements,
 not proof of multi-user load acceptance. Dated operational measurements belong in
 the focused acceptance and telemetry guides rather than this component overview.
 
+The deployed migration sequence extends through **001-032**. Released/applied 032
+includes coverage display precomputations and targeted entity statistics.
+**Source-only 033** adds canonical display identity; it is not deployed.
+Live schema/minimum runtime remain **32**, retaining
+`migration_baseline=27`; applied **001-032 are immutable**. A standalone native
+migration under the actual restricted migration login preceded coordinated
+backend revision **42** and UI revision **43**, using full values and `--no-hooks`.
+All four application images were rebuilt with native artifacts and published with
+strict TLS verification; the separate Martin workload was preserved. Accepted
+receipts verify runtime-role readiness and preservation of original data and
+configuration. Protected full pre-32 backups and old images remain retained;
+image-only rollback is unsupported. Scripted deployed-browser verification passed;
+owner acceptance/milestone and capacity remain separate. See
+[release status](development-progress.md#coverage-display-optimization).
+[Ingest Reprocessing](ingest-reprocessing.md) defines the preceding 031 contract's
+bounded default, explicit force, retry receipts and queued historical-job
+compatibility; those ingest semantics are unchanged by 032.
+
+The pending coordinated source contract requires schema/minimum runtime **33**,
+baseline **27**. [ADR 0013](decisions/013-canonical-coverage-display-identity.md)
+defines the general display policy, not an OSM derivation/matcher/path-policy
+change. No OSM regeneration or route rematching is needed. The schema-32 reader
+descriptions below retain their deployed scope; the next section defines their
+source-only replacements. [033 release gates](database-migrations.md#canonical-coverage-display-033-source-only)
+remain pending until explicit MAIN cutover completion.
+
+The following folded-028 release evidence is historical, **prior to 031**.
 The provider-identity/source-adoption foundation requires minimum runtime 26
-(migrations 024-026). The approved active sequence remains **001-028**, with **no
-active 029**. Ordinary static 027 advances 26 to 27 without a legacy dispatcher or
+(migrations 024-026). At that checkpoint the active sequence was **001-028**, with
+no active 029. Ordinary static 027 advances 26 to 27 without a legacy dispatcher or
 archive replay; 001-027 remain unchanged. New 028 folds deferred-generation locking,
 strict eligible cohorts and mixed-failure automatic retry into the pipeline.
 Source `SupportedSchemaVersion`, schema and minimum runtime remain **28**, marker
@@ -188,7 +215,7 @@ future designs, not current schema objects.
 |---|---|
 | `sources` | Current account-owned source, display name, immutable type, auto-sync flag, health status, encrypted current config |
 | `sources.deleted_at` | Tombstoned source identity retained for provenance; configuration is cleared and CRUD excludes deleted rows |
-| `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state |
+| `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state and private immutable success receipts (031) |
 | `source_objects` | Source-local successful object inventory, retained checksum and optional ownership-blocked epoch |
 | `accounts.workout_ownership_epoch` | Account-wide invalidation epoch advanced only by a source's live-to-deleted transition |
 | `jobs` | Parent/child hierarchy, type, priority, status, progress, retry/cancel links, safe parameters |
@@ -299,6 +326,10 @@ The application database intentionally copies only matched segment and logical-p
 | `account_path_daily_rollups` | Distinct-workout count keyed by account, logical path, and workout-local start date |
 | `account_path_all_time` | All-time first/latest visit dates and distinct-workout count by logical path |
 | `account_data_generations` | Cache-busting generation for private tile URLs after mutations |
+| `workout_path_display_partials` | Compact workout/display-entity/source-path qualification partials and numeric bounds |
+| `workout_path_display_context` | Independent workout/display-entity state/national-park context |
+| `workout_park_display_bounds` | Independent workout/park matched-evidence bounds |
+| `coverage_display_dirty` | Transaction-local account, workout and segment-source keys for deferred display maintenance |
 
 The unique workout/physical-segment constraint collapses repeated passes and GPS-jitter spans into one segment match. Persistence dissolves overlapping or contiguous spans regardless of direction, computes length from the dissolved geometry, and stores disjoint visited spans as separate components of one `MultiLineString`; it never fills gaps between them. The unique workout/logical-path constraint ensures matching multiple member segments and outbound/inbound traversal count once. Segment evidence therefore retains only clipped, positive-length geometry actually traversed by selected workouts. Every emitted span receives the containing logical path's count and fixed bucket; unvisited spans and members are not emitted.
 
@@ -307,6 +338,265 @@ Public graph derivation batches source ways to bound PostgreSQL temporary and sh
 Daily rollups support named periods and arbitrary explicit ranges without maintaining separate mutable materializations for each shortcut.
 
 Selections containing all workouts in a date range use daily rollups. Arbitrary workout subsets query the underlying unique workout/path attribution joined to the selected workout IDs, because an account/day rollup cannot preserve subset membership. Tile functions choose the rollup or attribution path from the authorized map selection and join selected segment-match evidence to avoid rendering unvisited portions of a logical path. First/latest visit fields always come from all-time date-only extrema.
+
+#### Coverage Display Precomputations (Requires 32)
+
+This section and Targeted Coverage Hover Statistics describe deployed 032;
+[canonical display identity](#canonical-display-identity-requires-33-source-only)
+supersedes their source-entity aggregation and cache scope in pending source 033.
+
+Road Coverage list reads use normalized, compact evidence projections rather than
+rescanning segment geometry and tags for every request. These supplement the tile
+rollups above; they are not cached final responses or separate year/month datasets.
+One normalized dataset serves named periods, all-time history and every custom date range.
+
+Path partials are keyed by account, workout, display entity, source logical path
+and `qualifies_without_name`. Education-ground identities can combine several
+source paths without losing the live source-path name qualification. Driveways,
+parking aisles and parking areas are excluded from path partials. Regional-park
+context and park bounds are computed independently from matched evidence, so a
+segment excluded from path statistics can still supply context or park bounds.
+
+`app.map_selection_coverage_entities` retains selection/session/account/generation
+authorization and joins workout visibility, routed/applied-result eligibility,
+local start date, path names/classes/localities, park attributions and park/region
+metadata live. A logical deletion therefore disappears from fresh reads without
+waiting for physical evidence cleanup. Failed, cancelled or timed-out rematches
+do not discard the old applied result. Metadata or date edits are not frozen in
+the projections. Qualified source-path/bucket rows are deduplicated to one
+display-entity/workout visit **before** range and all-time counts and extrema;
+latest-date navigation still chooses the earliest start/ID on a tied date.
+
+Evidence INSERT/UPDATE/DELETE and relevant copied-segment UPDATE/DELETE triggers
+only enqueue deduplicated dirty keys. An initially deferred constraint trigger
+flushes once per affected account at normal commit: it serializes through an
+actual no-value-change update of the account generation row, then expands segment
+source keys into affected workouts in a separate command **after** that barrier.
+At READ COMMITTED this sees matches committed while waiting; Repeatable Read
+conflicts must propagate rather than publish a stale projection. Both old and new
+source keys are retained for updates. One set-based evidence scan rebuilds all
+three projections for the dirty workouts and drains the queue. Evidence,
+projections and existing generation changes commit or roll back atomically;
+maintenance errors cannot leave a partially replaced applied result. The barrier
+does not itself increment the public generation or change invalidation policy.
+These tables/helpers are security-owner-only with forced RLS and no direct
+API/worker/tile grants. See [migration 032](database-migrations.md#coverage-display-precomputations-032).
+
+The dialog makes one `bulk=true` request to
+`GET /api/map-selections/{mapSelectionId}/coverage/paths` per uncached load. The API
+evaluates the coverage function once, reads at most 50,001 rows to detect overflow,
+and buffers a complete response bounded to **50,000 entities and 64 MiB of
+uncompressed JSON including metadata** before sending success. Either limit returns
+422 Problem Details with field `bulk`, code `limit`, and no partial results. Bulk
+metadata is page 1, page size 50,000, total equal to item count, and one total page
+(zero when empty). Valid page/pageSize values do not slice bulk results; server
+search and sort still apply. Default API pagination remains capped at 100 rows.
+
+Client-side displayed-text search, unnamed visibility, sorting/tie-breaks and
+preference-sized paging are unchanged. The shell's five-minute complete-result
+cache remains keyed by resolved date range and account data generation. The client
+validates complete-result metadata and never caches a failed, aborted, incomplete
+or oversized load; 422 asks the user to choose a smaller date range. There is no
+fallback page loop that could cache a partial result.
+
+#### Targeted Coverage Hover Statistics
+
+`GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}/stats?generation=...`
+returns one `RoadCoverageEntity`, including identity, counts, visit dates,
+navigation workout IDs and raw bounds, but **no geometry or expanded fit bounds**.
+The API uses a read-only transaction and
+`app.map_selection_coverage_entity_stats(uuid,uuid,uuid,bigint,text,uuid)`;
+it does not call the full list or geometry-detail reader. The server adds no dwell
+delay. Click-to-fit/blink highlights continue using the existing detail endpoint
+and its geometry/fit bounds.
+
+The STABLE security-definer function validates active account, session, selection
+expiry and current generation before reading facts, within the same statement
+snapshot. Each compact fact source is restricted to the requested kind and ID
+before aggregation. A union of target partials, context, attribution and bounds
+first identifies candidate workouts; only those candidates receive live eligibility
+checks, including independent context-only and bounds-only contributors.
+Account/entity/workout indexes cover path partials and context;
+account/park/workout indexes cover park bounds and the existing park attribution
+lookup. Range statistics still cover **all eligible workouts in the inclusive
+selection date range**, independent of checked/focused workouts; all-time statistics
+cover the account's eligible history. Live eligibility, source-name qualification,
+education visit deduplication, context, date extrema and earliest-start/ID
+navigation ties match the existing readers.
+
+Park availability also retains the detail reader's range-only **canonical-text
+geometry** gate: at least one eligible in-range canonical park match must exist.
+Numeric bounds still include UUID-cast noncanonical evidence when mixed with that
+canonical evidence. A list row alone does not prove detail/stats availability.
+Unavailable entities or foreign, expired or stale selections return 404.
+
+Only the API runtime role can execute the new reader; underlying facts and
+maintenance helpers remain private to the security owner. The stats reader fixes
+`search_path=pg_catalog, app`; both compact list/stats readers set `jit=off`.
+Readiness checks exact function-body fingerprints and catalog structure, including
+signatures/results/defaults, security/ownership/ACLs, settings, projection tables,
+RLS, indexes and maintenance triggers. Numeric schema 32 alone is not readiness
+proof. These additions shipped in the
+[released/applied 032 SQL](../api/migrations/sql/032_coverage_display_precomputations.sql),
+not a 033. Applied 001-032 are immutable; future changes require a forward migration.
+
+The UI-only hover timing follow-up retains the **750ms visibility dwell**, including
+cache hits, but starts an uncached stats lookup after **250ms of stable hover**.
+Lookup and the remaining dwell run concurrently. Its separate in-memory hover
+cache holds at most **128 LRU entries for five minutes from response load**, keyed
+by selection ID, generation, display policy/revision, resolved start/end dates,
+entity kind and ID. It is not the shell's complete-table cache. Successful results
+are cached immediately, even if the pointer leaves before the popup appears;
+returning to an entity reuses its cached result or existing in-flight lookup.
+Entity changes, canvas mouseleave, window blur and a hidden document cancel popup
+visibility, not useful in-flight lookups. They suppress retries and selection
+recovery for inactive hovers. Selection/generation/policy/revision/range changes
+abort obsolete lookups, remove popups and clear cached stats. Late successes/errors
+cannot affect a replacement context. Unmount aborts all lookups, clears the cache
+and unregisters all listeners. Failed/aborted lookups are not cached. The existing
+client retry for a server 503 remains **one retry after 250ms**, with no new server
+delay or retry budget. This timing follow-up is deployed UI-only; no database
+migration or backend rollout was required.
+
+#### Canonical Display Identity (Requires 33, Source Only)
+
+Policy `coverage-display-identity-v1` groups by **region + normalized actual display
+name + normalized actual display place**. Hidden jurisdiction IDs, source kind,
+broad class, connectivity components and source UUIDs are not named-group keys.
+Names/localities use NFC/casefold/NFC pinned to PostgreSQL 18 UTF8 built-in
+`pg_c_utf8`, then explicit Unicode White_Space collapse/trim. Directions, accents,
+punctuation and suffixes remain significant; blank/unknown names retain source
+kind/UUID discrimination instead of merging fallback labels. The versioned,
+length-prefixed UTF-8 namespace tuple hashes with SHA-256 to UUIDv8 with explicit
+variant bits. Stored normalized key fields detect inconsistent UUID collisions
+and abort preparation. [ADR 0013](decisions/013-canonical-coverage-display-identity.md)
+specifies the exact tuple and whitespace code points.
+
+Membership is date-context-resolved, not a permanent source mapping. Resolve all
+historically eligible sources, retaining 032 source-name/base-locality evidence,
+in-range park context and region precedence. Use historical context/region fallback
+for history-only sources; if their resolved key agrees, include their full visit
+history. Deduplicate the union of workouts across every member before range and
+all-time counts/extrema. List/stats expose only groups with an in-range visit;
+latest-date ties still select earliest start then UUID. Checked/focused subsets
+change geometry, not metadata or membership. Mixed named park/path members form
+one group, with deterministic park-preferred representative kind/class for
+presentation only. Geometry unions actual matched pieces, preserving gaps.
+
+Six private, security-owner/forced-RLS tables store `coverage_display_revisions`,
+`coverage_display_contexts`, `coverage_display_members`, `coverage_display_visits`,
+`coverage_display_entities` and `coverage_display_invalidations`. Contexts are
+unique by account, generation, revision, inclusive dates, policy and label locale
+(`en`). The API's existing Repeatable Read selection transaction invokes VOLATILE
+SECURITY DEFINER `app.prepare_coverage_display_context`, builds/reuses the complete
+ready context and binds it with a composite-account FK. Preparation returns
+context ID, display revision and policy; JSON requires `coverageDisplayPolicy`
+and `coverageDisplayRevision`. Read-only hover/detail and tiles never rebuild.
+
+Preparation cleans obsolete/older-than-one-day unreferenced contexts and retains
+eight reusable unreferenced scopes per account, a soft limit excluding valid
+actively pinned selections. Account cascades and context-column-only FK cleanup
+preserve account identity; failed builds, savepoints and maintenance roll back
+atomically without exposing half-built contexts.
+
+All source inputs invalidate contexts: matches/segment projections, path/park
+metadata, attribution, workout dates/start/deletion, route presence/applied
+eligibility and region labels, including context-only evidence. Deferred
+account/transaction coalescing advances both display revision and public generation
+once, without rebuilding every range on write or taking early ingest/provider
+generation locks. Preserve generation-before-revision order, 032 post-barrier
+segment expansion, correct evidence under both READ COMMITTED commit orders and
+Repeatable Read `40001` propagation. Deleted-account tombstones drain safely.
+
+List reads indexed ready entities with search after grouping; point stats is an
+authorized canonical index lookup without geometry or full-account aggregation.
+The replaced stored detail reader gates whole-group in-range geometry on metadata;
+the API calls that same six-argument reader with transaction-local `jit=off`.
+All four MVT layers and focus GeoJSON use this context's canonical IDs, metadata,
+counts and buckets while retaining source IDs/kinds for hit priority and actual
+geometry. A source path feature may have canonical `entityKind=park`; representative
+kind never filters membership. No tile-local text hashing or invented bridges.
+
+Bulk, hover and detail caches and stale-response guards add policy/revision to
+their existing scope; local search/sort/filter/paging and click improvements remain.
+Runtime readiness pins exact 033 bodies and ownership/ACL/RLS/index/trigger
+contracts. This is a generally applicable application read-model policy, not an
+OSM derivation, matcher or path-policy change. Coverage recomputation here means
+context warm/rebuild from retained evidence, **not new route jobs**. Live remains
+backend-42/UI-43/schema-32 until the coordinated MAIN deployment completes.
+
+#### Click-Highlight Follow-Up (Unreleased Source Only)
+
+The following source behavior is **undeployed**, after live backend revision 42 /
+UI revision 43 and schema 32. It does not amend the deployed contracts above.
+The implementation is in [MapPage](../ui/src/MapPage.tsx) and
+[the map API](../api/maps.go); it is folded into the pending 033 release above.
+Earlier source verification does not establish full 033 verification or deployment.
+
+An entity-name click closes Road Coverage and returns focus to the mounted map
+canvas immediately on intent, without waiting for detail. An uncached request
+shows transient loading feedback with **Cancel** in a bottom map banner, visible
+on desktop and mobile at **z-index 7**, below passive tooltips at **8**. Failure or
+the **30-second** request timeout leaves map-level **Retry / Close** feedback,
+not a reopened error dialog. Detail retries are manual, with no hidden retry.
+Exact geometry and its expanded fit bounds must be available before fitting;
+table/raw bounds do not cause a speculative camera move. The existing
+**350ms** fit animation and white blink are retained: blinking starts immediately
+when geometry is available, and the **three-second** duration starts only after
+camera movement and requested tiles are ready, with the existing bounded fallback.
+
+The existing
+`GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}?generation=...`
+endpoint and response shape remain unchanged. The source API now calls
+`app.map_selection_coverage_entity_detail` with the existing six arguments
+(account, session, selection, generation, kind and canonical ID). Migration 033
+replaces that stored reader with metadata-gated whole-group geometry in one
+statement snapshot, retaining the correlated `LATERAL`/`OFFSET 0` barrier and
+minimum-500-meter fit pipeline. The earlier API-local source-only geometry copy
+is superseded. Denied metadata cannot initiate geometry work. The transaction
+remains read-only with explicit `SET LOCAL jit=off`, not a global setting change.
+This combined release requires schema/minimum runtime **33**; applied **001-032
+remain unchanged**.
+
+A separate canvas-visit detail cache stores only successful, still-current
+responses, keyed by selection ID, generation, resolved dates, display policy and
+revision, entity kind and canonical ID.
+It evicts least-recently-used entries to retain at most **8 entries / 8 MiB of
+UTF-8 serialized JSON**, with a fixed **five-minute TTL from load**; hits do not
+extend expiry. Oversized details can be displayed without caching. This bounds
+serialized payload accounting, not JavaScript heap or process memory. There is no
+bulk geometry prefetch. The separate hover-stats cache and shell complete-result
+bulk cache, including client-side paging, remain unchanged.
+
+Latest-request sequence and selection/generation/range, deletion, workout subset,
+mode/diagnostics and selection-refresh context guards prevent superseded work from
+changing UI, camera, caches or recovery state. Context changes clear detail state
+and cache; cancellation, abort and unmount stop pending work without surfacing
+stale errors or caching late successes. Reusing the same geometry/source skips
+redundant GeoJSON `setData`; style/source replacement forces installation again.
+Reopening Road Coverage cancels pending detail work rather than allowing it to
+complete behind the dialog. Late 200, 503 or 404 responses cannot fit, cache,
+invalidate the bulk-table cache or automatically refresh the capability after
+reopen. Already-completed detail cache entries and highlights are preserved.
+A current 404 invalidates detail and complete-table caches and shows visible
+Retry feedback. Only that manual Retry refreshes the capability; the user then
+reopens Road Coverage and chooses an entity again, without automatic replay of
+the stale click.
+
+#### Map Overlay Layout
+
+Map cards and the navigation-control container share `--map-overlay-inset`:
+**0.75rem on mobile layouts, 1rem on desktop**. MapLibre's inner control margin is
+zero, avoiding a doubled inset. The Road coverage legend width reserves the zoom
+button column and its gutter. Existing viewport-bound map and independently
+scrolling sidebar behavior remain unchanged.
+
+Route and Coverage tooltips remain canvas-level popups above the legend,
+navigation controls and attribution. The stage/canvas host must not create a
+stacking context that traps them below sibling overlays. Popup root and content
+use `pointer-events: none`, so these passive tooltips do not interrupt hover or
+intercept map/control interaction. The
+[map CSS guard](../ui/scripts/check-map-css.mjs) protects these layout rules.
 
 #### Deferred Generation (Folded 028, Undeployed)
 
@@ -611,12 +901,47 @@ processing failure, never permission to hash or match a truncated prefix. These
 are matching bounds, not raw-ingest retention limits; ingestion and raw-route
 availability remain independent of derived Coverage success.
 
-The normal observation window contains 128 points. Only typed graph-node/edge
-exhaustion invokes bounded retries at the same start with 64, then 32 points.
+The normal observation window contains 128 points. The approved early hard-gap
+correction below scopes these windows to continuous legs rather than letting a
+whole-route window span disjoint clusters before decoder splitting. Only typed
+graph-node/edge exhaustion invokes bounded retries at the same start with 64,
+then 32 points.
 The next accepted window starts at the preceding accepted end minus one, and
 normal size 128 is tried again. Record starts/ordinals and observations/evidence
 only for accepted windows. Supplemental turn/tangent rematches also use bounded
 fallback while retaining their continuity and supporting-traversal checks.
+
+**Implemented and deployed in revision 41:** sample
+the complete route once without changing original or sampled sequences, then
+partition adjacent sampled points before any window, candidate or graph work.
+Sampling and partitioning share `coverage.GeographicGapReason`. Existing hard
+gaps are elapsed time greater than 30 seconds,
+distance greater than 200 meters, or backward time; threshold equality is not
+itself a gap. Missing timestamps disable only temporal detection for that pair,
+not spatial detection. Valid remote pause/resume legs remain matchable without
+inventing Coverage for the travel between them. This is existing matcher-stage
+ordering work, not ingest preprocessing.
+
+Primary/adaptive windows and supplemental seam/turn/tangent scopes stay within
+each leg; overlap and repair never cross a hard gap. One route-level `Result`
+retains global offsets, order, split accounting and provenance. Clipping and
+`Prepare` union/deduplication remain global, preserving disjoint visited spans and
+unique physical-segment accounting across legs. Minimum-traversal acceptance
+remains per decoded chunk: summing separate subthreshold chunks cannot make
+them acceptable. Point/output bounds remain per route, not multiplied per leg.
+
+Path policy `coverage-path-policy-experimental-v82`, sampling
+`coverage-sampling-experimental-v1`, rules `coverage-experimental-v1` and
+`coverage-production-v1` remain unchanged: this corrects intended split handling.
+No database migration, minimum-runtime change, global cache buster or recomputation
+is introduced; the existing schema-31 contract is independent. This is not a
+universal output-equivalence claim for previously successful disjoint routes:
+per-leg window alignment can change decoding/evidence. Existing `acceptedCoverage`
+remains authoritative unless explicitly rerun. Retry lineage, automatic allowance
+and manual/automatic shared root budgets are unchanged. The narrowly authorized
+postdeployment failed-only retry and completed verification are described in the
+[evaluation design](coverage-matcher-evaluation.md#early-hard-gap-partitioning-design),
+with owner-specific operational evidence kept private.
 
 Every attempt reuses the same snapshot, admitted capacity and deadline; graph
 node/edge and expansion-layer bounds remain unchanged. No arbitrary node pruning,
@@ -810,7 +1135,7 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 
 1. The adapter enumerates metadata matching incremental or explicit-range rules.
 2. Incremental sync selects new or changed objects and ownership-blocked objects whose captured epoch is stale (requires 26).
-3. Bounded Manual Sync selects all matching objects, even previously processed ones.
+3. New bounded Manual Sync applies the same metadata-skip policy within inclusive export-file dates; only explicit `reprocessAllFiles: true` processes all eligible files in a fresh run. Existing bounded jobs with no persisted flag retain their original force policy.
 4. The M8 remote transport stages at most one file per slot in a random job directory with `0700` access under `WORKER_STAGING_ROOT/private`, with mode-0600 files; the outer root defaults to `/var/lib/workouts/staging`. The old `/tmp/<user-id>/<job-id>/` layout is not the contract.
 5. Remote downloads use a non-final filename and are atomically promoted after bounded download and pre/post metadata validation.
 6. Local/NFS adapters may read directly when staging is unnecessary.
@@ -818,9 +1143,13 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 8. Cleanup removes the staged file before the slot claims another.
 
 iCloud incremental discovery uses remote ID, size and modification time, not a
-remote content hash. A same-metadata content overwrite is undetectable; bounded
-Manual Sync forces matching dates to reprocess. One application discovery per
-sync does not imply one native listing or HTTP request: backend stat/download
+remote content hash. A same-metadata content overwrite can go undetected; explicit
+bounded reprocessing reads current bytes. Rclone iCloud v1.75.2 advertises
+`hash.None` and returns `hash.ErrUnsupported`: no free remote MD5 is available.
+The `v2:rclone:` SHA-256 hashes source-scoped metadata, not file content. Actual
+processing computes local content SHA-256 while parsing; skipping never downloads
+all remote bytes for a hash and does not prove their integrity. One application
+discovery per sync does not imply one native listing or HTTP request: backend stat/download
 can list internally. Flat discovery is bounded to 100000 entries, 10000 eligible
 exports and 32 MiB stdout; files are capped at 64 MiB, metadata operations at
 60 seconds and downloads including checks at five minutes. Native retries are
@@ -842,9 +1171,42 @@ deleted owner's workout to be adopted. If blockers remain, success records the
 new captured epoch. Same-job manifest actions stay frozen, completed file
 checkpoints never reopen, and recovery restores committed counters/events without
 double counting. Source deletion does not enqueue an immediate sync: the next
-auto-sync or a new manual job is needed. Bounded Manual Sync already forces
-eligible files to reprocess. Successful bytes are not invalidated or deleted to
-implement ownership retry.
+auto-sync or a new manual job is needed. New bounded defaults use the same
+owner-aware policy; explicit reprocessing is the opt-in force path. Successful
+bytes are not invalidated or deleted to implement ownership retry.
+
+### Reprocessing, Retry And Receipts (Requires 31)
+
+`IngestCreate` accepts optional boolean `reprocessAllFiles` only with both valid
+ordered dates, including when `false`. New bounded requests default to false and
+persist an explicit boolean on parent and child parameters; incremental requests
+and parameters omit it. Existing bounded parameters with an absent flag still
+mean force. No new/old contract marker, historical parameter rewrite or frozen
+manifest rewrite is needed.
+
+New API enqueue uses coalescing v2 over sorted source IDs/generations, mode,
+dates, effective force and root/retry ancestry, including each source-child
+predecessor. Omitted/false bounded requests coalesce, but force, retries of
+unrelated roots and distinct retry paths remain separate. Existing sorted
+source-row locks and active-job uniqueness provide coordination; no new lock is added.
+
+At fresh retry discovery, valid successful processing of the same file metadata
+on the current source-child ancestor path skips regardless of original force.
+Sibling/other-branch/unrelated success is not ancestor evidence. A forced retry
+processes failed, unreached or changed files without being defeated by older
+unrelated successful inventory. A non-forced retry additionally permits ordinary
+valid inventory skips, including files its original run intentionally skipped.
+
+Private `source_files.observed_identity` and `ownership_blocked_epoch` receipts
+are stamped at successful file commit from the admitted ingest-write capability,
+pre-decision ownership epoch and exact frozen manifest. Terminal-file and manifest
+immutability protect them. An ancestor receipt survives movement of the latest
+inventory success pointer. Historical NULL receipts require sufficient current
+inventory/checksum/manifest proof or may need a safe extra download, never an
+invented universal skip guarantee. Frozen same-job actions, terminal checkpoints,
+counter restoration, date/ownership/account fences and workout/route identity
+remain intact. Explicit file force does not guarantee Coverage rematching. See
+the [complete contract](ingest-reprocessing.md).
 
 ### Parsing and normalization
 

@@ -2,11 +2,22 @@
 
 ## Status
 
-Acceptance evidence for ADR 0009, accepted on 9/11/2026 with matcher rules
+Historical acceptance evidence for ADR 0009, accepted on 9/11/2026 with matcher rules
 `coverage-experimental-v1`, adaptive sampling, and path policy
-`coverage-path-policy-experimental-v82`. Production Coverage persistence remains
-the next delivery slice. The owner-only diagnostic API and UI persist bounded
-matcher evidence and labels and remain available for route-level review.
+`coverage-path-policy-experimental-v82`. Production Coverage persistence was the
+next delivery slice at that checkpoint; later release receipts below record its
+delivery. The owner-only diagnostic API and UI persist bounded matcher evidence
+and labels and remain available for route-level review. Early hard-gap isolation
+is implemented and deployed in Helm revision 41. This is a scoped correctness and
+query-footprint fix, not new capacity certification or replacement benchmark evidence.
+
+Source-only [canonical display policy 033](decisions/013-canonical-coverage-display-identity.md)
+is a separate application read-model change, **not** an OSM derivation, matcher or
+path-policy version bump. It needs no OSM regeneration/download or route rematch.
+Coverage recomputation means warming/rebuilding context from existing evidence,
+not new route jobs. Live remains backend-42/UI-43, schema/minimum runtime 32, baseline 27;
+source support/schema/minimum 33 is pending coordinated MAIN deployment. Existing
+matcher benchmarks and historical acceptance evidence are not 033 verification.
 
 ## Scope
 
@@ -63,8 +74,9 @@ and [shared architectural contract](architecture.md#shared-matching-contract).
 Diagnostics and production share `routepipeline.OriginalPointLimit` (50,000 raw
 route points) and `routepipeline.DefaultLimits()` (12,000 sampled observations),
 with unchanged limits of 10,000 evidence portions, 4,096 segments, 256 generations and 64 unavailable
-regions. Migration 030 widens the diagnostic count checks to match; schema 30
-retains minimum runtime 26. The raw-point guard runs before matcher admission.
+regions. Canonical migration 027 widens the diagnostic count checks to match;
+the deployed schema and minimum runtime are 32. Migration 032 optimizes coverage
+display reads without changing these matching limits. The raw-point guard runs before matcher admission.
 Equal input, OSM snapshot, movement mode, sampling, matching rules and road
 geometry settings produce the same matching counts and evidence in both
 adapters. This is matching-limit parity, not equal execution budgets: the
@@ -85,6 +97,79 @@ overrides are service configuration, not attested by the response metadata.
 Do not interpret a custom-parameter diagnostic as production parity merely
 because its version labels and limits match. Compare its effective settings with
 the production job's minimum traversal and `coverage.DefaultRoadGeometryRules()`.
+
+### Early Hard-Gap Partitioning Design
+
+The approved correction moves existing hard-gap handling ahead of window
+formation, candidate lookup and graph construction in the shared matcher
+pipeline. It is not a new ingest stage or route-data rewrite. Previously, a
+whole-route window could include remote observation clusters before the decoder
+split them, spending bounded candidate/graph work on a discontinuous trace. A
+valid pause/resume route must not be rejected merely for containing remote legs,
+and the unobserved travel between those legs must never become Coverage.
+
+- Sample the complete route **once**, preserving the original observation
+  sequence and the existing sampled sequence, including gap-adjacent endpoints.
+  Do not sample each leg independently or renumber provider sequences. Sampling
+   and partitioning share `coverage.GeographicGapReason`, rather than duplicate
+   predicates.
+- Partition adjacent sampled observations using the existing rules: elapsed time
+  **greater than 30 seconds**, spatial distance **greater than 200 meters**, or
+  backward time. Equality at either threshold is not itself a gap. A missing
+  timestamp prevents a temporal decision for that pair, but spatial detection
+  still applies. These are existing split semantics, not new tuning values.
+- Form primary 128-observation windows within each leg; only typed graph-node/
+  edge exhaustion invokes the existing 64/32 recovery. One-point overlap applies
+  within a leg, never between legs. Seam, turn and tangent rematches and their
+  supporting-observation/traversal scopes must stay within the same leg. No
+  repair, candidate graph or inferred connector may span a hard gap.
+- Assemble one route-level `Result`, retaining global sampled-point offsets,
+  route order, timestamps, split accounting and provenance. Clip evidence
+  globally and run the existing global `Prepare` union/deduplication so repeated
+  physical segments across legs are not double-counted. Union is not permission
+  to fill an unobserved interval or join disconnected geometry.
+- Keep minimum-traversal acceptance **per decoded chunk**. Separate subthreshold
+  chunks do not become accepted because their lengths sum past the minimum;
+  global preparation only combines already accepted evidence.
+
+Original/sampled-point and route-output bounds remain global, not per-leg
+allowances. Candidate, graph, expansion and repair bounds, cancellation, one
+snapshot/admission/deadline, atomic failure, CPU/memory, concurrency and timeout
+budgets remain unchanged. A processing error in any leg fails the route atomically,
+without publishing partial Coverage.
+
+This repairs the existing intended split behavior without changing
+`coverage-path-policy-experimental-v82`, `coverage-sampling-experimental-v1`,
+`coverage-experimental-v1` or `coverage-production-v1`. It requires no database
+migration or minimum-runtime change; the existing schema-31 contract is
+independent. It adds no global cache buster or automatic recomputation.
+Previously successful disjoint-route results are **not universally
+output-equivalent**: restarting windows per leg can change alignment, local
+decoding and accepted evidence even though sampling and thresholds are unchanged.
+Existing `acceptedCoverage` remains authoritative unless explicitly rerun.
+
+Current-source synthetic verification covers remote pause/resume legs, strict
+threshold boundaries, missing/backward timestamps, leg-local adaptive and
+supplemental windows, global accounting/preparation, per-chunk minimum rejection,
+and unchanged failure/cancellation behavior. The existing 204-case matcher golden
+passes; 27 additional full-result/Prepare continuous-route goldens match the
+manifest-verified pre-fix implementation. Normal and race verification passed.
+Prior synthetic measurements retain their recorded source/version scope; they
+are not relabeled as measurements of this correction. Real-case inputs, replay
+measurements and selective production recovery evidence remain private.
+
+The separately verified revision-41 deployment used only the new API/shared-worker
+images, without changing schema, configuration, resources or timeouts. Authorized
+recovery used only a
+failed-route retry through the direct API against the latest Coverage parent,
+with a fresh precondition requiring **exactly one authoritative failed target**.
+If that precondition does not hold, stop rather than broaden the retry. Successful
+routes are not rerun, ingestion is not repeated, and neither automatic allowance
+nor the manual/automatic shared root budget was reset. The selective recovery
+completed; its owner-specific measurements remain private. No retry is submitted
+by this documentation update.
+
+### Diagnostic Deployment Configuration
 
 For xdev enablement, set `api.coverageDiagnostics.enabled=true`. The current Helm
 default selects `api.coverageDiagnostics.databaseSecret.name` as
@@ -135,10 +220,13 @@ Non-deleted workouts with route summaries are selected in stable workout
 chronology. Route points are read in sequence order one workout at a time. The
 workout type key and provider label select experimental `foot`, `bicycle`, or
 conservative `shared_public` policy, but neither source value is retained in the
-report. The complete route is adaptively sampled before matching. Sampled points
-are then processed in windows of at most 128 observations; adjacent windows
-share one observation so the boundary transition is retained without counting
-the observation twice.
+report. The historical implementation adaptively sampled the complete route, then
+formed whole-route windows of at most 128 observations, potentially spanning
+disjoint legs before decoder splitting. Adjacent windows shared one observation
+without counting it twice. The approved early hard-gap design retains whole-route
+sampling but forms those overlapping windows separately within each continuous
+leg, before candidate lookup or graph construction; it is not yet deployment
+evidence.
 
 Each non-empty workout has one bounded two-minute context and one read-only,
 repeatable-read OSM matcher snapshot shared by all of its windows. The snapshot
@@ -269,6 +357,8 @@ accepted traversal with 2 positive portions at total cost 0.0550.
 The manual `coverage-evaluate` command reads one routed workout at a time, applies
 versioned adaptive 5-meter/5-second sampling, and evaluates overlapping windows of
 at most 128 observations under one two-minute read-only OSM snapshot per workout.
+This historical description predates early hard-gap partitioning; the design
+above changes window scope, not these recorded measurement results.
 Its JSON report contains only aggregate outcome/mode counts, observation statuses,
 candidate and graph bounds, traversal/portion counts, unique public segment count,
 safe error categories, and durations. It emits no account/workout IDs, route
@@ -301,9 +391,10 @@ public-coordinate adapter measurements above retain their separate scopes.
   smoke evaluation, aggregate route evaluation, and repeated deployed diagnostics.
   Dense downtown, switchback, and tunnel cases still require representative
   measurement.
-- Diagnostics persist map-data/rules provenance, immutable rematch runs, labels,
-  and exact segment evidence. Durable production matches, logical-path counting,
-  aggregation, and Coverage rendering remain the next implementation phase.
+- At the original evaluation checkpoint, diagnostics persisted map-data/rules
+  provenance, immutable rematch runs, labels and exact segment evidence. Durable
+  production matches, logical-path counting, aggregation and Coverage rendering
+  were the next phase; later release sections record their delivery.
 
 ### Historical Policy Refinements
 

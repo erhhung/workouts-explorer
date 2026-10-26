@@ -1651,17 +1651,41 @@ export function Summary({
       </header>
       {saveNotice && (
         <div className="summary-notice" role="status">
-          {saveNotice}
+          <span>{saveNotice}</span>
+          <button
+            type="button"
+            className="secondary"
+            aria-label="Dismiss date range warning"
+            onClick={() => setSaveNotice("")}
+          >
+            Dismiss
+          </button>
         </div>
       )}
       {exportError && (
         <div className="summary-notice summary-export-error" role="alert">
-          {exportError}
+          <span>{exportError}</span>
+          <button
+            type="button"
+            className="secondary"
+            aria-label="Dismiss export error"
+            onClick={() => setExportError("")}
+          >
+            Dismiss
+          </button>
         </div>
       )}
       {deletionNotice && (
         <div className="summary-notice" role="status">
-          {deletionNotice}
+          <span>{deletionNotice}</span>
+          <button
+            type="button"
+            className="secondary"
+            aria-label="Dismiss deletion notice"
+            onClick={() => setDeletionNotice(undefined)}
+          >
+            Dismiss
+          </button>
         </div>
       )}
       <CustomDateRangeDialog

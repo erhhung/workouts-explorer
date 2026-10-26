@@ -25,6 +25,32 @@ func setSourceConfig(t *testing.T) {
 	t.Setenv("LOCAL_SOURCE_ROOTS", "/data/workouts")
 }
 
+func TestAllowAdminPasswordDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
+	setAccountLifecycleConfig(t)
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"false", false},
+		{"true", true},
+	} {
+		t.Run("value="+test.value, func(t *testing.T) {
+			t.Setenv("ALLOW_ADMIN_PASSWORD", test.value)
+			t.Setenv("PASSWORD_MINIMUM_LENGTH", "20")
+			cfg, err := LoadAPI()
+			if err != nil || cfg.AllowAdminPassword != test.want || cfg.PasswordMinimum != 20 {
+				t.Fatalf("allow admin password=%t minimum=%d err=%v", cfg.AllowAdminPassword, cfg.PasswordMinimum, err)
+			}
+		})
+	}
+	t.Setenv("ALLOW_ADMIN_PASSWORD", "sometimes")
+	if _, err := LoadAPI(); err == nil {
+		t.Fatal("invalid admin-password switch accepted")
+	}
+}
+
 func TestOTLPEndpointDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("API_DATABASE_URL", "postgresql://database.invalid/workouts")
 	t.Setenv("WORKER_DATABASE_URL", "postgresql://database.invalid/workouts")

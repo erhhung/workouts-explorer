@@ -13,6 +13,7 @@ data:
   BASE_MAPS_JSON: {{ mustToJson .Values.api.publicConfig.baseMaps | quote }}
   TILE_SERVER_URL: "http://workouts-explorer-tiles:3000"
   PASSWORD_MINIMUM_LENGTH: {{ .Values.api.passwordMinimumLength | quote }}
+  ALLOW_ADMIN_PASSWORD: {{ .Values.api.allowAdminPassword | quote }}
   SESSION_LIFETIME: {{ .Values.api.sessionLifetime | quote }}
   PAGE_SIZE_MAXIMUM: {{ .Values.api.pageSizeMaximum | quote }}
   TRUSTED_PROXY_CIDRS: {{ .Values.api.trustedProxyCidrs | quote }}

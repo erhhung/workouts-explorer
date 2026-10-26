@@ -4,7 +4,33 @@ This document defines the durable job contract used by the API, worker, and
 database schema. It elaborates the job architecture without changing the
 observable behavior in `functional-spec.md`.
 
-Active migrations remain **001-028**, with **no active 029**. New 028 folds the
+Current deployment uses migrations **001-032**, schema and
+minimum runtime **32**, with marker **27**. Migration 031 defines the ingest
+contract; 032 adds coverage display projections maintained atomically with evidence
+updates, without changing job hierarchy, matching rules or retry budgets.
+Released/applied 001-032 are immutable. A standalone restricted native migration
+preceded accepted full-values backend **42** and UI **43** rollouts with
+`--no-hooks`. Actual API/worker readiness and original-data/configuration
+preservation passed; resources, concurrency, timeouts and retry/matcher budgets
+remain unchanged. Source auto-sync stays off, with no new ingest/matching work or
+provider checks. Full pre-32 backups and old images remain retained; image-only
+rollback is unsupported. Scripted deployed-browser verification passed; owner
+acceptance/milestone and capacity remain separate. See [Ingest Reprocessing](ingest-reprocessing.md)
+and [coverage display precomputations](database-migrations.md#coverage-display-precomputations-032).
+
+Pending source-only **033** requires coordinated schema/minimum runtime **33**,
+baseline **27**; live backend-42/UI-43 remains on 32 until MAIN cutover completes.
+[Canonical display identity](decisions/013-canonical-coverage-display-identity.md)
+adds context preparation and deferred all-input invalidation, coalescing display
+revision/public generation once per account/transaction. It retains job hierarchy,
+matching rules, generation vectors and retry budgets. Coverage "recomputation"
+here means warming/rebuilding a canonical read-model context from existing
+evidence, **not enqueueing `coverage_update`/`coverage_update_route` jobs**. No OSM
+regeneration or rematching is needed. Existing job lifecycle and historical
+receipts below are not schema-33 deployment proof; see [pending gates](database-migrations.md#canonical-coverage-display-033-source-only).
+
+The following folded-028 release evidence is historical, **prior to 031**.
+At that checkpoint active migrations were **001-028**, with no active 029. New 028 folds the
 generation-lock fix, strict eligible cohorts and mixed-failure automatic policy
 into the pipeline. Source `SupportedSchemaVersion`, schema and minimum runtime
 are **28**, marker **27**. The folded contract is **deployed in `dev-20261020`,
@@ -59,8 +85,8 @@ choose the least-recently-served active parent, then its oldest eligible child.
 | `queued` | No | Eligible for a worker claim or waiting for children |
 | `running` | No | Claimed under a live lease or has at least one active child |
 | `succeeded` | Yes | Completed successfully, including a no-data result |
-| `partially_succeeded` | Yes | Parent only: at least one child succeeded and another failed or was cancelled |
-| `failed` | Yes | Work failed, or no parent child succeeded and at least one failed |
+| `partially_succeeded` | Yes | Stored parent outcome: mixed results; ingest requires at least one imported or updated workout |
+| `failed` | Yes | Work failed; unsuccessful ingest has zero imported and zero updated workouts |
 | `cancelled` | Yes | Cancelled before completion, with no successful parent child |
 
 Cancellation intent is stored separately as `cancel_requested_at` and
@@ -107,6 +133,33 @@ derived from child statuses:
 - `cancelled` when no child succeeded and every child was cancelled; and
 - `failed` when no child succeeded and at least one child failed, including a
   mix of failed and cancelled children.
+
+Schema 29 introduced file-based ingest partial success; schema 30 refines this to
+the result counts shown to the owner. An unsuccessful ingest parent is
+`partially_succeeded` when its source progress records at least one imported
+(`workouts_created`) or updated workout. Otherwise it is `failed`, even if some
+files succeeded, were skipped, or contained only unchanged workouts. All-success
+empty runs remain `succeeded`. This never makes an active run terminal early or
+changes an all-cancelled run to partial success.
+
+Failed source children stay failed for selective source retry and do not advance
+source-success freshness. Existing terminal execution history is immutable, but
+`displayStatus` projects the same workout-based rule for historical ingest parents
+and source children. Detail badges, latest-job cards, notifications and history
+filters/counts all use that presentation. A historical failed run with imported or
+updated workouts therefore displays a warning-colored `partially_succeeded` badge
+without rewriting its job, timestamps, notification or retry lineage.
+
+The Files disclosure can filter failures across the whole run before pagination.
+Zero failed files does not imply success: an unsuccessful source-level run with
+zero created and zero updated workouts still displays **Failed** under unchanged
+030 rules. Successful empty runs remain successful; no `failuresCount` field is
+added to the API.
+
+Retry starts a new source attempt with the original range and effective policy,
+not just failed filenames. It skips valid same-metadata ancestor successes even
+after force; non-forced retries may additionally use ordinary valid inventory.
+See [ingest retry evidence](#ingest-reprocessing-and-retry-evidence-requires-31).
 
 Parent progress is the aggregate of persisted child counters. Parent terminal
 state and notification creation occur in the same transaction that makes the
@@ -176,7 +229,7 @@ File inventory and recovery follow these invariants:
   `skipped_live_owner`, record `ownership_blocked_epoch` from the pre-decision
   fence, not a later account epoch. Mixed files retain both successful writes and
   blocked evidence; an all-blocked file can still succeed.
-- For a fresh incremental job, `app.read_ingest_candidate_actions(job, worker,
+- For a fresh incremental or new non-forced bounded job, `app.read_ingest_candidate_actions(job, worker,
   lease, candidates)` skips unchanged successful metadata when the blocker is
   absent or its epoch is current, without reread/download. A stale blocked epoch
   selects `process` even for identical metadata and bytes. Reprocessing may adopt
@@ -188,8 +241,9 @@ File inventory and recovery follow these invariants:
   counted skips are restored without double counting.
 - Source deletion cancels only work using that source and does not enqueue sync
   for another. Ownership reconsideration needs the next auto-sync or a **new**
-  manual job, not recovery of an old frozen job. Bounded Manual Sync already
-  processes every eligible file regardless of successful checksum.
+  manual job, not recovery of an old frozen job. Only explicit bounded
+  `reprocessAllFiles: true` requests the old all-eligible-files force policy for a
+  new run; legacy bounded jobs without the flag retain their original force policy.
 - `adopted` contributes to Updated and `skipped_live_owner` to Unchanged in both
   immediate and recovered totals. The distinct owner-private import event remains
   authoritative; Unchanged here does not imply equal payloads. No new public job
@@ -213,7 +267,7 @@ Recovery can discover committed outbox work independently of the original ingest
 finishing. This does not reopen terminal ingest files/jobs or count their results
 again. Normal route-child fencing and matcher admission still apply.
 
-### Generation Lock Timing (Folded 028, Undeployed)
+### Generation Lock Timing (Folded 028)
 
 The file fence removes only the generation-row `FOR UPDATE NOWAIT`; the
 nonlocking existence check still fails with `55000` if the row is missing.
@@ -339,6 +393,40 @@ ordinal. Successful and superseded route children have no child in a selective
 retry. This preserves per-workout attempt history while parent navigation remains
 the primary first/second/.../latest Run-detail control.
 
+### Ingest Reprocessing And Retry Evidence (Requires 31)
+
+New bounded jobs persist explicit `reprocessAllFiles: false` by default, or
+`true` when requested. Incremental jobs omit the field. An absent field on an
+existing bounded job means its original force policy; retry copies that effective
+policy explicitly without rewriting history or introducing another version marker.
+The API permits the optional boolean only with both valid ordered dates, even
+when false. Date bounds always apply to eligible export files.
+
+Every retry first checks valid successful processing for the same file and
+observed metadata on its own source-child predecessor path, regardless of force.
+Sibling children, other branches and unrelated inventory jobs are not that path.
+Valid path success skips; a stale ownership-blocked epoch invalidates it. Forced
+retry processes failed, unreached or changed files with no valid path success
+even if unrelated older inventory was successful. Normal non-forced retry also
+allows ordinary valid global source-inventory skips, including files intentionally
+skipped by the original run. It is not a chain-only-download rule.
+
+Private `source_files.observed_identity` and `ownership_blocked_epoch` receipts
+are stamped on the successful commit from the transaction's admitted capability,
+pre-decision epoch and frozen candidate metadata, alongside the real parsed-byte
+SHA-256. Guards reject caller-supplied receipt values and preserve terminal-file
+and manifest immutability. Later inventory pointer/blocker changes cannot erase
+the ancestor's durable receipt. Historical NULL receipts require sufficient
+current inventory/checksum/manifest proof; otherwise a safe extra download is
+allowed, not a promise that all historical successes always skip.
+
+Same-job recovery is different: it restores frozen actions and terminal file
+checkpoints without reevaluation or duplicate counters, even if ownership changed
+since discovery. No force option bypasses account/source/date/lease/runtime or
+ownership fencing, workout deduplication or route identity; no forced Coverage
+guarantee is introduced. The [full contract](ingest-reprocessing.md) specifies
+metadata limitations and the bounded-only control.
+
 ### Current Retry Eligibility And Superseded Presentation
 
 Stored execution state describes the attempt that actually ran. A Coverage
@@ -433,6 +521,13 @@ and coalescing key. Cancellation intent does not make a job inactive; equivalent
 requests return the existing job until it is terminal. The database unique
 constraint is authoritative so concurrent API replicas cannot enqueue duplicate
 work.
+
+New API ingest roots use coalescing v2, including sorted source IDs/generations,
+mode, dates, effective force, root versus retry, parent predecessor and sorted
+source-child predecessor links. Omitted/false bounded requests normalize together;
+force and distinct retry paths do not. Reuse existing sorted source-row locks and
+the active-job uniqueness constraint, not a new lock. Historical keys and queued
+parameters remain intact, including the earlier-active-ingest conflict guard.
 
 OSM region updates are globally single-flight by provider-qualified region ID,
 independent of administrator identity. New ingest Coverage uses durable private

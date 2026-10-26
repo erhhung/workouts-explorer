@@ -187,17 +187,19 @@ func supplementalFailureRoute(kind string) (*windowSnapshot, []coverage.Geograph
 	return snapshot, points
 }
 
-func TestEvaluateSupplementalFailureDiscardsPrimaryEvidence(t *testing.T) {
+func TestEvaluateHardGapSkipsSupplementalQueries(t *testing.T) {
 	for _, kind := range []string{"turn", "tangent"} {
 		t.Run(kind, func(t *testing.T) {
 			baseline, points := supplementalFailureRoute(kind)
-			result, err := Evaluate(context.Background(), baseline, points, fixtureConfig())
-			initial := 128
-			if kind == "tangent" {
-				initial = 192
+			baseline.fail = func([]osm.MatcherObservation) error {
+				if len(baseline.calls) > 2 {
+					return &coverage.OSMEvaluationLimitError{Field: "graph edge", Limit: 4096}
+				}
+				return nil
 			}
-			if err != nil || len(result.Evidence) < 2 || len(baseline.calls) != 4 || baseline.calls[3].size != initial || result.Stats.Windows != 4 {
-				t.Fatalf("fixture did not reach supplemental %s after three accepted primary windows: counts=%+v stats=%+v calls=%v err=%v", kind, result.Counts, result.Stats, baseline.calls, err)
+			result, err := Evaluate(context.Background(), baseline, points, fixtureConfig())
+			if err != nil || len(result.Evidence) < 2 || len(baseline.calls) != 2 || baseline.calls[0].size != 128 || baseline.calls[1].size != 128 || result.Stats.Windows != 2 {
+				t.Fatalf("hard gap reached supplemental %s: counts=%+v stats=%+v calls=%v err=%v", kind, result.Counts, result.Stats, baseline.calls, err)
 			}
 			meters := 0.0
 			for _, evidence := range result.Evidence {
@@ -209,55 +211,6 @@ func TestEvaluateSupplementalFailureDiscardsPrimaryEvidence(t *testing.T) {
 			}
 			if math.Abs(meters-wantMeters) > 1e-6 {
 				t.Fatalf("successful supplemental rematch bridged a hard gap: meters=%f want=%f", meters, wantMeters)
-			}
-			for _, cancelAttempt := range []int{0, 1, 2} {
-				t.Run(fmt.Sprintf("cancelAttempt=%d", cancelAttempt), func(t *testing.T) {
-					ctx, cancel := context.WithCancel(context.Background())
-					defer cancel()
-					snapshot, points := supplementalFailureRoute(kind)
-					snapshot.ctx = ctx
-					limit := &coverage.OSMEvaluationLimitError{Field: "graph edge", Limit: 4096}
-					snapshot.fail = func([]osm.MatcherObservation) error {
-						attempt := len(snapshot.calls) - 3
-						if attempt <= 0 {
-							return nil
-						}
-						if attempt == cancelAttempt {
-							cancel()
-						}
-						return limit
-					}
-					failed, err := Evaluate(ctx, snapshot, points, fixtureConfig())
-					if !reflect.DeepEqual(failed, Result{}) {
-						t.Fatalf("partial result after supplemental failure: %+v", failed)
-					}
-					wantSizes := []int{128, 64, 32}
-					if kind == "tangent" {
-						wantSizes = []int{192, 128, 64, 32}
-					}
-					if cancelAttempt > 0 {
-						wantSizes = wantSizes[:cancelAttempt]
-						if !errors.Is(err, context.Canceled) {
-							t.Fatalf("cancellation error=%v", err)
-						}
-					} else if err != limit {
-						t.Fatalf("exhaustion error=%v want original graph limit", err)
-					}
-					if len(snapshot.calls) != 3+len(wantSizes) || !reflect.DeepEqual(snapshot.calls[:3], baseline.calls[:3]) {
-						t.Fatalf("primary windows retried or supplemental attempts escaped bounds: %v", snapshot.calls)
-					}
-					for i, size := range wantSizes {
-						if snapshot.calls[3+i].size != size {
-							t.Fatalf("wrong supplemental fallback: %v", snapshot.calls)
-						}
-					}
-					// Even a caller mistakenly preparing the failed result has nothing
-					// to clip or copy, using a fresh context to avoid masking evidence.
-					prepared, prepareErr := Prepare(context.Background(), snapshot, failed, time.Time{})
-					if prepareErr != nil || prepared != nil || snapshot.clipCalls != 0 || snapshot.copyCalls != 0 || len(snapshot.clipRefs)+len(snapshot.copyRefs) != 0 {
-						t.Fatalf("failed evaluation reached downstream work: prepared=%+v err=%v clips=%v copies=%v", prepared, prepareErr, snapshot.clipRefs, snapshot.copyRefs)
-					}
-				})
 			}
 		})
 	}

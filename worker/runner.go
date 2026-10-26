@@ -377,12 +377,13 @@ func (r *Runner) claimNext(ctx context.Context) (claimedJob, error) {
 
 func decodeIngestParameters(raw []byte) (ingestMode, *time.Time, *time.Time, error) {
 	var value struct {
-		SourceID      string  `json:"sourceId"`
-		Generation    int64   `json:"generation"`
-		Mode          string  `json:"mode"`
-		StartDate     *string `json:"startDate"`
-		EndDate       *string `json:"endDate"`
-		LegacySchema6 *bool   `json:"legacySchema6"`
+		SourceID          string          `json:"sourceId"`
+		Generation        int64           `json:"generation"`
+		Mode              string          `json:"mode"`
+		StartDate         *string         `json:"startDate"`
+		EndDate           *string         `json:"endDate"`
+		LegacySchema6     *bool           `json:"legacySchema6"`
+		ReprocessAllFiles json.RawMessage `json:"reprocessAllFiles"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -394,6 +395,10 @@ func decodeIngestParameters(raw []byte) (ingestMode, *time.Time, *time.Time, err
 		if !(character >= '0' && character <= '9') && !(character >= 'A' && character <= 'F') {
 			return "", nil, nil, errors.New("invalid ingest parameters")
 		}
+	}
+	if value.ReprocessAllFiles != nil && (value.Mode != string(ingestBounded) || value.LegacySchema6 != nil ||
+		(!bytes.Equal(value.ReprocessAllFiles, []byte("true")) && !bytes.Equal(value.ReprocessAllFiles, []byte("false")))) {
+		return "", nil, nil, errors.New("invalid ingest parameters")
 	}
 	if value.Mode == string(ingestIncremental) && value.StartDate == nil && value.EndDate == nil && value.LegacySchema6 == nil {
 		return ingestIncremental, nil, nil, nil

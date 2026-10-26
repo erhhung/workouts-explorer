@@ -18,8 +18,49 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 28 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 28", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 33 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 33", SupportedSchemaVersion)
+	}
+}
+
+func TestIngestFileFilterReadiness(t *testing.T) {
+	for _, required := range []string{
+		"to_regprocedure('app.read_owned_job_files(uuid,integer,integer,boolean)')",
+		"p.prosecdef AND p.provolatile='v' AND p.pronargdefaults=0",
+		"has_function_privilege('workouts_api',p.oid,'EXECUTE')",
+		"acl.is_grantable OR acl.grantee<>'workouts_api'::regrole::oid",
+	} {
+		if !strings.Contains(runtimeReadinessSQL, required) {
+			t.Errorf("missing ingest file filter readiness check: %s", required)
+		}
+	}
+}
+
+func TestIngestOutcomeReadiness(t *testing.T) {
+	for _, required := range []string{
+		"to_regprocedure('app.ingest_outcome_status(text,text,bigint,bigint)')",
+		"NOT p.prosecdef AND p.provolatile='i' AND p.pronargdefaults=0",
+		"p.proconfig=ARRAY['search_path=pg_catalog']",
+	} {
+		if !strings.Contains(runtimeReadinessSQL, required) {
+			t.Errorf("missing ingest outcome readiness check: %s", required)
+		}
+	}
+}
+
+func TestIngestReprocessingReadiness(t *testing.T) {
+	for _, required := range []string{
+		"minimum_runtime_version >= 31",
+		"source_files_success_receipt",
+		"source_files_receipt_before_write",
+		"to_regprocedure('app.ingest_retry_ancestor_jobs(uuid,uuid,uuid)')",
+		"to_regprocedure('app.stamp_ingest_source_file_receipt()')",
+		"pg_get_function_result(p.oid)='uuid[]'",
+		"has_column_privilege(r.oid,a.attrelid,a.attname,'SELECT')",
+	} {
+		if !strings.Contains(runtimeReadinessSQL, required) {
+			t.Errorf("missing ingest reprocessing readiness check: %s", required)
+		}
 	}
 }
 

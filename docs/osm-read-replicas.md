@@ -302,8 +302,8 @@ on the second and later retries, never doubling six minutes to twelve or shorten
 a longer initial budget on the first retry. Other retry reasons reset the count.
 The default seven-minute lease is a renewable ownership TTL, not the match budget;
 twenty-second heartbeats support retries longer than the TTL. The initial budget
-plus ten seconds must remain strictly below the lease duration. This source policy
-is not yet deployed; earlier repair and release receipts retain their original
+plus ten seconds must remain strictly below the lease duration. This policy is
+deployed; earlier dated repair and release receipts retain their original
 three-/six-/ten-minute policy. Cancellation, lease loss and shutdown still interrupt
 waiting; authentication, permission and caught-up invalid-metadata failures are
 not silently treated as replication lag.
