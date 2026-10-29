@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -146,7 +147,7 @@ func TestEligibleCohortCombinedLifecycleIntegration(t *testing.T) {
 	}
 	var retry uuid.UUID
 	var count int
-	if err := f.coverageDB.QueryRow(f.ctx, `SELECT * FROM app.retry_next_coverage_update(1,28)`).Scan(&retry, &count); err != nil || count != 25 {
+	if err := f.coverageDB.QueryRow(f.ctx, `SELECT * FROM app.retry_next_coverage_update(1,$1)`, database.SupportedSchemaVersion).Scan(&retry, &count); err != nil || count != 25 {
 		t.Fatalf("one nonpermanent failure must carry all25 failed siblings: count=%d err=%v", count, err)
 	}
 	checkScope(retry)

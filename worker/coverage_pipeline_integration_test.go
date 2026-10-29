@@ -95,6 +95,13 @@ func newCoveragePipelineFixture(t *testing.T, budget ...time.Duration) (*coverag
 	keys := testKeyring(t)
 	runner := testRunner(f.workerDB, keys, root, io.Discard)
 	runner.osmDB = f.osmDB
+	// Each fixture declares its producer policy through the real observer. A
+	// previous minimum-traversal test must not silently change this case's target.
+	observer := NewCoverageReconciler(f.coverageDB, f.osmDB, runner.logger, CoverageReconcilerOptions{
+		MinimumTraversalMeters: runner.coverageMinTraversalMeters, OSMAutoAddRegions: runner.osmAutoAddRegions})
+	if err := observer.observe(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := ConfigureFileSlotLimits(ctx, f.workerDB, 2, 4); err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +235,9 @@ func TestCoveragePipelineFileBoundaryIntegration(t *testing.T) {
 				if strings.Contains(query.SQL, "WITH route_point AS") {
 					lookups.Add(1)
 					assertCountQuery(t, f.adminDB, 0, `SELECT count(*) FROM app.ingest_file_slots WHERE account_id=$1`, source.accountID)
+					assertCountQuery(t, f.adminDB, 2, `SELECT count(*) FROM app.job_progress
+						WHERE job_id IN ($1,$2) AND files_succeeded=1 AND files_failed=0
+						AND workouts_created=$3`, job.childID, job.parentID, test.count)
 				}
 				return ctx
 			})
@@ -366,6 +376,9 @@ func TestCoveragePipelineFakeICloudCleanupIntegration(t *testing.T) {
 			t.Error("APP transaction across OSM")
 		}
 		assertCountQuery(t, f.adminDB, 0, `SELECT count(*) FROM app.ingest_file_slots WHERE account_id=$1`, f.accountID)
+		assertCountQuery(t, f.adminDB, 2, `SELECT count(*) FROM app.job_progress
+			WHERE job_id IN ($1,$2) AND files_failed=0 AND files_succeeded=
+			(SELECT count(*) FROM app.source_files WHERE job_id=$1 AND state='succeeded')`, jobs.childID, jobs.parentID)
 		entries, err := os.ReadDir(staging)
 		if err != nil {
 			t.Fatal(err)
@@ -427,6 +440,12 @@ func TestCoveragePipelineTerminalRecoveryIntegration(t *testing.T) {
 			_ = directory.Close()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if err := runner.resolveCandidateActions(f.ctx, job, source.sourceID, files); err != nil {
+				t.Fatal(err)
+			}
+			if state, err := runner.recordFileManifest(f.ctx, job, files); err != nil || state != "created" {
+				t.Fatalf("record synthetic file manifest: state=%s err=%v", state, err)
 			}
 			outcome := runner.processSourceFile(f.ctx, job, source.sourceID, source.root, files[0], nil)
 			if outcome.fatal != nil || !outcome.succeeded {

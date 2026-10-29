@@ -530,6 +530,18 @@ func (r *CoverageRunner) loadRoute(ctx context.Context, claim coverageClaim, cla
 		return coverageRoute{}, coverageDatabaseFailure(err)
 	}
 	defer r.rollback(tx)
+	descriptor, err := json.Marshal(productionMatchingDescriptor(claim.minimumTraversalMeters))
+	if err != nil {
+		return coverageRoute{}, err
+	}
+	var supported bool
+	if err := tx.QueryRow(ctx, `SELECT app.coverage_production_descriptor_current($1,$2,$3,$4)`,
+		claim.jobID, r.workerID, claim.leaseID, descriptor).Scan(&supported); err != nil {
+		return coverageRoute{}, coverageDatabaseFailure(err)
+	}
+	if !supported {
+		return coverageRoute{}, errors.New("unsupported immutable production matcher descriptor")
+	}
 	var result coverageRoute
 	var createdAt time.Time
 	var attempts int

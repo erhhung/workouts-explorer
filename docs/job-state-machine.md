@@ -4,36 +4,47 @@ This document defines the durable job contract used by the API, worker, and
 database schema. It elaborates the job architecture without changing the
 observable behavior in `functional-spec.md`.
 
-Current deployment uses migrations **001-032**, schema and
-minimum runtime **32**, with marker **27**. Migration 031 defines the ingest
-contract; 032 adds coverage display projections maintained atomically with evidence
-updates, without changing job hierarchy, matching rules or retry budgets.
-Released/applied 001-032 are immutable. A standalone restricted native migration
-preceded accepted full-values backend **42** and UI **43** rollouts with
-`--no-hooks`. Actual API/worker readiness and original-data/configuration
-preservation passed; resources, concurrency, timeouts and retry/matcher budgets
-remain unchanged. Source auto-sync stays off, with no new ingest/matching work or
-provider checks. Full pre-32 backups and old images remain retained; image-only
-rollback is unsupported. Scripted deployed-browser verification passed; owner
-acceptance/milestone and capacity remain separate. See [Ingest Reprocessing](ingest-reprocessing.md)
-and [coverage display precomputations](database-migrations.md#coverage-display-precomputations-032).
+Current source uses migrations **001-030**, final source/runtime
+`SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and
+ledger **0-30**. Combined **029** defines ingest outcomes/reprocessing/phases;
+**030** defines compact and canonical display. See the
+[history mapping](database-migrations.md#source-history-mapping) and
+[completed revision-61 cutover](database-migrations.md#live-cutover-revision-61).
+APP 30/minimum 30 and OSM 10/minimum 10 are deployed; the separate steady-idle
+measurement remains pending, not established by source numbering or readiness.
+Resources, concurrency, timeouts and retry/matcher budgets are unchanged.
+Image-only rollback across an incompatible database contract is unsupported.
+Milestone acceptance belongs only to
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout); historical
+browser receipts are not independent certification of that gate or capacity.
+See [Ingest Reprocessing](ingest-reprocessing.md) and
+[database migrations](database-migrations.md).
 
-Pending source-only **033** requires coordinated schema/minimum runtime **33**,
-baseline **27**; live backend-42/UI-43 remains on 32 until MAIN cutover completes.
+Source migration **030**
 [Canonical display identity](decisions/013-canonical-coverage-display-identity.md)
 adds context preparation and deferred all-input invalidation, coalescing display
 revision/public generation once per account/transaction. It retains job hierarchy,
-matching rules, generation vectors and retry budgets. Coverage "recomputation"
+matching rules, generation policy/vectors and retry budgets. Coverage "recomputation"
 here means warming/rebuilding a canonical read-model context from existing
 evidence, **not enqueueing `coverage_update`/`coverage_update_route` jobs**. No OSM
-regeneration or rematching is needed. Existing job lifecycle and historical
-receipts below are not schema-33 deployment proof; see [pending gates](database-migrations.md#canonical-coverage-display-033-source-only).
+regeneration/download, rematching or provider check is needed for context warming.
+Existing job lifecycle and historical receipts below retain their original scope;
+they are not new source-30 verification receipts.
 
-The following folded-028 release evidence is historical, **prior to 031**.
+**Pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)):
+the **032 release receipt** records a standalone restricted native migration that
+preceded the full-values backend **42** and UI **43** rollouts with `--no-hooks`.
+Actual API/worker readiness and original-data/configuration preservation passed.
+Source auto-sync remained off; no new ingest/matching work or provider checks
+were started. Full pre-32 backups and old images were retained; image-only
+rollback was unsupported. Scripted deployed-browser verification passed for that
+release, not as a new 033 browser receipt or milestone/capacity certification.
+
+The following folded-028 release evidence predates explicit ingest reprocessing.
 At that checkpoint active migrations were **001-028**, with no active 029. New 028 folds the
 generation-lock fix, strict eligible cohorts and mixed-failure automatic policy
 into the pipeline. Source `SupportedSchemaVersion`, schema and minimum runtime
-are **28**, marker **27**. The folded contract is **deployed in `dev-20261020`,
+were **28**, marker **27**. The folded contract **deployed in `dev-20261020`,
 Helm revision 29**, schema/Goose/minimum 28, marker 27;
 [Development Progress](development-progress.md) owns receipts.
 
@@ -134,8 +145,8 @@ derived from child statuses:
 - `failed` when no child succeeded and at least one child failed, including a
   mix of failed and cancelled children.
 
-Schema 29 introduced file-based ingest partial success; schema 30 refines this to
-the result counts shown to the owner. An unsuccessful ingest parent is
+Combined migration 029 uses workout-based partial success, matching the result
+counts shown to the owner. An unsuccessful ingest parent is
 `partially_succeeded` when its source progress records at least one imported
 (`workouts_created`) or updated workout. Otherwise it is `failed`, even if some
 files succeeded, were skipped, or contained only unchanged workouts. All-success
@@ -153,13 +164,13 @@ without rewriting its job, timestamps, notification or retry lineage.
 The Files disclosure can filter failures across the whole run before pagination.
 Zero failed files does not imply success: an unsuccessful source-level run with
 zero created and zero updated workouts still displays **Failed** under unchanged
-030 rules. Successful empty runs remain successful; no `failuresCount` field is
+029 rules. Successful empty runs remain successful; no `failuresCount` field is
 added to the API.
 
 Retry starts a new source attempt with the original range and effective policy,
 not just failed filenames. It skips valid same-metadata ancestor successes even
 after force; non-forced retries may additionally use ordinary valid inventory.
-See [ingest retry evidence](#ingest-reprocessing-and-retry-evidence-requires-31).
+See [ingest retry evidence](#ingest-reprocessing-and-retry-evidence-requires-29).
 
 Parent progress is the aggregate of persisted child counters. Parent terminal
 state and notification creation occur in the same transaction that makes the
@@ -174,6 +185,50 @@ ensures a successor parent covers the new revision. One failed route does not
 cancel siblings or prevent another route child from being claimed. A mixture of
 succeeded and failed or cancelled routes therefore makes the coverage parent
 `partially_succeeded`; all failed routes make it `failed`.
+
+## Ingest Activity Phases (Requires 29)
+
+Ingest activity is separate from the lifecycle state machine: a source can remain
+`running` through discovery, file imports, map analysis, time zone updates and
+cleanup. A full file counter is not a terminal transition. Manual and scheduled
+ingest use the same activity contract, including when every file is skipped.
+
+Migration 029 adds `app.record_ingest_phase(uuid,text,uuid,text,bigint,bigint)` and
+the partial `job_events_ingest_phase_latest_idx` index. The required writer uses
+the source/parent/child ingest fence to verify account, worker, live lease and
+cancellation state, then appends a safe phase snapshot to `app.job_events`.
+Required phase records do not use the optional diagnostic writer's event cap.
+Repeated identical snapshots are idempotent within an attempt; progress cannot
+regress within the same phase and attempt. Re-entering a phase or reclaiming the
+job permits a new progress sequence.
+
+The worker records `resuming` only for a reclaimed execution, then reports
+`preparing`, `discovering` and `importing`. Actual interleaved route work reports
+`analyzing_imported_routes`; empty drains do not create false activity changes.
+After files, `analyzing_existing_routes` covers the source's stored routes,
+`updating_time_zones` covers account time zone updates, and `cleanup` precedes
+normal finalization. Nested route work retains the existing-route phase rather
+than incorrectly switching to imported-route analysis. None of these phases
+changes coverage batching or makes ingest wait for separate street-matching jobs.
+
+API source details expose optional `activity` with a closed phase key, optional
+`current`/`total` counters and `updatedAt`. The latest event identity within the
+job's current attempt is authoritative, not timestamp order or elapsed time.
+No phase evidence means absent activity, not an inferred phase. Root detail uses
+its active source children for presentation; multiple active sources retain
+separate labeled activities. Cancellation and terminal state override the last
+activity, so a retained cleanup event never implies success.
+
+The exact approved messages, including queued and successful outcomes, are in
+[Ingest Activity Messages](functional-spec.md#ingest-activity-messages).
+Fast phase transitions remain in Events even if they finish between polls;
+the UI does not replay them as current work. Selected Running detail polls every
+10 seconds, or faster when configured, while queued detail and Task history keep
+the configured interval, normally 30 seconds. Hidden tabs pause detail polling;
+terminal ingest stops it. Successful detail reads refresh open Files and, when
+phase evidence exists, Events; closed panels are invalidated without fetching,
+Logs remain manual, and failed reads do not trigger artifact refreshes. Existing
+terminal Coverage eligibility polling is unchanged.
 
 ## Claim, Lease, And Fencing
 
@@ -269,6 +324,10 @@ again. Normal route-child fencing and matcher admission still apply.
 
 ### Generation Lock Timing (Folded 028)
 
+This describes the folded-028 foundation. Source 030's read-model invalidation
+coalesces display revision/public generation once per account/transaction without
+changing job or generation policy; see [canonical display identity](decisions/013-canonical-coverage-display-identity.md).
+
 The file fence removes only the generation-row `FOR UPDATE NOWAIT`; the
 nonlocking existence check still fails with `55000` if the row is missing.
 Identity advisory locks, source/job locks, account/workout KEY SHARE, lease,
@@ -361,6 +420,62 @@ The pipeline preserves `coverage-production-v1`, 500m CPU / 256 MiB, two lanes,
 admission 2/2/2, one slot per reader and existing timeout/automatic retry budgets.
 These invariants and synthetic concurrent tests are not capacity certification.
 
+### Metadata-Driven Recovery (Requires 29)
+
+**Deployed at Helm 62; initialization and live unchanged-cycle acceptance PASS.**
+[ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md) refines the
+full-fingerprint mismatch rule above: exact input plus unchanged complete
+selection fingerprint/policy can rebind selected generation heads without GPS.
+Changed selection still requires fresh ROI. The complete immutable parent
+descriptor includes minimum traversal and production contract as well as rules,
+sampling and path policy; only successful `applied`/`no_evidence` persistence
+stamps `app.coverage_applied_match_proofs`. Preparing or sealing is not success.
+
+`app.claim_coverage_reconciliation_work` explicitly returns `scan_required`.
+Ordinary campaigns own desired/completed revisions and a durable keyset cursor;
+queue-only claims replay due committed handoffs/builders and exact dirty keys
+without advancing, completing or clearing that cursor. Queue failure preserves
+it too. Handoff inserts, point mutations and terminal ingest root/source transitions
+persist exact-account wakes. A root's prepared tail becomes sealable only after
+root/all source siblings terminal and due preparation exhausted; expired active
+ingest first follows normal lease recovery. No ordinary history scan follows
+queue-only recovery, and EOF proof repair is not a catalog campaign.
+
+Wakes coalesce by `(account_id, transaction_id)`, without comparing transaction
+IDs as revisions or taking a shared account-generation lock in file writes.
+Claimers consume committed wakes only, preserving a later concurrent commit.
+Point statement transition hooks cover both old/new UPDATE keys and equal
+count/bounds telemetry changes. Dirty-version and selection-proof checks precede
+any raw snapshot. Valid pending/unavailable proof suppresses unchanged work;
+only initially unknown proof needs bounded bootstrap, never an invented old
+negative catalog baseline.
+
+Lease/runtime/revision, immutable source/content/ownership, canonical input,
+mutation-version, catalog and descriptor CAS fence atomic proof/apply. Crashes
+resume committed cursor/queue state; newer wakes can bypass backoff without
+resetting campaign progress. Lagged OSM catalog/event floors cannot destructively
+invalidate readiness or advance the cursor. Completion sets the next scan to
+infinity only if that revision covers the current desired revision; completing N
+cannot park a due N+1 campaign. Route-local typed ROI deadline/invalid-data failures
+use a 30-second default ROI budget and five-minute route-only deferral under
+lease/input/mutation-version CAS, leaving other routes free to progress. Systemic,
+cancellation, lease-loss and replica-lag failures remain cycle-fatal; this is not
+matching-job retry authority. See [failure semantics and readiness](decisions/014-metadata-driven-coverage-reconciliation.md#failure-semantics-and-readiness).
+24-hour age alone no longer creates work. The reconciler's
+30-second idle poll is not the UI's 10-second Running-job refresh.
+
+Reconciliation backoff, bounded contention retry and readiness deferral are not
+alternative route-job retry authorization. Identical authoritative failed or
+cancelled targets retain their 027/028 guards, cancellation footprints and consumed
+budgets, including cleared-pointer cases. Existing live children are not duplicated;
+old in-flight descriptors are never rewritten to newer settings. Genuine changed
+targets and distinct proven adoption events retain their existing eligibility.
+See [replica fences](osm-read-replicas.md#metadata-fences-osm-010) and
+[delivery and measured idle cycles](development-progress.md#metadata-driven-coverage-reconciliation).
+An authorized one-shot `NewCoverageReconciler(...).RunOnce` can verify this idle
+path without changing lifecycle state or manufacturing a campaign; see the
+[repeat procedure](decisions/014-metadata-driven-coverage-reconciliation.md#repeatable-unchanged-cycle-verification).
+
 ## Retry
 
 User-requested retry creates a new job linked by `retry_of_job_id`; it never
@@ -393,7 +508,7 @@ ordinal. Successful and superseded route children have no child in a selective
 retry. This preserves per-workout attempt history while parent navigation remains
 the primary first/second/.../latest Run-detail control.
 
-### Ingest Reprocessing And Retry Evidence (Requires 31)
+### Ingest Reprocessing And Retry Evidence (Requires 29)
 
 New bounded jobs persist explicit `reprocessAllFiles: false` by default, or
 `true` when requested. Incremental jobs omit the field. An absent field on an

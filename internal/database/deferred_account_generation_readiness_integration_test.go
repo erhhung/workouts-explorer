@@ -73,7 +73,7 @@ func TestDeferredGenerationReadinessPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
-	// The rollback-only 028 proof predates 033's coalescing invalidator body.
+	// The rollback-only 028 proof predates 030's coalescing invalidator body.
 	raw, err = migrations.Files.ReadFile("009_raw_route_map.sql")
 	if err != nil {
 		t.Fatal(err)

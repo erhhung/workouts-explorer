@@ -9,8 +9,8 @@ import (
 )
 
 func TestDeferredGenerationRuntimeReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 33 {
-		t.Fatalf("runtime version = %d, want 33", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 30 {
+		t.Fatalf("runtime version = %d, want 30", SupportedSchemaVersion)
 	}
 	if !strings.HasPrefix(runtimeFullReadinessSQL, "SELECT ("+runtimeReadinessSQL+") AND ("+runtimeDeferredReadinessSQL+") AND ("+runtimeCohortReadinessSQL+")") {
 		t.Fatal("full readiness must require base, deferred generation and eligible-cohort contracts")
@@ -50,7 +50,7 @@ func TestDeferredGenerationReadinessProtectedBodies(t *testing.T) {
 		t.Fatalf("expected generation invalidator and nonlocking helper fingerprints, got %d", len(bodies))
 	}
 	for i, fixture := range []struct{ file, function string }{
-		{"033_canonical_coverage_display.sql", "advance_account_data_generation"},
+		{"030_coverage_display.sql", "advance_account_data_generation"},
 		{"028_ingest_coverage_pipeline.sql", "lock_account_data_generation"},
 	} {
 		raw, err := migrations.Files.ReadFile(fixture.file)

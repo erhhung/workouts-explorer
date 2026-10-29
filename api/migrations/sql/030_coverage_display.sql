@@ -1,4 +1,312 @@
 -- +goose Up
+-- Keep evidence and its projection in one migration snapshot. Eligibility,
+-- workout dates, source-path metadata and park attributions remain live joins.
+LOCK TABLE app.workouts, app.workout_segment_matches, app.path_segments IN SHARE ROW EXCLUSIVE MODE;
+
+CREATE TABLE app.workout_path_display_partials (
+    account_id uuid NOT NULL,
+    workout_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    logical_path_id uuid NOT NULL,
+    qualifies_without_name boolean NOT NULL,
+    region_id text NOT NULL,
+    education_key_present boolean NOT NULL,
+    education_name text,
+    minimum_longitude double precision NOT NULL,
+    minimum_latitude double precision NOT NULL,
+    maximum_longitude double precision NOT NULL,
+    maximum_latitude double precision NOT NULL,
+    PRIMARY KEY (account_id, workout_id, entity_id, logical_path_id, qualifies_without_name),
+    FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts (id, account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE app.workout_path_display_context (
+    account_id uuid NOT NULL,
+    workout_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    locality_name text NOT NULL,
+    PRIMARY KEY (account_id, workout_id, entity_id),
+    FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts (id, account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE app.workout_park_display_bounds (
+    account_id uuid NOT NULL,
+    workout_id uuid NOT NULL,
+    park_id uuid NOT NULL,
+    region_id text,
+    minimum_longitude double precision NOT NULL,
+    minimum_latitude double precision NOT NULL,
+    maximum_longitude double precision NOT NULL,
+    maximum_latitude double precision NOT NULL,
+    PRIMARY KEY (account_id, workout_id, park_id),
+    FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts (id, account_id) ON DELETE CASCADE
+);
+
+-- No source FKs: tombstones must survive source pruning and account cascades
+-- until the deferred callback can discard them or rebuild remaining evidence.
+CREATE TABLE app.coverage_display_dirty (
+    transaction_id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    scope text NOT NULL CHECK (scope IN ('account', 'workout', 'segment')),
+    workout_id uuid,
+    region_id text,
+    generation_id bigint,
+    physical_segment_id uuid,
+    CHECK (
+        (scope = 'account' AND workout_id IS NULL AND region_id IS NULL
+            AND generation_id IS NULL AND physical_segment_id IS NULL)
+        OR (scope = 'workout' AND workout_id IS NOT NULL AND region_id IS NULL
+            AND generation_id IS NULL AND physical_segment_id IS NULL)
+        OR (scope = 'segment' AND workout_id IS NULL AND region_id IS NOT NULL
+            AND generation_id IS NOT NULL AND physical_segment_id IS NOT NULL)
+    ),
+    UNIQUE NULLS NOT DISTINCT
+        (transaction_id, account_id, scope, workout_id, region_id, generation_id, physical_segment_id)
+);
+
+ALTER TABLE app.workout_path_display_partials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.workout_path_display_partials FORCE ROW LEVEL SECURITY;
+CREATE POLICY workout_path_display_partials_owner_policy ON app.workout_path_display_partials
+    TO workouts_security_owner USING (TRUE) WITH CHECK (TRUE);
+ALTER TABLE app.workout_path_display_context ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.workout_path_display_context FORCE ROW LEVEL SECURITY;
+CREATE POLICY workout_path_display_context_owner_policy ON app.workout_path_display_context
+    TO workouts_security_owner USING (TRUE) WITH CHECK (TRUE);
+ALTER TABLE app.workout_park_display_bounds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.workout_park_display_bounds FORCE ROW LEVEL SECURITY;
+CREATE POLICY workout_park_display_bounds_owner_policy ON app.workout_park_display_bounds
+    TO workouts_security_owner USING (TRUE) WITH CHECK (TRUE);
+ALTER TABLE app.coverage_display_dirty ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.coverage_display_dirty FORCE ROW LEVEL SECURITY;
+CREATE POLICY coverage_display_dirty_owner_policy ON app.coverage_display_dirty
+    TO workouts_security_owner USING (TRUE) WITH CHECK (TRUE);
+
+-- NULL account is used only for the set-based migration backfill. Runtime
+-- callers first serialize the account and expand segment keys into workouts.
+-- +goose StatementBegin
+CREATE FUNCTION app.rebuild_coverage_display_precomputations(target_account_id uuid) RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path = pg_catalog, app, public AS $function$
+BEGIN
+    DELETE FROM app.workout_path_display_partials partial USING app.coverage_display_dirty dirty
+    WHERE dirty.transaction_id = txid_current() AND dirty.scope = 'workout'
+        AND (target_account_id IS NULL OR dirty.account_id = target_account_id)
+        AND partial.account_id = dirty.account_id AND partial.workout_id = dirty.workout_id;
+    DELETE FROM app.workout_path_display_context context USING app.coverage_display_dirty dirty
+    WHERE dirty.transaction_id = txid_current() AND dirty.scope = 'workout'
+        AND (target_account_id IS NULL OR dirty.account_id = target_account_id)
+        AND context.account_id = dirty.account_id AND context.workout_id = dirty.workout_id;
+    DELETE FROM app.workout_park_display_bounds bounds USING app.coverage_display_dirty dirty
+    WHERE dirty.transaction_id = txid_current() AND dirty.scope = 'workout'
+        AND (target_account_id IS NULL OR dirty.account_id = target_account_id)
+        AND bounds.account_id = dirty.account_id AND bounds.workout_id = dirty.workout_id;
+
+    WITH evidence AS MATERIALIZED (
+        SELECT match.account_id, match.workout_id, match.logical_path_id, match.region_id,
+            match.geom, segment.highway, segment.tags
+        FROM app.coverage_display_dirty dirty
+        JOIN app.workout_segment_matches match
+            ON match.account_id = dirty.account_id AND match.workout_id = dirty.workout_id
+        JOIN app.path_segments segment ON segment.account_id = match.account_id
+            AND segment.region_id = match.region_id AND segment.generation_id = match.generation_id
+            AND segment.physical_segment_id = match.physical_segment_id
+        WHERE dirty.transaction_id = txid_current() AND dirty.scope = 'workout'
+            AND (target_account_id IS NULL OR dirty.account_id = target_account_id)
+    ), path_partials AS (
+        INSERT INTO app.workout_path_display_partials (
+            account_id, workout_id, entity_id, logical_path_id, qualifies_without_name,
+            region_id, education_key_present, education_name,
+            minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude
+        )
+        SELECT account_id, workout_id,
+            COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id), logical_path_id,
+            (tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+                OR NOT (tags ? 'workouts:park_id')) IS TRUE,
+            min(region_id), bool_or(tags ? 'workouts:education_id'), min(tags->>'workouts:education_name'),
+            ST_XMin(ST_Extent(geom)::box2d), ST_YMin(ST_Extent(geom)::box2d),
+            ST_XMax(ST_Extent(geom)::box2d), ST_YMax(ST_Extent(geom)::box2d)
+        FROM evidence
+        WHERE NOT (highway = 'service' AND COALESCE(tags->>'service', '') IN ('driveway', 'parking_aisle'))
+            AND tags->>'amenity' IS DISTINCT FROM 'parking'
+        GROUP BY account_id, workout_id,
+            COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id), logical_path_id,
+            (tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+                OR NOT (tags ? 'workouts:park_id')) IS TRUE
+    ), path_context AS (
+        INSERT INTO app.workout_path_display_context (account_id, workout_id, entity_id, locality_name)
+        SELECT account_id, workout_id,
+            COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id),
+            min(tags->>'workouts:park_name')
+        FROM evidence
+        WHERE tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+            AND NULLIF(tags->>'workouts:park_name', '') IS NOT NULL
+        GROUP BY account_id, workout_id,
+            COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id)
+    )
+    INSERT INTO app.workout_park_display_bounds (
+        account_id, workout_id, park_id, region_id,
+        minimum_longitude, minimum_latitude, maximum_longitude, maximum_latitude
+    )
+    SELECT account_id, workout_id, (tags->>'workouts:park_id')::uuid,
+        min(region_id) FILTER (WHERE tags->>'workouts:park_id' = ((tags->>'workouts:park_id')::uuid)::text),
+        ST_XMin(ST_Extent(geom)::box2d), ST_YMin(ST_Extent(geom)::box2d),
+        ST_XMax(ST_Extent(geom)::box2d), ST_YMax(ST_Extent(geom)::box2d)
+    FROM evidence
+    WHERE tags ? 'workouts:park_id' AND tags->>'workouts:park_id' IS NOT NULL
+    GROUP BY account_id, workout_id, (tags->>'workouts:park_id')::uuid;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.flush_coverage_display_precomputations(target_account_id uuid) RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path = pg_catalog, app AS $function$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM app.coverage_display_dirty
+        WHERE transaction_id = txid_current() AND account_id = target_account_id AND scope = 'account') THEN
+        RETURN;
+    END IF;
+
+    -- An actual row update serializes flushes even at REPEATABLE READ. Keep the
+    -- public generation unchanged and take this barrier only at flush time.
+    UPDATE app.account_data_generations SET generation = generation WHERE account_id = target_account_id;
+    IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM app.accounts WHERE id = target_account_id) THEN
+            RAISE EXCEPTION 'coverage display generation is unavailable' USING ERRCODE = '55000';
+        END IF;
+        DELETE FROM app.coverage_display_dirty
+        WHERE transaction_id = txid_current() AND account_id = target_account_id;
+        RETURN;
+    END IF;
+
+    -- This separate command gets a fresh READ COMMITTED snapshot AFTER waiting.
+    -- Eager expansion could miss a concurrent, previously uncommitted match.
+    INSERT INTO app.coverage_display_dirty (transaction_id, account_id, scope, workout_id)
+    SELECT DISTINCT txid_current(), match.account_id, 'workout', match.workout_id
+    FROM app.coverage_display_dirty dirty
+    JOIN app.workout_segment_matches match ON match.account_id = dirty.account_id
+        AND match.region_id = dirty.region_id AND match.generation_id = dirty.generation_id
+        AND match.physical_segment_id = dirty.physical_segment_id
+    WHERE dirty.transaction_id = txid_current() AND dirty.account_id = target_account_id AND dirty.scope = 'segment'
+    ON CONFLICT DO NOTHING;
+
+    PERFORM app.rebuild_coverage_display_precomputations(target_account_id);
+    DELETE FROM app.coverage_display_dirty
+    WHERE transaction_id = txid_current() AND account_id = target_account_id;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- Keep queue keys and refresh protocol stable, skipping match updates that
+-- change no reader input (including timestamp-only maintenance writes).
+-- +goose StatementBegin
+CREATE FUNCTION app.mark_coverage_display_dirty() RETURNS trigger
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+DECLARE old_account uuid; new_account uuid;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
+            -- Compare exact EWKB without resolving PostGIS equality operators
+            -- through this definer's deliberately restricted search_path.
+            IF (OLD.account_id, OLD.workout_id, OLD.logical_path_id, OLD.region_id, OLD.generation_id,
+                    OLD.physical_segment_id, OLD.first_traversed_at, OLD.first_route_order, OLD.covered_meters, public.ST_AsEWKB(OLD.geom))
+                IS NOT DISTINCT FROM (NEW.account_id, NEW.workout_id, NEW.logical_path_id, NEW.region_id, NEW.generation_id,
+                    NEW.physical_segment_id, NEW.first_traversed_at, NEW.first_route_order, NEW.covered_meters, public.ST_AsEWKB(NEW.geom)) THEN
+                RETURN NULL;
+            END IF;
+        ELSIF (OLD.account_id, OLD.region_id, OLD.generation_id, OLD.physical_segment_id,
+                OLD.logical_path_id, OLD.highway, OLD.tags) IS NOT DISTINCT FROM
+            (NEW.account_id, NEW.region_id, NEW.generation_id, NEW.physical_segment_id,
+                NEW.logical_path_id, NEW.highway, NEW.tags) THEN
+            RETURN NULL;
+        END IF;
+    END IF;
+    IF TG_OP <> 'INSERT' THEN
+        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
+            VALUES (txid_current(), OLD.account_id, 'workout', OLD.workout_id) ON CONFLICT DO NOTHING;
+        ELSE
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, region_id, generation_id, physical_segment_id)
+            VALUES (txid_current(), OLD.account_id, 'segment', OLD.region_id, OLD.generation_id, OLD.physical_segment_id)
+            ON CONFLICT DO NOTHING;
+        END IF;
+        old_account := OLD.account_id;
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
+            VALUES (txid_current(), NEW.account_id, 'workout', NEW.workout_id) ON CONFLICT DO NOTHING;
+        ELSE
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, region_id, generation_id, physical_segment_id)
+            VALUES (txid_current(), NEW.account_id, 'segment', NEW.region_id, NEW.generation_id, NEW.physical_segment_id)
+            ON CONFLICT DO NOTHING;
+        END IF;
+        new_account := NEW.account_id;
+    END IF;
+    INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope)
+    SELECT DISTINCT txid_current(), account_id, 'account' FROM unnest(ARRAY[old_account, new_account]) account_id
+    WHERE account_id IS NOT NULL ORDER BY account_id ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.flush_coverage_display_dirty_account() RETURNS trigger
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path = pg_catalog, app AS $function$
+BEGIN
+    PERFORM app.flush_coverage_display_precomputations(NEW.account_id);
+    RETURN NULL;
+END;
+$function$;
+-- +goose StatementEnd
+
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER TABLE app.workout_path_display_partials OWNER TO workouts_security_owner;
+ALTER TABLE app.workout_path_display_context OWNER TO workouts_security_owner;
+ALTER TABLE app.workout_park_display_bounds OWNER TO workouts_security_owner;
+ALTER TABLE app.coverage_display_dirty OWNER TO workouts_security_owner;
+ALTER FUNCTION app.rebuild_coverage_display_precomputations(uuid) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.flush_coverage_display_precomputations(uuid) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.mark_coverage_display_dirty() OWNER TO workouts_security_owner;
+ALTER FUNCTION app.flush_coverage_display_dirty_account() OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+
+REVOKE ALL ON app.workout_path_display_partials, app.workout_path_display_context,
+    app.workout_park_display_bounds, app.coverage_display_dirty
+FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
+REVOKE ALL ON FUNCTION app.rebuild_coverage_display_precomputations(uuid),
+    app.flush_coverage_display_precomputations(uuid), app.mark_coverage_display_dirty(),
+    app.flush_coverage_display_dirty_account()
+FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
+
+-- Backfill all evidence in one batch, including currently ineligible workouts.
+INSERT INTO app.coverage_display_dirty (transaction_id, account_id, scope, workout_id)
+SELECT DISTINCT txid_current(), account_id, 'workout', workout_id FROM app.workout_segment_matches;
+SELECT app.rebuild_coverage_display_precomputations(NULL);
+DELETE FROM app.coverage_display_dirty WHERE transaction_id = txid_current();
+
+CREATE TRIGGER workout_segment_matches_display_dirty_after_write
+AFTER INSERT OR UPDATE OR DELETE ON app.workout_segment_matches
+FOR EACH ROW EXECUTE FUNCTION app.mark_coverage_display_dirty();
+CREATE TRIGGER path_segments_display_dirty_after_change
+AFTER UPDATE OR DELETE ON app.path_segments
+FOR EACH ROW EXECUTE FUNCTION app.mark_coverage_display_dirty();
+CREATE CONSTRAINT TRIGGER coverage_display_dirty_account_flush
+AFTER INSERT ON app.coverage_display_dirty DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW WHEN (NEW.scope = 'account')
+EXECUTE FUNCTION app.flush_coverage_display_dirty_account();
+
+
+CREATE INDEX workout_path_display_partials_entity_idx
+    ON app.workout_path_display_partials (account_id, entity_id, workout_id);
+CREATE INDEX workout_path_display_context_entity_idx
+    ON app.workout_path_display_context (account_id, entity_id, workout_id);
+CREATE INDEX workout_park_display_bounds_park_idx
+    ON app.workout_park_display_bounds (account_id, park_id, workout_id);
+
 -- Display identity is a read-model policy, not a matcher/source-data migration.
 -- +goose StatementBegin
 DO $block$
@@ -111,7 +419,7 @@ CREATE TABLE app.coverage_display_entities (
 );
 CREATE INDEX coverage_display_entities_visible_idx ON app.coverage_display_entities(account_id, context_id, canonical_id)
     WHERE range_workout_count > 0;
--- Tombstones deliberately have no source/account FK, like the 032 queue.
+-- Tombstones deliberately have no source/account FK, like the precomputation queue.
 CREATE TABLE app.coverage_display_invalidations (
     txid bigint NOT NULL,
     account_id uuid NOT NULL,
@@ -324,62 +632,8 @@ END;
 $function$;
 -- +goose StatementEnd
 
--- Retain 032's exact queue keys and refresh protocol, skipping match updates
--- that change no reader input (including timestamp-only maintenance writes).
--- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.mark_coverage_display_dirty() RETURNS trigger
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
-DECLARE old_account uuid; new_account uuid;
-BEGIN
-    IF TG_OP = 'UPDATE' THEN
-        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
-            -- Compare exact EWKB without resolving PostGIS equality operators
-            -- through this definer's deliberately restricted search_path.
-            IF (OLD.account_id, OLD.workout_id, OLD.logical_path_id, OLD.region_id, OLD.generation_id,
-                    OLD.physical_segment_id, OLD.first_traversed_at, OLD.first_route_order, OLD.covered_meters, public.ST_AsEWKB(OLD.geom))
-                IS NOT DISTINCT FROM (NEW.account_id, NEW.workout_id, NEW.logical_path_id, NEW.region_id, NEW.generation_id,
-                    NEW.physical_segment_id, NEW.first_traversed_at, NEW.first_route_order, NEW.covered_meters, public.ST_AsEWKB(NEW.geom)) THEN
-                RETURN NULL;
-            END IF;
-        ELSIF (OLD.account_id, OLD.region_id, OLD.generation_id, OLD.physical_segment_id,
-                OLD.logical_path_id, OLD.highway, OLD.tags) IS NOT DISTINCT FROM
-            (NEW.account_id, NEW.region_id, NEW.generation_id, NEW.physical_segment_id,
-                NEW.logical_path_id, NEW.highway, NEW.tags) THEN
-            RETURN NULL;
-        END IF;
-    END IF;
-    IF TG_OP <> 'INSERT' THEN
-        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
-            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
-            VALUES (txid_current(), OLD.account_id, 'workout', OLD.workout_id) ON CONFLICT DO NOTHING;
-        ELSE
-            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, region_id, generation_id, physical_segment_id)
-            VALUES (txid_current(), OLD.account_id, 'segment', OLD.region_id, OLD.generation_id, OLD.physical_segment_id)
-            ON CONFLICT DO NOTHING;
-        END IF;
-        old_account := OLD.account_id;
-    END IF;
-    IF TG_OP <> 'DELETE' THEN
-        IF TG_TABLE_NAME = 'workout_segment_matches' THEN
-            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
-            VALUES (txid_current(), NEW.account_id, 'workout', NEW.workout_id) ON CONFLICT DO NOTHING;
-        ELSE
-            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, region_id, generation_id, physical_segment_id)
-            VALUES (txid_current(), NEW.account_id, 'segment', NEW.region_id, NEW.generation_id, NEW.physical_segment_id)
-            ON CONFLICT DO NOTHING;
-        END IF;
-        new_account := NEW.account_id;
-    END IF;
-    INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope)
-    SELECT DISTINCT txid_current(), account_id, 'account' FROM unnest(ARRAY[old_account, new_account]) account_id
-    WHERE account_id IS NOT NULL ORDER BY account_id ON CONFLICT DO NOTHING;
-    RETURN NULL;
-END;
-$function$;
--- +goose StatementEnd
-
--- Only the first actual 032 account-key insert invokes this bridge, not every
--- match. Leave 032's deferred flush, draining and subsequent expansion intact.
+-- Only the first actual precomputation account-key insert invokes this bridge, not every
+-- match. Leave the precomputation deferred flush, draining and subsequent expansion intact.
 -- +goose StatementBegin
 CREATE FUNCTION app.queue_coverage_display_source_invalidation() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
@@ -455,9 +709,9 @@ BEGIN
     FOR target IN SELECT account_id FROM app.coverage_display_invalidations
         WHERE txid = txid_current() ORDER BY account_id LOOP
         -- All flush paths take generation before revision, including metadata-
-        -- only writes; otherwise a 032 evidence flush could invert these locks.
+        -- only writes; otherwise an evidence flush could invert these locks.
         UPDATE app.account_data_generations SET generation = generation WHERE account_id = target;
-        -- This retains 032's barrier and fresh post-barrier segment expansion.
+        -- This retains the precomputation barrier and fresh post-barrier segment expansion.
         PERFORM app.flush_coverage_display_precomputations(target);
         UPDATE app.coverage_display_revisions SET revision = revision + 1,
             last_invalidated_transaction_id = txid_current()
@@ -779,7 +1033,7 @@ $function$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.map_selection_coverage_entity_stats (
+CREATE FUNCTION app.map_selection_coverage_entity_stats (
     target_account_id uuid, target_session_id uuid, target_selection_id uuid, target_generation bigint,
     target_entity_kind text, target_entity_id uuid
 ) RETURNS TABLE (
@@ -1212,13 +1466,14 @@ ALTER FUNCTION app.coverage_mvt(integer, integer, integer, json) OWNER TO workou
 ALTER FUNCTION app.map_selection_coverage_focus(uuid, uuid, uuid, bigint, uuid) OWNER TO workouts_security_owner;
 REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 
-UPDATE app.schema_metadata SET schema_version = 33, minimum_runtime_version = 33 WHERE singleton;
+-- Publish precomputations and canonical readers as one runtime contract.
+UPDATE app.schema_metadata SET schema_version = 30, minimum_runtime_version = 30 WHERE singleton;
 
 -- +goose Down
 -- +goose StatementBegin
 DO $block$
 BEGIN
-    RAISE EXCEPTION 'canonical coverage display is forward-only; restore the pre-migration backup to roll back'
+    RAISE EXCEPTION 'coverage display is forward-only: evidence precomputations and canonical context bindings cannot be undone safely; restore the pre-migration backup to roll back'
         USING ERRCODE = '55000';
 END;
 $block$;

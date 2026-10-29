@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/erhhung/workouts-explorer/api/migrations"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -55,7 +53,7 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayMigrate32(t, ctx)
+	coverageDisplayMigrate30(t, ctx)
 
 	t.Run("Full21FieldsEducationDedupAndCheckedSubsetIndependence", func(t *testing.T) {
 		f := newCoverageDisplayFixture(t, db)
@@ -102,7 +100,7 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 		s = coverageEntityStatsAll(t, db, f)
 		coverageEntityStatsCheck(t, db, f, s, "path", f.paths[3], `name='Changed Walk' AND broad_class='cycleway'
 			AND locality_name='Excluded Regional Context'`)
-		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[0], `name='Changed Park' AND locality_name='Changed Town' AND region_id IS NULL`)
+		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[0], `name='Changed Park' AND locality_name='Changed Town' AND region_id='display:zeta'`)
 		tx := beginAccount(t, ctx, db.migration, f.account)
 		segment := coverageEntityStatsClone(t, db, tx, f, f.segments[0], `{"workouts:education_name":"A Historical School"}`, 0)
 		coverageDisplayExec(t, db, tx, `UPDATE app.workout_segment_matches SET physical_segment_id=$3
@@ -165,10 +163,12 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 	t.Run("ParkCanonicalGeometryAvailabilityAndMixedBounds", func(t *testing.T) {
 		f := newCoverageDisplayFixture(t, db)
 		s := coverageEntityStatsAll(t, db, f)
-		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[0], `region_id IS NULL AND range_first_workout_id=$7
+		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[0], `region_id='display:zeta' AND range_first_workout_id=$7
 			AND minimum_longitude=3 AND maximum_longitude=12.25`, f.workouts[1])
-		coverageDisplayCheck(t, db, `SELECT EXISTS(SELECT 1 FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL) WHERE entity_id=$5)
-			AND NOT EXISTS(SELECT 1 FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,'park',$5))`, f.account, f.session, s.id, s.generation, f.parks[2])
+		coverageDisplayCheck(t, db, `SELECT NOT EXISTS(SELECT 1 FROM app.coverage_display_entities entity
+			JOIN app.coverage_display_members member USING(account_id,context_id,canonical_id)
+			WHERE entity.account_id=$1 AND member.source_id=$2 AND entity.context_id=(
+			SELECT coverage_display_context_id FROM app.map_selections WHERE id=$3))`, f.account, f.parks[2], s.id)
 		bootstrapExec(t, db, f.bootstrapFixture, `UPDATE app.path_segments SET tags=jsonb_set(tags,'{workouts:park_id}',to_jsonb($3::text))
 			WHERE account_id=$1 AND physical_segment_id=$2`, f.account, f.segments[7], f.parks[2].String())
 		s = coverageEntityStatsAll(t, db, f)
@@ -180,7 +180,8 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 		s = coverageEntityStatsAll(t, db, f)
 		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[2], `range_workout_count=1 AND minimum_longitude=8 AND maximum_longitude=10.25`)
 		coverageDisplayCheck(t, db, `SELECT fit_maximum_longitude < maximum_longitude
-			FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'park',$5)`, f.account, f.session, s.id, s.generation, f.parks[2])
+			FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'park',$5)`, f.account, f.session, s.id, s.generation,
+			coverageDisplayCanonicalID(t, db, f.account, s.id, "park", f.parks[2]))
 		tx = beginAccount(t, ctx, db.migration, f.account)
 		coverageDisplayInsertMatch(t, db, tx, f, f.workouts[6], f.segments[7], 99)
 		coverageDisplayExec(t, db, tx, `DELETE FROM app.workout_segment_matches WHERE account_id=$1 AND workout_id=$2 AND physical_segment_id=$3`,
@@ -191,16 +192,20 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 			VALUES($1,$2,$3,'2026-01-10T08:00:00Z','2026-01-10')`, f.account, f.workouts[0], f.parks[2])
 		coverageDisplayCommit(t, db, tx)
 		s = coverageEntityStatsAll(t, db, f)
-		coverageDisplayCheck(t, db, `SELECT EXISTS(SELECT 1 FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)
-			WHERE entity_id=$5 AND range_workout_count=1 AND all_time_workout_count=2)
-			AND NOT EXISTS(SELECT 1 FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,'park',$5))`, f.account, f.session, s.id, s.generation, f.parks[2])
+		// Historical canonical region plus noncanonical range bounds keep the
+		// cached row visible, but cannot manufacture canonical range geometry.
+		id := coverageDisplayCanonicalID(t, db, f.account, s.id, "park", f.parks[2])
+		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[2], `range_workout_count=1 AND all_time_workout_count=2
+			AND region_id='display:alpha' AND minimum_longitude=10 AND maximum_longitude=10.25`)
+		coverageDisplayCheck(t, db, `SELECT NOT EXISTS(SELECT 1 FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,'park',$5))`,
+			f.account, f.session, s.id, s.generation, id)
 		coverageDisplayWorkoutExec(t, db, f, `UPDATE app.workouts SET local_start_date='2026-01-11' WHERE account_id=$1 AND id=$2`, f.account, f.workouts[6])
 		s = coverageEntityStatsAll(t, db, f)
 		coverageEntityStatsCheck(t, db, f, s, "park", f.parks[2], `range_workout_count=2 AND all_time_workout_count=2
 			AND minimum_longitude=8 AND maximum_longitude=10.25`)
 	})
 
-	t.Run("EligibleMaterializationScalesWithTargetCandidatesNotAccount", func(t *testing.T) {
+	t.Run("WarmCanonicalProbeDoesNotScaleWithAccountWorkouts", func(t *testing.T) {
 		f := newCoverageDisplayFixture(t, db)
 		contextWorkout := coverageEntityStatsAddWorkouts(t, db, f, 1)[0]
 		tx := beginAccount(t, ctx, db.migration, f.account)
@@ -331,35 +336,19 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 	})
 }
 
-func TestCoverageEntityStatsOriginalDetailOracle(t *testing.T) {
-	body := coverageEntityStatsOracle(t)
-	for _, required := range []string{"original_list", "app.workout_segment_matches", "app.path_segments",
-		"ST_UnaryUnion(ST_Collect(geom))", "segment.tags->>'workouts:park_id' = metadata.entity_id::text", "$5::text", "$6::uuid"} {
-		if !strings.Contains(body, required) {
-			t.Errorf("independent original detail oracle is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"app.map_selection_coverage_entities(", "app.map_selection_coverage_entity_stats(",
-		"app.workout_path_display_partials", "app.workout_path_display_context", "app.workout_park_display_bounds", "target_entity_", "target_account_id"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("original detail oracle depends on current readers/facts or has unbound parameters: %q", forbidden)
-		}
-	}
-}
-
 func TestCoverageEntityStatsExplainQueryAndCardinalityExtraction(t *testing.T) {
 	body := coverageDisplayFunction(t, coverageDisplaySQL(t), "map_selection_coverage_entity_stats")
 	query := coverageEntityStatsReturnQuery(t, body)
-	if !strings.HasPrefix(query, "WITH ") || !strings.Contains(query, "eligible AS MATERIALIZED (") ||
+	if !strings.HasPrefix(query, "SELECT ") || !strings.Contains(query, "entity.canonical_id = target_entity_id") ||
 		strings.Contains(query, "RETURN QUERY") || strings.HasSuffix(query, "END;") {
-		t.Fatal("plan regression must explain the actual materialized RETURN QUERY, not a function scan")
+		t.Fatal("plan regression must explain the actual canonical point query, not a function scan")
 	}
 	for _, join := range []string{"Hash Join", "Nested Loop"} {
 		for _, literal := range []string{"2", "2.00", "2e0"} {
 			plan := fmt.Sprintf(`[{"Plan":{"Node Type":%q,"Plans":[
-				{"Subplan Name":"CTE eligible","Actual Rows":%s,"Actual Loops":1.00},
+				{"Relation Name":"coverage_display_entities","Actual Rows":%s,"Actual Loops":1.00},
 				{"Node Type":"CTE Scan","CTE Name":"eligible","Actual Rows":200.00,"Actual Loops":2}]}}]`, join, literal)
-			rows, loops := coverageEntityStatsEligiblePlanRows(t, []byte(plan))
+			rows, loops := coverageEntityStatsEntityPlanRows(t, []byte(plan))
 			if rows != 2 || loops != 1 {
 				t.Fatalf("must inspect the producer, not repeated CTE scans: rows=%d loops=%d", rows, loops)
 			}
@@ -370,25 +359,6 @@ func TestCoverageEntityStatsExplainQueryAndCardinalityExtraction(t *testing.T) {
 			t.Errorf("invalid or non-integral plan cardinality accepted: %q", literal)
 		}
 	}
-}
-
-// Use the original detail's raw geometry gate and replace its metadata call with
-// the original 019 SQL, so neither new compact reader supplies the oracle.
-func coverageEntityStatsOracle(t *testing.T) string {
-	t.Helper()
-	source, err := migrations.Files.ReadFile("020_facility_coverage_identity.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := coverageDisplayFunction(t, string(source), "map_selection_coverage_entity_detail")
-	call := regexp.MustCompile(`(?s)SELECT \* FROM app\.map_selection_coverage_entities\(target_account_id,\s*target_session_id,\s*target_selection_id,\s*target_generation,\s*NULL\)`)
-	if len(call.FindAllString(body, -1)) != 1 {
-		t.Fatal("original 020 detail must have exactly one metadata call")
-	}
-	legacyList := strings.ReplaceAll(coverageDisplayOracle(t), "$5::text", "NULL::text")
-	body = call.ReplaceAllStringFunc(body, func(string) string { return "SELECT * FROM (" + legacyList + ") original_list" })
-	return strings.NewReplacer("target_account_id", "$1::uuid", "target_session_id", "$2::uuid", "target_selection_id", "$3::uuid",
-		"target_generation", "$4::bigint", "target_entity_kind", "$5::text", "target_entity_id", "$6::uuid").Replace(body)
 }
 
 func coverageEntityStatsAll(t *testing.T, db testDatabases, f coverageDisplayFixture) coverageDisplaySelection {
@@ -418,29 +388,47 @@ func coverageEntityStatsAllSelection(t *testing.T, db testDatabases, f coverageD
 
 func coverageEntityStatsRow(t *testing.T, db testDatabases, f coverageDisplayFixture, s coverageDisplaySelection, kind any, entity uuid.UUID) {
 	t.Helper()
+	entity = coverageDisplayCanonicalID(t, db, f.account, s.id, kind, entity)
 	tx := beginAccount(t, db.ctx, db.migration, f.account)
+	coverageDisplayExec(t, db, tx, `SELECT set_config('app.session_id',$1,true)`, f.session.String())
 	coverageDisplayExec(t, db, tx, `SET LOCAL jit=off`)
 	var delta, actual string
 	err := tx.QueryRow(db.ctx, `WITH actual AS MATERIALIZED (
 		SELECT * FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,$5,$6)
-	), original_detail (`+coverageEntityStatsColumns+`,geometry,fit_minimum_longitude,fit_minimum_latitude,fit_maximum_longitude,fit_maximum_latitude)
-	AS MATERIALIZED (`+coverageEntityStatsOracle(t)+`), expected AS MATERIALIZED (SELECT `+coverageEntityStatsColumns+` FROM original_detail),
-	listed AS MATERIALIZED (SELECT * FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)
-		WHERE entity_kind=$5 AND entity_id=$6 AND EXISTS(SELECT 1 FROM original_detail)),
+	), listed AS MATERIALIZED (SELECT * FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)
+		WHERE entity_kind=$5 AND entity_id=$6),
+	geometry_available AS (SELECT EXISTS(
+		SELECT 1 FROM app.map_selections selection
+		JOIN app.coverage_display_members member ON member.account_id=selection.account_id AND member.context_id=selection.coverage_display_context_id
+		JOIN app.workout_segment_matches match ON match.account_id=member.account_id
+		JOIN app.path_segments segment ON segment.account_id=match.account_id AND segment.region_id=match.region_id
+		AND segment.generation_id=match.generation_id AND segment.physical_segment_id=match.physical_segment_id
+		JOIN app.workouts workout ON workout.account_id=match.account_id AND workout.id=match.workout_id
+		JOIN app.workout_routes route ON route.account_id=workout.account_id AND route.workout_id=workout.id
+		JOIN app.workout_coverage_states coverage ON coverage.account_id=workout.account_id AND coverage.workout_id=workout.id
+		LEFT JOIN app.coverage_paths path ON path.account_id=match.account_id AND path.logical_path_id=match.logical_path_id
+		WHERE selection.account_id=$1 AND selection.id=$3 AND member.canonical_id=$6
+		AND workout.local_start_date BETWEEN selection.start_date AND selection.end_date
+		AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL AND coverage.applied_route_input_revision IS NOT NULL
+		AND ((member.source_kind='park' AND segment.tags->>'workouts:park_id'=member.source_id::text)
+		 OR (member.source_kind='path' AND path.logical_path_id IS NOT NULL
+		 AND member.source_id=COALESCE(NULLIF(segment.tags->>'workouts:education_id','')::uuid,match.logical_path_id)
+		 AND NOT(segment.highway='service' AND COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle'))
+		 AND segment.tags->>'amenity' IS DISTINCT FROM 'parking'
+		 AND (path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park') OR NOT(segment.tags ? 'workouts:park_id'))))) available),
+	expected_detail AS (SELECT actual.* FROM actual,geometry_available WHERE available),
 	shipped AS MATERIALIZED (SELECT `+coverageEntityStatsColumns+` FROM app.map_selection_coverage_entity_detail($1,$2,$3,$4,$5,$6)),
 	differences AS (
-		SELECT 'stats-only' direction,to_jsonb(d) value FROM (TABLE actual EXCEPT ALL TABLE expected) d UNION ALL
-		SELECT 'original-only',to_jsonb(d) FROM (TABLE expected EXCEPT ALL TABLE actual) d UNION ALL
-		SELECT 'list-only',to_jsonb(d) FROM (TABLE listed EXCEPT ALL TABLE actual) d UNION ALL
+		SELECT 'list-only' direction,to_jsonb(d) value FROM (TABLE listed EXCEPT ALL TABLE actual) d UNION ALL
 		SELECT 'stats-not-list',to_jsonb(d) FROM (TABLE actual EXCEPT ALL TABLE listed) d UNION ALL
-		SELECT 'detail-only',to_jsonb(d) FROM (TABLE shipped EXCEPT ALL TABLE actual) d UNION ALL
-		SELECT 'stats-not-detail',to_jsonb(d) FROM (TABLE actual EXCEPT ALL TABLE shipped) d
+		SELECT 'detail-only',to_jsonb(d) FROM (TABLE shipped EXCEPT ALL TABLE expected_detail) d UNION ALL
+		SELECT 'missing-detail',to_jsonb(d) FROM (TABLE expected_detail EXCEPT ALL TABLE shipped) d
 	) SELECT (SELECT COALESCE(jsonb_agg(to_jsonb(differences)),'[]'::jsonb)::text FROM differences),
 		(SELECT COALESCE(jsonb_agg(to_jsonb(actual)),'[]'::jsonb)::text FROM actual)`,
 		f.account, f.session, s.id, s.generation, kind, entity).Scan(&delta, &actual)
 	_ = tx.Rollback(db.ctx)
 	if err != nil || delta != "[]" {
-		t.Fatalf("21-column stats/original-detail/list parity kind=%v entity=%s: %s err=%v", kind, entity, delta, err)
+		t.Fatalf("21-column canonical stats/detail/list parity kind=%v entity=%s: %s err=%v", kind, entity, delta, err)
 	}
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(actual), &rows); err != nil || len(rows) > 1 {
@@ -456,8 +444,16 @@ func coverageEntityStatsRow(t *testing.T, db testDatabases, f coverageDisplayFix
 
 func coverageEntityStatsAPI(t *testing.T, db testDatabases, account uuid.UUID, args ...any) string {
 	t.Helper()
+	if selection, ok := args[2].(uuid.UUID); ok {
+		if entity, ok := args[5].(uuid.UUID); ok {
+			args[5] = coverageDisplayCanonicalID(t, db, account, selection, args[4], entity)
+		}
+	}
 	tx := beginAccount(t, db.ctx, db.api, account)
 	defer tx.Rollback(db.ctx)
+	if session, ok := args[1].(uuid.UUID); ok {
+		coverageDisplayExec(t, db, tx, `SELECT set_config('app.session_id',$1,true)`, session.String())
+	}
 	var rows string
 	if err := tx.QueryRow(db.ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(stats)),'[]'::jsonb)::text
 		FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,$5,$6) stats`, args...).Scan(&rows); err != nil {
@@ -469,6 +465,7 @@ func coverageEntityStatsAPI(t *testing.T, db testDatabases, account uuid.UUID, a
 func coverageEntityStatsCheck(t *testing.T, db testDatabases, f coverageDisplayFixture, s coverageDisplaySelection, kind string, entity uuid.UUID, predicate string, args ...any) {
 	t.Helper()
 	values := append([]any{f.account, f.session, s.id, s.generation, kind, entity}, args...)
+	values[5] = coverageDisplayCanonicalID(t, db, f.account, s.id, kind, entity)
 	coverageDisplayCheck(t, db, `SELECT count(*)=1 AND bool_and(`+predicate+`) FROM app.map_selection_coverage_entity_stats($1,$2,$3,$4,$5,$6)`, values...)
 }
 
@@ -486,6 +483,9 @@ func coverageEntityStatsSelection(t *testing.T, db testDatabases, f coverageDisp
 		coverageDisplayExec(t, db, tx, `INSERT INTO app.map_selection_workouts(account_id,selection_id,workout_id,sort_order) VALUES($1,$2,$3,$4)`, f.account, s.id, workout, i)
 	}
 	coverageDisplayCommit(t, db, tx)
+	api := deferredBeginSelection(t, db, f.account, f.session)
+	coverageDisplayExec(t, db, api, `SELECT * FROM app.prepare_coverage_display_context($1,$2,$3,$4)`, f.account, f.session, s.id, s.generation)
+	coverageDisplayCommit(t, db, api)
 	return s
 }
 
@@ -535,7 +535,7 @@ func coverageEntityStatsAddWorkouts(t *testing.T, db testDatabases, f coverageDi
 
 func coverageEntityStatsReturnQuery(t *testing.T, body string) string {
 	t.Helper()
-	_, query, found := strings.Cut(body, "RETURN QUERY\n")
+	_, query, found := strings.Cut(body, "RETURN QUERY ")
 	query = strings.TrimSpace(query)
 	if !found || !strings.HasSuffix(query, "END;") {
 		t.Fatal("stats must expose one SQL RETURN QUERY for nested-plan regression")
@@ -561,25 +561,20 @@ func coverageEntityStatsExplain(t *testing.T, db testDatabases, f coverageDispla
 	coverageDisplayExec(t, db, tx, `SET LOCAL ROLE workouts_security_owner`)
 	coverageDisplayExec(t, db, tx, `SET LOCAL search_path=pg_catalog,app`)
 	coverageDisplayExec(t, db, tx, `SET LOCAL jit=off`)
-	var start, end string
-	if err := tx.QueryRow(db.ctx, `SELECT start_date::text,end_date::text FROM app.map_selections
+	var context uuid.UUID
+	if err := tx.QueryRow(db.ctx, `SELECT coverage_display_context_id FROM app.map_selections
 		WHERE account_id=$1 AND session_id=$2 AND id=$3 AND generation=$4 AND expires_at>transaction_timestamp()`,
-		f.account, f.session, s.id, s.generation).Scan(&start, &end); err != nil {
+		f.account, f.session, s.id, s.generation).Scan(&context); err != nil {
 		t.Fatal(err)
-	}
-	for _, date := range []string{start, end} {
-		if _, err := time.Parse(time.DateOnly, date); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if kind != "path" && kind != "park" {
 		t.Fatal("plan literals require a validated entity kind")
 	}
+	canonical := coverageDisplayCanonicalID(t, db, f.account, s.id, kind, entity)
 	query := strings.NewReplacer("target_account_id", "'"+f.account.String()+"'::uuid",
 		"target_session_id", "'"+f.session.String()+"'::uuid", "target_selection_id", "'"+s.id.String()+"'::uuid",
 		"target_generation", fmt.Sprintf("%d::bigint", s.generation), "target_entity_kind", "'"+kind+"'::text",
-		"target_entity_id", "'"+entity.String()+"'::uuid", "selected_start_date", "DATE '"+start+"'",
-		"selected_end_date", "DATE '"+end+"'").Replace(coverageEntityStatsReturnQuery(t, body))
+		"target_entity_id", "'"+canonical.String()+"'::uuid", "authorized_id", "'"+context.String()+"'::uuid").Replace(coverageEntityStatsReturnQuery(t, body))
 	var candidates, account int64
 	if err := tx.QueryRow(db.ctx, `WITH candidate AS (
 		SELECT workout_id FROM app.workout_path_display_partials WHERE account_id=$1 AND entity_id=$3 AND $2='path'
@@ -610,20 +605,20 @@ func coverageEntityStatsExplain(t *testing.T, db testDatabases, f coverageDispla
 	if err := tx.QueryRow(db.ctx, `EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF, SUMMARY OFF) `+query).Scan(&plan); err != nil {
 		t.Fatal(err)
 	}
-	rows, loops := coverageEntityStatsEligiblePlanRows(t, plan)
-	if loops != 1 || rows != candidates || rows >= account {
-		t.Fatalf("eligible materialization was not target-bounded: rows=%d loops=%d candidates=%d account=%d", rows, loops, candidates, account)
+	rows, loops := coverageEntityStatsEntityPlanRows(t, plan)
+	if loops != 1 || rows != 1 || strings.Contains(string(plan), `"Relation Name": "workouts"`) || strings.Contains(string(plan), `"Relation Name": "workout_segment_matches"`) {
+		t.Fatalf("warm canonical stats must read exactly one cached entity without rescanning workouts: rows=%d loops=%d plan=%s", rows, loops, plan)
 	}
-	t.Logf("%s target: materialized eligible=%d candidate union=%d account eligible=%d", kind, rows, candidates, account)
+	t.Logf("%s target: cached rows=%d source candidates=%d account eligible=%d", kind, rows, candidates, account)
 }
 
-func coverageEntityStatsEligiblePlanRows(t *testing.T, encoded []byte) (int64, int64) {
+func coverageEntityStatsEntityPlanRows(t *testing.T, encoded []byte) (int64, int64) {
 	t.Helper()
 	type node struct {
-		Subplan string      `json:"Subplan Name"`
-		Rows    json.Number `json:"Actual Rows"`
-		Loops   json.Number `json:"Actual Loops"`
-		Plans   []node      `json:"Plans"`
+		Relation string      `json:"Relation Name"`
+		Rows     json.Number `json:"Actual Rows"`
+		Loops    json.Number `json:"Actual Loops"`
+		Plans    []node      `json:"Plans"`
 	}
 	var document []struct {
 		Plan node `json:"Plan"`
@@ -635,7 +630,7 @@ func coverageEntityStatsEligiblePlanRows(t *testing.T, encoded []byte) (int64, i
 	found := 0
 	var visit func(node)
 	visit = func(n node) {
-		if n.Subplan == "CTE eligible" {
+		if n.Relation == "coverage_display_entities" {
 			var err error
 			if rows, err = coverageEntityStatsPlanCardinality(n.Rows); err != nil {
 				t.Fatal(err)
@@ -651,7 +646,7 @@ func coverageEntityStatsEligiblePlanRows(t *testing.T, encoded []byte) (int64, i
 	}
 	visit(document[0].Plan)
 	if found != 1 {
-		t.Fatalf("expected one materialized eligible producer, found=%d: %s", found, encoded)
+		t.Fatalf("expected one cached canonical entity probe, found=%d: %s", found, encoded)
 	}
 	return rows, loops
 }

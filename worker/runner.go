@@ -63,17 +63,19 @@ type Runner struct {
 }
 
 type claimedJob struct {
-	id         uuid.UUID
-	accountID  uuid.UUID
-	lease      uuid.UUID
-	kind       string
-	owner      string
-	sourceName string
-	sourceType string
-	mode       ingestMode
-	startDate  *time.Time
-	endDate    *time.Time
-	paramsErr  error
+	id          uuid.UUID
+	accountID   uuid.UUID
+	lease       uuid.UUID
+	kind        string
+	owner       string
+	sourceName  string
+	sourceType  string
+	mode        ingestMode
+	startDate   *time.Time
+	endDate     *time.Time
+	paramsErr   error
+	attempt     int
+	ingestPhase *ingestPhaseProgress
 }
 
 type RunnerOptions struct {
@@ -364,7 +366,7 @@ func (r *Runner) claimNext(ctx context.Context) (claimedJob, error) {
 	job.lease = lease
 	if job.kind == "manual_ingest_source" || job.kind == "scheduled_ingest_source" {
 		var parameters []byte
-		if err := tx.QueryRow(ctx, `SELECT parameters FROM app.jobs WHERE id=$1 AND account_id=$2`, job.id, job.accountID).Scan(&parameters); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT parameters,attempt FROM app.jobs WHERE id=$1 AND account_id=$2`, job.id, job.accountID).Scan(&parameters, &job.attempt); err != nil {
 			return claimedJob{}, err
 		}
 		job.mode, job.startDate, job.endDate, job.paramsErr = decodeIngestParameters(parameters)

@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	MinimumSchemaVersion   = 8
-	SupportedSchemaVersion = 9
+	MinimumSchemaVersion   = 10
+	SupportedSchemaVersion = 10
 )
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
@@ -16,7 +16,11 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		return false
 	}
 	var ready bool
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, osmReadinessSQL, MinimumSchemaVersion, SupportedSchemaVersion).Scan(&ready)
+	return err == nil && ready
+}
+
+const osmReadinessSQL = `
 		SELECT current_database() = 'osm'
 		   AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')
 		   AND to_regclass('osm_catalog.schema_metadata') IS NOT NULL
@@ -25,6 +29,25 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   AND to_regclass('osm_catalog.region_storage') IS NOT NULL
 		   AND to_regclass('osm_catalog.storage_gc') IS NOT NULL
 		   AND to_regclass('osm_catalog.promotion_events') IS NOT NULL
+		   AND to_regclass('osm_catalog.route_region_catalog_state') IS NOT NULL
+		   AND EXISTS (
+		       SELECT 1 FROM osm_catalog.route_region_catalog_state
+		       WHERE singleton AND revision >= 1 AND octet_length(fingerprint) = 32
+		         AND octet_length(selection_fingerprint) = 32
+		         AND jsonb_typeof(active_generations) = 'object'
+		         AND jsonb_typeof(configured_regions) = 'array'
+		   )
+		   AND (SELECT count(*) = 2 FROM pg_attribute
+		       WHERE attrelid = to_regclass('osm_catalog.regions')
+		         AND attname IN ('boundary_sha256','geographic_area_m2')
+		         AND attgenerated = 's' AND attnotnull AND NOT attisdropped)
+		   AND (SELECT count(*) = 7 FROM pg_trigger
+		       WHERE NOT tgisinternal AND tgenabled = 'O' AND (
+		         (tgrelid = to_regclass('osm_catalog.regions') AND tgname IN
+		           ('regions_lock_route_catalog','regions_refresh_route_catalog','regions_deny_catalog_truncate'))
+		         OR (tgrelid = to_regclass('osm_catalog.generations') AND tgname IN
+		           ('generations_lock_route_catalog','generations_refresh_route_catalog','generations_deny_catalog_truncate'))
+		         OR (tgrelid = to_regclass('osm_catalog.route_region_catalog_state') AND tgname = 'route_catalog_deny_truncate')))
 		   AND to_regclass('osm_catalog.regions_boundary_gist') IS NOT NULL
 		   AND to_regclass('osm_canonical.ways') IS NOT NULL
 		   AND to_regclass('osm_canonical.localities') IS NOT NULL
@@ -101,7 +124,5 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 		   )
 		   AND EXISTS (
 		       SELECT 1 FROM osm_catalog.schema_metadata
-		       WHERE singleton AND schema_version BETWEEN $1 AND $2 AND minimum_runtime_version <= $2
-		   )`, MinimumSchemaVersion, SupportedSchemaVersion).Scan(&ready)
-	return err == nil && ready
-}
+		       WHERE singleton AND schema_version BETWEEN $1 AND $2 AND minimum_runtime_version BETWEEN $1 AND $2
+		   )`

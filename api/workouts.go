@@ -589,7 +589,7 @@ func resolveRange(input rangeInput, prefs readPreferences, now time.Time) (resol
 			return resolvedRange{}, "endDate", fmt.Errorf("must not be before startDate")
 		}
 		if _, err := time.LoadLocation(prefs.timezone); err != nil {
-			return resolvedRange{}, "timezone", fmt.Errorf("stored timezone is invalid")
+			return resolvedRange{}, "timezone", fmt.Errorf("stored time zone is invalid")
 		}
 		return resolvedRange{dateOnly(start), dateOnly(end), prefs.timezone}, "", nil
 	}
@@ -602,7 +602,7 @@ func resolveRange(input rangeInput, prefs readPreferences, now time.Time) (resol
 	}
 	location, err := time.LoadLocation(zone)
 	if err != nil || zone == "Local" {
-		return resolvedRange{}, "tz", fmt.Errorf("must be a valid IANA timezone")
+		return resolvedRange{}, "tz", fmt.Errorf("must be a valid IANA time zone")
 	}
 	today := dateOnly(now.In(location))
 	start, end := today, today

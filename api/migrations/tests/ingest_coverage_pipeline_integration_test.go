@@ -162,7 +162,7 @@ func TestIngestCoveragePipelinePostgreSQL(t *testing.T) {
 				t.Fatal("obsolete runtime or wrong role configured pipeline")
 			}
 		}
-		for _, runtime := range []any{nil, 26, 27, 30, 31} {
+		for _, runtime := range []any{nil, 26, 27, 28, 29} {
 			_, err := db.coverage.Exec(ctx, `SELECT * FROM app.claim_next_coverage_route('obsolete',$1,interval '1 minute',$2)`, uuid.New(), runtime)
 			bootstrapSQLState(t, err, "55000")
 			_, err = db.coverage.Exec(ctx, `SELECT * FROM app.claim_coverage_reconciliation('obsolete',$1,interval '1 minute',$2)`, uuid.New(), runtime)
@@ -780,7 +780,7 @@ func TestIngestCoveragePipelinePostgreSQL(t *testing.T) {
 const pipelineEnqueueSQL = `SELECT job_id FROM app.enqueue_coverage_update($1,$2,$3,$4,1,
  'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5,$5)`
 const pipelineApplySQL = `SELECT * FROM app.apply_ingest_coverage_batch($1,$2,$3,$4,$5,$6,
- 'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5,33)`
+ 'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5,30)`
 
 func pipelineTargets(workouts []uuid.UUID, revision int) []byte {
 	targets := make([]map[string]any, len(workouts))

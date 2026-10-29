@@ -153,12 +153,12 @@ func TestDeferredAccountGenerationPostgreSQL(t *testing.T) {
 				t.Fatal(err)
 			}
 			var valid bool
-			if err := db.migration.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=33 AND migration_baseline=27
+			if err := db.migration.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=30 AND migration_baseline=27
 				AND (SELECT count(*)=$1+1 AND count(DISTINCT version_id)=$1+1 AND min(version_id)=0 AND max(version_id)=$1 AND bool_and(is_applied) FROM public.goose_db_version)
 				FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion).Scan(&valid); err != nil || !valid {
-				t.Fatalf("current schema/min33/marker27 exact ledger: %t %v", valid, err)
+				t.Fatalf("current schema/min30/marker27 exact ledger: %t %v", valid, err)
 			}
-			if before != "" && before != deferredSecurityContract(t, db, "033_canonical_coverage_display.sql") {
+			if before != "" && before != deferredSecurityContract(t, db, "030_coverage_display.sql") {
 				t.Fatal("folded generation fix changed its protected OIDs, ABI, grants, RLS or policies")
 			}
 			if beforeScopes != "" && beforeScopes != deferredTriggerScopes(t, db) {
@@ -212,7 +212,7 @@ func deferredReadiness(t *testing.T, db testDatabases) {
 
 // Cohort ABIs deliberately change in 028. The generation fix itself retains its
 // existing function identities, protection and counter-table authorization.
-// 033 intentionally replaces the counter body; compare exact checkpoint bodies.
+// Display30 intentionally replaces the counter body; compare exact checkpoint bodies.
 func deferredSecurityContract(t *testing.T, db testDatabases, counterMigration string) string {
 	t.Helper()
 	raw, err := migrations.Files.ReadFile(counterMigration)

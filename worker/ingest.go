@@ -253,9 +253,18 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		_, err = r.finishCancelled(ctx, job)
 		return err
 	}
+	job.ingestPhase = &ingestPhaseProgress{}
+	if job.attempt > 1 {
+		if err := r.recordIngestPhase(ctx, job, phaseResuming, nil, nil); err != nil {
+			return err
+		}
+	}
 	// A prior lease may have committed a file before transport cleanup or progress.
 	// Staging recovery precedes claims; replay durable work before touching source I/O.
 	if err := r.drainIngestCoverage(ctx, job, false); err != nil {
+		return err
+	}
+	if err := r.recordIngestPhase(ctx, job, phasePreparing, nil, nil); err != nil {
 		return err
 	}
 	r.recordDiagnosticsBestEffort(ctx, job, "ingest-started", map[string]any{"operation": "discover"})
@@ -279,6 +288,10 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		directory, openErr := sourceconfig.OpenDirectory(config.Path, r.localRoots)
 		if openErr != nil {
 			return r.failIngest(ctx, job, ingestFailure{"source-unavailable", "Source directory is not accessible."})
+		}
+		if phaseErr := r.recordIngestPhase(ctx, job, phaseDiscovering, nil, nil); phaseErr != nil {
+			_ = directory.Close()
+			return phaseErr
 		}
 		files, err = discoverSourceFiles(directory)
 		_ = directory.Close()
@@ -305,6 +318,9 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 					err = privateCleanupError(ctx)
 				}
 			}()
+			if err := r.recordIngestPhase(ctx, job, phaseDiscovering, nil, nil); err != nil {
+				return err
+			}
 			var objects []rclonesource.Object
 			objects, err = remote.List(ctx)
 			files = remoteSourceFiles(objects)
@@ -316,6 +332,10 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 	}
 	if err == nil {
 		err = r.ingestFiles(ctx, job, snapshot.sourceID, sourcePath, remote, files, results)
+	}
+	// Error cleanup must still run, but must not hide the phase that failed.
+	if err == nil {
+		err = r.recordIngestPhase(ctx, job, phaseCleanup, nil, nil)
 	}
 	if remote != nil {
 		updated := remote.Config()
@@ -369,6 +389,9 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 // No terminal writes here: the caller must remove private transport files and
 // persist final cookies before clearing the immutable job snapshot.
 func (r *Runner) ingestFiles(ctx context.Context, job claimedJob, sourceID uuid.UUID, sourcePath string, remote *rclonesource.Source, files []sourceFile, results *ingestResults) error {
+	if job.ingestPhase == nil {
+		job.ingestPhase = &ingestPhaseProgress{}
+	}
 	files = filterSourceFiles(files, job.startDate, job.endDate)
 	if err := r.resolveCandidateActions(ctx, job, sourceID, files); err != nil {
 		return err
@@ -399,24 +422,32 @@ func (r *Runner) ingestFiles(ctx context.Context, job claimedJob, sourceID uuid.
 		return err
 	}
 	r.recordDiagnosticsBestEffort(ctx, job, "ingest-progress", map[string]any{"current": 0, "total": len(files)})
+	if err := r.recordIngestPhase(ctx, job, phaseImporting, nil, nil); err != nil {
+		return err
+	}
 
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if job.ingestPhase.phase != phaseImporting {
+			if err := r.recordIngestPhase(ctx, job, phaseImporting, nil, nil); err != nil {
+				return err
+			}
+		}
 		outcome := r.processSourceFile(ctx, job, sourceID, sourcePath, file, remote)
 		if outcome.fatal != nil {
 			return outcome.fatal
 		}
-		// processSourceFile has returned, including transport and file-slot cleanup.
+		if !outcome.alreadyCounted {
+			results.applyFileOutcome(file.name, outcome)
+			if err := r.recordIngestProgress(ctx, job, *results); err != nil {
+				return err
+			}
+		}
+		// Publish the file result before coverage work can delay its counters.
+		// Transport and file-slot cleanup have already completed on return.
 		if err := r.drainIngestCoverage(ctx, job, false); err != nil {
-			return err
-		}
-		if outcome.alreadyCounted {
-			continue
-		}
-		results.applyFileOutcome(file.name, outcome)
-		if err := r.recordIngestProgress(ctx, job, *results); err != nil {
 			return err
 		}
 	}
@@ -427,6 +458,9 @@ func (r *Runner) ingestFiles(ctx context.Context, job claimedJob, sourceID uuid.
 	}
 	if err := r.repairCoverageReadiness(ctx, job); err != nil {
 		return fmt.Errorf("repair workout coverage readiness: %w", err)
+	}
+	if err := r.recordIngestPhase(ctx, job, phaseUpdatingTimeZones, nil, nil); err != nil {
+		return err
 	}
 	if err := r.reconcileAccountTimezones(ctx, job); err != nil {
 		return err

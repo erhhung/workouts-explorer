@@ -574,8 +574,21 @@ export function buildRawRouteDirectionMarkers(
         distanceSinceMarker < spacingPixels
       )
         continue;
-      const from = projected[i - smoothingPoints],
-        to = projected[i + smoothingPoints];
+      let fromIndex = i - smoothingPoints,
+        toIndex = i + smoothingPoints;
+      // Dense GPS samples still need a usable screen-space bearing at a fitted zoom.
+      while (
+        Math.hypot(
+          projected[toIndex].x - projected[fromIndex].x,
+          projected[toIndex].y - projected[fromIndex].y,
+        ) < 4 &&
+        (fromIndex > 0 || toIndex < line.length - 1)
+      ) {
+        fromIndex = Math.max(0, fromIndex - 1);
+        toIndex = Math.min(line.length - 1, toIndex + 1);
+      }
+      const from = projected[fromIndex],
+        to = projected[toIndex];
       if (Math.hypot(to.x - from.x, to.y - from.y) < 4) continue;
       features.push({
         type: "Feature",
@@ -764,6 +777,8 @@ function MapCanvas({
     update?: {
       source: GeoJSONSource;
       route: RawRouteFeature;
+      projectionKey: string;
+      viewportReady: boolean;
       status: "worker" | "tiles" | "ready";
     };
   }>({ moving: false });
@@ -1155,33 +1170,62 @@ function MapCanvas({
     map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity", 0);
   }
 
+  function directionProjectionKey(map: MapLibreMap) {
+    const canvas = map.getCanvas();
+    return JSON.stringify([
+      map.getZoom(),
+      map.getBearing(),
+      map.getPitch(),
+      canvas.clientWidth,
+      canvas.clientHeight,
+      map.getProjection(),
+    ]);
+  }
+
   function syncDirectionVisibility(map: MapLibreMap) {
     const { moving, update } = directionStateRef.current;
     if (
       mapRef.current !== map ||
       !styleLoadedRef.current ||
-      moving ||
-      map.isMoving() ||
       !update ||
       update.route !== directionRouteRef.current ||
       update.source !== map.getSource(DIAGNOSTIC_DIRECTION_SOURCE) ||
       !map.getLayer(DIAGNOSTIC_DIRECTION_LAYER)
     )
       return;
-    if (update.status === "tiles" && map.isSourceLoaded(DIAGNOSTIC_DIRECTION_SOURCE))
+    if (update.projectionKey !== directionProjectionKey(map)) {
+      invalidateDirectionMarkers(map);
+      if (!moving && !map.isMoving()) syncDirectionMarkers(map);
+      return;
+    }
+    if (!update.viewportReady) return;
+    if ((moving || map.isMoving()) && update.status !== "ready") return;
+    const movingReady = (moving || map.isMoving()) && update.status === "ready";
+    const routeSource = diagnosticModeRef.current ? DIAGNOSTIC_RAW_ROUTE_SOURCE : ROUTES_SOURCE;
+    const routeReady =
+      movingReady || Boolean(map.getSource(routeSource) && map.isSourceLoaded(routeSource));
+    if (update.status === "tiles" && map.isSourceLoaded(DIAGNOSTIC_DIRECTION_SOURCE) && routeReady)
       update.status = "ready";
-    const ready = update.status === "ready";
+    const ready = update.status === "ready" && routeReady;
     const visible = diagnosticModeRef.current
       ? Boolean(diagnosticRawRouteRef.current) && !rawRouteHiddenRef.current
       : true;
-    map.setPaintProperty(
-      DIAGNOSTIC_DIRECTION_LAYER,
-      "icon-opacity-transition",
+    const transition =
       ready && diagnosticModeRef.current && diagnosticEnabledRef.current
         ? RAW_ROUTE_FADE
-        : { duration: 0, delay: 0 },
-    );
-    map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity", ready && visible ? 0.95 : 0);
+        : { duration: 0, delay: 0 };
+    const priorTransition = map.getPaintProperty(
+      DIAGNOSTIC_DIRECTION_LAYER,
+      "icon-opacity-transition",
+    ) as typeof transition | undefined;
+    if (
+      priorTransition?.duration !== transition.duration ||
+      priorTransition.delay !== transition.delay
+    )
+      map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity-transition", transition);
+    const opacity = ready && visible ? 0.95 : 0;
+    if (map.getPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity") !== opacity)
+      map.setPaintProperty(DIAGNOSTIC_DIRECTION_LAYER, "icon-opacity", opacity);
   }
 
   function syncDirectionMarkers(map: MapLibreMap) {
@@ -1221,17 +1265,35 @@ function MapCanvas({
           "icon-opacity-transition": { duration: 0, delay: 0 },
         },
       });
+    const installed = directionStateRef.current.update;
+    const projectionKey = directionProjectionKey(map);
     if (directionStateRef.current.moving || map.isMoving()) {
-      invalidateDirectionMarkers(map);
+      if (
+        installed?.source !== source ||
+        installed.route !== route ||
+        installed.status !== "ready" ||
+        installed.projectionKey !== projectionKey
+      )
+        invalidateDirectionMarkers(map);
+      else syncDirectionVisibility(map);
       return;
     }
-    const installed = directionStateRef.current.update;
-    if (installed?.source === source && installed.route === route) {
+    if (
+      installed?.source === source &&
+      installed.route === route &&
+      installed.projectionKey === projectionKey
+    ) {
       syncDirectionVisibility(map);
       return;
     }
     invalidateDirectionMarkers(map);
-    const update = { source, route, status: "worker" as "worker" | "tiles" | "ready" };
+    const update = {
+      source,
+      route,
+      projectionKey,
+      viewportReady: false,
+      status: "worker" as "worker" | "tiles" | "ready",
+    };
     directionStateRef.current.update = update;
     const data = buildRawRouteDirectionMarkers(route, (coordinate) =>
       map.project(coordinate as [number, number]),
@@ -1950,23 +2012,46 @@ function MapCanvas({
     map.on("load", restoreMissedInitialStyle);
     map.on("load", showDefaultViewport);
     map.on("error", styleError);
-    const hideMovingDirections = () => {
+    const beginDirectionMovement = (event?: { originalEvent?: Event }) => {
       if (disposed) return;
       directionStateRef.current.moving = true;
-      invalidateDirectionMarkers(map);
+      if (event?.originalEvent && map.dragPan.isActive()) syncDirectionMarkers(map);
+      else invalidateDirectionMarkers(map);
+    };
+    const invalidateCameraDirections = () => {
+      if (!disposed) invalidateDirectionMarkers(map);
     };
     const refreshDirectionMarkers = () => {
       if (disposed || map.isMoving()) return;
+      const { moving, update } = directionStateRef.current;
       directionStateRef.current.moving = false;
-      invalidateDirectionMarkers(map);
+      // Only a user drag can retain ready markers; programmatic movement invalidates them.
+      if (!moving || update?.status !== "ready") invalidateDirectionMarkers(map);
       syncDirectionMarkers(map);
     };
     const directionSourceReady = (event: { sourceId?: string }) => {
-      if (!disposed && event.sourceId === DIAGNOSTIC_DIRECTION_SOURCE) syncDirectionVisibility(map);
+      if (
+        !disposed &&
+        [DIAGNOSTIC_DIRECTION_SOURCE, ROUTES_SOURCE, DIAGNOSTIC_RAW_ROUTE_SOURCE].includes(
+          event.sourceId ?? "",
+        )
+      )
+        syncDirectionVisibility(map);
     };
-    map.on("movestart", hideMovingDirections);
+    const directionViewportRendered = () => {
+      const state = directionStateRef.current;
+      if (disposed || state.moving || map.isMoving() || !state.update) return;
+      // Route tile requests for the final camera are issued during rendering, not moveend.
+      state.update.viewportReady = true;
+      syncDirectionVisibility(map);
+    };
+    map.on("movestart", beginDirectionMovement);
+    map.on("zoomstart", invalidateCameraDirections);
+    map.on("rotatestart", invalidateCameraDirections);
+    map.on("pitchstart", invalidateCameraDirections);
     map.on("moveend", refreshDirectionMarkers);
     map.on("sourcedata", directionSourceReady);
+    map.on("render", directionViewportRendered);
     map.on("mousemove", ROUTES_LAYER, hover);
     map.on("mouseleave", ROUTES_LAYER, leaveRoute);
     map.on("mousemove", ROUTE_MARKERS_LAYER, hover);
@@ -1998,9 +2083,13 @@ function MapCanvas({
       map.off("load", restoreMissedInitialStyle);
       map.off("load", showDefaultViewport);
       map.off("error", styleError);
-      map.off("movestart", hideMovingDirections);
+      map.off("movestart", beginDirectionMovement);
+      map.off("zoomstart", invalidateCameraDirections);
+      map.off("rotatestart", invalidateCameraDirections);
+      map.off("pitchstart", invalidateCameraDirections);
       map.off("moveend", refreshDirectionMarkers);
       map.off("sourcedata", directionSourceReady);
+      map.off("render", directionViewportRendered);
       map.off("mousemove", ROUTES_LAYER, hover);
       map.off("mouseleave", ROUTES_LAYER, leaveRoute);
       map.off("mousemove", ROUTE_MARKERS_LAYER, hover);
@@ -2245,15 +2334,9 @@ function coverageRouteStatus(workout: MapSelectionWorkout) {
     return { kind: "stale", label: "Coverage stale", symbol: "" };
   if (readiness.mapDataStatus === "unavailable")
     return { kind: "unavailable", label: "Coverage unavailable", symbol: "×" };
-  if (
-    readiness.mapDataStatus === "pending" ||
-    readiness.processingStatus === "queued" ||
-    readiness.processingStatus === "running"
-  )
-    return { kind: "pending", label: "Coverage pending", symbol: "" };
-  if (readiness.processingStatus === "failed")
+  if (readiness.processingStatus === "failed" && readiness.mapDataStatus !== "pending")
     return { kind: "failed", label: "Coverage failed", symbol: "!" };
-  return { kind: "unprocessed", label: "Coverage unprocessed", symbol: "-" };
+  return { kind: "pending", label: "Coverage pending", symbol: "" };
 }
 
 function shouldPollCoverage(workout: MapSelectionWorkout) {
@@ -2379,6 +2462,7 @@ function WorkoutRouteList({
             </label>
             {focusDisabled ? (
               <Tooltip
+                portal
                 content={unavailableCoverageReason(workout)}
                 className="map-route-readiness-tooltip"
                 label={`${workout.type.name}: ${unavailableCoverageReason(workout)}`}
@@ -4308,6 +4392,7 @@ export default function MapPage({
       workout.coverageReadiness.resultStatus === "none"
     )
       return;
+    cancelRouteHover();
     requestedFocusActiveRef.current = false;
     const location = new URL(window.location.href);
     location.pathname = "/map";
@@ -4330,7 +4415,6 @@ export default function MapPage({
   function focusWorkoutFromMap(workoutId: string) {
     const workout = availableWorkouts.find((item) => item.id === workoutId);
     if (!workout) return;
-    cancelRouteHover();
     focusWorkout(workout);
     setListScrollRequest((current) => ({ key: (current?.key ?? 0) + 1, workoutId }));
   }

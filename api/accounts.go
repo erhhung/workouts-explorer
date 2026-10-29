@@ -275,8 +275,10 @@ func (s *Server) CreateInvitation(w http.ResponseWriter, r *http.Request, params
 		return
 	}
 	result := make(chan string, 1)
-	work := deliveryWork{to: email, subject: "Your Workouts Explorer invitation", body: "Register at " + strings.TrimRight(s.config.PublicURL, "/") + "/register?token=" + url.QueryEscape(token), result: result,
-		done: func(category string) bool { return s.recordDelivery("invitation_tokens", verifier, category) }}
+	work := deliveryWork{
+		to: email, subject: "Your Workouts Explorer invitation", body: "Register at " + strings.TrimRight(s.config.PublicURL, "/") + "/register?token=" + url.QueryEscape(token), result: result,
+		done: func(category string) bool { return s.recordDelivery("invitation_tokens", verifier, category) },
+	}
 	if !s.delivery.enqueue(work) {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "invitation remains retryable because email delivery is unavailable")
 		return
@@ -914,10 +916,10 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 		return "clockFormat", "clock format is unsupported"
 	}
 	if value.Timezone == "Local" || strings.HasPrefix(value.Timezone, "/") || strings.Contains(value.Timezone, "..") {
-		return "timezone", "timezone must be an IANA timezone name"
+		return "timezone", "time zone must be an IANA time zone name"
 	}
 	if _, err := time.LoadLocation(value.Timezone); err != nil {
-		return "timezone", "timezone must be an IANA timezone name"
+		return "timezone", "time zone must be an IANA time zone name"
 	}
 	maximum := s.config.PageSizeMaximum
 	if maximum == 0 {
@@ -1000,7 +1002,8 @@ func nullableStringValue(value interface {
 	IsNull() bool
 	IsSpecified() bool
 	MustGet() string
-}) any {
+},
+) any {
 	if !value.IsSpecified() || value.IsNull() {
 		return nil
 	}

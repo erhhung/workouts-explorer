@@ -10,7 +10,7 @@ import (
 
 func coverageDisplaySQL(t *testing.T) string {
 	t.Helper()
-	body, err := migrations.Files.ReadFile("032_coverage_display_precomputations.sql")
+	body, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,8 @@ func coverageDisplayFunction(t *testing.T, source, name string) string {
 
 func TestCoverageDisplayPrecomputationsSchemaAndSecurity(t *testing.T) {
 	source := coverageDisplaySQL(t)
-	if strings.Count(source, "CREATE TABLE app.") != 4 || strings.Count(source, "CREATE CONSTRAINT TRIGGER ") != 1 {
+	precomputations, _, found := strings.Cut(source, "-- Display identity is a read-model policy")
+	if !found || strings.Count(precomputations, "CREATE TABLE app.") != 4 || strings.Count(precomputations, "CREATE CONSTRAINT TRIGGER ") != 1 {
 		t.Fatal("expected three projections, one dirty queue and one deferred coordinator")
 	}
 	for _, table := range []string{"workout_path_display_partials", "workout_path_display_context",
@@ -53,7 +54,7 @@ func TestCoverageDisplayPrecomputationsSchemaAndSecurity(t *testing.T) {
 		"REVOKE ALL ON app.workout_path_display_partials, app.workout_path_display_context,",
 		"REVOKE ALL ON FUNCTION app.rebuild_coverage_display_precomputations(uuid),",
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;",
-		"schema_version = 32, minimum_runtime_version = 32", "forward-only; restore the pre-migration backup",
+		"schema_version = 30, minimum_runtime_version = 30", "forward-only", "restore the pre-migration backup",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("missing display projection contract %q", required)
@@ -63,13 +64,9 @@ func TestCoverageDisplayPrecomputationsSchemaAndSecurity(t *testing.T) {
 	if strings.Contains(queue, "REFERENCES") {
 		t.Fatal("dirty tombstones must survive deletion of their source rows")
 	}
-	apiGrant := "GRANT EXECUTE ON FUNCTION app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid) TO workouts_api;"
-	if strings.Count(source, apiGrant) != 1 {
-		t.Fatal("exactly one API-only entity stats execute grant is required")
-	}
-	restrictedSource := strings.Replace(source, apiGrant, "", 1)
+	restrictedSource := precomputations
 	if regexp.MustCompile(`(?i)\bGRANT\s+EXECUTE\b`).MatchString(restrictedSource) {
-		t.Fatal("only the exact API entity stats reader may gain execute privileges")
+		t.Fatal("precomputation maintenance must not gain runtime execute privileges")
 	}
 	for _, forbidden := range []string{"GRANT SELECT", "GRANT EXECUTE", "DISABLE TRIGGER", "NO FORCE ROW LEVEL SECURITY",
 		"SET CONSTRAINTS", "CREATE OR REPLACE FUNCTION app.persist_coverage_route",
@@ -87,7 +84,7 @@ func TestCoverageDisplayPrecomputationsDeferredBatching(t *testing.T) {
 		"OLD.account_id, 'workout', OLD.workout_id", "NEW.account_id, 'workout', NEW.workout_id",
 		"OLD.account_id, 'segment', OLD.region_id, OLD.generation_id, OLD.physical_segment_id",
 		"NEW.account_id, 'segment', NEW.region_id, NEW.generation_id, NEW.physical_segment_id",
-		"OLD.account_id, 'account'", "NEW.account_id, 'account'", "ON CONFLICT DO NOTHING",
+		"FROM unnest(ARRAY[old_account, new_account]) account_id", "'account'", "ON CONFLICT DO NOTHING",
 		"OLD.highway, OLD.tags) IS NOT DISTINCT FROM", "NEW.highway, NEW.tags)",
 	} {
 		if !strings.Contains(mark, required) {
@@ -125,7 +122,8 @@ func TestCoverageDisplayPrecomputationsDeferredBatching(t *testing.T) {
 		}
 		previous = index
 	}
-	if strings.Count(source, "UPDATE app.account_data_generations") != 1 || strings.Contains(flush, "EXCEPTION WHEN") {
+	precomputations, _, found := strings.Cut(source, "-- Display identity is a read-model policy")
+	if !found || strings.Count(precomputations, "UPDATE app.account_data_generations") != 1 || strings.Contains(flush, "EXCEPTION WHEN") {
 		t.Fatal("only flush may take the generation barrier; serialization/deadlock failures must propagate")
 	}
 	if !strings.Contains(flush[previous:], "DELETE FROM app.coverage_display_dirty") {
@@ -182,29 +180,19 @@ func TestCoverageDisplayPrecomputationsIndependentEvidence(t *testing.T) {
 
 func TestCoverageDisplayPrecomputationsReaderContract(t *testing.T) {
 	source := coverageDisplaySQL(t)
-	reader := coverageDisplayFunction(t, source, "map_selection_coverage_entities")
-	oldSource, err := migrations.Files.ReadFile("019_coverage_explorer_reads.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldReader := coverageDisplayFunction(t, string(oldSource), "map_selection_coverage_entities")
-	beforeVisits := func(body string) string {
-		body, _, _ = strings.Cut(body, "), path_visits AS MATERIALIZED (")
-		return strings.Join(strings.Fields(body), "")
-	}
-	if beforeVisits(reader) != beforeVisits(oldReader) {
-		t.Fatal("selection authorization and live workout eligibility must match 019")
-	}
+	reader := coverageDisplayFunction(t, source, "coverage_display_source_visits")
+	definition := regexp.MustCompile(`(?s)CREATE FUNCTION app\.coverage_display_source_visits\(.*?\$function\$;`).FindString(source)
 	for _, required := range []string{
 		") LANGUAGE sql STABLE SECURITY DEFINER", "SET jit = off AS $function$",
 		"path.logical_path_id = partial.logical_path_id", "WHERE path.name IS NOT NULL OR partial.qualifies_without_name",
 		"GROUP BY eligible.id, eligible.local_start_date, eligible.started_at, partial.entity_id",
-		"CASE WHEN bool_or(visit.education_key_present) THEN 'other' ELSE min(visit.broad_class) END",
-		"COALESCE(min(visit.education_name), min(visit.name))", "LEFT JOIN app.workout_park_display_bounds bounds",
-		"JOIN app.workout_path_display_context context", "JOIN park_bounds bounds USING (entity_id)",
-		"COALESCE(regional_park.locality_name, identity.locality_name)", "strpos(lower(concat_ws(' '",
+		"CASE WHEN bool_or(visit.education_key_present) THEN 'other' ELSE min(visit.broad_class COLLATE \"C\") END",
+		"COALESCE(min(visit.education_name COLLATE \"C\"), min(visit.name COLLATE \"C\"))", "LEFT JOIN app.workout_park_display_bounds bounds",
+		"JOIN app.workout_path_display_context context", "LEFT JOIN park_bounds bounds ON bounds.park_id = visit.entity_id",
+		"COALESCE(context.range_locality, CASE WHEN NOT identity.has_range THEN context.historical_locality END,",
+		"workout.deletion_requested_at IS NULL", "coverage.applied_route_input_revision IS NOT NULL", "route.route IS NOT NULL",
 	} {
-		if !strings.Contains(source, required) {
+		if !strings.Contains(definition, required) {
 			t.Errorf("missing exact reader contract %q", required)
 		}
 	}
@@ -214,7 +202,8 @@ func TestCoverageDisplayPrecomputationsReaderContract(t *testing.T) {
 			t.Errorf("reader must use projections/live eligibility and count deduplicated visits: %s", forbidden)
 		}
 	}
-	if strings.Count(reader, "ORDER BY visit.local_start_date DESC, visit.started_at, visit.workout_id") != 4 {
-		t.Fatal("all four latest-workout references must retain ascending same-date start/UUID tie breaks")
+	prepare := coverageDisplayFunction(t, source, "prepare_coverage_display_context")
+	if !strings.Contains(prepare, "ORDER BY local_start_date DESC, started_at, workout_id") || !strings.Contains(prepare, "ORDER BY local_start_date, started_at, workout_id") {
+		t.Fatal("canonical summaries must retain first/latest date/start/UUID tie breaks")
 	}
 }

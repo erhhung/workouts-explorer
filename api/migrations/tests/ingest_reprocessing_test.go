@@ -19,9 +19,19 @@ func reprocessingSQL(t *testing.T, name string) string {
 }
 
 func TestIngestReprocessingMigrationContract(t *testing.T) {
-	sql := reprocessingSQL(t, "031_ingest_reprocessing.sql")
+	sql := reprocessingSQL(t, "029_ingest_status_reporting.sql")
+	if !strings.Contains(sql, "schema_version = 29, minimum_runtime_version = 29") || !strings.Contains(sql, "ingest status reporting is forward-only") {
+		t.Fatal("reprocessing must ship atomically with status29 and reject downgrade")
+	}
+	_, sql, found := strings.Cut(sql, "-- Omission in persisted bounded jobs")
+	if !found {
+		t.Fatal("missing reprocessing section")
+	}
+	sql, _, found = strings.Cut(sql, "-- Reliable phase snapshots")
+	if !found {
+		t.Fatal("missing phase section boundary")
+	}
 	for _, required := range []string{
-		"schema_version = 31, minimum_runtime_version = 31",
 		"CREATE OR REPLACE FUNCTION app.valid_ingest_child_parameters(value jsonb)",
 		"jsonb_typeof(value->'reprocessAllFiles') IS DISTINCT FROM 'boolean'",
 		"value ? 'legacySchema6' AND (value ? 'reprocessAllFiles'",
@@ -34,7 +44,7 @@ func TestIngestReprocessingMigrationContract(t *testing.T) {
 		"(cardinality(visited) = 0 AND node.snapshot_job IS NULL)",
 		"(node.snapshot_job IS NOT NULL AND (node.snapshot_source IS DISTINCT FROM target_source OR",
 		"CREATE FUNCTION app.stamp_ingest_source_file_receipt() RETURNS trigger",
-		"capability.runtime_version >= 31", "capability.source_id = NEW.source_id AND capability.job_id = NEW.job_id",
+		"capability.runtime_version >= 29", "capability.source_id = NEW.source_id AND capability.job_id = NEW.job_id",
 		"child.worker_id = capability.worker_id AND child.lease_token = capability.lease_token",
 		"stored.action = 'process' AND stored.observed_size = NEW.size_bytes",
 		"extract(epoch FROM NEW.modified_at)", "stored.modified_ns / 1000",
@@ -46,7 +56,6 @@ func TestIngestReprocessingMigrationContract(t *testing.T) {
 		"ALTER FUNCTION app.stamp_ingest_source_file_receipt() OWNER TO workouts_security_owner",
 		"ALTER FUNCTION app.ingest_retry_ancestor_jobs(uuid,uuid,uuid) OWNER TO workouts_security_owner",
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles, workouts_migration",
-		"ingest reprocessing is forward-only",
 	} {
 		if !strings.Contains(sql, required) {
 			t.Errorf("missing reprocessing contract %q", required)
@@ -128,7 +137,7 @@ func TestIngestReprocessingMigrationContract(t *testing.T) {
 }
 
 func TestIngestReprocessingSourceFileReadPrivileges(t *testing.T) {
-	sql := strings.Join(strings.Fields(reprocessingSQL(t, "031_ingest_reprocessing.sql")), "")
+	sql := strings.Join(strings.Fields(reprocessingSQL(t, "029_ingest_status_reporting.sql")), "")
 	revoke := "REVOKESELECTONapp.source_filesFROMworkouts_api,workouts_worker;"
 	grant := "GRANTSELECT(" + reprocessingSafeFileColumns + ")ONapp.source_filesTOworkouts_api,workouts_worker;"
 	if strings.Index(sql, revoke) < 0 || strings.Index(sql, grant) <= strings.Index(sql, revoke) {

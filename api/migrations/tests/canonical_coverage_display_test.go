@@ -10,11 +10,15 @@ import (
 
 func canonicalCoverageSQL(t *testing.T) string {
 	t.Helper()
-	body, err := migrations.Files.ReadFile("033_canonical_coverage_display.sql")
+	body, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(body)
+	_, canonical, found := strings.Cut(string(body), "-- Display identity is a read-model policy")
+	if !found {
+		t.Fatal("missing canonical display section")
+	}
+	return canonical
 }
 
 func canonicalRequire(t *testing.T, source string, fragments ...string) {
@@ -59,8 +63,8 @@ func TestCanonicalCoverageDisplayPrivateSchema(t *testing.T) {
 		"ON DELETE SET NULL (coverage_display_context_id)",
 		"REVOKE ALL ON app.coverage_display_revisions, app.coverage_display_contexts, app.coverage_display_members,",
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;",
-		"schema_version = 33, minimum_runtime_version = 33",
-		"forward-only; restore the pre-migration backup")
+		"schema_version = 30, minimum_runtime_version = 30",
+		"forward-only", "restore the pre-migration backup")
 	queue := regexp.MustCompile(`(?s)CREATE TABLE app\.coverage_display_invalidations \((.*?)\n\);`).FindString(source)
 	canonicalForbid(t, queue, "REFERENCES")
 	canonicalForbid(t, source, "migration_baseline =", "GRANT SELECT", "DISABLE TRIGGER", "NO FORCE ROW LEVEL SECURITY",
@@ -320,7 +324,7 @@ func TestCanonicalCoverageDisplayDeferredInvalidation(t *testing.T) {
 	bridge := coverageDisplayFunction(t, source, "queue_coverage_display_source_invalidation")
 	metadata := coverageDisplayFunction(t, source, "queue_coverage_display_metadata_invalidation")
 	advance := coverageDisplayFunction(t, source, "advance_account_data_generation")
-	dirty := coverageDisplayFunction(t, source, "mark_coverage_display_dirty")
+	dirty := coverageDisplayFunction(t, coverageDisplaySQL(t), "mark_coverage_display_dirty")
 	flush := coverageDisplayFunction(t, source, "flush_coverage_display_invalidations")
 	canonicalRequire(t, source,
 		"AFTER INSERT ON app.coverage_display_dirty FOR EACH ROW WHEN (NEW.scope = 'account')",
@@ -368,7 +372,7 @@ func TestCanonicalCoverageDisplayDeferredInvalidation(t *testing.T) {
 
 func TestCanonicalCoverageDisplayExactGeometryChangeGuard(t *testing.T) {
 	source := canonicalCoverageSQL(t)
-	definition := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION app\.mark_coverage_display_dirty\(\).*?\$function\$;`).FindString(source)
+	definition := regexp.MustCompile(`(?s)CREATE FUNCTION app\.mark_coverage_display_dirty\(\).*?\$function\$;`).FindString(coverageDisplaySQL(t))
 	canonicalRequire(t, definition, "SET search_path = pg_catalog, app AS $function$",
 		"OLD.covered_meters, public.ST_AsEWKB(OLD.geom)) IS NOT DISTINCT FROM",
 		"NEW.covered_meters, public.ST_AsEWKB(NEW.geom)) THEN RETURN NULL")
@@ -404,8 +408,11 @@ func TestCanonicalCoverageDisplayReadOnlyABIAndAuthorization(t *testing.T) {
 		"context.start_date = scope.start_date", "context.end_date = scope.end_date",
 		"context.policy_version = 'coverage-display-identity-v1'", "context.label_locale = 'en'", "ERRCODE = '55000'")
 	result := regexp.MustCompile(`(?s)RETURNS TABLE \((.*?)\)\s*LANGUAGE`)
-	old := coverageDisplaySQL(t)
-	oldDefinition := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION app\.map_selection_coverage_entities\s*\(.*?\$function\$;`).FindString(old)
+	old, err := migrations.Files.ReadFile("019_coverage_explorer_reads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDefinition := regexp.MustCompile(`(?s)CREATE FUNCTION app\.map_selection_coverage_entities\s*\(.*?\$function\$;`).FindString(string(old))
 	want := result.FindStringSubmatch(oldDefinition)
 	for _, name := range []string{"map_selection_coverage_entities", "map_selection_coverage_entity_stats", "map_selection_coverage_entity_members"} {
 		body := coverageDisplayFunction(t, source, name)
@@ -423,10 +430,10 @@ func TestCanonicalCoverageDisplayReadOnlyABIAndAuthorization(t *testing.T) {
 			canonicalRequire(t, body, "SELECT member.source_kind, member.source_id", "member.canonical_id = entity.canonical_id")
 			continue
 		}
-		definition := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION app\.` + name + `\s*\(.*?\$function\$;`).FindString(source)
+		definition := regexp.MustCompile(`(?s)CREATE (?:OR REPLACE )?FUNCTION app\.` + name + `\s*\(.*?\$function\$;`).FindString(source)
 		got := result.FindStringSubmatch(definition)
 		if len(got) != 2 || len(want) != 2 || compactSQL(got[1]) != compactSQL(want[1]) {
-			t.Errorf("%s must preserve the exact 032 list's 21-column ABI", name)
+			t.Errorf("%s must preserve the shipped list's exact 21-column ABI", name)
 		}
 	}
 	validation := coverageDisplayFunction(t, source, "validate_map_selection")

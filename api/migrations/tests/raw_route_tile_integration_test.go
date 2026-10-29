@@ -113,8 +113,8 @@ func TestRawRouteTilePrefilterSemantics(t *testing.T) {
 	}
 	t.Run("supported schema", func(t *testing.T) {
 		var version, minimum int
-		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != database.SupportedSchemaVersion || minimum != 33 {
-			t.Fatalf("metadata=%d/%d, want %d/33 err=%v", version, minimum, database.SupportedSchemaVersion, err)
+		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != database.SupportedSchemaVersion || minimum != 30 {
+			t.Fatalf("metadata=%d/%d, want %d/30 err=%v", version, minimum, database.SupportedSchemaVersion, err)
 		}
 		var boundaries bool
 		if err := tx.QueryRow(db.ctx, `SELECT pg_get_userbyid(p.proowner)='workouts_security_owner'

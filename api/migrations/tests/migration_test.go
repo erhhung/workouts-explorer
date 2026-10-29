@@ -60,11 +60,8 @@ var migrationFiles = []string{
 	"026_adopted_workout_coverage.sql",
 	"027_coverage_recovery_baseline.sql",
 	"028_ingest_coverage_pipeline.sql",
-	"029_ingest_partial_success.sql",
-	"030_ingest_workout_outcomes.sql",
-	"031_ingest_reprocessing.sql",
-	"032_coverage_display_precomputations.sql",
-	"033_canonical_coverage_display.sql",
+	"029_ingest_status_reporting.sql",
+	"030_coverage_display.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {
@@ -81,6 +78,52 @@ func TestMigrationFilesAreSequential(t *testing.T) {
 	}
 	if sqlStrings.Join(actual, "\n") != sqlStrings.Join(migrationFiles, "\n") {
 		t.Fatalf("migration files are not the expected sequential set:\n%s", sqlStrings.Join(actual, "\n"))
+	}
+}
+
+func TestStatusAndDisplayMigrationCheckpoints(t *testing.T) {
+	for _, checkpoint := range []struct {
+		file      string
+		version   int
+		functions int
+	}{
+		{"029_ingest_status_reporting.sql", 29, 34},
+		{"030_coverage_display.sql", 30, 24},
+	} {
+		t.Run(checkpoint.file, func(t *testing.T) {
+			raw, err := migrations.Files.ReadFile(checkpoint.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts := stdstrings.Split(string(raw), "-- +goose Down")
+			if len(parts) != 2 {
+				t.Fatal("expected exactly one Up/Down boundary")
+			}
+			up, down := parts[0], parts[1]
+			metadata := fmt.Sprintf("UPDATE app.schema_metadata SET schema_version = %d, minimum_runtime_version = %d WHERE singleton;", checkpoint.version, checkpoint.version)
+			if stdstrings.Count(up, "UPDATE app.schema_metadata") != 1 || !sqlStrings.Contains(up, metadata) || sqlStrings.Contains(up, "migration_baseline =") {
+				t.Fatal("publish schema/minimum once at the final checkpoint and preserve baseline27")
+			}
+			definitions := regexp.MustCompile(`(?m)^CREATE (?:OR REPLACE )?FUNCTION app\.(\w+)`).FindAllStringSubmatch(up, -1)
+			seen := map[string]bool{}
+			for _, definition := range definitions {
+				if seen[definition[1]] {
+					t.Fatalf("intermediate replacement definition retained: %s", definition[1])
+				}
+				seen[definition[1]] = true
+			}
+			if len(definitions) != checkpoint.functions {
+				t.Fatalf("function inventory=%d, want %d", len(definitions), checkpoint.functions)
+			}
+			if !sqlStrings.Contains(down, "forward-only") || !sqlStrings.Contains(down, "ERRCODE = '55000'") || !sqlStrings.Contains(down, "restore the pre-migration backup") {
+				t.Fatal("Down must explicitly reject unsafe downgrade")
+			}
+			for _, forbidden := range []string{"DROP ", "DELETE FROM", "UPDATE app.", "ALTER "} {
+				if stdstrings.Contains(down, forbidden) {
+					t.Fatalf("forward-only Down contains mutation %q", forbidden)
+				}
+			}
+		})
 	}
 }
 

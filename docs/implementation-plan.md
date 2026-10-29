@@ -29,15 +29,27 @@ A milestone is complete when:
 - Helm and runtime configuration changes are documented.
 - No source secrets, health values, or GPS coordinates appear in logs or traces.
 
-## Canonical Display Identity (033, Pending Release)
+## Canonical Display Identity (030)
 
 [ADR 0013](decisions/013-canonical-coverage-display-identity.md) is accepted and
-implemented in source, **undeployed**. Live remains backend-42/UI-43, schema/minimum
-runtime **32**, baseline **27**, ledger **0-32**. Source support/schema/minimum
-runtime are **33**, baseline **27**. Applied **001-032 remain immutable**. The older
-click-highlight follow-up is folded into this pending release, not independently
-deployed. The earlier 521-test UI receipt is historical; a focused current run
-passes **219 MapPage tests**, not full new-release verification.
+**deployed** behavior, including the click-highlight follow-up. Current source
+combines compact/canonical display in **030** and ingest status/reprocessing/phases
+in **029**, with **001-028 unchanged**. Final source/runtime support and
+schema/minimum runtime are **30**, baseline **27**, ledger **0-30**. See the
+[history mapping](database-migrations.md#source-history-mapping) and
+[pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The authorized live reconciliation is pending here. M8 is complete with explicit user
+approval and the final qualified live browser gate **PASS**; see
+[authoritative closeout](development-progress.md#milestone-8-closeout).
+
+The following are enduring release requirements, not a new deployment receipt.
+Protected actual-backup migration/preservation, actual-role readiness and matching
+database/image rollback proof, retention and completed deployment evidence are
+recorded in the private canonical migration handoff under **pre-squash historical
+numbering** ([mapping](database-migrations.md#source-history-mapping)). These are
+not fresh squash proofs. The earlier **521 UI tests**
+and focused **219 MapPage tests** receipts remain historical within their original
+scope, not a new full-suite pass or a substitute for database/browser proof.
 
 - Verify the generally applicable display key, pinned Unicode policy/UUIDv8 and
   collision rejection, unnamed nonmerging, mixed park/path presentation and source
@@ -50,35 +62,47 @@ passes **219 MapPage tests**, not full new-release verification.
   commit orders and stale Repeatable Read `40001`. Complete full source/race,
   database-backed readiness and desktop/mobile browser verification separately.
 - Monitor workspace, `/tmp`, NFS and application-PG filesystems/inodes regularly.
-  Keep all dumps/archives under `~/nfs-share/.temp/`, symlinked from the matching
-  private `deploy/internal` bundle, not on constrained workspace storage. Rehearse
+  Keep dumps/archives in approved protected storage with the private operator
+  handoff, not on constrained workspace storage. Rehearse
   native migration, preservation, actual-role readiness and matching database/image
   rollback on a protected actual-backup restore before any live mutation.
 - Retain fresh protected backups and old images, drain incompatible runtimes and
-  coordinate schema/minimum runtime 33 with compatible API/general-worker/Coverage-
-  worker and UI. Explicit MAIN cutover completion and read-only deployed validation
-  are still pending. Preserve TLS/migration/Martin flags/identity, replica policy,
-  auto-sync, admin-password debug, resources, concurrency, timeouts and retries.
+  coordinate schema/minimum runtime 30 with compatible API/general-worker/Coverage-
+  worker and UI. Record cutover completion and read-only deployed validation;
+  historical policy deployment is complete, but squash cutover remains pending.
+  Preserve TLS/migration/Martin
+  flags/identity, replica policy, auto-sync, admin-password debug, resources,
+  concurrency, timeouts and retries.
 - Warm/rebuild canonical contexts from retained evidence for validation. This is
   Coverage read-model recomputation, **not new route jobs**: no OSM derivation,
   matcher or path-policy bump, and **no OSM regeneration/download/rematch needed**.
   Do not start imports, provider checks or OSM work to adopt the display policy.
 
-See [pending progress](development-progress.md#canonical-display-identity-033-source-only)
-and [migration gates](database-migrations.md#canonical-coverage-display-033-source-only).
+See [deployed progress](development-progress.md#canonical-display-identity-030),
+[architecture](architecture.md#canonical-display-identity-requires-30),
+[functional contract](functional-spec.md#canonical-display-identity-030),
+[click-highlight contract](functional-spec.md#click-highlight-follow-up)
+and [migration requirements](database-migrations.md#canonical-coverage-display-030).
 
-## Coverage Display Optimization (032)
+## Coverage Display Optimization (030)
 
-The current approved optimization retains all Road Coverage filtering, sorting and
+The deployed optimization retains all Road Coverage filtering, sorting and
 pagination in the browser. One bounded bulk request replaces the repeated page
-fetches and duplicate full-result counts. Migration 032 precomputes compact
+fetches and duplicate full-result counts. Migration 030 precomputes compact
 matched-evidence partials, independent regional context and park bounds; live
 eligibility/metadata joins and entity/workout deduplication precede summarization
 for arbitrary date ranges. Dirty-key maintenance batches replacement work at
 transaction commit, including underlying evidence and segment updates.
 
-Implementation and synthetic verification pass; the technical implementation is
-now deployed with released/applied immutable 032, schema/minimum runtime **32**,
+The following rollout paragraph uses **pre-squash historical numbering**
+([mapping](database-migrations.md#source-history-mapping)) for the **032/backend-42/UI-43**
+checkpoint. Its schema and pending-acceptance statements are superseded by
+[current 030 source status](#canonical-display-identity-030) and
+[M8 closeout](development-progress.md#milestone-8-closeout); original verification
+boundaries are unchanged.
+
+Implementation and synthetic verification passed; the implementation deployed
+with released/applied immutable 032, schema/minimum runtime **32**,
 marker **27** and ledger **0-32**. All four application images were rebuilt with
 native artifacts and published with strict TLS verification. A standalone
 restricted native migration preceded coordinated backend **42** and UI **43**,
@@ -86,20 +110,23 @@ using full values and `--no-hooks` while preserving separate Martin, original da
 and configuration. Full pre-32 backups and old images remain retained; image-only
 rollback is unsupported. Scripted deployed-browser verification passed; owner
 acceptance/milestone and capacity remain separate. See
-[architecture](architecture.md#coverage-display-precomputations-requires-32) and
+[architecture](architecture.md#coverage-display-precomputations-requires-30) and
 [current progress](development-progress.md#coverage-display-optimization).
 
-## Ingest Reprocessing Follow-Up (031)
+## Ingest Reprocessing Follow-Up (029)
 
-The preceding approved follow-up covers implementation and coordinated deployment of
+The approved follow-up covers implementation and coordinated deployment of
 [Ingest Reprocessing](ingest-reprocessing.md), not design-only exploration.
-The compatible API/worker/UI implementation is now deployed at schema/minimum
-runtime **32** in the accepted backend-42/UI-43 release. The original 031 contract
-requirements below retain their introduction scope; they are not instructions to
-downgrade the current runtime. Scripted deployed-browser verification passed;
-owner acceptance/milestone and capacity remain separate. The separate all-popups
-**Dismiss** requirement is outside this ingest design scope and is not accepted
-by the deployment receipt.
+Its compatible API/worker/UI behavior is deployed; current source combines this
+contract in **029**, with final schema/minimum runtime **30**, baseline **27**.
+The approved live reconciliation remains pending here. The requirements below
+describe source adoption, not instructions to downgrade an unreconciled live
+runtime. Earlier backend-42/UI-43 rollout/browser receipts remain historical,
+not current release proof. M8 acceptance and the
+final live browser pass are recorded in
+[closeout](development-progress.md#milestone-8-closeout); capacity is not certified.
+The separate all-popups **Dismiss** requirement remains outside this ingest
+design scope and is not accepted by its historical deployment receipt.
 
 - Default new bounded jobs to metadata skipping within inclusive export-file
   dates; retain existing incremental, ownership-epoch and account/source rules.
@@ -129,11 +156,12 @@ by the deployment receipt.
 - Verify omitted/false/true inputs, invalid presence/type/dates, isolated coalescing,
   both retry policies, durable/legacy proof, stale blockers, frozen recovery,
   counter restoration, identity preservation and checkbox hover/keyboard access
-  with synthetic January 2025 inputs. Preserve schema 030 outcomes: an unsuccessful
+  with synthetic January 2025 inputs. Preserve 029 outcomes: an unsuccessful
   zero-created/zero-updated run stays Failed even with zero failed files.
-- Take backups, use native migration 031 with applied 001-030 immutable, and
+- Take backups, use the complete native source sequence through 030 for compatible
+  histories (separate approved reconciliation for the historical live ledger), and
   coordinate compatible API/general-worker/Coverage-worker images and matching UI.
-  Source support/schema/minimum runtime become 31, marker stays 27. Verify history,
+  Final source support/schema/minimum runtime become 30, marker stays 27. Verify history,
   role readiness and queued-job compatibility; do not claim live success from
   disposable tests or attempt an incompatible image-only rollback.
 
@@ -300,7 +328,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 ### Vertical slice
 
 - Expand `/api/ingest` to selected source sets and parent/child aggregation.
-- Implement incremental and bounded metadata skipping, with explicit bounded reprocessing under the 031 follow-up contract.
+- Implement incremental and bounded metadata skipping, with explicit bounded reprocessing under the 029 follow-up contract.
 - Coalesce equivalent active jobs by normalized parameters.
 - Implement per-account, per-worker, and PostgreSQL-coordinated global file limits.
 - Expand snapshot cancellation, lease-recovery, and startup-scavenging behavior
@@ -317,7 +345,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 - A three-source account never processes more than two files concurrently by default.
 - A bounded range does not stage all files at once.
 - Incremental and new bounded sync skip unchanged successful metadata; explicit bounded reprocessing opts into the old force behavior, subject to valid ancestor-success skips on retry.
-- An unsuccessful ingest yields partially_succeeded only with created or updated workouts under schema 030; reads/skips/unchanged workouts do not qualify.
+- An unsuccessful ingest yields partially_succeeded only with created or updated workouts under migration 029; reads/skips/unchanged workouts do not qualify.
 - Parent retry includes only failed children.
 - Source update does not affect an active job snapshot.
 - Source deletion cancels affected jobs and clears snapshots.
@@ -334,7 +362,7 @@ Manual and scheduled Data Sync are reliable, bounded, observable, cancellable, a
 
 ### Completion evidence (8/6/2026)
 
-These are historical observations **prior to 031**. In particular, the bounded
+These are historical observations **before explicit ingest reprocessing**. In particular, the bounded
 one-day reprocessing observation retains the original force default; it does not
 describe the new default or become a synthetic replacement observation.
 
@@ -655,7 +683,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   hardened the manual update Job's pull/TLS settings, completed the dedicated
   role's metadata and account-context grants, and raised only trusted production
   route input capacity to 50,000 points while retaining the public diagnostics
-  limit. Migration 030 subsequently aligns diagnostics with production at 50,000
+  limit. The current 027 baseline aligns diagnostics with production at 50,000
   original / 12,000 sampled points through shared pipeline limits, without
   changing request budgets or deployment policy. Live reconciliation then
   persisted path, segment, and park attribution.
@@ -813,11 +841,26 @@ not removed requirements or a production-readiness claim.
 
 ## Milestone 8: iCloud/Rclone Source
 
+### Status
+
+**Complete.** Explicit user approval and the confirmed final qualified live browser
+gate **PASS** close all three M8 closeout items; no further owner decision is
+pending. iCloud ingest and independent available-map Coverage recovery are
+verified. Current source targets **001-030**, schema/minimum runtime **30**, baseline
+**27**, ledger **0-30**; the [authorized live reconciliation](database-migrations.md#pre-cutover-live-status)
+is pending here, without reopening M8. The authoritative
+[Milestone 8 closeout](development-progress.md#milestone-8-closeout) records the
+deployed behavior, image lineage, browser/cleanup boundaries and private evidence
+retention. Historical results below remain scoped receipts, not new full-suite,
+capacity, load or failover passes. M9 administration, OSM administration and full
+monitoring/runbooks remain future work; M7/M11 benchmark exclusions are unchanged.
+
 ### Approved Source Adoption (Requires 26)
 
 The implementation/deployment-status paragraph below is a historical checkpoint
-**prior to 031**. The current [031 follow-up](#ingest-reprocessing-follow-up-031)
-supersedes its version/status statements, not its recorded verification boundaries.
+**before explicit ingest reprocessing**. The [current status](#status) and
+[030 source release](#canonical-display-identity-030) supersede its version/status
+statements, not its recorded verification boundaries.
 
 Latest migration code is **26**. The approved identity/adoption feature requires
 schema and minimum runtime **26**, with migrations 024-026 and coordinated API,
@@ -852,7 +895,7 @@ The new approved contract supersedes the earlier source-scoped provider-ID rule:
   identical metadata/bytes. Same-job manifest actions remain frozen, terminal
   file checkpoints never reopen and recovery counters/events do not double-count.
   Deletion starts no immediate sync; the next auto-sync or a new manual job is
-  needed. Prior to 031, bounded manual jobs already forced eligible files to
+  needed. Before explicit reprocessing, bounded manual jobs already forced eligible files to
   reprocess; new bounded defaults now use metadata skipping, with force opt-in.
 - Every successful source-switch adoption records a durable Coverage request in
   the same file transaction, including unchanged content/route. Post-commit ingest
@@ -898,7 +941,8 @@ publication or live operation is claimed by this documentation update.
 
 ### Status (10/13/2026)
 
-This is a historical checkpoint; current live status is linked above.
+This is a historical checkpoint; [current M8 status](#status) supersedes its
+pending acceptance, unchecked README and deployment statements, not its receipts.
 
 **Ready for owner review.** Implementation and synthetic verification are ready:
 ordinary verification, scoped race tests, actual disposable PostGIS M8 suites,
@@ -924,7 +968,7 @@ activation/rollout remain pending.
 
 The source-scoped identity decision here is historical and superseded by
 [Approved Source Adoption](#approved-source-adoption-requires-26). These decisions
-are **prior to 031**: its bounded-force default is superseded by the opt-in policy
+are **before explicit ingest reprocessing**: its bounded-force default is superseded by the opt-in policy
 in [Ingest Reprocessing](ingest-reprocessing.md). The observations and original
 verification boundaries remain historical evidence, not new verification.
 
@@ -1125,8 +1169,10 @@ as green. M7 historical measurements and acceptance decisions remain unchanged.
 
 ### Owner Review And Boundaries
 
-The image/schema-22 and reader-rollout statements below record the earlier review
-phase, not current deployment status or the runtime-26 integration gate above.
+The pending-acceptance, unchecked README, image/schema-22 and reader-rollout
+statements below record the earlier review phase. They are superseded by
+[current M8 status](#status), not current instructions or outstanding decisions;
+their original verification and hardening exclusions remain unchanged.
 
 - Owner acceptance and explicit milestone closeout remain pending; keep README
   milestone 8 unchecked until authorized. Synthetic implementation verification

@@ -11,6 +11,19 @@ Fitness platforms record individual workouts and GPS routes, but they do not mak
 
 Workouts Explorer imports workout records and GPS tracks, normalizes them independently of the source provider, and presents both raw routes and path-level coverage on an interactive map.
 
+Current source ends at **030**, with final source/runtime support and
+schema/minimum runtime **30**, baseline **27**, ledger **0-30**. Combined **029**
+contains ingest status/reprocessing/phases; **030** contains compact/canonical
+display. See the [history mapping](database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The approved live reconciliation is pending; source preparation is not deployment.
+Context warming uses retained evidence with no job, generation-policy or
+matcher-policy change; it needs no provider check, new import, OSM
+regeneration/download or route rematch. M8 acceptance is governed only by
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout), not by this
+brief or historical verification receipts. Benchmark/capacity targets below
+remain separate and are not certified by deployment or milestone closeout.
+
 ## Intended Users
 
 The initial user is the product owner, who has Apple Fitness workout history exported by Health Auto Export. The self-hosted product must nevertheless support multiple independently invited users from the MVP onward.
@@ -86,7 +99,7 @@ Each user owns one personal workout account. Users cannot access another account
 
 - Type-agnostic source CRUD through authenticated REST APIs
 - `health-auto-export-local` source for local or NFS-mounted archives
-- `health-auto-export-icloud` source using an externally authenticated ready session and a job-scoped native rclone 1.75.2 CLI; implementation/synthetic verification ready for owner review
+- Deployed `health-auto-export-icloud` source using an externally authenticated ready session and a job-scoped native rclone 1.75.2 CLI
 - Per-source `autoSyncEnabled` behavior
 - High-priority asynchronous connection checks
 - Scheduled incremental sync of new or changed files, default daily with an operator-configurable cadence independent of UI polling
@@ -118,18 +131,19 @@ it does not promise forced Coverage. ID-less fallback remains source-local.
 Retries skip valid unchanged successes on their own source-child ancestor path
 even after force; ordinary non-forced retries may also use valid source inventory.
 See [Ingest Reprocessing](ingest-reprocessing.md) for the API, legacy bounded-job
-compatibility and coordinated schema/minimum-runtime-31 rollout, with marker 27.
-The requested implementation/deployment is not claimed complete here; the
-separate pending all-popups **Dismiss** requirement belongs to the UI release,
-outside the ingest design.
+compatibility and source-029 contract, with final runtime 30 and marker 27.
+The all-popups **Dismiss** requirement belongs to the UI release, outside the
+ingest design; current browser/acceptance status is tracked only in
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout).
 
-At the historical checkpoint **prior to 031**, M8 implementation and synthetic
-verification are ready for owner review as of 10/12/2026; its completion checkbox
-remains unchecked pending owner acceptance. [Verification results](implementation-plan.md#verification-results-10122026)
+At the historical checkpoint **before explicit ingest reprocessing**, M8 implementation and synthetic
+verification were ready for owner review as of 10/12/2026; its completion checkbox
+was unchecked pending owner acceptance. [Verification results](implementation-plan.md#verification-results-10122026)
 distinguish passing M8 PostGIS suites from ordinary checks with database skips
 and three reproduced baseline database failures. No live-cloud or production
-validation is claimed. Optional owner-operated cloud checks and publication/
-redeployment require separate authorization, not further implementation work.
+validation was claimed by those receipts. Their authorization boundaries are
+historical, not a renewed approval requirement for the already-authorized M8
+closeout after its browser gate.
 
 ### Workout data
 

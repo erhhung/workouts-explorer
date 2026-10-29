@@ -2,8 +2,10 @@ package migrations_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +70,7 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayMigrate32(t, ctx)
+	coverageDisplayMigrate30(t, ctx)
 	coverageDisplayCheck(t, db, `SELECT to_regclass('app.workout_path_display_partials') IS NOT NULL
 		AND to_regclass('app.coverage_display_dirty') IS NOT NULL`)
 
@@ -88,15 +90,19 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 			AND locality_name='Excluded Regional Context' AND minimum_longitude=4
 			AND maximum_longitude=4.25 AND minimum_latitude=23 AND maximum_latitude=23.5`)
 		coverageDisplayEntityCheck(t, db, f, s, f.paths[4], `broad_class='other' AND name='Empty Key Campus'`)
-		for _, park := range []uuid.UUID{f.parks[0], f.parks[2]} {
-			coverageDisplayEntityCheck(t, db, f, s, park, `entity_kind='park' AND range_workout_count=1
-				AND region_id IS NULL AND region_name IS NULL AND minimum_longitude IS NOT NULL`)
-		}
+		coverageDisplayEntityCheck(t, db, f, s, f.parks[0], `entity_kind='park' AND range_workout_count=1
+			AND region_id='display:zeta' AND minimum_longitude IS NOT NULL`)
+		coverageDisplayCheck(t, db, `SELECT NOT EXISTS(SELECT 1 FROM app.coverage_display_entities entity
+			JOIN app.coverage_display_members member USING(account_id,context_id,canonical_id)
+			WHERE entity.account_id=$1 AND member.source_id=$2)`, f.account, f.parks[2])
 		coverageDisplayEntityCheck(t, db, f, s, f.parks[0], `range_first_workout_id=$6
 			AND minimum_longitude=3 AND maximum_longitude=12.25`, f.workouts[1])
 		coverageDisplayCheck(t, db, `SELECT NOT EXISTS (
-			SELECT 1 FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL)
-			WHERE entity_id IN ($5,$6,$7))`, f.account, f.session, s.id, s.generation,
+			SELECT 1 FROM app.coverage_display_entities entity
+			JOIN app.coverage_display_members member USING(account_id,context_id,canonical_id)
+			JOIN app.map_selections selection ON selection.account_id=entity.account_id AND selection.coverage_display_context_id=entity.context_id
+			WHERE selection.account_id=$1 AND selection.session_id=$2 AND selection.id=$3 AND selection.generation=$4
+			AND member.source_id IN ($5,$6,$7))`, f.account, f.session, s.id, s.generation,
 			f.parks[3], f.parks[4], f.paths[2])
 	})
 
@@ -290,11 +296,16 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 			bootstrapExec(t, db, f.bootstrapFixture, `UPDATE app.path_segments SET tags=jsonb_set(tags,
 				'{workouts:park_id}',to_jsonb($3::text)) WHERE account_id=$1 AND physical_segment_id=$2`, f.account, f.segments[7], key)
 			s = coverageDisplayParity(t, db, f)
-			predicate := `region_id IS NULL AND region_name IS NULL`
 			if key == f.parks[2].String() {
-				predicate = `region_id='display:alpha'`
+				coverageDisplayEntityCheck(t, db, f, s, f.parks[2], `region_id='display:alpha' AND minimum_longitude=8 AND maximum_longitude=8.25`)
+			} else {
+				coverageDisplayCheck(t, db, `SELECT region_id IS NULL AND minimum_longitude=8 AND maximum_longitude=8.25
+					FROM app.workout_park_display_bounds WHERE account_id=$1 AND park_id=$2`, f.account, f.parks[2])
+				coverageDisplayCheck(t, db, `SELECT NOT EXISTS(SELECT 1 FROM app.coverage_display_entities entity
+					JOIN app.coverage_display_members member USING(account_id,context_id,canonical_id)
+					WHERE entity.account_id=$1 AND member.source_id=$2 AND entity.context_id=(
+					SELECT coverage_display_context_id FROM app.map_selections WHERE id=$3))`, f.account, f.parks[2], s.id)
 			}
-			coverageDisplayEntityCheck(t, db, f, s, f.parks[2], predicate+` AND minimum_longitude=8 AND maximum_longitude=8.25`)
 		}
 	})
 
@@ -379,11 +390,11 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 		}
 		coverageDisplayExec(t, db, stale, `UPDATE app.workout_segment_matches SET geom=ST_Translate(geom,0.5,0)
 			WHERE account_id=$1 AND workout_id=$2 AND physical_segment_id=$3`, f.account, f.workouts[0], f.segments[3])
-		// Evidence-only maintenance must change the barrier's row version even
-		// though it deliberately preserves the public generation value.
+		// Display evidence invalidation now advances both the public generation
+		// and the barrier row version in the winning commit.
 		bootstrapExec(t, db, f.bootstrapFixture, `UPDATE app.path_segments SET tags=jsonb_set(tags,
 			'{workouts:education_name}','"Committed School"') WHERE account_id=$1 AND physical_segment_id=$2`, f.account, f.segments[0])
-		coverageDisplayCheck(t, db, `SELECT generation=$2 AND xmin::text<>$3
+		coverageDisplayCheck(t, db, `SELECT generation=$2+1 AND xmin::text<>$3
 			FROM app.account_data_generations WHERE account_id=$1`, f.account, generation, version)
 		winning := coverageDisplayFacts(t, db, f)
 		var oldSnapshot bool
@@ -567,8 +578,7 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 	}
 }
 
-// These full-row oracles describe 032 source identities, before canonical aliases.
-func coverageDisplayMigrate32(t *testing.T, ctx context.Context) {
+func coverageDisplayMigrate30(t *testing.T, ctx context.Context) {
 	t.Helper()
 	config, err := pgx.ParseConfig(os.Getenv("MIGRATION_DATABASE_URL"))
 	if err != nil {
@@ -580,14 +590,14 @@ func coverageDisplayMigrate32(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 32); err != nil {
+	if _, err := provider.UpTo(ctx, 30); err != nil {
 		t.Fatal(err)
 	}
 	var historical bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=32 AND minimum_runtime_version=32 AND migration_baseline=27
-		AND (SELECT count(*)=33 AND count(DISTINCT version_id)=33 AND min(version_id)=0 AND max(version_id)=32 AND bool_and(is_applied)
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27
+		AND (SELECT count(*)=31 AND count(DISTINCT version_id)=31 AND min(version_id)=0 AND max(version_id)=30 AND bool_and(is_applied)
 			FROM public.goose_db_version) FROM app.schema_metadata WHERE singleton`).Scan(&historical); err != nil || !historical {
-		t.Fatalf("historical display oracle requires an isolated Goose schema32/min32/marker27 fixture, not latest: %t %v", historical, err)
+		t.Fatalf("display tests require an isolated Goose schema30/min30/marker27 fixture: %t %v", historical, err)
 	}
 }
 
@@ -732,50 +742,91 @@ func coverageDisplayInsertMatch(t *testing.T, db testDatabases, tx pgx.Tx, f cov
 		WHERE account_id=$1 AND physical_segment_id=$3`, f.account, workout, segment, order)
 }
 
-// Extract only the immutable 019 SQL body, not pg_get_functiondef of the current
-// reader. Neither projection tables nor 032's aggregation logic enter the oracle.
-func coverageDisplayOracle(t *testing.T) string {
+// Recompute all private fact rows directly from raw evidence, independently of
+// the dirty queue, refresh helpers, eligibility and canonical context cache.
+func coverageDisplayProjectionParity(t *testing.T, db testDatabases, f coverageDisplayFixture) {
 	t.Helper()
-	source, err := migrations.Files.ReadFile("019_coverage_explorer_reads.sql")
-	if err != nil {
-		t.Fatal(err)
+	evidence := `WITH evidence AS MATERIALIZED (
+		SELECT match.*,segment.highway,segment.tags FROM app.workout_segment_matches match
+		JOIN app.path_segments segment USING(account_id,region_id,generation_id,physical_segment_id)
+		WHERE match.account_id=$1
+	), expected AS (`
+	for _, oracle := range []struct{ table, query string }{
+		{"workout_path_display_partials", `SELECT account_id,workout_id,
+			COALESCE(NULLIF(tags->>'workouts:education_id','')::uuid,logical_path_id) entity_id,logical_path_id,
+			(tags->>'workouts:park_kind' IN ('state_park','national_park') OR NOT(tags ? 'workouts:park_id')) IS TRUE qualifies_without_name,
+			min(region_id) region_id,bool_or(tags ? 'workouts:education_id') education_key_present,
+			min(tags->>'workouts:education_name') education_name,
+			ST_XMin(ST_Extent(geom)::box2d) minimum_longitude,ST_YMin(ST_Extent(geom)::box2d) minimum_latitude,
+			ST_XMax(ST_Extent(geom)::box2d) maximum_longitude,ST_YMax(ST_Extent(geom)::box2d) maximum_latitude
+			FROM evidence WHERE NOT(highway='service' AND COALESCE(tags->>'service','') IN ('driveway','parking_aisle'))
+			AND tags->>'amenity' IS DISTINCT FROM 'parking' GROUP BY account_id,workout_id,entity_id,logical_path_id,qualifies_without_name`},
+		{"workout_path_display_context", `SELECT account_id,workout_id,
+			COALESCE(NULLIF(tags->>'workouts:education_id','')::uuid,logical_path_id) entity_id,
+			min(tags->>'workouts:park_name') locality_name FROM evidence
+			WHERE tags->>'workouts:park_kind' IN ('state_park','national_park') AND NULLIF(tags->>'workouts:park_name','') IS NOT NULL
+			GROUP BY account_id,workout_id,entity_id`},
+		{"workout_park_display_bounds", `SELECT account_id,workout_id,(tags->>'workouts:park_id')::uuid park_id,
+			min(region_id) FILTER(WHERE tags->>'workouts:park_id'=((tags->>'workouts:park_id')::uuid)::text) region_id,
+			ST_XMin(ST_Extent(geom)::box2d) minimum_longitude,ST_YMin(ST_Extent(geom)::box2d) minimum_latitude,
+			ST_XMax(ST_Extent(geom)::box2d) maximum_longitude,ST_YMax(ST_Extent(geom)::box2d) maximum_latitude
+			FROM evidence WHERE tags ? 'workouts:park_id' AND tags->>'workouts:park_id' IS NOT NULL GROUP BY account_id,workout_id,park_id`},
+	} {
+		tx := beginAccount(t, db.ctx, db.migration, f.account)
+		var delta string
+		err := tx.QueryRow(db.ctx, evidence+oracle.query+`), actual AS (SELECT * FROM app.`+oracle.table+` WHERE account_id=$1),
+			differences AS (SELECT to_jsonb(a) value FROM actual a EXCEPT ALL SELECT to_jsonb(e) FROM expected e),
+			missing AS (SELECT to_jsonb(e) value FROM expected e EXCEPT ALL SELECT to_jsonb(a) FROM actual a)
+			SELECT COALESCE(jsonb_agg(value),'[]'::jsonb)::text FROM (TABLE differences UNION ALL TABLE missing) delta`, f.account).Scan(&delta)
+		_ = tx.Rollback(db.ctx)
+		if err != nil || delta != "[]" {
+			t.Fatalf("full-row raw evidence/%s parity: %s err=%v", oracle.table, delta, err)
+		}
 	}
-	body := coverageDisplayFunction(t, string(source), "map_selection_coverage_entities")
-	return strings.NewReplacer("target_account_id", "$1::uuid", "target_session_id", "$2::uuid",
-		"target_selection_id", "$3::uuid", "target_generation", "$4::bigint", "target_search", "$5::text").Replace(body)
 }
 
 func coverageDisplayParity(t *testing.T, db testDatabases, f coverageDisplayFixture) coverageDisplaySelection {
 	t.Helper()
-	s := coverageDisplaySelection{id: uuid.New()}
-	tx := beginAccount(t, db.ctx, db.migration, f.account)
-	if err := tx.QueryRow(db.ctx, `SELECT generation FROM app.account_data_generations WHERE account_id=$1`, f.account).Scan(&s.generation); err != nil {
-		t.Fatal(err)
-	}
-	// A new selection is necessary after committed generation-changing writes.
-	// No checked workouts: the read contract deliberately ignores that subset.
-	coverageDisplayExec(t, db, tx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,
-		start_date,end_date,selection_kind) VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes',
-		'2026-01-10','2026-01-12','explicit_subset')`, s.id, f.account, f.session, s.generation)
-	coverageDisplayCommit(t, db, tx)
+	coverageDisplayProjectionParity(t, db, f)
+	s := canonicalDisplaySelection(t, db, f, "2026-01-10", "2026-01-12", nil).coverageDisplaySelection
+	var unfiltered []map[string]any
 	for _, search := range []any{nil, "", "SCHOOL", "EXCLUDED REGIONAL", f.campus.String(), "%_no_match"} {
 		read := beginAccount(t, db.ctx, db.migration, f.account)
+		coverageDisplayExec(t, db, read, `SELECT set_config('app.session_id',$1,true)`, f.session.String())
 		coverageDisplayExec(t, db, read, `SET LOCAL jit=off`)
-		var delta, actual string
-		err := read.QueryRow(db.ctx, `WITH actual AS MATERIALIZED (
-			SELECT * FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5)
-		), expected AS MATERIALIZED (`+coverageDisplayOracle(t)+`), differences AS (
-			SELECT 'new-only' direction,to_jsonb(difference_row) value FROM (TABLE actual EXCEPT ALL TABLE expected) difference_row
-			UNION ALL
-			SELECT 'old-only',to_jsonb(difference_row) FROM (TABLE expected EXCEPT ALL TABLE actual) difference_row
-		) SELECT (SELECT COALESCE(jsonb_agg(to_jsonb(differences)),'[]'::jsonb)::text FROM differences),
-			(SELECT COALESCE(jsonb_agg(to_jsonb(actual) ORDER BY entity_kind,entity_id),'[]'::jsonb)::text FROM actual)`,
-			f.account, f.session, s.id, s.generation, search).Scan(&delta, &actual)
+		var actual string
+		err := read.QueryRow(db.ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(entity) ORDER BY entity_kind,entity_id),'[]'::jsonb)::text
+			FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5) entity`, f.account, f.session, s.id, s.generation, search).Scan(&actual)
 		_ = read.Rollback(db.ctx)
-		if err != nil || delta != "[]" {
-			t.Fatalf("committed full-row 032/019 EXCEPT ALL parity, search=%v: %s err=%v", search, delta, err)
+		if err != nil {
+			t.Fatal(err)
 		}
-		api := beginAccount(t, db.ctx, db.api, f.account)
+		var rows []map[string]any
+		if err := json.Unmarshal([]byte(actual), &rows); err != nil {
+			t.Fatal(err)
+		}
+		if search == nil {
+			unfiltered = rows
+		} else {
+			// These fixture labels are ASCII; Unicode policy has its own vectors.
+			// Search must filter whole grouped rows literally, not source IDs or SQL wildcards.
+			expected := make([]map[string]any, 0)
+			for _, row := range unfiltered {
+				var fields []string
+				for _, field := range []string{"entity_id", "entity_kind", "broad_class", "name", "locality_name", "region_name", "region_id"} {
+					if value, ok := row[field].(string); ok {
+						fields = append(fields, value)
+					}
+				}
+				if strings.Contains(strings.ToLower(strings.Join(fields, " ")), strings.ToLower(search.(string))) {
+					expected = append(expected, row)
+				}
+			}
+			if !reflect.DeepEqual(rows, expected) {
+				t.Fatalf("canonical literal search=%v changed whole-row filtering: got=%v want=%v", search, rows, expected)
+			}
+		}
+		api := deferredBeginSelection(t, db, f.account, f.session)
 		var exposed string
 		err = api.QueryRow(db.ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(entity) ORDER BY entity_kind,entity_id),'[]'::jsonb)::text
 			FROM app.map_selection_coverage_entities($1,$2,$3,$4,$5) entity`,
@@ -793,7 +844,29 @@ func coverageDisplayEntityCheck(t *testing.T, db testDatabases, f coverageDispla
 	t.Helper()
 	values := append([]any{f.account, f.session, s.id, s.generation, entity}, args...)
 	coverageDisplayCheck(t, db, `SELECT count(*)=1 AND bool_and(`+predicate+`)
-		FROM app.map_selection_coverage_entities($1,$2,$3,$4,NULL) WHERE entity_id=$5`, values...)
+		FROM app.coverage_display_entities entity JOIN app.map_selections selection
+		ON selection.account_id=entity.account_id AND selection.coverage_display_context_id=entity.context_id
+		WHERE selection.account_id=$1 AND selection.session_id=$2 AND selection.id=$3 AND selection.generation=$4
+		AND entity.canonical_id IN (SELECT member.canonical_id FROM app.coverage_display_members member
+		WHERE member.account_id=$1 AND member.context_id=entity.context_id AND member.source_id=$5)`, values...)
+}
+
+// Fixtures retain source IDs for evidence writes; readers take canonical IDs.
+func coverageDisplayCanonicalID(t *testing.T, db testDatabases, account, selection uuid.UUID, kind any, source uuid.UUID) uuid.UUID {
+	t.Helper()
+	tx := beginAccount(t, db.ctx, db.migration, account)
+	defer tx.Rollback(db.ctx)
+	var id uuid.UUID
+	err := tx.QueryRow(db.ctx, `SELECT member.canonical_id FROM app.coverage_display_members member
+		JOIN app.map_selections selection ON selection.account_id=member.account_id AND selection.coverage_display_context_id=member.context_id
+		WHERE selection.account_id=$1 AND selection.id=$2 AND member.source_kind=$3 AND member.source_id=$4`, account, selection, kind, source).Scan(&id)
+	if err == pgx.ErrNoRows {
+		return source
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func coverageDisplayFacts(t *testing.T, db testDatabases, f coverageDisplayFixture) string {
@@ -820,6 +893,11 @@ func coverageDisplayCheck(t *testing.T, db testDatabases, query string, args ...
 	}
 	tx := beginAccount(t, db.ctx, db.migration, account)
 	defer tx.Rollback(db.ctx)
+	if len(args) > 1 {
+		if session, ok := args[1].(uuid.UUID); ok {
+			coverageDisplayExec(t, db, tx, `SELECT set_config('app.session_id',$1,true)`, session.String())
+		}
+	}
 	var valid bool
 	if err := tx.QueryRow(db.ctx, query, args...).Scan(&valid); err != nil || !valid {
 		t.Fatalf("coverage display invariant failed: %v\n%s\nargs=%v", err, query, args)
@@ -844,7 +922,7 @@ func coverageDisplayFence(t *testing.T, db testDatabases, tx pgx.Tx, f coverageD
 	t.Helper()
 	var source uuid.UUID
 	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`,
-		f.job, reprocessingWorker, f.lease, 32).Scan(&source); err != nil {
+		f.job, reprocessingWorker, f.lease, 30).Scan(&source); err != nil {
 		t.Fatalf("fence synthetic source job for header mutation/purge: %v", err)
 	}
 }

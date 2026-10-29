@@ -37,7 +37,7 @@ func run(ctx context.Context) error {
 		}
 		defer os.Remove(options.ArchivePath)
 	} else if err != nil {
-		return fmt.Errorf("inspect timezone boundary archive: %w", err)
+		return fmt.Errorf("inspect time zone boundary archive: %w", err)
 	}
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -48,6 +48,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(os.Stdout, "promoted timezone dataset %d with %d boundaries\n", result.DatasetID, result.FeatureCount)
+	_, err = fmt.Fprintf(os.Stdout, "promoted time zone dataset %d with %d boundaries\n", result.DatasetID, result.FeatureCount)
 	return err
 }

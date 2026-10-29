@@ -19,7 +19,15 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 		}
 		return string(body)
 	}
-	source := read("030_ingest_workout_outcomes.sql")
+	full := read("029_ingest_status_reporting.sql")
+	_, source, found := strings.Cut(full, "-- Presentation is derived")
+	if !found {
+		t.Fatal("missing workout outcome section")
+	}
+	source, _, found = strings.Cut(source, "-- Omission in persisted bounded jobs")
+	if !found {
+		t.Fatal("missing outcome section boundary")
+	}
 	for _, required := range []string{
 		"CREATE FUNCTION app.ingest_outcome_status(job_kind text, job_status text, workouts_created bigint, workouts_updated bigint)",
 		"RETURNS text LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_catalog",
@@ -32,8 +40,6 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 		"COALESCE(sum(progress.workouts_created), 0) > 0 OR COALESCE(sum(progress.workouts_updated), 0) > 0",
 		"WHEN cancelled_count = child_count THEN 'cancelled'",
 		"WHEN failed_count + cancelled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
-		"UPDATE app.schema_metadata SET schema_version = 30 WHERE singleton;",
-		"ingest workout outcomes is forward-only",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("missing outcome migration contract: %s", required)
@@ -65,18 +71,27 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 		}
 		return body
 	}
-	old := read("029_ingest_partial_success.sql")
+	old := read("015_coverage_route_jobs.sql")
 	start := "    IF parent_kind = 'coverage_update' THEN\n"
-	if between(old, start, "    ELSIF failed_count") != between(source, start, "    ELSIF failed_count") {
+	if between(old, start, "    END IF;") != between(source, start, "    ELSIF failed_count") {
 		t.Fatal("coverage progress/superseded accounting changed")
 	}
 	start = "    PERFORM set_config('app.job_transition', 'derive_parent', true);\n"
 	if between(old, start, "$function$;") != between(source, start, "$function$;") {
 		t.Fatal("parent counters/timestamps/status-change gate changed")
 	}
-	start = "    SELECT kind, status INTO parent_kind, parent_status FROM app.jobs\n"
+	parent := coverageDisplayFunction(t, source, "derive_parent_status")
+	start = "    SELECT count( * ), count( * ) FILTER (WHERE status = 'queued')"
 	if between(old, start, "    IF child_count = 0 THEN RETURN; END IF;") != between(source, start, "    IF child_count = 0 THEN RETURN; END IF;") {
-		t.Fatal("parent account scope, terminal guard or child status counts changed")
+		t.Fatal("child status counts/account scope changed")
+	}
+	for _, required := range []string{"WHERE id = parent_id AND account_id = app.current_account_id() FOR UPDATE;",
+		"parent_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN;",
+		"FROM app.jobs WHERE parent_job_id = parent_id AND account_id = app.current_account_id();",
+		"IF child_count = 0 THEN RETURN; END IF;"} {
+		if !strings.Contains(parent, required) {
+			t.Errorf("missing parent scope/terminal contract: %s", required)
+		}
 	}
 	coverageCase := "WHEN succeeded_count > 0 AND failed_count + cancelled_count > 0 THEN 'partially_succeeded'\n" +
 		"            WHEN succeeded_count = 0 AND cancelled_count = child_count THEN 'cancelled'\n" +
@@ -102,7 +117,7 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 	}
 }
 
-// The caller provisions roles and applies migrations through 030. Never use
+// The caller provisions roles and applies migrations through display30. Never use
 // application configuration or a remote database for these synthetic fixtures.
 func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 	if os.Getenv("INGEST_WORKOUT_OUTCOMES_TEST_DISPOSABLE") != "1" {
@@ -137,7 +152,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 	t.Run("MetadataAndSecurity", func(t *testing.T) {
 		var safe bool
 		if err := db.migration.QueryRow(db.ctx, `SELECT
-			(SELECT schema_version=30 AND minimum_runtime_version=28 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+			(SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT p.provolatile='i' AND NOT p.prosecdef AND NOT p.proisstrict
 			 AND p.proconfig=ARRAY['search_path=pg_catalog'] AND l.lanname='sql'
 			 AND pg_get_userbyid(p.proowner)='workouts_security_owner'
@@ -252,12 +267,16 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		}
 		if durableFile {
 			var source uuid.UUID
-			if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,28)`, child, worker, lease).Scan(&source); err != nil {
+			if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, child, worker, lease).Scan(&source); err != nil {
 				t.Fatal(err)
 			}
+			var frozen string
+			if err := tx.QueryRow(db.ctx, `SELECT app.record_ingest_file_manifest($1,$2,$3,$4)`, child, worker, lease, reprocessingManifest(1)).Scan(&frozen); err != nil || frozen != "created" {
+				t.Fatalf("freeze synthetic file receipt: %s %v", frozen, err)
+			}
 			file := uuid.New()
-			if _, err := tx.Exec(db.ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,state,processing_started_at)
-				VALUES($1,app.current_account_id(),$2,$3,$1::uuid::text,1,'processing',clock_timestamp())`, file, source, child); err != nil {
+			if _, err := tx.Exec(db.ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,modified_at,state,processing_started_at)
+				VALUES($1,app.current_account_id(),$2,$3,'HealthAutoExport-2026-01-01.json',10,to_timestamp(100),'processing',clock_timestamp())`, file, source, child); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := tx.Exec(db.ctx, `UPDATE app.source_files SET state='succeeded',processed_at=clock_timestamp(),
@@ -398,10 +417,8 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		foreign := create(t, "manual_ingest", 1, uuid.Nil)
 		process(t, success, 0, "succeeded", counts{}, false)
 		process(t, foreign, 0, "failed", counts{created: 50}, false)
-		// Use 029's actual state machine inside a rolled-back transaction, never
-		// disabled triggers or terminal-row/progress rewrites. Created counters
-		// without file-success counters legitimately produced 'failed' in 029;
-		// an empty successful sibling produced the opposite old misclassification.
+		// Use the retained schema-28 state machine to create genuine historical
+		// outcomes, then restore status29 inside this rolled-back transaction.
 		tx := beginAccount(t, db.ctx, db.migration, f.account)
 		defer tx.Rollback(db.ctx)
 		definition := func(name string) string {
@@ -421,7 +438,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 			}
 			return start + bodyText + "$function$;"
 		}
-		if _, err := tx.Exec(db.ctx, definition("029_ingest_partial_success.sql")); err != nil {
+		if _, err := tx.Exec(db.ctx, definition("015_coverage_route_jobs.sql")); err != nil {
 			t.Fatal(err)
 		}
 		for _, item := range []struct {
@@ -437,7 +454,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		if err := tx.QueryRow(db.ctx, `SELECT (SELECT status='failed' FROM app.jobs WHERE id=$1)
 			AND (SELECT status='partially_succeeded' FROM app.jobs WHERE id=$2)
 			AND (SELECT workouts_created=1 FROM app.job_progress WHERE job_id=$1)`, f.parent, oldPartial.parent).Scan(&historical); err != nil || !historical {
-			t.Fatalf("029 failed-with-imports/partial-without-imports baseline: %t %v", historical, err)
+			t.Fatalf("schema28 failed-with-imports/partial-without-imports baseline: %t %v", historical, err)
 		}
 		const snapshot = `SELECT jsonb_build_object(
 			'jobs',(SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM app.jobs j WHERE account_id=$1),
@@ -448,7 +465,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		if err := tx.QueryRow(db.ctx, snapshot, f.account).Scan(&before); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(db.ctx, definition("030_ingest_workout_outcomes.sql")); err != nil {
+		if _, err := tx.Exec(db.ctx, definition("029_ingest_status_reporting.sql")); err != nil {
 			t.Fatal(err)
 		}
 		for _, item := range []struct {

@@ -46,17 +46,17 @@ type Result struct {
 // Validate checks all caller-controlled provenance before opening a database transaction.
 func (options Options) Validate() error {
 	if strings.TrimSpace(options.ArchivePath) == "" {
-		return errors.New("timezone boundary archive path is required")
+		return errors.New("time zone boundary archive path is required")
 	}
 	if options.Release != strings.TrimSpace(options.Release) || len(options.Release) < 1 || len(options.Release) > 128 {
-		return errors.New("timezone boundary release must be 1 to 128 non-surrounding-whitespace characters")
+		return errors.New("time zone boundary release must be 1 to 128 non-surrounding-whitespace characters")
 	}
 	parsed, err := url.Parse(options.SourceURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return errors.New("timezone boundary source URL must be an absolute HTTPS URL without user info")
+		return errors.New("time zone boundary source URL must be an absolute HTTPS URL without user info")
 	}
 	if !sha256Pattern.MatchString(options.SHA256) {
-		return errors.New("timezone boundary SHA256 must be exactly 64 lowercase hexadecimal characters")
+		return errors.New("time zone boundary SHA256 must be exactly 64 lowercase hexadecimal characters")
 	}
 	return nil
 }
@@ -66,31 +66,31 @@ func (options Options) Validate() error {
 func DownloadArchive(ctx context.Context, sourceURL, destination string) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return fmt.Errorf("create timezone boundary download: %w", err)
+		return fmt.Errorf("create time zone boundary download: %w", err)
 	}
 	response, err := (&http.Client{Timeout: 10 * time.Minute}).Do(request)
 	if err != nil {
-		return fmt.Errorf("download timezone boundary archive: %w", err)
+		return fmt.Errorf("download time zone boundary archive: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("download timezone boundary archive: unexpected HTTP status %d", response.StatusCode)
+		return fmt.Errorf("download time zone boundary archive: unexpected HTTP status %d", response.StatusCode)
 	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("create timezone boundary archive: %w", err)
+		return fmt.Errorf("create time zone boundary archive: %w", err)
 	}
 	written, copyErr := io.Copy(file, io.LimitReader(response.Body, maxArchiveBytes+1))
 	closeErr := file.Close()
 	if copyErr != nil || closeErr != nil || written > maxArchiveBytes {
 		_ = os.Remove(destination)
 		if written > maxArchiveBytes {
-			return errors.New("timezone boundary archive exceeds 256 MiB")
+			return errors.New("time zone boundary archive exceeds 256 MiB")
 		}
 		if copyErr != nil {
-			return fmt.Errorf("write timezone boundary archive: %w", copyErr)
+			return fmt.Errorf("write time zone boundary archive: %w", copyErr)
 		}
-		return fmt.Errorf("close timezone boundary archive: %w", closeErr)
+		return fmt.Errorf("close time zone boundary archive: %w", closeErr)
 	}
 	return nil
 }
@@ -99,16 +99,16 @@ func DownloadArchive(ctx context.Context, sourceURL, destination string) error {
 func VerifyArchive(path, expectedSHA256 string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open timezone boundary archive: %w", err)
+		return fmt.Errorf("open time zone boundary archive: %w", err)
 	}
 	defer file.Close()
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		return fmt.Errorf("hash timezone boundary archive: %w", err)
+		return fmt.Errorf("hash time zone boundary archive: %w", err)
 	}
 	actual := hex.EncodeToString(hash.Sum(nil))
 	if actual != expectedSHA256 {
-		return fmt.Errorf("timezone boundary archive SHA256 mismatch: got %s", actual)
+		return fmt.Errorf("time zone boundary archive SHA256 mismatch: got %s", actual)
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ func VerifyArchive(path, expectedSHA256 string) error {
 // Import loads and promotes a verified timezone-boundary-builder archive atomically.
 func Import(ctx context.Context, pool *pgxpool.Pool, options Options) (Result, error) {
 	if pool == nil {
-		return Result{}, errors.New("timezone boundary database pool is required")
+		return Result{}, errors.New("time zone boundary database pool is required")
 	}
 	if err := options.Validate(); err != nil {
 		return Result{}, err
@@ -132,12 +132,12 @@ func Import(ctx context.Context, pool *pgxpool.Pool, options Options) (Result, e
 		return existing, nil
 	}
 	if err != pgx.ErrNoRows {
-		return Result{}, fmt.Errorf("check active timezone dataset: %w", err)
+		return Result{}, fmt.Errorf("check active time zone dataset: %w", err)
 	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("begin timezone boundary import: %w", err)
+		return Result{}, fmt.Errorf("begin time zone boundary import: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -151,13 +151,13 @@ func Import(ctx context.Context, pool *pgxpool.Pool, options Options) (Result, e
 		WHERE osm_catalog.timezone_datasets.state='retired'
 		RETURNING id`, Provider, options.Release, options.SourceURL, options.SHA256).Scan(&result.DatasetID)
 	if err != nil {
-		return Result{}, fmt.Errorf("create timezone dataset: %w", err)
+		return Result{}, fmt.Errorf("create time zone dataset: %w", err)
 	}
 
 	result.FeatureCount, err = streamArchive(options.ArchivePath, func(tzid string, geometry json.RawMessage) error {
 		var geometryID int64
 		if insertErr := tx.QueryRow(ctx, insertGeometrySQL, result.DatasetID, tzid, geometry).Scan(&geometryID); insertErr != nil {
-			return fmt.Errorf("insert timezone %q: %w", tzid, insertErr)
+			return fmt.Errorf("insert time zone %q: %w", tzid, insertErr)
 		}
 		return nil
 	})
@@ -165,16 +165,16 @@ func Import(ctx context.Context, pool *pgxpool.Pool, options Options) (Result, e
 		return Result{}, err
 	}
 	if result.FeatureCount == 0 {
-		return Result{}, errors.New("timezone boundary archive contains no features")
+		return Result{}, errors.New("time zone boundary archive contains no features")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE osm_catalog.timezone_datasets SET boundary_count=$2 WHERE id=$1`, result.DatasetID, result.FeatureCount); err != nil {
-		return Result{}, fmt.Errorf("record timezone boundary count: %w", err)
+		return Result{}, fmt.Errorf("record time zone boundary count: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `SELECT osm_catalog.promote_timezone_dataset($1)`, result.DatasetID); err != nil {
-		return Result{}, fmt.Errorf("promote timezone dataset: %w", err)
+		return Result{}, fmt.Errorf("promote time zone dataset: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Result{}, fmt.Errorf("commit timezone boundary import: %w", err)
+		return Result{}, fmt.Errorf("commit time zone boundary import: %w", err)
 	}
 	return result, nil
 }
@@ -202,7 +202,7 @@ type geoJSONFeature struct {
 func streamArchive(path string, consume func(string, json.RawMessage) error) (int64, error) {
 	archive, err := zip.OpenReader(path)
 	if err != nil {
-		return 0, fmt.Errorf("open timezone boundary ZIP: %w", err)
+		return 0, fmt.Errorf("open time zone boundary ZIP: %w", err)
 	}
 	defer archive.Close()
 
@@ -213,7 +213,7 @@ func streamArchive(path string, consume func(string, json.RawMessage) error) (in
 		name := strings.ToLower(filepath.Base(candidate.Name))
 		if name == "combined.json" || name == "combined.geojson" {
 			if geoJSON != nil {
-				return 0, errors.New("timezone boundary ZIP contains multiple combined GeoJSON files")
+				return 0, errors.New("time zone boundary ZIP contains multiple combined GeoJSON files")
 			}
 			geoJSON = candidate
 			continue
@@ -227,11 +227,11 @@ func streamArchive(path string, consume func(string, json.RawMessage) error) (in
 		geoJSON = fallback
 	}
 	if geoJSON == nil {
-		return 0, errors.New("timezone boundary ZIP must contain combined.json, combined.geojson, or one GeoJSON file")
+		return 0, errors.New("time zone boundary ZIP must contain combined.json, combined.geojson, or one GeoJSON file")
 	}
 	reader, err := geoJSON.Open()
 	if err != nil {
-		return 0, fmt.Errorf("open timezone boundary GeoJSON: %w", err)
+		return 0, fmt.Errorf("open time zone boundary GeoJSON: %w", err)
 	}
 	defer reader.Close()
 	return streamFeatureCollection(reader, consume)
@@ -241,7 +241,7 @@ func streamFeatureCollection(reader io.Reader, consume func(string, json.RawMess
 	decoder := json.NewDecoder(reader)
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
-		return 0, errors.New("timezone boundary GeoJSON must be an object")
+		return 0, errors.New("time zone boundary GeoJSON must be an object")
 	}
 	var count int64
 	foundFeatures := false
@@ -249,41 +249,41 @@ func streamFeatureCollection(reader io.Reader, consume func(string, json.RawMess
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return 0, fmt.Errorf("decode timezone boundary GeoJSON: %w", err)
+			return 0, fmt.Errorf("decode time zone boundary GeoJSON: %w", err)
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return 0, errors.New("timezone boundary GeoJSON contains a non-string key")
+			return 0, errors.New("time zone boundary GeoJSON contains a non-string key")
 		}
 		if key == "type" {
 			if err := decoder.Decode(&collectionType); err != nil {
-				return 0, errors.New("timezone boundary GeoJSON type must be a string")
+				return 0, errors.New("time zone boundary GeoJSON type must be a string")
 			}
 			continue
 		}
 		if key != "features" {
 			var discard json.RawMessage
 			if err := decoder.Decode(&discard); err != nil {
-				return 0, fmt.Errorf("decode timezone boundary GeoJSON field %q: %w", key, err)
+				return 0, fmt.Errorf("decode time zone boundary GeoJSON field %q: %w", key, err)
 			}
 			continue
 		}
 		if foundFeatures {
-			return 0, errors.New("timezone boundary GeoJSON contains duplicate features fields")
+			return 0, errors.New("time zone boundary GeoJSON contains duplicate features fields")
 		}
 		foundFeatures = true
 		token, err := decoder.Token()
 		if err != nil || token != json.Delim('[') {
-			return 0, errors.New("timezone boundary GeoJSON features must be an array")
+			return 0, errors.New("time zone boundary GeoJSON features must be an array")
 		}
 		for decoder.More() {
 			var feature geoJSONFeature
 			if err := decoder.Decode(&feature); err != nil {
-				return 0, fmt.Errorf("decode timezone boundary feature %d: %w", count+1, err)
+				return 0, fmt.Errorf("decode time zone boundary feature %d: %w", count+1, err)
 			}
 			tzid, err := featureTZID(feature)
 			if err != nil {
-				return 0, fmt.Errorf("timezone boundary feature %d: %w", count+1, err)
+				return 0, fmt.Errorf("time zone boundary feature %d: %w", count+1, err)
 			}
 			if err := consume(tzid, feature.Geometry); err != nil {
 				return 0, err
@@ -291,17 +291,17 @@ func streamFeatureCollection(reader io.Reader, consume func(string, json.RawMess
 			count++
 		}
 		if _, err := decoder.Token(); err != nil {
-			return 0, fmt.Errorf("close timezone boundary features: %w", err)
+			return 0, fmt.Errorf("close time zone boundary features: %w", err)
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
-		return 0, fmt.Errorf("close timezone boundary GeoJSON: %w", err)
+		return 0, fmt.Errorf("close time zone boundary GeoJSON: %w", err)
 	}
 	if !foundFeatures {
-		return 0, errors.New("timezone boundary GeoJSON has no features field")
+		return 0, errors.New("time zone boundary GeoJSON has no features field")
 	}
 	if collectionType != "FeatureCollection" {
-		return 0, errors.New("timezone boundary GeoJSON type must be FeatureCollection")
+		return 0, errors.New("time zone boundary GeoJSON type must be FeatureCollection")
 	}
 	return count, nil
 }

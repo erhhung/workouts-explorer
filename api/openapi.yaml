@@ -1403,6 +1403,22 @@ components:
         workoutsUpdatedWithRoute: {type: integer, format: int64, minimum: 0, description: "Updated or adopted import events with a nonempty route. Omitted when historical snapshots are unknown."}
         workoutsUnchanged: {type: integer, format: int64, minimum: 0}
         workoutsRejected: {type: integer, format: int64, minimum: 0}
+    IngestActivity:
+      type: object
+      additionalProperties: false
+      description: >-
+        Latest journaled phase for the source job's current attempt, ordered by event identity, not timestamp.
+        Present only on ingest source details, including children of an ingest root, and omitted when no
+        current-attempt phase was recorded (including legacy jobs). Root activity is not synthesized.
+        Terminal job status takes precedence over this last historical activity; cleanup does not imply completion.
+      required: [phase, updatedAt]
+      properties:
+        phase:
+          type: string
+          enum: [resuming, preparing, discovering, importing, analyzing_imported_routes, analyzing_existing_routes, updating_time_zones, cleanup]
+        current: {type: integer, format: int64, minimum: 0, description: "Phase-specific count, omitted when unknown."}
+        total: {type: integer, format: int64, minimum: 0, description: "Phase-specific total, omitted when unknown."}
+        updatedAt: {type: string, format: date-time}
     JobSourceContext:
       type: object
       additionalProperties: false
@@ -1556,6 +1572,7 @@ components:
         status: {$ref: '#/components/schemas/JobStatus'}
         displayStatus: {$ref: '#/components/schemas/JobDisplayStatus'}
         attempt: {type: integer, minimum: 0}
+        activity: {$ref: '#/components/schemas/IngestActivity'}
         progress: {$ref: '#/components/schemas/JobProgress'}
         source: {$ref: '#/components/schemas/JobSourceContext'}
         coverage: {$ref: '#/components/schemas/CoverageJobContext'}

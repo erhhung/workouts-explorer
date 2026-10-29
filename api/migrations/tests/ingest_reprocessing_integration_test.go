@@ -68,7 +68,7 @@ func TestIngestReprocessingPostgreSQL(t *testing.T) {
 	t.Run("MetadataSecurityAndUnchangedFence", func(t *testing.T) {
 		var safe bool
 		if err := db.migration.QueryRow(db.ctx, `SELECT
-			(SELECT schema_version=33 AND minimum_runtime_version=33 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+			(SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT bool_and(p.prosecdef AND pg_get_userbyid(p.proowner)='workouts_security_owner'
 			 AND p.proconfig=ARRAY['search_path=pg_catalog, app']
 			 AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')
@@ -779,7 +779,7 @@ func reprocessingFile(t *testing.T, db testDatabases, f reprocessingFixture, man
 	tx := beginAccount(t, db.ctx, pool, f.account)
 	defer tx.Rollback(db.ctx)
 	if historical {
-		// Emulate a pre-031 success, without ever rewriting a terminal row.
+		// Emulate a pre-status29 success, without ever rewriting a terminal row.
 		reprocessingExec(t, db, tx, `ALTER TABLE app.source_files DISABLE TRIGGER source_files_receipt_before_write`)
 	}
 	reprocessingFenceTx(t, db, tx, f)

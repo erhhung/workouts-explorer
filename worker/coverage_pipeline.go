@@ -23,16 +23,22 @@ import (
 )
 
 type coverageHandoff struct {
-	WorkoutID          uuid.UUID              `json:"workoutId"`
-	EventID            uuid.UUID              `json:"eventId"`
-	Origin             string                 `json:"origin"`
-	ContentSHA256      string                 `json:"contentSha256"`
-	RouteDigest        string                 `json:"routeDigest"`
-	OwnershipEpoch     int64                  `json:"ownershipEpoch"`
-	Readiness          string                 `json:"readiness"`
-	Reason             any                    `json:"reason"`
-	Generations        []osm.RegionGeneration `json:"generations"`
-	CatalogFingerprint string                 `json:"catalogFingerprint"`
+	WorkoutID            uuid.UUID                  `json:"workoutId"`
+	EventID              uuid.UUID                  `json:"eventId"`
+	Origin               string                     `json:"origin"`
+	ContentSHA256        string                     `json:"contentSha256"`
+	SourceID             string                     `json:"sourceId,omitempty"`
+	RouteDigest          string                     `json:"routeDigest"`
+	OwnershipEpoch       int64                      `json:"ownershipEpoch"`
+	Readiness            string                     `json:"readiness"`
+	Reason               any                        `json:"reason"`
+	Generations          []osm.RegionGeneration     `json:"generations"`
+	CatalogFingerprint   string                     `json:"catalogFingerprint"`
+	CatalogRevision      int64                      `json:"catalogRevision"`
+	SelectionFingerprint string                     `json:"selectionFingerprint"`
+	SelectionPolicy      string                     `json:"selectionPolicy"`
+	MatchingDescriptor   coverageMatchingDescriptor `json:"matchingDescriptor"`
+	MutationVersion      int64                      `json:"mutationVersion"`
 }
 
 type coverageReplayOptions struct {
@@ -40,6 +46,8 @@ type coverageReplayOptions struct {
 	autoAdd, replicasOnly bool
 	renew                 func(context.Context) error
 	requestTimeout        time.Duration
+	workStarted           func(context.Context) error
+	resolved              func(context.Context, uuid.UUID) error
 }
 
 type coverageReadinessFailure struct{ cause error }
@@ -57,6 +65,8 @@ func (r *Runner) drainIngestCoverage(ctx context.Context, job claimedJob, flush 
 	}
 	return replayIngestCoverage(ctx, r.db, r.osmDB, job.accountID, job.id, r.workerID, job.lease, nil, size, flush,
 		coverageReplayOptions{minimumTraversal: r.coverageMinTraversalMeters, autoAdd: r.osmAutoAddRegions,
+			workStarted:    func(ctx context.Context) error { return r.ingestCoverageStarted(ctx, job) },
+			resolved:       func(ctx context.Context, id uuid.UUID) error { return r.ingestCoverageResolved(ctx, job, id) },
 			requestTimeout: r.leaseDuration / 2, renew: func(ctx context.Context) error {
 				alive, err := r.heartbeat(ctx, job)
 				if err != nil {
@@ -151,24 +161,16 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 		if len(items) == 0 {
 			return nil
 		}
+		if options.workStarted != nil {
+			if err := options.workStarted(ctx); err != nil {
+				return err
+			}
+		}
 		retryBatch := false
 		for i := range items {
 			if options.renew != nil {
 				if err := options.renew(ctx); err != nil {
 					return err
-				}
-			}
-			var minimumEventID int64
-			if options.replicasOnly {
-				observationCtx, cancel := context.WithCancel(ctx)
-				if options.requestTimeout > 0 {
-					cancel()
-					observationCtx, cancel = context.WithTimeout(ctx, options.requestTimeout)
-				}
-				err := db.QueryRow(observationCtx, `SELECT last_osm_event_id FROM app.coverage_reconciliation_observation()`).Scan(&minimumEventID)
-				cancel()
-				if err != nil {
-					return fmt.Errorf("read coverage reconciliation observation: %w", err)
 				}
 			}
 			if err := func() error {
@@ -178,17 +180,46 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 					ctx, cancel = context.WithTimeout(ctx, options.requestTimeout)
 					defer cancel()
 				}
-				coordinates, err := readCoverageHandoffCoordinates(ctx, db, accountID, authorityJob, workerID, lease, revision, &items[i])
+				minimumEventID, minimumCatalogRevision, err := readCoverageCatalogFloor(ctx, db)
+				if err != nil {
+					return err
+				}
+				metadata, err := readCoverageSelectionMetadata(ctx, db, accountID, authorityJob, workerID, lease, revision, items[i].WorkoutID)
 				if err != nil {
 					return coverageHandoffError(err)
 				}
-				readiness, err := osm.ResolveRouteRegionsWithCatalog(ctx, osmDB, coordinates, minimumEventID)
-				if err != nil {
-					return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
+				items[i].MutationVersion = metadata.MutationVersion
+				items[i].RouteDigest = metadata.RouteDigest
+				if metadata.Readiness != "" {
+					catalog, err := osm.ReadRouteRegionCatalog(ctx, osmDB, minimumEventID, minimumCatalogRevision)
+					if err != nil {
+						return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
+					}
+					if rebindCoverageSelection(&metadata, catalog, options.autoAdd) {
+						metadata.WorkoutID, metadata.EventID, metadata.Origin = items[i].WorkoutID, items[i].EventID, items[i].Origin
+						metadata.ContentSHA256, metadata.OwnershipEpoch = items[i].ContentSHA256, items[i].OwnershipEpoch
+						items[i] = metadata
+					}
 				}
-				readiness = routeReadinessForAutoAddPolicy(readiness, options.autoAdd)
-				items[i].Readiness, items[i].Reason, items[i].Generations = readiness.State, nullableReadinessReason(readiness.Reason), readiness.Regions
-				items[i].CatalogFingerprint = readiness.CatalogFingerprint
+				if items[i].Readiness == "" {
+					coordinates, err := readCoverageHandoffCoordinates(ctx, db, accountID, authorityJob, workerID, lease, revision, &items[i])
+					if err != nil {
+						return coverageHandoffError(err)
+					}
+					readiness, err := osm.ResolveRouteRegionsWithCatalog(ctx, osmDB, coordinates, minimumEventID, minimumCatalogRevision)
+					if err != nil {
+						return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
+					}
+					readiness = routeReadinessForAutoAddPolicy(readiness, options.autoAdd)
+					if readiness.CatalogFingerprint == "" && len(coordinates) == 0 {
+						catalog, err := osm.ReadRouteRegionCatalog(ctx, osmDB, minimumEventID, minimumCatalogRevision)
+						if err != nil {
+							return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
+						}
+						readiness.CatalogFingerprint, readiness.CatalogRevision, readiness.SelectionFingerprint = catalog.Fingerprint, catalog.Revision, catalog.SelectionFingerprint
+					}
+					setCoverageSelectionProof(&items[i], readiness, options.autoAdd)
+				}
 				if options.renew != nil {
 					if err := options.renew(ctx); err != nil {
 						return err
@@ -218,6 +249,11 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 				break
 			}
 			retries = 0
+			if options.resolved != nil {
+				if err := options.resolved(ctx, items[i].WorkoutID); err != nil {
+					return err
+				}
+			}
 			// The saved capacity can be smaller than this metadata page, or
 			// earlier pages/files may already have filled most of the builder.
 			if err := drainPreparedIngestCoverage(ctx, db, osmDB, accountID, authorityJob, workerID, lease, revision, options); err != nil {
@@ -238,6 +274,7 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 
 func prepareCoverageHandoff(ctx context.Context, db *pgxpool.Pool, accountID uuid.UUID, authorityJob any,
 	workerID string, lease uuid.UUID, revision *int64, item coverageHandoff, options coverageReplayOptions) error {
+	item.MatchingDescriptor = productionMatchingDescriptor(options.minimumTraversal)
 	encoded, err := json.Marshal([]coverageHandoff{item})
 	if err != nil {
 		return err
@@ -263,10 +300,14 @@ func prepareCoverageHandoff(ctx context.Context, db *pgxpool.Pool, accountID uui
 }
 
 type coveragePreparedRefresh struct {
-	WorkoutID          uuid.UUID              `json:"workoutId"`
-	EventID            uuid.UUID              `json:"eventId"`
-	Generations        []osm.RegionGeneration `json:"generations"`
-	CatalogFingerprint string                 `json:"catalogFingerprint"`
+	WorkoutID            uuid.UUID                  `json:"workoutId"`
+	EventID              uuid.UUID                  `json:"eventId"`
+	Generations          []osm.RegionGeneration     `json:"generations"`
+	CatalogFingerprint   string                     `json:"catalogFingerprint"`
+	CatalogRevision      int64                      `json:"catalogRevision"`
+	SelectionFingerprint string                     `json:"selectionFingerprint"`
+	SelectionPolicy      string                     `json:"selectionPolicy"`
+	MatchingDescriptor   coverageMatchingDescriptor `json:"matchingDescriptor"`
 }
 
 // SQL returns actionable builders only. A held result ends this drain, rather
@@ -319,16 +360,23 @@ func drainPreparedIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, a
 			if builderID == uuid.Nil || rootID == uuid.Nil || capacity < 1 || capacity > 1000 || len(targets) == 0 || len(targets) > capacity {
 				return false, errors.New("invalid prepared coverage cohort")
 			}
-			var minimumEventID int64
-			if options.replicasOnly {
-				if err := db.QueryRow(ctx, `SELECT last_osm_event_id FROM app.coverage_reconciliation_observation()`).Scan(&minimumEventID); err != nil {
-					return false, fmt.Errorf("read coverage reconciliation observation: %w", err)
+			if options.workStarted != nil {
+				if err := options.workStarted(ctx); err != nil {
+					return false, err
 				}
+			}
+			minimumEventID, minimumCatalogRevision, err := readCoverageCatalogFloor(ctx, db)
+			if err != nil {
+				return false, err
 			}
 			// There is no APP checkout during catalog validation. This proves an
 			// observed OSM snapshot, not cross-database latest-generation atomicity.
-			if err := refreshPreparedCoverageVectors(ctx, osmDB, targets, minimumEventID, options.replicasOnly); err != nil {
+			if err := refreshPreparedCoverageVectors(ctx, osmDB, targets, minimumEventID, minimumCatalogRevision, options.replicasOnly); err != nil {
 				return false, database.RedactOSMConnectionError(err)
+			}
+			for i := range targets {
+				targets[i].MatchingDescriptor = productionMatchingDescriptor(options.minimumTraversal)
+				targets[i].SelectionPolicy = coverageSelectionPolicy(options.autoAdd)
 			}
 			if options.renew != nil {
 				if err := options.renew(ctx); err != nil {
@@ -366,25 +414,33 @@ func drainPreparedIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, a
 	}
 }
 
-func refreshPreparedCoverageVectors(ctx context.Context, db *pgxpool.Pool, targets []coveragePreparedRefresh, minimumEventID int64, replicasOnly bool) error {
-	catalog, err := osm.ReadRouteRegionCatalog(ctx, db, minimumEventID)
+func refreshPreparedCoverageVectors(ctx context.Context, db *pgxpool.Pool, targets []coveragePreparedRefresh, minimumEventID, minimumCatalogRevision int64, replicasOnly bool) error {
+	for _, target := range targets {
+		minimumCatalogRevision = max(minimumCatalogRevision, target.CatalogRevision)
+	}
+	catalog, err := osm.ReadRouteRegionCatalog(ctx, db, minimumEventID, minimumCatalogRevision)
 	if err != nil {
 		return err
 	}
 	for i := range targets {
-		current := len(targets[i].Generations) > 0 && targets[i].CatalogFingerprint == catalog.Fingerprint
+		current := len(targets[i].Generations) > 0 && targets[i].SelectionFingerprint != "" && targets[i].SelectionFingerprint == catalog.SelectionFingerprint
 		for _, region := range targets[i].Generations {
 			if replicasOnly && catalog.ActiveGenerations[region.RegionID] < region.Generation {
 				return osm.ErrMatcherReplicaNotReady
 			}
-			current = current && catalog.ActiveGenerations[region.RegionID] == region.Generation
+			current = current && catalog.ActiveGenerations[region.RegionID] > 0
 		}
 		if !current {
-			// Never substitute a new head for an old ROI result. Invalidation
-			// makes SQL expose the obligation for a fresh full-route lookup.
+			// Selection changes require a fresh exact full-route lookup.
 			targets[i].Generations = []osm.RegionGeneration{}
+		} else {
+			for j := range targets[i].Generations {
+				targets[i].Generations[j].Generation = catalog.ActiveGenerations[targets[i].Generations[j].RegionID]
+			}
 		}
 		targets[i].CatalogFingerprint = catalog.Fingerprint
+		targets[i].CatalogRevision = catalog.Revision
+		targets[i].SelectionFingerprint = catalog.SelectionFingerprint
 	}
 	return nil
 }

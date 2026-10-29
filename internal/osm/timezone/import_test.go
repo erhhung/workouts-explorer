@@ -45,8 +45,8 @@ func TestOptionsValidate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			options := valid
 			test.mutate(&options)
-			if err := options.Validate(); err == nil {
-				t.Fatal("expected validation error")
+			if err := options.Validate(); err == nil || !strings.HasPrefix(err.Error(), "time zone boundary ") {
+				t.Fatalf("expected time zone boundary validation error, got %v", err)
 			}
 		})
 	}
@@ -62,8 +62,8 @@ func TestVerifyArchiveRequiresExactDigest(t *testing.T) {
 	if err := VerifyArchive(path, hex.EncodeToString(digest[:])); err != nil {
 		t.Fatalf("verify archive: %v", err)
 	}
-	if err := VerifyArchive(path, strings.Repeat("0", 64)); err == nil {
-		t.Fatal("expected digest mismatch")
+	if err := VerifyArchive(path, strings.Repeat("0", 64)); err == nil || !strings.HasPrefix(err.Error(), "time zone boundary archive SHA256 mismatch: ") {
+		t.Fatalf("expected time zone boundary digest mismatch, got %v", err)
 	}
 }
 
@@ -83,8 +83,8 @@ func TestStreamFeatureCollection(t *testing.T) {
 
 func TestStreamFeatureCollectionRejectsInvalidFeature(t *testing.T) {
 	input := strings.Replace(validFeatureCollection, "America/Los_Angeles", "Not_A_Timezone", 1)
-	if _, err := streamFeatureCollection(strings.NewReader(input), func(string, json.RawMessage) error { return nil }); err == nil {
-		t.Fatal("expected invalid tzid error")
+	if _, err := streamFeatureCollection(strings.NewReader(input), func(string, json.RawMessage) error { return nil }); err == nil || !strings.HasPrefix(err.Error(), "time zone boundary feature 1: invalid tzid ") {
+		t.Fatalf("expected invalid tzid error with time zone boundary context, got %v", err)
 	}
 }
 

@@ -2,25 +2,29 @@
 
 ## Scope And Status
 
-This is the approved public contract for bounded ingest and retry behavior in
-schema/runtime **31**, now deployed with schema/minimum runtime **32** and
-released/applied immutable migrations **001-032**. It applies to local/NFS and
-iCloud sources. Coordinated backend **42** and UI **43** are accepted; scripted
-deployed-browser verification passed. Owner acceptance/milestone and capacity
-remain separate. Deployment is not live-cloud verification or owner acceptance.
-See [current release status](development-progress.md#coverage-display-optimization).
-Pending source-only [033](database-migrations.md#canonical-coverage-display-033-source-only)
-requires coordinated schema/minimum runtime **33**, baseline **27**; it is not
-deployed and does not change this ingest contract. Its Coverage recomputation is
-canonical context warm/rebuild from existing evidence, not reprocessing files,
-OSM regeneration or route rematching. Live remains backend-42/UI-43/schema-32
-until explicit MAIN cutover completion; applied **001-032 stay immutable**.
-Historical observations elsewhere remain evidence **prior to 031**, not synthetic
-replacement observations or proof of this contract.
+This is the approved public contract for bounded ingest and retry behavior, now
+included in **029_ingest_status_reporting.sql**, for local/NFS and iCloud sources.
+Final source/runtime support, schema and minimum runtime are **30**, baseline **27**,
+ledger **0-30**. See the [history mapping](database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The behavior is deployed under historical numbering; live source-squash
+reconciliation is authorized but pending here.
+Milestone acceptance is governed only by
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout), not this
+contract or a deployment receipt. Capacity certification remains separate.
+
+[030 canonical display identity](decisions/013-canonical-coverage-display-identity.md)
+combines with compact display projections without changing this ingest
+contract, job behavior, generation policy or matcher policy. Its Coverage
+recomputation is canonical context warming/rebuild from existing evidence, not
+reprocessing files, OSM regeneration/download or route rematching; no provider
+check is needed for context warming.
+Historical observations elsewhere predate explicit reprocessing; they are not
+synthetic replacement observations or proof of this contract.
 
 The separate requirement that all popups include **Dismiss** belongs to
-the UI release, not this ingest design; deployment does not establish its owner
-browser acceptance. No source configuration, credentials, live import
+the UI release, not this ingest design; browser closeout is tracked at the
+authoritative acceptance link. No source configuration, credentials, live import
 or private workout data is needed to document or verify the contract.
 
 ## Default And Explicit Reprocessing
@@ -172,7 +176,7 @@ new ownership or metadata decisions.
 
 ## Durable Success Evidence
 
-Migration 031 adds private nullable `observed_identity` and
+Migration 029 adds private nullable `observed_identity` and
 `ownership_blocked_epoch` receipt columns to `app.source_files`. A guarded
 `processing -> succeeded` transition stamps them in the file commit transaction,
 using the admitted transaction's ingest-write capability and captured ownership
@@ -224,7 +228,7 @@ way to revisit such files, not a promise that metadata detects all overwrites.
 
 ## Outcomes And Rollout
 
-Schema 030's workout-based outcome rule is unchanged. An unsuccessful ingest with
+029's workout-based outcome rule is unchanged. An unsuccessful ingest with
 zero created and zero updated workouts displays **Failed**, even when its failed
 file count is zero: source discovery, authentication or other source-level work
 can fail before a file fails. There is no new `failuresCount` API field; public
@@ -234,31 +238,33 @@ remain cancelled, and unsuccessful runs qualify for partial success only through
 created/updated workouts. Historical execution records and notifications are not
 rewritten to achieve the display projection.
 
-Ingest reprocessing was introduced by migration **031**. Its rollout contract is
-described below; current deployment additionally uses **032**, schema and minimum
-runtime **32**, for coverage display precomputations. Use the complete active
-inventory in `api/migrations/sql/`, not an ingest-only migration subset. See
-[current migration requirements](database-migrations.md#coverage-display-precomputations-032).
-Source support is now **33** for the separate pending canonical display release;
-do not run new binaries against live 32 or infer a need for new ingest/route jobs.
+Ingest reprocessing and phase progress are included in migration **029**. The
+final source contract requires schema/minimum runtime **30**, baseline **27**;
+live reconciliation is pending here. Use the complete active **001-030** inventory
+in `api/migrations/sql/`, not an ingest-only migration subset. See
+[current migration requirements](database-migrations.md). The 030 read model
+does not require new ingest/route jobs or provider checks for context warming.
 
-The accepted 032 release used a standalone restricted native migration followed
+Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
+the 032 release used a standalone restricted native migration followed
 by full-values backend-42/UI-43 rollouts with `--no-hooks`. Original data and all
 configuration objects were preserved, including source auto-sync off and existing
 resources, concurrency, timeouts and matcher/retry budgets. No new ingest,
 matching or provider check was started. Full pre-32 backups and old images remain
 retained; image-only rollback is unsupported. Scripted deployed-browser
-verification passed; owner acceptance/milestone and capacity remain separate.
+verification passed at that checkpoint; it is not the current 033 browser or
+milestone acceptance receipt. See [Milestone 8 Closeout](development-progress.md#milestone-8-closeout).
 
-For the original 031 introduction, the native migration command advances through **001-031**. Applied
-**001-030 are immutable**. Source support, schema and minimum runtime become
-**31**; `migration_baseline` remains **27**. Take protected backups and retain
-matching old images, stop/drain incompatible API and worker runtimes, apply 031,
+For compatible source histories, the native command advances through **001-030**.
+Source support, schema and minimum runtime become **30**; `migration_baseline`
+remains **27**. The historical live ledger needs separate approved reconciliation,
+not ordinary Goose Up. Take protected backups and retain matching old images,
+stop/drain incompatible API and worker runtimes, apply the complete source contract,
 and bring up coordinated compatible API/general-worker/Coverage-worker images
 with the matching UI. Verify history, readiness and grants before resuming work.
 No old/new API-worker rolling mixture is supported. An incompatible-image rollback
 requires the matching database backup, not an image-only rollback or Goose Down.
-See [database migrations](database-migrations.md#explicit-ingest-reprocessing-031).
+See [database migrations](database-migrations.md#explicit-ingest-reprocessing-029).
 
 Release verification must cover omitted/false/true bounded requests, incremental
 presence rejection, coalescing isolation, forced and normal retry paths, durable

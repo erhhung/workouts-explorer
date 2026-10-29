@@ -1,18 +1,88 @@
 # Application Database Migrations
 
-The deployed migration sequence is **001-032**. Released/applied 032 includes coverage
-display precomputations and targeted entity statistics. **Source-only 033** adds
-canonical display identity and is **not deployed**. Live schema and minimum runtime
-are **32**, retaining `migration_baseline=27`, with
-contiguous Goose ledger **0-32**. Applied **001-032 are immutable**. The standalone
-native migration and coordinated backend-42/UI-43 deployment are accepted.
-Scripted deployed-browser verification passed; owner acceptance/milestone and
-capacity remain separate.
-The preceding ingest contract remains defined by 031. See
-[current release status](development-progress.md#coverage-display-optimization).
-The baseline release receipts below are historical, **prior to 031/032**.
-Source support/schema/minimum runtime for the pending coordinated release are
-**33**, baseline **27**; see [033 gates](#canonical-coverage-display-033-source-only).
+The current **source** migration sequence is **001-030**. Final source/runtime
+`SupportedSchemaVersion=30`, schema **30** and minimum runtime **30** retain
+`migration_baseline=27` and a contiguous Goose ledger **0-30**. Migrations
+**001-028 are unchanged**. The approved source contract is now installed at Helm
+revision **61**: APP schema/minimum runtime **30/30**, baseline **27**, ledger
+**0-30**, retaining original ledger rows and Goose row-ID high-water **54**.
+Separate OSM schema/minimum runtime **10/10** is verified on the primary and two
+standbys. Current Helm revision **62** retains those schema/history contracts and
+corrects observer campaign allocation. Deployment, initial proof validation and
+bounded live unchanged-cycle acceptance are verified.
+
+## Source History Mapping
+
+Old numbers in public release reports are **pre-squash historical numbering**;
+use this mapping rather than treating them as current migrations or fresh passes.
+
+| Current source migration | Folded pre-squash historical numbering | Contract |
+|---|---|---|
+| `001`-`028` | `001`-`028` | Unchanged foundation and committed-route pipeline |
+| [029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql) | `029_ingest_partial_success.sql` + `030_ingest_workout_outcomes.sql` + `031_ingest_reprocessing.sql` + `034_ingest_phase_progress.sql` | Final workout-based outcomes, file filtering, explicit reprocessing and durable activity phases |
+| [030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql) | `032_coverage_display_precomputations.sql` + `033_canonical_coverage_display.sql` | Compact display facts, targeted stats and canonical display identity |
+
+Both display sections below belong to **030**, with distinct precomputation and
+canonical-identity anchors. Ingest outcomes, reprocessing and phase progress all
+belong to **029**. There is no ongoing source schema/runtime 31-34 compatibility
+contract. Private historical receipts, Git/image history and earlier test results
+remain immutable; the squash changes numbering, not approved functionality.
+
+The deployed [metadata-driven reconciliation](#metadata-driven-coverage-reconciliation-029-and-osm-010)
+is an additional source-029 feature, not functionality claimed by those historical
+receipts or merely by renumbering. Initial proof validation and bounded live
+unchanged-cycle verification are complete.
+
+## Live Cutover (Revision 61)
+
+The separate operator-recorded APP cutover completed at Helm **61**, with native
+API/shared-worker/OSM images under the original tag. UI/Martin stayed unchanged;
+all **18 configuration specifications** were preserved. APP schema/minimum runtime
+is **30/30**, baseline **27**, ledger **0-30**; original retained ledger rows and
+Goose row-ID high-water **54** were verified. Native OSM 010 Up completed on actual
+PG17 and schema/minimum **10/10** was verified on primary and two standbys. This
+was not an ordinary Goose downgrade or a new runtime compatibility branch.
+
+Private checks before prior writers restarted verified recorded context/region
+projections, roles, sequence states and old-table counters, including zero
+forbidden APP old-table DML in the owned transaction. This bounded preservation
+proof does not establish a full raw-data backup/hash or universal absence of data
+loss. No manual application jobs or provider operations were started. Fallback
+image pins were retained at deployment, not certified as globally retrievable
+now: older registry artifact deletions require fresh reachability checks before
+relying on rollback. Matching database/image recovery remains required.
+
+The selected genuine PostgreSQL matrix and full `go test ./...` passed; isolated
+tests used PG18.6. Actual PG17 OSM native Up/standby verification is not a full PG17
+test matrix or completion of every historical race. See
+[revision-61 verification](development-progress.md#metadata-driven-coverage-reconciliation).
+Revision **62** replaces only the catalog observer and makes a one-time metadata
+update for accounts missing initial selection proof. Genuine campaigns allocate
+above all global/account counters, preventing a legacy account's completed
+revision from masking new work. No schema, table or Goose-history change occurs;
+healthy accounts and unrelated application data remain unchanged. Initial proof
+validation subsequently completed. Three fresh production reconciliation cycles
+returned no work, with no GPS/ROI, new jobs or changed rows; this bounded idle
+acceptance is separate from readiness and does not certify map-scaling capacity.
+See the [repeat procedure](decisions/014-metadata-driven-coverage-reconciliation.md#repeatable-unchanged-cycle-verification).
+This documentation closeout performs no cluster, deployment or database work.
+
+## Pre-Cutover Live Status
+
+**Historical checkpoint, superseded by [revision 61](#live-cutover-revision-61).**
+The pre-cutover deployment was Helm revision **60**, schema **34**, minimum runtime
+**33**, baseline **27**, ledger **0-34**, in **pre-squash historical numbering**
+([mapping](#source-history-mapping)). Only API, shared worker and UI pins changed
+at that checkpoint; OSM and Martin were unchanged. This is not deployed schema 30.
+See [current release status](development-progress.md#current-status) and the
+[029 phase follow-up](development-progress.md#ingest-phase-progress-follow-up-029).
+[Milestone 8 closeout](development-progress.md#milestone-8-closeout) retains its
+revision-57 browser **PASS**; it is not reopened or a capacity certification.
+
+That higher-numbered catalog/ledger required a separate approved operator cutover,
+not ordinary Goose Up, replay of applied SQL or improvised ledger edits. Its
+34/60 receipt and the revision-57 M8 receipt remain mapped history, not relabeled
+source-30 passes. Current preservation and verification scope is recorded above.
 
 ## Directory Layout
 
@@ -55,11 +125,12 @@ includes active SQL from `api/migrations/sql/` only. Tests obtain isolated featu
 checkpoints through semantic sections of that same SQL, not a second versioned
 migration history.
 
-The deployed Coverage contract uses **001-028**.
+The historical folded-028 Coverage release used **001-028**.
 `028_ingest_coverage_pipeline.sql` folds together the pipeline, deferred-generation
 locking fix, strict eligible-cohort construction and mixed-failure automatic retry
-policy. Schema and minimum runtime are **28**, `migration_baseline` remains **27**,
-and that release's `SupportedSchemaVersion=28`. Goose's version-0 sentinel is bookkeeping,
+policy. At that checkpoint schema and minimum runtime were **28**,
+`migration_baseline` remained **27**, and `SupportedSchemaVersion=28`.
+Goose's version-0 sentinel is bookkeeping,
 not a migration file. Internal serial row IDs need not be consecutive; migration
 versions must be.
 
@@ -73,18 +144,15 @@ a routine upgrade mechanism.
 
 ## Ingest Outcomes And File Filtering
 
-Migration 029 advanced the active sequence ordinarily to **001-029**.
-`029_ingest_partial_success.sql` adds file-aware ingest-parent outcomes and
-server-side failed-file pagination. Source `SupportedSchemaVersion=29` requires
-this migration before new binaries start. Minimum runtime remains **28**, and
-`migration_baseline` remains **27**; existing runtime-28 readers retain their
-three-argument file-list ABI.
+`029_ingest_status_reporting.sql` combines ingest status reporting, file filtering,
+workout-based outcomes, explicit reprocessing and phase progress. The complete
+source sequence finishes at schema/minimum runtime **30/30**, baseline **27**;
+intermediate sections are not separate supported runtime contracts.
 
-When a failed source child has successfully processed files or unchanged files
-that were successfully skipped, its terminal ingest parent is
-`partially_succeeded`, even if no whole source child succeeded. Durable successful
-file records cover progress snapshots that lag committed imports. Failed source
-children remain failed and retryable; all-cancelled runs remain cancelled.
+The final partial-success criterion is imported or updated workouts, not successful
+file reads or skips. Durable records cover progress snapshots that lag committed
+imports. Failed source children remain failed and retryable; all-cancelled runs
+remain cancelled.
 Notifications distinguish file-processing failures from source-level failures,
 without promising that a bounded retry processes only failed filenames.
 
@@ -95,9 +163,9 @@ Apply it with the native migration entry point, not by editing applied 028.
 
 ## Workout-Based Ingest Outcomes
 
-Migration 030 advanced the sequence to **001-030**. The applied 029 SQL remains
-immutable; `030_ingest_workout_outcomes.sql` supersedes its file-based success
-criterion. An unsuccessful ingest is partially successful only when
+Migration **029** contains the final workout-based success criterion, with no
+intermediate file-based contract. An unsuccessful ingest is partially successful
+only when
 `workouts_created > 0 OR workouts_updated > 0`. Successful file reads, skips and
 unchanged workouts alone do not qualify. Successful empty runs remain completed,
 all-cancelled runs remain cancelled, and Coverage/deletion outcomes are unchanged.
@@ -109,15 +177,15 @@ rewriting its execution record, notification row, timestamps or retry lineage.
 Source-child display follows the same rule while its stored failure stays
 retryable. New terminal parents use the workout-based rule directly.
 
-Source runtime is **30**, minimum runtime remains **28**, and baseline marker
-remains **27**. Apply native migration 030 before deploying the new API.
+Final source runtime and minimum runtime are **30**, and baseline marker remains
+**27**. Use the complete source sequence before deploying compatible binaries.
 
-## Explicit Ingest Reprocessing (031)
+## Explicit Ingest Reprocessing (029)
 
-`031_ingest_reprocessing.sql` advances the active sequence to **001-031**, schema
-and minimum runtime **31**, retaining `migration_baseline=27`. Source support is
-31. Apply it through the native `/app/migrate` entry point; applied **001-030 stay
-immutable**, with no ledger repair or replay of applied SQL.
+`029_ingest_status_reporting.sql` includes explicit ingest reprocessing, retaining
+`migration_baseline=27`. Final source support/schema/minimum runtime are **30**.
+Use native `/app/migrate` for compatible source histories; the separately approved
+live reconciliation is not ordinary Goose Up or permission to replay applied SQL.
 
 New bounded API jobs persist explicit boolean `reprocessAllFiles`, default false;
 incremental jobs cannot carry the field. Existing bounded jobs with the field
@@ -125,7 +193,7 @@ absent retain their original force policy. Do not rewrite historical parameters,
 coalescing keys, queued jobs or frozen candidate metadata, or add another new/old
 contract marker. The existing historical parameter compatibility is retained.
 
-031 adds private nullable `source_files.observed_identity` and
+029 adds private nullable `source_files.observed_identity` and
 `ownership_blocked_epoch` success receipts and guarded commit-time stamping from
 the admitted ingest-write capability and frozen manifest. Existing terminal-file
 and manifest immutability remain authoritative. Retry reads valid same-file,
@@ -139,30 +207,92 @@ is made. Normal non-forced retries can still use ordinary valid inventory skips.
 The new API v2 coalescing identity separates effective force, date/source-generation
 scope and root/retry ancestry using existing sorted source-row locks and active
 uniqueness, not another lock. Private receipts do not expand the public file ABI.
-Schema 030's workout-based outcomes are unchanged: unsuccessful runs with zero
+029's workout-based outcomes are unchanged: unsuccessful runs with zero
 created/updated workouts display **Failed** even with zero failed files; source
 discovery/authentication can fail without a failed file. Successful empty and
 all-cancelled runs retain their existing outcomes.
 
 Take fresh protected backups and retain matching old images. Drain/stop
-incompatible API/general-worker/Coverage-worker runtimes, apply native 031, then
+incompatible API/general-worker/Coverage-worker runtimes, apply the full source sequence, then
 deploy coordinated compatible API/worker images and matching UI. Minimum runtime
-31 fences older execution; do not mix old API/worker images with this contract.
+30 fences older execution; do not mix old API/worker images with this contract.
 Verify contiguous history, marker, role readiness, grants and queued historical
 job compatibility before resuming. Rollback requires the matching database backup
-and old images together; 031 is forward-only, not an image-only rollback. This
+and old images together; 029 is forward-only, not an image-only rollback. This
 section defines rollout requirements, not a live-release receipt.
 See [Ingest Reprocessing](ingest-reprocessing.md) for the full API and retry rules.
 
-## Coverage Display Precomputations (032)
+## Metadata-Driven Coverage Reconciliation (029 And OSM 010)
 
-[032_coverage_display_precomputations.sql](../api/migrations/sql/032_coverage_display_precomputations.sql) is an ordinary forward migration after
-031. Applied **001-032 remain immutable**; use native `/app/migrate`, with no ledger
-rewrite or replay. Its final metadata assignment is schema **32** and minimum
-runtime **32**; the baseline marker stays **27**. The targeted reader and indexes
-shipped in this **released/applied 032**, not a 033 or a rewrite of deployed history.
-Accepted private receipts verify compatible runtime support and actual API/worker
-role readiness, not merely numeric schema compatibility.
+**Deployed at Helm 62; initialization and live unchanged-cycle acceptance PASS.**
+[ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md) documents why
+unchanged routes must not require full-history GPS/hash/ROI scans or redundant jobs.
+The feature is the `BEGIN PRECISE NEAR-IDLE COVERAGE RECONCILIATION` section of
+[029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql),
+before its metadata assignment/Down section. Complete APP source/runtime stays
+**30**, schema/minimum runtime **30/30**, baseline **27**, ledger **0-30**;
+001-028 and combined 030 are not changed by this feature. Section placement is
+not a separately supported intermediate runtime.
+
+029 adds owner-only forced-RLS `app.coverage_route_changes`,
+`app.coverage_route_selection_proofs`, `app.coverage_applied_match_proofs` and
+`app.coverage_reconciliation_wakes`; accepted catalog fields on
+`app.coverage_reconciliation_state`; queue/scan controls on
+`app.coverage_reconciliation_accounts`; and the immutable complete matching
+descriptor on `app.coverage_job_contexts`. Transition hooks capture point changes
+including old/new UPDATE keys with equal count/bounds; terminal/handoff hooks wake
+exact accounts without an account-generation lock in file transactions.
+
+The callable contract includes fenced `app.read_coverage_catalog_observation`,
+`app.read_coverage_selection_metadata`, `app.observe_coverage_catalog`,
+`app.claim_coverage_reconciliation_work` (with `scan_required`),
+`app.apply_coverage_selection`, `app.ingest_coverage_route_needs_proof` and
+`app.coverage_production_descriptor_current`. Runtime access is explicit helper
+execution only, not direct private-table access. Readiness composes table/RLS/ACL,
+function signatures/attributes/native body fingerprints, dirty indexes,
+mutation/terminal hooks and baseline patch fences into full APP readiness.
+
+Historical applied-proof initialization requires exact retained successful
+immutable shipped-V1 job history, including minimum traversal and the actual
+generation/input target. Cleared pointers require a matching successful finish
+marker; conflicting descriptors are rejected. **No historical negative selection
+baseline is inferred.** Unknown selection proof has a bounded one-time bootstrap
+cost; valid pending/unavailable proof is then reusable. Ordinary identical
+observations do no DML, and 24-hour age no longer triggers a scan. Queue-only
+recovery preserves campaign cursor/completion and existing retry/cancel authority.
+
+OSM uses a **separate**
+[010_route_region_catalog_state.sql](../internal/osm/migrations/010_route_region_catalog_state.sql),
+raising OSM schema/minimum runtime to **10/10**. It adds generated region boundary
+SHA/area and `osm_catalog.route_region_catalog_state` with transactional revision,
+legacy-compatible full fingerprint, selection fingerprint, active heads and
+configured metadata. Catalog-write triggers suppress equal derived head UPDATEs;
+unchanged catalog upserts are also suppressed. Selection covers all catalog
+IDs/configuration/boundaries/configured-active presence, excluding replacement
+generation numbers. This permits proof-based generation rebinding without GPS,
+not unfenced substitution of heads or per-point area/hash computation.
+
+OSM 010 and APP source-30 readers/runtimes were coordinated at revision 61;
+metadata/event floors must be observed in one replica Repeatable Read snapshot with no strict-policy
+primary fallback. The selected genuine PostgreSQL matrix and deployed readiness
+passed within the [revision-61 scope](#live-cutover-revision-61), not as a claim
+that all historical races passed. APP is **30/minimum 30**, OSM **10/minimum 10**.
+The prior higher-numbered APP history was reconciled by the separately recorded
+operator cutover, not ordinary Goose downgrade or runtime compatibility branches.
+These forward-only contracts do not promise image-only rollback or current global
+registry retention. The [delivery record](development-progress.md#metadata-driven-coverage-reconciliation)
+includes completed proof initialization and measured unchanged-cycle acceptance;
+map-scaling and capacity acceptance remain separate.
+
+## Coverage Display Precomputations (030)
+
+[030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql) follows
+029 and combines compact projections, targeted statistics and canonical identity.
+Its final metadata assignment is schema **30** and minimum runtime **30**; the
+baseline marker stays **27**. Use native `/app/migrate` for compatible histories;
+the [completed operator cutover](#live-cutover-revision-61) was separate.
+Actual API/worker role readiness must establish the final combined contract,
+not merely numeric schema compatibility or historical receipts.
 
 The migration adds three normalized compact projections:
 
@@ -200,7 +330,7 @@ before physical cleanup; failed rematching retains the prior applied coverage.
 
 ### Targeted Entity Statistics
 
-032 also adds
+030 also adds
 `app.map_selection_coverage_entity_stats(uuid,uuid,uuid,bigint,text,uuid)` for
 `GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}/stats`.
 It returns the same 21 ordered metadata fields as the list/detail readers,
@@ -236,7 +366,7 @@ six display functions, not normalized SQL. It also checks signatures, ordered
 results/defaults, language/volatility/security settings, ownership/ACLs, table
 columns/constraints, forced RLS/policies, index definitions/validity and exact
 maintenance-trigger events/deferral. A missing index, altered setting/body or
-broadened privilege fails readiness even at schema 32.
+broadened privilege fails readiness even at schema 30.
 
 Contract and disposable-database checks live in
 [stats contract tests](../api/migrations/tests/coverage_entity_stats_test.go),
@@ -244,42 +374,43 @@ Contract and disposable-database checks live in
 [projection maintenance/upgrade tests](../api/migrations/tests/coverage_display_precomputations_integration_test.go),
 [exact readiness contract tests](../internal/database/coverage_display_precomputations_readiness_test.go), and
 [catalog mutation tests](../internal/database/coverage_display_precomputations_readiness_integration_test.go).
-Recorded verification belongs in
+Verification using pre-squash historical numbering ([mapping](#source-history-mapping)) belongs in
 [Development Progress](development-progress.md#coverage-display-optimization),
 with separate source, deployment and passed scripted deployed-browser evidence
 boundaries; none permits replaying applied migrations.
 
 ### Release Requirements
 
-Before applying 032, retain a protected pre-migration backup and matching images,
+Before applying 030, retain a protected pre-migration backup and matching images,
 drain incompatible runtimes, and coordinate compatible API, general-worker and
-Coverage-worker images and UI. Verify clean creation, 031-to-032 upgrade, backfill parity,
+Coverage-worker images and UI. Verify clean creation, 028-to-030 upgrade, backfill parity,
 batched maintenance, concurrent segment invalidation, rollback on maintenance
 failure, role isolation and unchanged date-range semantics. These are release
 requirements, not test or deployment receipts. Goose Down deliberately raises
-SQLSTATE `55000`: **032 is forward-only**. Rollback requires restoring the matching
+SQLSTATE `55000`: **030 is forward-only**. Rollback requires restoring the matching
 pre-migration database backup and images, not an image-only downgrade.
 
-The accepted release applied 032 through a standalone restricted native migration
-Job while incompatible runtimes were paused, then rolled backend revision **42**
+The **pre-squash historical numbering** ([mapping](#source-history-mapping))
+**032/backend-42/UI-43 checkpoint** applied 032 through a standalone
+restricted native migration Job while incompatible runtimes were paused, then rolled backend revision **42**
 and UI revision **43** with full values and `--no-hooks`. Paused original-column
 hash checks preserved all **82 original business tables**, prior ledger entries
 and unrelated relations/roles/functions. Actual API/general-worker/Coverage-worker
 readiness passed at schema/minimum **32**, marker **27**, ledger **0-32**. Full
 protected pre-32 database/role backups and matching old image exports remain
-retained. Scripted deployed-browser verification passed; owner acceptance/milestone
-and capacity remain separate. No image-only rollback, provider check or new
+retained. Scripted deployed-browser verification passed at that checkpoint, not
+as current release acceptance. See [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
+No capacity certification, image-only rollback, provider check or new
 ingest/matching operation is implied by this release.
 
-## Canonical Coverage Display (033, Source Only)
+## Canonical Coverage Display (030)
 
-[033_canonical_coverage_display.sql](../api/migrations/sql/033_canonical_coverage_display.sql)
-is the next ordinary forward migration, **not applied live**. It advances schema
-and minimum runtime to **33**, retaining `migration_baseline=27`; its expected
-post-migration ledger is **0-33**. Applied **001-032 are immutable**, including
-032's shipped stats reader. Use native `/app/migrate`, never replay/modify applied
-SQL or rewrite the ledger. Live backend-42/UI-43 remains schema/minimum **32** until
-explicit MAIN cutover completes.
+[030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql)
+includes canonical identity and the compact-fact/stats foundation. Final source
+schema and minimum runtime are **30**, retaining `migration_baseline=27` and ledger
+**0-30**. The behavior's historical receipts remain unchanged; the source contract
+is now installed at **revision 61**. Use native `/app/migrate` only with compatible
+histories; see the separate [completed live cutover](#live-cutover-revision-61).
 
 [ADR 0013](decisions/013-canonical-coverage-display-identity.md) defines policy
 `coverage-display-identity-v1`: region plus normalized actual display name/place,
@@ -308,13 +439,13 @@ and all four tile layers share that context and preserve actual source geometry
 and provenance. Selection JSON requires display policy/revision; compatible UI
 caches/guards must use them.
 
-033 retains compact-fact maintenance and post-barrier segment expansion. All
+030 retains compact-fact maintenance and post-barrier segment expansion. All
 reader inputs, including metadata, dates, deletion, route/applied eligibility and
 region labels, queue deferred invalidation. Revision and public generation advance
 once per account/transaction, not per row; no early ingest/provider generation
 lock or eager rebuild of every date context. Verify both READ COMMITTED commit
 orders, stale Repeatable Read `40001`, savepoints, rollback and deleted-account
-queue cleanup. Runtime readiness checks exact 033 bodies and
+queue cleanup. Runtime readiness checks exact 030 bodies and
 ownership/ACL/RLS/index/trigger contracts, not numeric version alone.
 
 Migration seeds revisions and advances public generation once per account to
@@ -324,9 +455,9 @@ derivation/matcher/path-policy bump, OSM regeneration/download or route rematchi
 is needed.** Coverage recomputation means canonical context warm/rebuild from
 existing evidence, not new route jobs.
 
-Before MAIN cutover: complete source verification; rehearse native 032-to-033
-migration, role readiness, preservation and full rollback on a protected restore
-of an actual backup using the actual migration role; retain fresh backups and
+The 030 rollout contract requires source verification; native 028-to-030
+migration, role readiness, preservation and full rollback rehearsal on a protected
+restore of an actual backup using the actual migration role; fresh backups and
 matching old images. Stop/drain incompatible API/general-worker/Coverage-worker
 runtimes and coordinate compatible images/UI, including tile SQL consumers.
 Preserve migration/TLS/OSM replica/Martin flags and identity, source auto-sync,
@@ -334,9 +465,31 @@ admin-password debug, resources, concurrency, timeouts and retry budgets. Keep
 all dumps/archives under `~/nfs-share/.temp/`, linked from the matching private
 `deploy/internal` release bundle; monitor workspace, `/tmp`, NFS and application-PG
 filesystems and inodes regularly. No live mutation is authorized by this document.
-033 Down raises `55000`: rollback needs the matching database restore **and** old
-images, never image-only downgrade. Full 033 verification, rehearsal and deployment
-receipts are separate gates in [Development Progress](development-progress.md#canonical-display-identity-033-source-only).
+030 Down raises `55000`: rollback needs the matching database restore **and** old
+images, never image-only downgrade. These are safety requirements, not completed
+source-squash cutover assertions or new execution authorization. Verification, rehearsal and
+deployment receipts retain their distinct scopes in
+[current status](development-progress.md#current-status); browser and milestone
+acceptance belongs in [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
+
+## Ingest Phase Progress (029)
+
+[029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql)
+includes the fenced, worker-only
+`app.record_ingest_phase` function and a partial `app.job_events(job_id, id DESC)`
+index for `code LIKE 'ingest-phase-%'`. Required phase writes use the append-only
+journal independently of optional diagnostic-event limits. There is no backfill,
+data rewrite or invented historical activity. Final source runtime **30** requires
+the combined structural readiness contract. The former additive phase-only
+rollback is not the rollback contract for combined, forward-only 029/030; retain
+matching database backups and images together.
+
+The revision-60 native migration completed in **73.09ms** using **pre-squash
+historical numbering** ([mapping](#source-history-mapping)): 034 installed schema
+**34/minimum 33**, baseline **27**, ledger **0-34**. That is an earlier release
+receipt, not a squashed-source pass or cutover claim. See the
+[follow-up closeout](development-progress.md#ingest-phase-progress-follow-up-029)
+for unchanged behavior and recorded validation. No operations run in this docs task.
 
 ## Native Upgrade Entry Point
 
@@ -442,8 +595,8 @@ Execution requires explicit operator approval and a fresh protected backup.
 Before application, rehearse repair and rollback on a protected restore of an
 **actual application backup**, using the **actual migration role**, released source
 and catalog-fingerprint proof. Synthetic archived-old-28 checks are not that
-protected actual-backup rehearsal. For the current release, the separately approved
-exact actual-profile rehearsal and live repair both passed; the following
+protected actual-backup rehearsal. For the historical folded-028 release, the
+separately approved exact actual-profile rehearsal and live repair both passed; the following
 preservation/rollback requirements still apply to any separately authorized repair.
 
 Pause **all old API, ingest and Coverage runtimes** before repair and replacement;

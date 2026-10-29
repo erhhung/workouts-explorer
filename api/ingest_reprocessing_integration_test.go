@@ -21,7 +21,7 @@ import (
 func TestIngestReprocessingIntegration(t *testing.T) {
 	apiURL, migrationURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL")
 	if apiURL == "" || migrationURL == "" {
-		t.Skip("API_DATABASE_URL and MIGRATION_DATABASE_URL are required; bounded persistence requires schema 31")
+		t.Skip("API_DATABASE_URL and MIGRATION_DATABASE_URL are required; bounded persistence requires schema 29")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

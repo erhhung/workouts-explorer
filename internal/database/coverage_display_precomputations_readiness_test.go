@@ -11,18 +11,18 @@ import (
 )
 
 func TestCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 33 {
-		t.Fatalf("supported schema = %d, want 33", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 30 {
+		t.Fatalf("supported schema = %d, want 30", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ")"
-	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 32 OR (") {
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ")"
+	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("full readiness must compose the version-gated display contract with all existing contracts")
 	}
 }
 
 func TestCoverageDisplayReadinessCatalogContract(t *testing.T) {
 	for _, required := range []string{
-		"SELECT minimum_runtime_version >= 32 FROM app.schema_metadata WHERE singleton",
+		"SELECT minimum_runtime_version >= 30 FROM app.schema_metadata WHERE singleton",
 		"('workout_path_display_partials', ARRAY[", "('workout_path_display_context', ARRAY[",
 		"('workout_park_display_bounds', ARRAY[", "('coverage_display_dirty', ARRAY[",
 		"c.relkind<>'r' OR c.relpersistence<>'p'", "pg_get_userbyid(c.relowner)<>'workouts_security_owner'",
@@ -72,13 +72,13 @@ func TestCoverageDisplayReadinessCatalogContract(t *testing.T) {
 }
 
 func TestCoverageDisplayReadinessEntityIndexes(t *testing.T) {
-	raw, err := migrations.Files.ReadFile("032_coverage_display_precomputations.sql")
+	raw, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	indexes := regexp.MustCompile(`CREATE INDEX (\w+)\s+ON (app\.\w+) \(([^)]+)\);`).FindAllStringSubmatch(string(raw), -1)
+	indexes := regexp.MustCompile(`CREATE INDEX (\w+)\s+ON (app\.workout_\w+) \(([^)]+)\);`).FindAllStringSubmatch(string(raw), -1)
 	if len(indexes) != 3 {
-		t.Fatalf("want three entity-first indexes in migration 032, got %d", len(indexes))
+		t.Fatalf("want three entity-first evidence indexes in migration 030, got %d", len(indexes))
 	}
 	for _, index := range indexes {
 		columns := strings.Split(index[3], ", ")
@@ -90,22 +90,18 @@ func TestCoverageDisplayReadinessEntityIndexes(t *testing.T) {
 }
 
 func TestCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
-	raw, err := migrations.Files.ReadFile("032_coverage_display_precomputations.sql")
+	raw, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pattern := regexp.MustCompile(`(?s)CREATE (?:OR REPLACE )?FUNCTION app\.([a-z_]+)\s*\(.*?AS \$function\$(.*?)\$function\$;`)
 	functions := map[string]string{}
 	for _, function := range pattern.FindAllStringSubmatch(string(raw), -1) {
-		functions[function[1]] = function[2]
-	}
-	raw, err = migrations.Files.ReadFile("033_canonical_coverage_display.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 033 retains the source-fact helpers but replaces the dirty marker and readers.
-	for _, function := range pattern.FindAllStringSubmatch(string(raw), -1) {
-		if _, protected := functions[function[1]]; protected {
+		switch function[1] {
+		case "rebuild_coverage_display_precomputations", "flush_coverage_display_precomputations", "mark_coverage_display_dirty", "flush_coverage_display_dirty_account", "map_selection_coverage_entities", "map_selection_coverage_entity_stats":
+			if _, duplicate := functions[function[1]]; duplicate {
+				t.Fatalf("duplicate evidence function definition for %s", function[1])
+			}
 			functions[function[1]] = function[2]
 		}
 	}
@@ -153,7 +149,7 @@ func TestCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	for _, reader := range readers {
 		result := "TABLE(" + strings.Join(strings.Fields(reader[1]), " ") + ")"
 		if len(strings.Split(reader[1], ",")) != 21 || strings.Count(runtimeCoverageDisplayReadinessSQL, "'"+result+"'") != 2 {
-			t.Fatal("both canonical readers must preserve the exact 21-column result from migration 032")
+			t.Fatal("both canonical readers must preserve the exact 21-column result in migration 030")
 		}
 	}
 }

@@ -10,8 +10,8 @@ import (
 
 func TestEligibleCohortCanonical28Contract(t *testing.T) {
 	files, err := fs.Glob(migrations.Files, "*.sql")
-	if err != nil || len(files) != 33 || files[27] != "028_ingest_coverage_pipeline.sql" || files[28] != "029_ingest_partial_success.sql" || files[29] != "030_ingest_workout_outcomes.sql" || files[30] != "031_ingest_reprocessing.sql" || files[31] != "032_coverage_display_precomputations.sql" || files[32] != "033_canonical_coverage_display.sql" {
-		t.Fatalf("canonical migration history must retain 028 through 032 and advance to 033: %v %v", files, err)
+	if err != nil || len(files) != 30 || files[27] != "028_ingest_coverage_pipeline.sql" || files[28] != "029_ingest_status_reporting.sql" || files[29] != "030_coverage_display.sql" {
+		t.Fatalf("canonical migration history must retain 028 and end with status29/display30: %v %v", files, err)
 	}
 	raw, err := migrations.Files.ReadFile("028_ingest_coverage_pipeline.sql")
 	if err != nil {

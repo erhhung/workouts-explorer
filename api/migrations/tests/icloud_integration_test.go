@@ -110,7 +110,7 @@ func TestICloudMigrationIntegration(t *testing.T) {
 		icloudWorker, oldScheduler.lease).Scan(&oldClaimedAccount); err != nil || oldClaimedAccount != oldScheduler.account {
 		t.Fatalf("pre-upgrade v20 scheduler claim=%s err=%v", oldClaimedAccount, err)
 	}
-	wantVersion, wantMinimum := database.SupportedSchemaVersion, 33
+	wantVersion, wantMinimum := database.SupportedSchemaVersion, 30
 	if foundationsOnly {
 		wantVersion, wantMinimum = 21, 21
 	}

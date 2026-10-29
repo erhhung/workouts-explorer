@@ -41,7 +41,7 @@ For development status, see [Development Progress](docs/development-progress.md)
 | ✅ | 5  | Import history; route and point downloads; safe individual workout and date-range deletions |
 | ✅ | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
 | ✅ | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
-| ✅ | 8  | Private iCloud setup; remote workout imports; clear prompts when access expires |
+| ✅ | [8](docs/development-progress.md#milestone-8-closeout) | Private iCloud setup; remote workout imports; clear prompts when access expires |
 | 🔳 | 9  | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
 | 🔳 | 10 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
 | 🔳 | 11 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |

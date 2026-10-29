@@ -20,17 +20,21 @@ func TestIngestPartialSuccessMigrationContract(t *testing.T) {
 		}
 		return string(body)
 	}
-	source := read("029_ingest_partial_success.sql")
+	source := read("029_ingest_status_reporting.sql")
+	status, _, found := strings.Cut(source, "-- BEGIN PRECISE NEAR-IDLE COVERAGE RECONCILIATION")
+	if !found {
+		t.Fatal("missing metadata reconciliation feature boundary")
+	}
 	for _, required := range []string{
 		"CREATE OR REPLACE FUNCTION app.derive_parent_status (parent_id uuid)",
 		"CREATE OR REPLACE FUNCTION app.notify_terminal_ingest_parent ()",
-		"progress.files_succeeded > 0 OR progress.files_skipped > 0 OR EXISTS",
-		"file.account_id = child.account_id AND file.state = 'succeeded'",
+		"COALESCE(sum(progress.workouts_created), 0) > 0 OR COALESCE(sum(progress.workouts_updated), 0) > 0",
+		"WHEN failed_count + cancelled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
 		"child.failure_code IS NOT DISTINCT FROM 'source-file-invalid' AND EXISTS",
 		"file.account_id = child.account_id AND file.state = 'failed'",
 		"child.status IN ('failed', 'cancelled')",
 		"ON CONFLICT(account_id, type, condition_key) DO NOTHING",
-		"UPDATE app.schema_metadata SET schema_version = 29 WHERE singleton;",
+		"UPDATE app.schema_metadata SET schema_version = 29, minimum_runtime_version = 29 WHERE singleton;",
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;",
 		"GRANT EXECUTE ON FUNCTION app.derive_parent_status(uuid) TO workouts_security_owner;",
 		"CREATE FUNCTION app.read_owned_job_files (target_job_id uuid, requested_limit integer, requested_offset integer, failures_only boolean)",
@@ -40,7 +44,7 @@ func TestIngestPartialSuccessMigrationContract(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION app.read_owned_job_files(uuid, integer, integer, boolean) TO workouts_api;",
 		"IF row_kind IN ('file', 'failed_file') THEN",
 		"AND (row_kind = 'file' OR file.state = 'failed');",
-		"ingest partial success is forward-only",
+		"ingest status reporting is forward-only",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("missing migration contract: %s", required)
@@ -48,20 +52,19 @@ func TestIngestPartialSuccessMigrationContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"DISABLE TRIGGER", "session_replication_role", "NO FORCE ROW LEVEL SECURITY", "DROP FUNCTION",
-		"minimum_runtime_version =", "migration_baseline =", "SELECT app.derive_parent_status",
+		"migration_baseline =", "SELECT app.derive_parent_status",
 		"UPDATE app.source_files", "UPDATE app.notifications", "boolean DEFAULT",
 		"ALTER FUNCTION app.derive_parent_status", "ALTER FUNCTION app.notify_terminal_ingest_parent",
 		"ALTER FUNCTION app.count_owned_job_rows",
 		"CREATE OR REPLACE FUNCTION app.read_owned_job_files",
-		"GRANT SELECT", "GRANT ALL",
+		"GRANT ALL",
 	} {
-		if strings.Contains(source, forbidden) {
+		if strings.Contains(status, forbidden) {
 			t.Errorf("migration changes existing history or security contract: %s", forbidden)
 		}
 	}
-	if strings.Count(source, "UPDATE app.jobs") != 1 || strings.Count(source, "SECURITY DEFINER") != 4 ||
-		strings.Count(source, "SET search_path = pg_catalog, app") != 4 {
-		t.Fatal("expected only the parent state-machine update and four pinned security-definer helpers")
+	if strings.Count(source, "UPDATE app.jobs") != 1 || strings.Count(source, "UPDATE app.schema_metadata") != 1 {
+		t.Fatal("expected only the guarded parent update and one atomic status29 metadata publication")
 	}
 	// The overload preserves the deployed reader's scope, bounds and redaction;
 	// its only query change filters before the window count and LIMIT/OFFSET.
@@ -184,13 +187,18 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 		t.Helper()
 		tx := beginAccount(t, db.ctx, db.worker, f.account)
 		var source uuid.UUID
-		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,28)`, c.id, worker, c.lease).Scan(&source); err != nil || source != c.source {
+		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, c.id, worker, c.lease).Scan(&source); err != nil || source != c.source {
 			t.Fatalf("file fence source=%s err=%v", source, err)
 		}
-		for _, state := range states {
+		var frozen string
+		if err := tx.QueryRow(db.ctx, `SELECT app.record_ingest_file_manifest($1,$2,$3,$4)`, c.id, worker, c.lease, reprocessingManifest(len(states))).Scan(&frozen); err != nil || frozen != "created" {
+			t.Fatalf("freeze synthetic file receipts: %s %v", frozen, err)
+		}
+		for index, state := range states {
 			id := uuid.New()
-			if _, err := tx.Exec(db.ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,state,processing_started_at)
-				VALUES($1,$2,$3,$4,$1::uuid::text,1,'processing',clock_timestamp())`, id, f.account, c.source, c.id); err != nil {
+			name := fmt.Sprintf("HealthAutoExport-2026-01-%02d.json", index+1)
+			if _, err := tx.Exec(db.ctx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,modified_at,state,processing_started_at)
+				VALUES($1,$2,$3,$4,$5,10,to_timestamp(100),'processing',clock_timestamp())`, id, f.account, c.source, c.id, name); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := tx.Exec(db.ctx, `UPDATE app.source_files SET state=$2,processed_at=clock_timestamp(),
@@ -276,7 +284,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 
 	t.Run("MetadataAndInternalSecurity", func(t *testing.T) {
 		var safe bool
-		if err := db.migration.QueryRow(db.ctx, `SELECT (SELECT schema_version=29 AND minimum_runtime_version=28 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+		if err := db.migration.QueryRow(db.ctx, `SELECT (SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT bool_and(p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog, app']
 			 AND pg_get_userbyid(p.proowner)=expected.owner
 			 AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')
@@ -354,13 +362,13 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 				progressSucceeded           int
 				lag                         bool
 			}{
-				{"mixed_files", "source-file-invalid", "partially_succeeded", filePartial, 1, 0, 1, 1, false},
+				{"mixed_files_without_workouts", "source-file-invalid", "failed", fileFailed, 1, 0, 1, 1, false},
 				{"all_files_failed", "source-file-invalid", "failed", fileFailed, 0, 0, 2, 0, false},
-				{"skipped_and_failed", "source-file-invalid", "partially_succeeded", filePartial, 0, 1, 1, 0, false},
-				{"durable_success_before_progress", "source-file-invalid", "partially_succeeded", filePartial, 1, 0, 1, 0, true},
-				{"retained_success_progress", "source-file-invalid", "partially_succeeded", filePartial, 0, 0, 1, 1, false},
-				{"fatal_after_commits", "source-read-failed", "partially_succeeded", genericPartial, 1, 0, 0, 0, true},
-				{"fatal_with_failed_files", "source-read-failed", "partially_succeeded", genericPartial, 1, 0, 1, 1, false},
+				{"skipped_and_failed", "source-file-invalid", "failed", fileFailed, 0, 1, 1, 0, false},
+				{"durable_success_before_progress", "source-file-invalid", "failed", fileFailed, 1, 0, 1, 0, true},
+				{"retained_success_progress", "source-file-invalid", "failed", fileFailed, 0, 0, 1, 1, false},
+				{"fatal_after_file_commits", "source-read-failed", "failed", genericFailed, 1, 0, 0, 0, true},
+				{"fatal_with_failed_files", "source-read-failed", "failed", genericFailed, 1, 0, 1, 1, false},
 				{"source_failure", "source-config-invalid", "failed", genericFailed, 0, 0, 0, 0, false},
 				{"file_code_without_failed_file", "source-file-invalid", "failed", genericFailed, 0, 0, 0, 0, false},
 			} {
@@ -409,7 +417,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 				claim(t, f, f.children[1])
 				check(t, f, "running", "")
 				finish(t, f, f.children[1], "failed", "source-config-invalid")
-				check(t, f, "partially_succeeded", genericPartial)
+				check(t, f, "failed", genericFailed)
 				stable(t, f)
 			})
 			t.Run("SuccessfulChildContribution", func(t *testing.T) {
@@ -419,7 +427,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 				claim(t, f, f.children[1])
 				files(t, f, f.children[1], "failed")
 				finish(t, f, f.children[1], "failed", "source-file-invalid")
-				check(t, f, "partially_succeeded", filePartial)
+				check(t, f, "failed", fileFailed)
 			})
 			for _, mixed := range []bool{false, true} {
 				t.Run(fmt.Sprintf("CancelledChildren/mixed=%t", mixed), func(t *testing.T) {
@@ -442,9 +450,27 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 						message = ""
 					}
 					if mixed {
-						status, message = "partially_succeeded", genericPartial
+						status, message = "failed", genericFailed
 					}
 					check(t, f, status, message)
+					stable(t, f)
+				})
+			}
+			for _, code := range []string{"source-file-invalid", "source-read-failed"} {
+				t.Run("ImportedWorkoutBanner/"+code, func(t *testing.T) {
+					f := create(t, kind, 1, uuid.Nil)
+					c := f.children[0]
+					claim(t, f, c)
+					files(t, f, c, "succeeded", "failed")
+					if !callBool(t, db.ctx, db.worker, f.account, `SELECT app.record_ingest_progress($1,$2,$3,2,0,1,1,1,0,0,0)`, c.id, worker, c.lease) {
+						t.Fatal("record imported workout")
+					}
+					finish(t, f, c, "failed", code)
+					message := genericPartial
+					if code == "source-file-invalid" {
+						message = filePartial
+					}
+					check(t, f, "partially_succeeded", message)
 					stable(t, f)
 				})
 			}
@@ -466,7 +492,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 		files(t, other, other.children[0], "succeeded", "failed")
 		progress(t, other, other.children[0], 1, 1, 1)
 		finish(t, other, other.children[0], "failed", "source-file-invalid")
-		check(t, other, "partially_succeeded", filePartial)
+		check(t, other, "failed", fileFailed)
 		for _, account := range []uuid.UUID{uuid.Nil, other.account} {
 			f := create(t, "manual_ingest", 1, account)
 			claim(t, f, f.children[0])
@@ -490,7 +516,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 				t.Fatalf("cross-account job/banner visible: %t %v", invisible, err)
 			}
 			_ = api.Rollback(db.ctx)
-			check(t, other, "partially_succeeded", filePartial)
+			check(t, other, "failed", fileFailed)
 		}
 	})
 }

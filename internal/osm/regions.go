@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,15 +30,21 @@ type ConfiguredRegion struct {
 }
 
 type RouteRegionReadiness struct {
-	State              string
-	Reason             string
-	Regions            []RegionGeneration
-	CatalogFingerprint string
+	State                string
+	Reason               string
+	Regions              []RegionGeneration
+	CatalogFingerprint   string
+	CatalogRevision      int64
+	SelectionFingerprint string
 }
 
 type RouteRegionCatalog struct {
-	Fingerprint       string
-	ActiveGenerations map[string]int64
+	Revision             int64
+	Fingerprint          string
+	SelectionFingerprint string
+	PromotionEventID     int64
+	ActiveGenerations    map[string]int64
+	ConfiguredRegions    []ConfiguredRegion
 }
 
 func ConfiguredRegions(ctx context.Context, pool *pgxpool.Pool) ([]ConfiguredRegion, error) {
@@ -126,75 +133,102 @@ func ResolveRouteRegionsAtPromotion(ctx context.Context, pool *pgxpool.Pool, poi
 // ResolveRouteRegionsWithCatalog binds ROI to the complete selection catalog,
 // including competing regions that were not chosen for this route. Both reads
 // share one read-only repeatable-read snapshot; no geometry leaves the catalog.
-func ResolveRouteRegionsWithCatalog(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID int64) (RouteRegionReadiness, error) {
-	if len(points) == 0 {
-		// Empty adoption owes an ACK, not matching or a catalog freshness proof.
-		return ResolveRouteRegions(ctx, pool, points)
-	}
+func ResolveRouteRegionsWithCatalog(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64) (RouteRegionReadiness, error) {
+	return ResolveRouteRegionsWithCatalogBudget(ctx, pool, points, minimumEventID, minimumCatalogRevision, 0)
+}
+
+// RouteRegionResolutionError identifies only the point-query stage. Connection,
+// catalog-head and replica-fence failures are never tagged as route-local.
+type RouteRegionResolutionError struct {
+	Err              error
+	DeadlineExceeded bool
+	InvalidData      bool
+}
+
+func (err *RouteRegionResolutionError) Error() string { return err.Err.Error() }
+func (err *RouteRegionResolutionError) Unwrap() error { return err.Err }
+
+var ErrRouteRegionResultInvalid = errors.New("OSM provider region query returned incomplete results")
+
+// The budget starts after the authorized catalog snapshot/freshness read. It
+// bounds actual ROI only, not APP authority or a whole reconciliation campaign.
+func ResolveRouteRegionsWithCatalogBudget(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64, roiBudget time.Duration) (RouteRegionReadiness, error) {
 	snapshot, err := BeginMatcherSnapshot(ctx, pool)
 	if err != nil {
 		return RouteRegionReadiness{}, err
 	}
 	defer closeMatcherSnapshot(ctx, snapshot)
-	catalog, err := readRouteRegionCatalog(ctx, snapshot.tx, minimumEventID)
+	catalog, err := readRouteRegionCatalog(ctx, snapshot.tx, minimumEventID, minimumCatalogRevision)
 	if err != nil {
 		return RouteRegionReadiness{}, err
 	}
-	readiness, err := resolveRouteRegions(ctx, snapshot.tx, points)
+	roiCtx := ctx
+	if roiBudget > 0 {
+		var cancel context.CancelFunc
+		roiCtx, cancel = context.WithTimeout(ctx, roiBudget)
+		defer cancel()
+	}
+	readiness, err := resolveRouteRegions(roiCtx, snapshot.tx, points)
 	if err != nil {
-		return RouteRegionReadiness{}, err
+		var row pgx.ScanArgError
+		var sql *pgconn.PgError
+		invalid := errors.Is(err, ErrRouteRegionResultInvalid) || errors.As(err, &row)
+		if errors.As(err, &sql) {
+			invalid = sql.Code == "22003" || sql.Code == "22P02" || sql.Code == "22023"
+		}
+		return RouteRegionReadiness{}, &RouteRegionResolutionError{Err: err,
+			DeadlineExceeded: roiBudget > 0 && roiCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil,
+			InvalidData:      invalid}
 	}
 	readiness.CatalogFingerprint = catalog.Fingerprint
+	readiness.CatalogRevision = catalog.Revision
+	readiness.SelectionFingerprint = catalog.SelectionFingerprint
 	return readiness, nil
 }
 
 // ReadRouteRegionCatalog observes the full selection proof and active heads in
 // the same snapshot used to fence replica lag. Only hashes and small head metadata
 // cross the connection, never provider boundary coordinates.
-func ReadRouteRegionCatalog(ctx context.Context, pool *pgxpool.Pool, minimumEventID int64) (RouteRegionCatalog, error) {
+func ReadRouteRegionCatalog(ctx context.Context, pool *pgxpool.Pool, minimumEventID, minimumCatalogRevision int64) (RouteRegionCatalog, error) {
 	snapshot, err := BeginMatcherSnapshot(ctx, pool)
 	if err != nil {
 		return RouteRegionCatalog{}, err
 	}
 	defer closeMatcherSnapshot(ctx, snapshot)
-	return readRouteRegionCatalog(ctx, snapshot.tx, minimumEventID)
+	return readRouteRegionCatalog(ctx, snapshot.tx, minimumEventID, minimumCatalogRevision)
 }
 
-func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID int64) (RouteRegionCatalog, error) {
-	if minimumEventID > 0 {
-		var head int64
-		if err := tx.QueryRow(ctx, `SELECT osm_catalog.promotion_event_head()`).Scan(&head); err != nil {
-			return RouteRegionCatalog{}, fmt.Errorf("read OSM promotion event head: %w", err)
-		}
-		if head < minimumEventID {
-			discardReplicaSnapshot(ctx, tx)
-			return RouteRegionCatalog{}, ErrMatcherReplicaNotReady
-		}
-	}
-	var fingerprint, heads []byte
-	// Hash each full boundary server-side before aggregating fixed-size row
-	// hashes. Length-prefixed IDs and fixed endian EWKB make the encoding stable.
-	if err := tx.QueryRow(ctx, `SELECT pg_catalog.sha256(
-		pg_catalog.convert_to('route-region-catalog-v1','UTF8') || COALESCE(string_agg(
-			pg_catalog.sha256(pg_catalog.int4send(octet_length(pg_catalog.convert_to(region.id,'UTF8'))) ||
-				pg_catalog.convert_to(region.id,'UTF8') || pg_catalog.boolsend(region.configured) ||
-				pg_catalog.sha256(ST_AsEWKB(region.boundary,'NDR')) ||
-				pg_catalog.int8send(COALESCE(generation.id,0))),
-			''::bytea ORDER BY region.id COLLATE "C"),''::bytea)),
-		COALESCE(jsonb_object_agg(region.id,generation.id) FILTER (WHERE generation.id IS NOT NULL),'{}'::jsonb)
-		FROM osm_catalog.regions region LEFT JOIN osm_catalog.generations generation
-		ON generation.region_id=region.id AND generation.state='active'`).Scan(&fingerprint, &heads); err != nil {
+func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID, minimumCatalogRevision int64) (RouteRegionCatalog, error) {
+	var catalog RouteRegionCatalog
+	var fingerprint, selection, heads, configured []byte
+	if err := tx.QueryRow(ctx, readRouteRegionCatalogSQL).Scan(&catalog.Revision, &fingerprint,
+		&selection, &heads, &configured, &catalog.PromotionEventID); err != nil {
 		return RouteRegionCatalog{}, fmt.Errorf("read OSM route region catalog proof: %w", err)
 	}
-	if len(fingerprint) != 32 {
+	if catalog.Revision < 1 || len(fingerprint) != 32 || len(selection) != 32 || catalog.PromotionEventID < 0 {
 		return RouteRegionCatalog{}, errors.New("invalid OSM route region catalog proof")
 	}
-	catalog := RouteRegionCatalog{Fingerprint: hex.EncodeToString(fingerprint)}
+	if catalog.Revision < minimumCatalogRevision || catalog.PromotionEventID < minimumEventID {
+		discardReplicaSnapshot(ctx, tx)
+		return RouteRegionCatalog{}, ErrMatcherReplicaNotReady
+	}
+	catalog.Fingerprint = hex.EncodeToString(fingerprint)
+	catalog.SelectionFingerprint = hex.EncodeToString(selection)
 	if err := json.Unmarshal(heads, &catalog.ActiveGenerations); err != nil {
 		return RouteRegionCatalog{}, fmt.Errorf("decode OSM route region catalog heads: %w", err)
 	}
+	if err := json.Unmarshal(configured, &catalog.ConfiguredRegions); err != nil {
+		return RouteRegionCatalog{}, fmt.Errorf("decode configured OSM route regions: %w", err)
+	}
+	if catalog.ActiveGenerations == nil || catalog.ConfiguredRegions == nil {
+		return RouteRegionCatalog{}, errors.New("missing OSM route region catalog metadata")
+	}
 	return catalog, nil
 }
+
+const readRouteRegionCatalogSQL = `SELECT revision,fingerprint,selection_fingerprint,
+	active_generations,configured_regions,osm_catalog.promotion_event_head()
+	FROM osm_catalog.route_region_catalog_state WHERE singleton`
 
 type regionQuerier interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -208,26 +242,7 @@ func resolveRouteRegions(ctx context.Context, db regionQuerier, points []RouteCo
 	for i, point := range points {
 		longitudes[i], latitudes[i] = point.Longitude, point.Latitude
 	}
-	rows, err := db.Query(ctx, `
-		WITH route_point AS (
-			SELECT ordinal::integer AS ordinal,ST_SetSRID(ST_MakePoint(longitude,latitude),4326) AS location
-			FROM unnest($1::double precision[],$2::double precision[]) WITH ORDINALITY point(longitude,latitude,ordinal)
-		)
-		SELECT point.ordinal,active.region_id,active.generation_id,(catalog.region_id IS NOT NULL)
-		FROM route_point point
-		LEFT JOIN LATERAL (
-			SELECT region.id AS region_id,generation.id AS generation_id
-			FROM osm_catalog.regions region
-			JOIN osm_catalog.generations generation ON generation.region_id=region.id AND generation.state='active'
-			WHERE region.configured AND ST_Covers(region.boundary,point.location)
-			ORDER BY ST_Area(region.boundary::geography),region.id LIMIT 1
-		) active ON true
-		LEFT JOIN LATERAL (
-			SELECT region.id AS region_id FROM osm_catalog.regions region
-			WHERE ST_Covers(region.boundary,point.location)
-			ORDER BY ST_Area(region.boundary::geography),region.id LIMIT 1
-		) catalog ON true
-		ORDER BY point.ordinal`, longitudes, latitudes)
+	rows, err := db.Query(ctx, resolveRouteRegionsSQL, longitudes, latitudes)
 	if err != nil {
 		return RouteRegionReadiness{}, fmt.Errorf("resolve OSM provider regions: %w", err)
 	}
@@ -245,10 +260,31 @@ func resolveRouteRegions(ctx context.Context, db regionQuerier, points []RouteCo
 		return RouteRegionReadiness{}, fmt.Errorf("read OSM provider regions: %w", err)
 	}
 	if len(observations) != len(points) {
-		return RouteRegionReadiness{}, errors.New("OSM provider region query returned incomplete results")
+		return RouteRegionReadiness{}, ErrRouteRegionResultInvalid
 	}
 	return readinessFromObservations(observations), nil
 }
+
+const resolveRouteRegionsSQL = `
+		WITH route_point AS (
+			SELECT ordinal::integer AS ordinal,ST_SetSRID(ST_MakePoint(longitude,latitude),4326) AS location
+			FROM unnest($1::double precision[],$2::double precision[]) WITH ORDINALITY point(longitude,latitude,ordinal)
+		)
+		SELECT point.ordinal,active.region_id,active.generation_id,(catalog.region_id IS NOT NULL)
+		FROM route_point point
+		LEFT JOIN LATERAL (
+			SELECT region.id AS region_id,generation.id AS generation_id
+			FROM osm_catalog.regions region
+			JOIN osm_catalog.generations generation ON generation.region_id=region.id AND generation.state='active'
+			WHERE region.configured AND ST_Covers(region.boundary,point.location)
+			ORDER BY region.geographic_area_m2,region.id LIMIT 1
+		) active ON true
+		LEFT JOIN LATERAL (
+			SELECT region.id AS region_id FROM osm_catalog.regions region
+			WHERE ST_Covers(region.boundary,point.location)
+			ORDER BY region.geographic_area_m2,region.id LIMIT 1
+		) catalog ON true
+		ORDER BY point.ordinal`
 
 func readinessFromObservations(observations []pointRegionObservation) RouteRegionReadiness {
 	regions := make(map[string]int64)

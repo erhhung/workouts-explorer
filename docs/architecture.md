@@ -13,40 +13,47 @@ marked planned, optional or deferred. Capacity targets are design requirements,
 not proof of multi-user load acceptance. Dated operational measurements belong in
 the focused acceptance and telemetry guides rather than this component overview.
 
-The deployed migration sequence extends through **001-032**. Released/applied 032
-includes coverage display precomputations and targeted entity statistics.
-**Source-only 033** adds canonical display identity; it is not deployed.
-Live schema/minimum runtime remain **32**, retaining
-`migration_baseline=27`; applied **001-032 are immutable**. A standalone native
-migration under the actual restricted migration login preceded coordinated
-backend revision **42** and UI revision **43**, using full values and `--no-hooks`.
-All four application images were rebuilt with native artifacts and published with
-strict TLS verification; the separate Martin workload was preserved. Accepted
-receipts verify runtime-role readiness and preservation of original data and
-configuration. Protected full pre-32 backups and old images remain retained;
-image-only rollback is unsupported. Scripted deployed-browser verification passed;
-owner acceptance/milestone and capacity remain separate. See
-[release status](development-progress.md#coverage-display-optimization).
-[Ingest Reprocessing](ingest-reprocessing.md) defines the preceding 031 contract's
-bounded default, explicit force, retry receipts and queued historical-job
-compatibility; those ingest semantics are unchanged by 032.
+The source migration sequence is **001-030**, with final source/runtime
+`SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and
+ledger **0-30**. Unchanged 001-028 precede combined ingest status/reprocessing/phases
+in **029** and display precomputations/canonical identity in **030**. See the
+[source mapping](database-migrations.md#source-history-mapping). Live reconciliation
+is authorized but pending; the [pre-cutover actual state](database-migrations.md#pre-cutover-live-status)
+is separate from this source target. Canonical display and click-highlight behavior
+are already deployed under historical numbering. See
+[current release status](development-progress.md#current-status) and
+[Milestone 8 closeout](development-progress.md#milestone-8-closeout) for acceptance
+and remaining verification boundaries; deployment alone does not certify capacity.
 
-The pending coordinated source contract requires schema/minimum runtime **33**,
+Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
+at the **032/backend-42/UI-43 checkpoint**, a standalone native
+migration under the actual restricted migration login preceded the coordinated
+rollout, using full values and `--no-hooks`. All four application images were
+rebuilt with native artifacts and published with strict TLS verification; the
+separate Martin workload was preserved. Accepted receipts verified runtime-role
+readiness and preservation of original data and configuration. Protected full
+pre-32 backups and old images were retained; image-only rollback is unsupported.
+Scripted deployed-browser verification passed for that checkpoint, not as proof
+of the current release's browser or milestone acceptance.
+[Ingest Reprocessing](ingest-reprocessing.md) defines the current 029 contract's
+bounded default, explicit force, retry receipts and queued historical-job
+compatibility; those ingest semantics are unchanged by display migration 030.
+
+The source canonical display contract requires schema/minimum runtime **30**,
 baseline **27**. [ADR 0013](decisions/013-canonical-coverage-display-identity.md)
 defines the general display policy, not an OSM derivation/matcher/path-policy
-change. No OSM regeneration or route rematching is needed. The schema-32 reader
-descriptions below retain their deployed scope; the next section defines their
-source-only replacements. [033 release gates](database-migrations.md#canonical-coverage-display-033-source-only)
-remain pending until explicit MAIN cutover completion.
+change. No OSM regeneration or route rematching is needed. The compact-fact reader
+descriptions below explain the foundation; the canonical section defines the final
+combined read contract. See [migration 030](database-migrations.md#canonical-coverage-display-030).
 
-The following folded-028 release evidence is historical, **prior to 031**.
+The following folded-028 release evidence predates explicit ingest reprocessing.
 The provider-identity/source-adoption foundation requires minimum runtime 26
 (migrations 024-026). At that checkpoint the active sequence was **001-028**, with
 no active 029. Ordinary static 027 advances 26 to 27 without a legacy dispatcher or
 archive replay; 001-027 remain unchanged. New 028 folds deferred-generation locking,
 strict eligible cohorts and mixed-failure automatic retry into the pipeline.
-Source `SupportedSchemaVersion`, schema and minimum runtime remain **28**, marker
-**27**. The folded contract, exact parking repair and UI follow-up are **deployed
+At that checkpoint, `SupportedSchemaVersion`, schema and minimum runtime were
+**28**, marker **27**. The folded contract, exact parking repair and UI follow-up are **deployed
 in `dev-20261020`, Helm revision 29**, schema/Goose/minimum runtime 28, marker 27.
 
 The [migration design](database-migrations.md) defines read-only history validation,
@@ -67,8 +74,9 @@ tuple fields and ledger IDs/timestamps were preserved before runtime startup;
 new structural readiness passed. Generic SQL normalization is not an admission
 rule. Chart semantic changes remain frozen; all release-manifest chart files and
 runtime resource/admission limits are unchanged.
-[Development Progress](development-progress.md) owns operational evidence; this
-contract is not owner iCloud acceptance or final yearly recovery closure.
+[Development Progress](development-progress.md#current-status) owns current evidence;
+this historical contract is not itself a milestone or yearly recovery receipt.
+See [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
 
 ## Components
 
@@ -99,7 +107,7 @@ commands in short-lived Jobs; it is not the general job runner.
 | Martin (`workouts-explorer-tiles`) | Generates dense private route and coverage vector tiles from the application database |
 | Public base-map providers | Provide unauthenticated browser style documents, tiles, glyphs, sprites, and images |
 | NFS archive | Immediately usable source archive for Health Auto Export JSON |
-| Rclone/iCloud Drive | M8 native 1.75.2 job-scoped transport implemented and deployed; owner ingest/recovery verified, milestone acceptance separate; local/NFS remains the fallback |
+| Rclone/iCloud Drive | M8 native 1.75.2 job-scoped transport implemented and deployed; ingest/recovery verified; [milestone closeout](development-progress.md#milestone-8-closeout) owns acceptance status; local/NFS remains the fallback |
 | SMTP server | Sends invitations and password resets using iCloud SMTP initially |
 | OTel gateway and UI/tiles sidecars | Gateway receives Go metrics/traces and sidecar metrics; Contrib 0.156.0 sidecars collect native nginx/Martin and separate collector self-telemetry |
 | Prometheus, Thanos Ruler, Pyrra and Alertmanager | Collect/store metrics, generate and evaluate app SLO rules, and route alerts; shared provisioning is infrastructure-owned |
@@ -215,7 +223,7 @@ future designs, not current schema objects.
 |---|---|
 | `sources` | Current account-owned source, display name, immutable type, auto-sync flag, health status, encrypted current config |
 | `sources.deleted_at` | Tombstoned source identity retained for provenance; configuration is cleared and CRUD excludes deleted rows |
-| `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state and private immutable success receipts (031) |
+| `source_files` | Safe discovery identity, source-relative name, size, modification metadata, checksum, processing state and private immutable success receipts (029) |
 | `source_objects` | Source-local successful object inventory, retained checksum and optional ownership-blocked epoch |
 | `accounts.workout_ownership_epoch` | Account-wide invalidation epoch advanced only by a source's live-to-deleted transition |
 | `jobs` | Parent/child hierarchy, type, priority, status, progress, retry/cancel links, safe parameters |
@@ -339,11 +347,11 @@ Daily rollups support named periods and arbitrary explicit ranges without mainta
 
 Selections containing all workouts in a date range use daily rollups. Arbitrary workout subsets query the underlying unique workout/path attribution joined to the selected workout IDs, because an account/day rollup cannot preserve subset membership. Tile functions choose the rollup or attribution path from the authorized map selection and join selected segment-match evidence to avoid rendering unvisited portions of a logical path. First/latest visit fields always come from all-time date-only extrema.
 
-#### Coverage Display Precomputations (Requires 32)
+#### Coverage Display Precomputations (Requires 30)
 
-This section and Targeted Coverage Hover Statistics describe deployed 032;
-[canonical display identity](#canonical-display-identity-requires-33-source-only)
-supersedes their source-entity aggregation and cache scope in pending source 033.
+This section and Targeted Coverage Hover Statistics describe the compact-fact
+foundation in **030**; [canonical display identity](#canonical-display-identity-requires-30)
+defines the final aggregation and cache scope in the same combined migration.
 
 Road Coverage list reads use normalized, compact evidence projections rather than
 rescanning segment geometry and tags for every request. These supplement the tile
@@ -380,7 +388,7 @@ projections and existing generation changes commit or roll back atomically;
 maintenance errors cannot leave a partially replaced applied result. The barrier
 does not itself increment the public generation or change invalidation policy.
 These tables/helpers are security-owner-only with forced RLS and no direct
-API/worker/tile grants. See [migration 032](database-migrations.md#coverage-display-precomputations-032).
+API/worker/tile grants. See [migration 030](database-migrations.md#coverage-display-precomputations-030).
 
 The dialog makes one `bulk=true` request to
 `GET /api/map-selections/{mapSelectionId}/coverage/paths` per uncached load. The API
@@ -435,10 +443,10 @@ maintenance helpers remain private to the security owner. The stats reader fixes
 `search_path=pg_catalog, app`; both compact list/stats readers set `jit=off`.
 Readiness checks exact function-body fingerprints and catalog structure, including
 signatures/results/defaults, security/ownership/ACLs, settings, projection tables,
-RLS, indexes and maintenance triggers. Numeric schema 32 alone is not readiness
-proof. These additions shipped in the
-[released/applied 032 SQL](../api/migrations/sql/032_coverage_display_precomputations.sql),
-not a 033. Applied 001-032 are immutable; future changes require a forward migration.
+RLS, indexes and maintenance triggers. Numeric schema 30 alone is not readiness
+proof. These additions and final canonical readers are combined in
+[030 source SQL](../api/migrations/sql/030_coverage_display.sql).
+Future feature changes require a forward migration, not another implicit squash.
 
 The UI-only hover timing follow-up retains the **750ms visibility dwell**, including
 cache hits, but starts an uncached stats lookup after **250ms of stable hover**.
@@ -458,7 +466,7 @@ client retry for a server 503 remains **one retry after 250ms**, with no new ser
 delay or retry budget. This timing follow-up is deployed UI-only; no database
 migration or backend rollout was required.
 
-#### Canonical Display Identity (Requires 33, Source Only)
+#### Canonical Display Identity (Requires 30)
 
 Policy `coverage-display-identity-v1` groups by **region + normalized actual display
 name + normalized actual display place**. Hidden jurisdiction IDs, source kind,
@@ -473,7 +481,7 @@ and abort preparation. [ADR 0013](decisions/013-canonical-coverage-display-ident
 specifies the exact tuple and whitespace code points.
 
 Membership is date-context-resolved, not a permanent source mapping. Resolve all
-historically eligible sources, retaining 032 source-name/base-locality evidence,
+historically eligible sources, retaining compact source-name/base-locality evidence,
 in-range park context and region precedence. Use historical context/region fallback
 for history-only sources; if their resolved key agrees, include their full visit
 history. Deduplicate the union of workouts across every member before range and
@@ -504,7 +512,7 @@ metadata, attribution, workout dates/start/deletion, route presence/applied
 eligibility and region labels, including context-only evidence. Deferred
 account/transaction coalescing advances both display revision and public generation
 once, without rebuilding every range on write or taking early ingest/provider
-generation locks. Preserve generation-before-revision order, 032 post-barrier
+generation locks. Preserve generation-before-revision order, compact-fact post-barrier
 segment expansion, correct evidence under both READ COMMITTED commit orders and
 Repeatable Read `40001` propagation. Deleted-account tombstones drain safely.
 
@@ -519,19 +527,20 @@ kind never filters membership. No tile-local text hashing or invented bridges.
 
 Bulk, hover and detail caches and stale-response guards add policy/revision to
 their existing scope; local search/sort/filter/paging and click improvements remain.
-Runtime readiness pins exact 033 bodies and ownership/ACL/RLS/index/trigger
+Runtime readiness pins exact 030 bodies and ownership/ACL/RLS/index/trigger
 contracts. This is a generally applicable application read-model policy, not an
 OSM derivation, matcher or path-policy change. Coverage recomputation here means
-context warm/rebuild from retained evidence, **not new route jobs**. Live remains
-backend-42/UI-43/schema-32 until the coordinated MAIN deployment completes.
+context warm/rebuild from retained evidence, **not new route jobs**. This contract
+requires source schema/minimum runtime **30**; actual deployment status and
+verification boundaries are in [current status](development-progress.md#current-status).
 
-#### Click-Highlight Follow-Up (Unreleased Source Only)
+#### Click-Highlight Follow-Up
 
-The following source behavior is **undeployed**, after live backend revision 42 /
-UI revision 43 and schema 32. It does not amend the deployed contracts above.
+The following behavior is already deployed and retained by source migration 030.
 The implementation is in [MapPage](../ui/src/MapPage.tsx) and
-[the map API](../api/maps.go); it is folded into the pending 033 release above.
-Earlier source verification does not establish full 033 verification or deployment.
+[the map API](../api/maps.go). Earlier source and browser receipts retain their
+checkpoint scope; [Milestone 8 closeout](development-progress.md#milestone-8-closeout)
+owns the current browser and acceptance outcome.
 
 An entity-name click closes Road Coverage and returns focus to the mounted map
 canvas immediately on intent, without waiting for detail. An uncached request
@@ -547,16 +556,16 @@ camera movement and requested tiles are ready, with the existing bounded fallbac
 
 The existing
 `GET /api/map-selections/{mapSelectionId}/coverage/{entityKind}/{entityId}?generation=...`
-endpoint and response shape remain unchanged. The source API now calls
+endpoint and response shape remain unchanged. The deployed API calls
 `app.map_selection_coverage_entity_detail` with the existing six arguments
-(account, session, selection, generation, kind and canonical ID). Migration 033
+(account, session, selection, generation, kind and canonical ID). Migration 030
 replaces that stored reader with metadata-gated whole-group geometry in one
 statement snapshot, retaining the correlated `LATERAL`/`OFFSET 0` barrier and
 minimum-500-meter fit pipeline. The earlier API-local source-only geometry copy
 is superseded. Denied metadata cannot initiate geometry work. The transaction
 remains read-only with explicit `SET LOCAL jit=off`, not a global setting change.
-This combined release requires schema/minimum runtime **33**; applied **001-032
-remain unchanged**.
+This combined source release requires schema/minimum runtime **30**; live cutover
+remains separate from this source requirement.
 
 A separate canvas-visit detail cache stores only successful, still-current
 responses, keyed by selection ID, generation, resolved dates, display policy and
@@ -598,10 +607,12 @@ use `pointer-events: none`, so these passive tooltips do not interrupt hover or
 intercept map/control interaction. The
 [map CSS guard](../ui/scripts/check-map-css.mjs) protects these layout rules.
 
-#### Deferred Generation (Folded 028, Undeployed)
+#### Deferred Generation (Introduced By Deployed Folded 028)
 
-The account generation is an invalidation counter, not a long-file mutex. In new
-028, the four existing header, route-summary, type-update and Coverage-current
+The account generation is an invalidation counter, not a long-file mutex. Folded
+028 introduced the following timing contract, deployed at the 10/20/2026 checkpoint.
+030 adds the display invalidation/coalescing rules described above. In 028, the
+four existing header, route-summary, type-update and Coverage-current
 generation triggers retain their names, events, UPDATE OF columns and WHEN scope,
 but become `DEFERRABLE INITIALLY DEFERRED` constraint triggers. Account seeding
 remains immediate. Each qualifying row event increments the counter; GPS points
@@ -704,10 +715,10 @@ target terminates. A failed route child does not stop its siblings.
 
 #### Committed-Route Handoff (Requires 28)
 
-The old pipeline is live in `dev-20261018`, Helm revision 28, schema/minimum 28,
-marker 27. The following **new folded-028 contract is undeployed**. Historical
-deployment verification does not attest this behavior; see
-[Development Progress](development-progress.md).
+The following contract was introduced by **deployed folded 028** at the
+10/20/2026 checkpoint. The preceding `dev-20261018`, Helm revision 28 receipt
+describes the old same-numeric-28 contract, not this behavior. See
+[current status](development-progress.md#current-status) for later releases.
 `worker.coverageBatchSize` /
 `WORKER_COVERAGE_BATCH_SIZE` defaults to 25 and accepts 1-1000. After transport and
 file-slot cleanup, the source worker prepares normal and adopted obligations.
@@ -732,12 +743,14 @@ of the ephemeral adoption force queue. Metadata-only batch reads retain no route
 buffers. Each protected STABLE route snapshot supplies content, ownership epoch,
 the full canonical digest and compact coordinates for just one route at a time.
 APP transactions close before OSM resolution. ROI readiness resolves one route at
-a time with one efficient route query, not per-point queries. A trusted fingerprint
-of **all catalog regions, configuration, boundaries and active heads** must match
-in the same Repeatable Read snapshot as ROI lookup and again before seal. A
-mismatch invalidates prepared readiness and requires fresh ROI; changing only the
-saved generation vector cannot bless an old result. Separate APP/OSM transactions
-do not establish cross-database latest-state atomicity.
+a time with one efficient route query, not per-point queries. The full catalog
+fingerprint covers **all catalog regions, configuration, boundaries and active
+heads** in the same Repeatable Read snapshot as ROI lookup and again before seal.
+The built source-029 metadata refinement permits generation-only rebinding when
+exact input, selection fingerprint and policy still prove the same selected IDs;
+a selection change requires fresh ROI. Substituting heads without that proof is
+never valid. See [metadata-driven reconciliation](#metadata-driven-reconciliation-requires-29).
+Separate APP/OSM transactions do not establish cross-database latest-state atomicity.
 A short atomic prepare/seal/defer transaction
 revalidates lease/runtime, account/source/event, ownership epoch, content and full
 route digest. Account-first, ordered parent/child NOWAIT locks precede workout/state
@@ -821,15 +834,15 @@ lineage reuse the Data Sync retry root and ordinals, allowing Run detail to
 navigate First, Second, and every later attempt through the latest without
 rerunning successful or superseded routes.
 
-New folded-028 automation requires at least one authoritative timeout/verified-
-transient failed child, then carries **all authoritative failed siblings** with
+Automation introduced by deployed folded 028 requires at least one authoritative
+timeout/verified-transient failed child, then carries **all authoritative failed siblings** with
 valid descriptors into the latest-only chained successor, including permanent,
 unknown and null-code failures. Successes never rerun and cancellations are not
 automatically revived. All-permanent/unknown parents stop. The default one
 additional attempt (range 0-20) is durable per root across descendants/restarts;
 manual retry never resets it, and normal failed-target scans cannot create fresh
-roots to bypass it. This new mixed policy is undeployed, not a reinterpretation
-of historical retry receipts.
+roots to bypass it. This mixed policy is deployed; earlier retry receipts retain
+their historical policy scope.
 
 Coverage execution state and owner-facing display state are separate contracts.
 For a stored failed/partially successful parent whose unsuccessful routes all
@@ -857,26 +870,53 @@ statistics remain instrumentation gaps, not existing gauges. Matcher concurrency
 increases above one only after representative measurements show adequate
 shared-database and active-user headroom.
 
-OSM promotion emits an immutable monotonic public event in the same transaction
-that activates a generation. Each application database observes only the event
-head and matcher-contract version, raises its own reconciliation revision, and
-seeds every active account without exposing account enumeration to runtime code.
-Coverage workers lease one account at a time, keyset-page routed workouts, resolve
-the current region/generation vector, and enqueue only stale targets. Cursors
-advance after each route; expired leases resume at the last committed cursor.
-Event-driven scans are supplemented by a daily full-account scan so provider
-boundary changes or retained-event gaps cannot strand historical routes.
+#### Metadata-Driven Reconciliation (Requires 29)
 
-Migration 022 includes routed workouts lacking coverage state in reconciliation
-instead of silently completing a scan that excludes them. A read-only revision-0/
-NULL-digest sentinel lets unchanged Go code compute the canonical SHA-256; fenced
-SQL verifies current points before initializing revision 1. NOWAIT lower-level
-locks and pre/post-write clock-based lease checks protect concurrent ingest.
-Both point readers return at most 50,001 points so Go rejects overflow beyond
-50,000 rather than hashing or matching a truncated prefix. Campaign wakeup keeps
-live leases/cursors intact, and completion of an older revision does not delay
-newer desired work. See the [legacy-route repair runbook](coverage-legacy-route-repair.md)
-for the narrowly scoped schema-20 compatibility procedure and selective retry.
+**Implementation BUILT; real PostgreSQL and deployment verification PENDING.**
+[ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md) specifies the
+motivation, four ordinary cases, invalidation matrix and acceptance boundary.
+Unchanged historical routes must not consume full-GPS/hash/ROI work merely to
+discover that no job is needed. This is new source-029 behavior, not a deployment
+claim or a reinterpretation of historical 022/028 repair receipts.
+
+The default **30-second idle poll** reads the OSM singleton catalog head and APP
+claim metadata. Identical observations return before locks/DML/account enumeration.
+Completed campaigns no longer become due after 24 hours; daily scanning has ceased
+to be a work trigger. Executor claim/preflight and health queries still run, so
+near-idle CPU does not mean zero database queries. This cadence is independent of
+the UI's 10-second Running-job refresh.
+
+OSM 010 computes generated boundary SHA/area at catalog write time and maintains
+transactional revision, legacy-compatible full fingerprint, selection fingerprint
+and head metadata. Selection proof covers all region IDs/configuration/boundaries
+and configured-active presence, including competing and unconfigured polygons,
+but not replacement generation numbers. Unchanged derived heads suppress UPDATEs.
+APP stores independent `app.coverage_route_selection_proofs` and successful
+`app.coverage_applied_match_proofs`; immutable job contexts capture rules, sampling,
+path policy, minimum traversal and production matcher contract. Preparation or
+enqueue cannot stamp successful applied provenance.
+
+Campaigns keyset-page metadata-actionable routes before any GPS read. Valid
+selection proof permits exact-ID generation rebinding without GPS; a changed
+selection or unknown input requires the bounded canonical snapshot/ROI path.
+Pending/unavailable proof is retained honestly. Initial unknown history may need
+one bounded bootstrap; old negative catalog baselines are never invented.
+
+Point transition hooks capture exact old/new keys, including telemetry changes
+with equal count/bounds, in `app.coverage_route_changes` without hashing or an
+account-generation lock in the file transaction. Transaction-coalesced
+`app.coverage_reconciliation_wakes` target exact accounts. Queue-only recovery
+drains handoffs, terminal-root tails and dirty keys without an ordinary follow-up
+scan or changing a saved campaign cursor. Retry/cancellation authority is unchanged.
+Lease/input/descriptor CAS and monotonic catalog/event floors reject stale results;
+head and ROI use one replica Repeatable Read snapshot with no strict-policy primary
+fallback. See [metadata fences](osm-read-replicas.md#metadata-fences-osm-010).
+
+APP feature 029 ships with complete source/runtime **30**; separate OSM 010 requires
+coordinated readers. The last reported live APP **34/minimum 33**, OSM **9**, Helm
+**60** is not a source-30/OSM-10 receipt. See
+[migration contract](database-migrations.md#metadata-driven-coverage-reconciliation-029-and-osm-010)
+and [pending verification](development-progress.md#metadata-driven-coverage-reconciliation).
 
 #### Shared Matching Contract
 
@@ -934,7 +974,7 @@ Path policy `coverage-path-policy-experimental-v82`, sampling
 `coverage-sampling-experimental-v1`, rules `coverage-experimental-v1` and
 `coverage-production-v1` remain unchanged: this corrects intended split handling.
 No database migration, minimum-runtime change, global cache buster or recomputation
-is introduced; the existing schema-31 contract is independent. This is not a
+is introduced; the ingest contract now in 029 is independent. This is not a
 universal output-equivalence claim for previously successful disjoint routes:
 per-leg window alignment can change decoding/evidence. Existing `acceptedCoverage`
 remains authoritative unless explicitly rerun. Retry lineage, automatic allowance
@@ -1054,8 +1094,9 @@ few lag waiters can block all matcher slots. Pool distribution is per new
 connection, not balanced per job. At the 10/13/2026 (`America/Los_Angeles`)
 checkpoint, live headless DNS/TCP and a separate direct-backend TLS/authentication
 client are verified in the linked telemetry guide. They do not certify in-pod
-TLS/authentication or mTLS; reader activation/rollout remain pending, and scoped
-fixture passes do not establish concurrent capacity.
+TLS/authentication or mTLS; reader activation/rollout were still pending at that
+checkpoint. See [current status](development-progress.md#current-status) for the
+subsequent active reader policy; scoped fixture passes do not establish capacity.
 
 OSM importer version 3 retains bounded named local, state, and national-park polygons only
 inside the generation build schema. The current derivation version 20 attaches stable park
@@ -1131,6 +1172,44 @@ PostgreSQL WAL and infrastructure backups may retain older encrypted values acco
 
 ## Ingest Pipeline
 
+### Ingest activity and refresh
+
+Ingest file counters measure discovered, skipped, succeeded and failed files,
+not completion of every ingest task. After files, source-scoped map-readiness
+analysis, account-wide time zone updates and cleanup may still be running.
+Manual and Automated sync publish their actual current activity after counters
+and results, including zero-import runs. Map analysis prepares later Coverage
+processing; it does not execute or wait for route-to-street matching.
+
+The general worker records phase entry before the corresponding work and real
+route-check progress through the fenced `app.record_ingest_phase` function
+included in 029. Required snapshots share the append-only `job_events` journal
+but bypass optional diagnostic limits. A partial `(job_id, id DESC)` index supports
+the latest current-attempt lookup. `JobDetail.activity` belongs to source children;
+root presentation derives from active children rather than whichever sibling
+last wrote an event. The detail GET uses an account-scoped read-only repeatable-read
+transaction. Old jobs with no phase evidence retain absent activity.
+
+Selected Running detail polling uses `min(10 seconds, configured polling interval)`.
+Queued detail, Task history and the Data Sync summary retain the configured
+interval, default **30 seconds**. Background detail polling pauses, and terminal
+ingest detail stops interval polling. Existing terminal Coverage eligibility
+refresh remains at the configured interval. These UI refresh intervals are
+independent of worker claim polling and source auto-sync cadence.
+
+A successful detail update refreshes the open Files page and, for phase-bearing
+ingest details, the open Events page, including terminal catch-up. Closed pages
+are marked stale without fetching; page/filter/scroll state is preserved. Logs
+remain manual-refresh only. Failed detail requests do not trigger artifact
+refreshes, and separate responses are not an atomic multi-endpoint snapshot.
+Short phases may complete between polls, but remain inspectable in Events; do not
+artificially delay work or replay completed phases as current activity.
+
+See the [exact phase messages](functional-spec.md#ingest-activity-messages) and
+[activity state semantics](job-state-machine.md#ingest-activity-phases-requires-29).
+User-facing time zone terminology uses two words; internal identifiers need not
+be renamed. Release evidence is recorded in the [029 follow-up](development-progress.md#ingest-phase-progress-follow-up-029).
+
 ### Discovery and staging
 
 1. The adapter enumerates metadata matching incremental or explicit-range rules.
@@ -1175,7 +1254,7 @@ auto-sync or a new manual job is needed. New bounded defaults use the same
 owner-aware policy; explicit reprocessing is the opt-in force path. Successful
 bytes are not invalidated or deleted to implement ownership retry.
 
-### Reprocessing, Retry And Receipts (Requires 31)
+### Reprocessing, Retry And Receipts (Requires 29)
 
 `IngestCreate` accepts optional boolean `reprocessAllFiles` only with both valid
 ordered dates, including when `false`. New bounded requests default to false and
@@ -1260,16 +1339,15 @@ The API owns the public private-tile route. A browser never calls Martin directl
 
 Tile URLs include an account data generation so a redraw after ingest or deletion does not reuse stale private data.
 
-With new folded 028, `app.lock_account_data_generation()` retains its historic name and
-ABI but performs a nonlocking MVCC read in the API's existing Repeatable Read
+Introduced by deployed folded 028, `app.lock_account_data_generation()` retains its
+historic name and ABI but performs a nonlocking MVCC read in the API's existing Repeatable Read
 transaction. Selected data and generation must come from that **same snapshot**.
 A concurrent writer can commit before selection creation returns, making the new
 capability already stale. Existing current-generation validation rejects it;
 the API must not bless old selected data with a newly read generation. Removing
 the generation-first lock eliminates its account/workout FK cycle, including the
 deferred focused-membership FK, without weakening those constraints. This helper's
-ABI does not make old runtime-28 images compatible with the new cohort contract;
-the new behavior remains undeployed.
+ABI does not make old runtime-28 images compatible with the folded cohort contract.
 
 ### Public map and OSM data
 
@@ -1293,7 +1371,7 @@ the new behavior remains undeployed.
 - Automatic region addition remains deferred. A no-evidence diagnostic resolves its route against the local provider catalog and reports each required but inactive region so the UI can present coverage as unavailable rather than as a successful zero-match review.
 - The unavailable-region fallback samples at most 256 evenly distributed route points, including both endpoints. The diagnostic response lists stable provider-qualified region IDs and display names; the Coverage UI shows its alert/retry state and suppresses normal review controls while preserving the raw route.
 - Diagnostic clipping discards non-positive or degenerate LineStrings before persistence, logs their count, and recomputes portion/segment totals and generation provenance from valid evidence. One unusable OSM substring cannot abort an otherwise valid diagnostic run.
-- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; in Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels. Arrows hide immediately during camera movement, regenerate for the final viewport, and reappear only after the current GeoJSON worker update and source tiles are ready. Superseded route/camera/style updates cannot reveal stale arrows; route lines and start/finish markers do not wait for this handoff. Each bearing is averaged from three GPS points before and after the marker so loops remain readable without depending on physical-distance spacing.
+- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; explicit focus cancels an old hover or its pending timer. In Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels; the bearing window starts three samples before/after a marker and expands within the same route component until it spans at least four screen pixels, rather than discarding dense GPS samples. Cached markers include zoom, bearing, pitch, viewport size and projection identity. Ready arrows remain visible and reuse their geographic positions during an actual user drag. Programmatic camera movements, including pan-only route/road fits, hide the arrows immediately; zoom, rotation and pitch also invalidate them. After movement settles, wait for a final-camera render, the current direction-worker/source update, and the private route source's tiles (or diagnostic in-memory route source), not unrelated basemap tiles. Render-time readiness checks do not repeatedly write unchanged paint properties. Superseded route/camera/style updates cannot reveal stale arrows; route lines and start/finish markers do not wait for this handoff.
 - Clicking a visible route feature in Routes mode immediately focuses and fits that workout, ensures it is checked, and issues a one-time centered scroll for its route-list row. Clicking a route-list row performs the same focus/fit selection without automatic list scrolling.
 - Summary's Show on map handoff checks the fresh capability's target readiness before fitting. If production Coverage is active but the target has no coverage result, it switches to raw Routes and retains focus; current/stale usable coverage keeps Coverage active. This one-time handoff does not force mode changes on ordinary tab reopening or capability refreshes. Cached readiness cannot clear the requested focus while capability creation is pending.
 - Accepted Summary deletions, including an already-unavailable response, notify the shared shell. It prunes the Map catalog, checked IDs and deleted focus, invalidates cached Coverage views, and advances a collection revision without changing the date range or refetching the complete workout collection. Late capability/overlay results cannot restore deleted entries. An external deletion that makes an explicit capability return 404 triggers one authoritative range-catalog recovery and retains only the still-available checked IDs, preserving explicit none rather than selecting all.
@@ -1308,13 +1386,14 @@ the new behavior remains undeployed.
 
 ### Rclone
 
-Milestone 8 source implementation is deployed and owner ingest/available-map
-Coverage recovery are verified; explicit milestone acceptance remains pending.
+Milestone 8 source implementation is deployed and ingest/available-map Coverage
+recovery are verified. [Milestone 8 closeout](development-progress.md#milestone-8-closeout)
+owns current acceptance and browser-verification status.
 The [initial verification](implementation-plan.md#verification-results-10122026)
-retains its synthetic/disposable scope. The implemented schema-28 pipeline is
-live in `dev-20261018`, Helm revision 28, schema/minimum runtime 28, marker 27.
+retains its synthetic/disposable scope. The `dev-20261018`, Helm revision 28,
+schema/minimum runtime 28, marker 27 receipt is a historical pipeline checkpoint.
 See [iCloud setup](icloud-source-setup.md)
-for private owner setup and [Development Progress](development-progress.md) for
+for private setup and [current status](development-progress.md#current-status) for
 actual live-version evidence and verification boundaries.
 
 - Native rclone 1.75.2 runs once per bounded operation with a job-private profile,
@@ -1700,14 +1779,15 @@ Public endpoints are limited to Swagger assets, the non-secret OpenAPI document,
 
 ## Exact Parking Continuation Addendum
 
-The 10/19/2026 source-only matcher follow-up extends
+The matcher follow-up first recorded at the 10/19/2026 source-only checkpoint extends
 [Matching Performance And Termination](#matching-performance-and-termination).
-The new production change is confined to `internal/coverage/matcher.go` and is
-**undeployed**. It retains `coverage-production-v1`; implementation labels V1/V2
+The production change is confined to `internal/coverage/matcher.go` and was
+subsequently **deployed with the folded-028 release on 10/20/2026**.
+It retains `coverage-production-v1`; implementation labels V1/V2
 do not denote policy versions. No SQL version or migration rewrite is involved.
-Active source remains 001-028, supported/schema/minimum runtime 28, marker 27.
-Live remains `dev-20261018`, Helm revision 28, on the old contract; new folded-028
-locking/cohort/retry behavior remains undeployed as described in Context.
+At the source-only checkpoint, the active source was 001-028, supported/schema/
+minimum runtime 28, marker 27, while live `dev-20261018`, Helm revision 28 still
+used the old contract. Those versions are historical, not current release status.
 
 Exact state keys use canonical unsigned varints for cursor, portion count and
 ordered interned IDs. Interning compares every portion field and all float bits,
@@ -1751,5 +1831,7 @@ semantic termination oracle. Processing-limit failures remain typed diagnostic
 guards, not proof of excessive route mileage. See
 [the evaluation checkpoint](coverage-matcher-evaluation.md#exact-parking-repair-follow-up-10192026)
 for synthetic measurements and verification scope; user-owned operational evidence
-stays private. The final combined worker rerun and protected actual-backup rehearsal
-remain pending; a staged private repair bundle is not deployment authorization.
+stays private. At the 10/19/2026 checkpoint, the final combined worker rerun and
+protected actual-backup rehearsal remained pending; a staged private repair bundle
+was not deployment authorization. Subsequent folded-028 release evidence is separate;
+see [current status](development-progress.md#current-status).

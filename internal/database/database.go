@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 33
+const SupportedSchemaVersion = 30
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)
@@ -1133,7 +1133,7 @@ const runtimeReadinessSQL = `
 		             WHERE acl.privilege_type='EXECUTE' AND acl.grantee<>p.proowner
 		               AND (acl.is_grantable OR acl.grantee<>'workouts_api'::regrole::oid))
 		   ))
-		   AND ($1 < 30 OR EXISTS (
+		   AND ($1 < 29 OR EXISTS (
 		       SELECT 1 FROM pg_proc p
 		       WHERE p.oid=to_regprocedure('app.ingest_outcome_status(text,text,bigint,bigint)')
 		         AND pg_get_userbyid(p.proowner)='workouts_security_owner'
@@ -1145,8 +1145,8 @@ const runtimeReadinessSQL = `
 		             WHERE acl.privilege_type='EXECUTE' AND acl.grantee<>p.proowner
 		               AND (acl.is_grantable OR acl.grantee<>'workouts_api'::regrole::oid))
 		   ))
-		   AND ($1 < 31 OR (
-		       (SELECT minimum_runtime_version >= 31 FROM app.schema_metadata WHERE singleton)
+		   AND ($1 < 29 OR (
+		       (SELECT minimum_runtime_version >= 29 FROM app.schema_metadata WHERE singleton)
 		       AND (SELECT count(*)=2 FROM pg_attribute a
 		           WHERE a.attrelid='app.source_files'::regclass AND NOT a.attisdropped
 		             AND NOT a.attnotnull AND a.attgenerated=''
@@ -1386,7 +1386,7 @@ const runtimeCohortReadinessSQL = `
 			('app.read_ingest_coverage_batch(uuid,uuid,text,uuid,bigint,uuid,integer,boolean)','app.cleanup_ingest_coverage_origins'),
 			('app.read_ingest_coverage_prepared(uuid,uuid,text,uuid,bigint,integer)','app.cleanup_ingest_coverage_origins'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.cleanup_ingest_coverage_origins'),
-			('app.claim_coverage_reconciliation(text,uuid,interval,integer)','app.ingest_coverage_cleanup_due'),
+			('app.claim_coverage_reconciliation(text,uuid,interval,integer)','app.coverage_reconciliation_queue_due'),
 			('app.read_coverage_reconciliation_routes(uuid,bigint,text,uuid,uuid,integer)','source.account_id=workout.account_id AND source.deleted_at IS NULL'),
 			('app.apply_ingest_coverage_batch(uuid,uuid,text,uuid,bigint,jsonb,text,text,text,double precision,integer)','INSERT INTO app.ingest_coverage_prepared'),
 			('app.apply_ingest_coverage_batch(uuid,uuid,text,uuid,bigint,jsonb,text,text,text,double precision,integer)','decode(item->>''catalogFingerprint'',''hex'')'),
@@ -1396,7 +1396,7 @@ const runtimeCohortReadinessSQL = `
 			('app.read_ingest_coverage_prepared(uuid,uuid,text,uuid,bigint,integer)','''catalogFingerprint'',encode(prepared.catalog_fingerprint,''hex'')'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','targets<builder.batch_size'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT'),
-			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.ingest_coverage_snapshot_digest'),
+			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.coverage_verified_route_digest'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.coverage_generation_vectors_equal'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','catalog_proof IS DISTINCT FROM prepared.catalog_fingerprint'),
 			('app.construct_coverage_retry(uuid,uuid,integer,integer)','prior_parent.sealed_ingest_root_id'),
@@ -1411,9 +1411,9 @@ const runtimeCohortReadinessSQL = `
 		WHERE p.oid=to_regprocedure('app.ingest_coverage_candidates(uuid,uuid)'))`
 
 // Exact body fingerprints pin the flush barrier, post-barrier key expansion,
-// source facts to 032 and replaced callbacks/readers to 033, including all whitespace.
+// source facts and canonical callbacks/readers to 030, including all whitespace.
 const runtimeCoverageDisplayReadinessSQL = `
-	SELECT $1 < 32 OR (
+	SELECT $1 < 30 OR (
 		WITH relations(name,columns,definitions) AS (VALUES
 			('workout_path_display_partials', ARRAY[
 				'account_id:uuid:true','workout_id:uuid:true','entity_id:uuid:true','logical_path_id:uuid:true',
@@ -1439,7 +1439,7 @@ const runtimeCoverageDisplayReadinessSQL = `
 				'CHECK ((scope = ANY (ARRAY[''account''::text, ''workout''::text, ''segment''::text])))',
 				'CHECK ((((scope = ''account''::text) AND (workout_id IS NULL) AND (region_id IS NULL) AND (generation_id IS NULL) AND (physical_segment_id IS NULL)) OR ((scope = ''workout''::text) AND (workout_id IS NOT NULL) AND (region_id IS NULL) AND (generation_id IS NULL) AND (physical_segment_id IS NULL)) OR ((scope = ''segment''::text) AND (workout_id IS NULL) AND (region_id IS NOT NULL) AND (generation_id IS NOT NULL) AND (physical_segment_id IS NOT NULL))))'])
 		)
-		SELECT (SELECT minimum_runtime_version >= 32 FROM app.schema_metadata WHERE singleton)
+		SELECT (SELECT minimum_runtime_version >= 30 FROM app.schema_metadata WHERE singleton)
 		AND NOT EXISTS (
 			SELECT 1 FROM relations expected LEFT JOIN pg_class c ON c.oid=to_regclass('app.'||expected.name)
 			WHERE c.oid IS NULL OR c.relkind<>'r' OR c.relpersistence<>'p'
@@ -1556,7 +1556,7 @@ const runtimeCoverageDisplayReadinessSQL = `
 // Catalog-only checks run as restricted runtime logins, without private-table grants.
 // Exact prosrc hashes must be updated with the corresponding embedded migration.
 const runtimeCanonicalCoverageDisplayReadinessSQL = `
-	SELECT $1 < 33 OR (
+	SELECT $1 < 30 OR (
 		WITH relations(name,columns,definitions) AS (VALUES
 			('coverage_display_revisions',ARRAY['account_id:uuid:true','revision:bigint:true','last_invalidated_transaction_id:bigint:false'],ARRAY[
 				'PRIMARY KEY (account_id)',
@@ -1605,7 +1605,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'4e1c86a9fcd6b98e1212ea7c3ee62321'),
 			('app.queue_coverage_display_source_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'fa05dcd935285a1265b9633fc1edc9ae'),
 			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c992a3bfae462a8be1f45e4e5a03d5fe'),
-			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'bbf3ded872ca3205e81305eb26207dc5'),
+			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c06ee64c7a96972646b33c0133ef6e31'),
 			('app.seed_coverage_display_revision()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'eebad7997cf527699c48dade43c3e348'),
 			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2538af856c9bea2a1219c8ddbe12f0ca'),
 			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2c883759bf98b433aff57f66fc576d10'),
@@ -1630,7 +1630,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)','plpgsql','s',true,false,'u',false,0,'jsonb',
 				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'639f6f1f0554094dfc4bc6c52e4dd93a')
 		)
-		SELECT (SELECT schema_version>=33 AND minimum_runtime_version>=33 AND migration_baseline=27
+		SELECT (SELECT schema_version>=30 AND minimum_runtime_version>=30 AND migration_baseline=27
 			FROM app.schema_metadata WHERE singleton)
 		AND current_setting('server_version_num')::integer BETWEEN 180000 AND 189999
 		AND current_setting('server_encoding')='UTF8'
@@ -1768,7 +1768,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			WHERE (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid=to_regprocedure(expected.signature))<>expected.callbacks)
 	)`
 
-const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `)`
+const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `)`
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool

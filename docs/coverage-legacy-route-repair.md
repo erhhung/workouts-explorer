@@ -2,6 +2,25 @@
 
 ## Scope And Status
 
+**Historical runbook:** the authorized repair and selective retries completed.
+The 10/13 schema-20/minimum-18 patch, schema-22 rollout instructions and pending
+release gates below are retained as history, not current deployment instructions.
+Current source ends at **030**, schema/minimum runtime **30**, baseline **27**,
+ledger **0-30**, with ingest status/reprocessing/phases in **029** and compact/
+canonical display in **030**. See the [history mapping](database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The authorized live reconciliation is pending, not a new repair receipt.
+Context warming changes no job, generation or
+matcher policy and needs no provider check, OSM regeneration/download or rematch.
+
+See [current migration requirements](database-migrations.md) and
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout). Only the
+latter governs M8 acceptance, including its browser gate; the existing closeout
+authorization needs no renewed owner request after that gate. This runbook does
+not independently certify acceptance, capacity or failover, or authorize new repairs.
+
+### Historical Checkpoint (10/13/2026)
+
 This runbook covers legacy routed workouts without coverage state. It is a
 derived-data repair, not source ingestion, workout import/delete/purge or an OSM
 rebuild. Choose only the owner account explicitly authorized for repair; do not
@@ -19,10 +38,11 @@ completion (status `0`); private account identity, health counts and route/job
 inventory are intentionally omitted. This is matching evidence, not just readiness, and does
 not establish replica routing or concurrent-capacity acceptance.
 
-The repair/retry verification gate is satisfied. M8 image builds, publication and
-deployment have not started in this phase; no release tag is selected, and they
-still require owner review and explicit authorization. M8 remains unchecked
-pending owner acceptance. No external source profiles were registered, and no
+At this checkpoint, the repair/retry verification gate was satisfied. M8 image
+builds, publication and deployment had not started; no release tag was selected, and they
+still required owner review and explicit authorization at this checkpoint. M8
+acceptance was pending then; its later [closeout](development-progress.md#milestone-8-closeout)
+is current. No external source profiles were registered, and no
 host keyring or rclone config was
 read. Earlier local image checks are historical, not new builds for this repair.
 

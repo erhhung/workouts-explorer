@@ -47,8 +47,10 @@ const mapBehavior = vi.hoisted(() => ({
   emitSetStyleLoad: true,
   styleLoaded: true,
   moving: false,
+  dragging: false,
   tilesLoaded: true,
   directionSourceLoaded: true,
+  routeSourceLoaded: true,
   projectionScale: 10000,
 }));
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, "geolocation");
@@ -69,7 +71,9 @@ vi.mock("maplibre-gl", () => ({
           ...source,
           setTiles: vi.fn(),
           setData: vi.fn((_data: unknown, waitForCompletion?: boolean) =>
-            waitForCompletion ? Promise.resolve() : undefined,
+            waitForCompletion
+              ? Promise.resolve().then(() => this.handlers.get("render")?.())
+              : undefined,
           ),
         });
       });
@@ -87,6 +91,12 @@ vi.mock("maplibre-gl", () => ({
         const layer = this.layers.get(id) as { paint?: Record<string, unknown> } | undefined;
         if (layer) layer.paint = { ...layer.paint, [property]: value };
       });
+      getPaintProperty = vi.fn(
+        (id: string, property: string) =>
+          (this.layers.get(id) as { paint?: Record<string, unknown> } | undefined)?.paint?.[
+            property
+          ],
+      );
       setLayoutProperty = vi.fn((id: string, property: string, value: unknown) => {
         const layer = this.layers.get(id) as { layout?: Record<string, unknown> } | undefined;
         if (layer) layer.layout = { ...layer.layout, [property]: value };
@@ -112,9 +122,18 @@ vi.mock("maplibre-gl", () => ({
       getStyle = vi.fn(() => this.style);
       isStyleLoaded = vi.fn(() => mapBehavior.styleLoaded);
       isMoving = vi.fn(() => mapBehavior.moving);
+      getZoom = vi.fn(() => Math.log2(mapBehavior.projectionScale));
+      getBearing = vi.fn(() => 0);
+      getPitch = vi.fn(() => 0);
+      getProjection = vi.fn(() => ({ type: "mercator" }));
+      dragPan = { isActive: vi.fn(() => mapBehavior.dragging) };
       areTilesLoaded = vi.fn(() => mapBehavior.tilesLoaded);
       isSourceLoaded = vi.fn((id: string) =>
-        id === "coverage-diagnostic-direction" ? mapBehavior.directionSourceLoaded : true,
+        id === "coverage-diagnostic-direction"
+          ? mapBehavior.directionSourceLoaded
+          : id === "private-workout-routes"
+            ? mapBehavior.routeSourceLoaded
+            : true,
       );
       queryRenderedFeatures = vi.fn(() => []);
       project = vi.fn((coordinate: [number, number]) => ({
@@ -422,8 +441,10 @@ beforeEach(() => {
   mapBehavior.emitSetStyleLoad = true;
   mapBehavior.styleLoaded = true;
   mapBehavior.moving = false;
+  mapBehavior.dragging = false;
   mapBehavior.tilesLoaded = true;
   mapBehavior.directionSourceLoaded = true;
+  mapBehavior.routeSourceLoaded = true;
   mapBehavior.projectionScale = 10000;
 });
 afterEach(() => {
@@ -1000,6 +1021,23 @@ describe("map contract helpers", () => {
     expect(marker.data[(1 * marker.width + 5) * 4 + 3]).toBe(255);
     expect(marker.data[13 * marker.width * 4 + 3]).toBe(0);
     expect(marker.data[(13 * marker.width + 5) * 4 + 3]).toBe(255);
+  });
+
+  test("keeps fitted arrow density for dense GPS samples instead of discarding subpixel bearings", () => {
+    const project = ([x, y]: number[]) => ({ x: x * 1024, y: -y * 1024 });
+    for (const count of [61, 7681]) {
+      const route = buildSegmentedRawRoute(
+        Array.from({ length: count }, (_, i) => ({
+          recordedAt: new Date(i * 1000).toISOString(),
+          longitude: (0.9375 * i) / (count - 1),
+          latitude: 0,
+        })),
+      )!;
+      const arrows = buildRawRouteDirectionMarkers(route, project);
+      expect(arrows.features).toHaveLength(10);
+      expect(buildRawRouteDirectionMarkers(route, project)).toEqual(arrows);
+      for (const arrow of arrows.features) expect(arrow.properties.bearing).toBeCloseTo(90);
+    }
   });
 });
 
@@ -2763,10 +2801,126 @@ describe("direction marker camera readiness", () => {
     const completions: Array<() => void> = [];
     const source = map.getSource(directionLayer);
     source.setData.mockImplementation((_data: unknown, waitForCompletion?: boolean) =>
-      waitForCompletion ? new Promise<void>((resolve) => completions.push(resolve)) : undefined,
+      waitForCompletion
+        ? new Promise<void>((resolve) =>
+            completions.push(() => {
+              map.handlers.get("render")?.();
+              resolve();
+            }),
+          )
+        : undefined,
     );
     return { source, completions };
   }
+
+  test("repeated A/B focus fits retain each route's final-camera arrow count", async () => {
+    const { map } = await mountDirections();
+    map.fitBounds.mockImplementation((bounds: number[][]) => {
+      mapBehavior.moving = true;
+      map.handlers.get("movestart")?.();
+      mapBehavior.projectionScale =
+        904 /
+        Math.max(Math.abs(bounds[1][0] - bounds[0][0]), Math.abs(bounds[1][1] - bounds[0][1]));
+      mapBehavior.moving = false;
+      map.handlers.get("moveend")?.();
+    });
+    const counts = new Map<number, number>();
+    for (const index of [1, 0, 1, 0, 1, 0]) {
+      const label = index === 0 ? /Running.*8\/08\/2026/ : /Hiking.*8\/01\/2026/;
+      await userEvent.click(screen.getByRole("button", { name: label }));
+      const points = index === 0 ? firstPoints : secondPoints;
+      const scale = mapBehavior.projectionScale;
+      const expected = buildRawRouteDirectionMarkers(
+        buildSegmentedRawRoute(points.points)!,
+        ([x, y]) => ({ x: x * scale, y: -y * scale }),
+      );
+      expect(expected.features.length).toBeGreaterThan(1);
+      await waitFor(() => {
+        expect(map.getLayer(directionLayer)?.paint["icon-opacity"]).toBe(0.95);
+        expect(map.getSource(directionLayer).setData.mock.calls.at(-1)?.[0]).toEqual(expected);
+      });
+      const count = map.getSource(directionLayer).setData.mock.calls.at(-1)[0].features.length;
+      if (counts.has(index)) expect(count).toBe(counts.get(index));
+      else counts.set(index, count);
+    }
+    expect(counts.size).toBe(2);
+  });
+
+  test("does not reuse markers at a different projection even when route and source identities match", async () => {
+    const { map } = await mountDirections();
+    const source = map.getSource(directionLayer);
+    const original = source.setData.mock.calls.at(-1)[0];
+    source.setData.mockClear();
+    mapBehavior.projectionScale = 2000;
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: directionLayer }));
+    await waitFor(() => expect(source.setData).toHaveBeenCalledTimes(1));
+    expect(source.setData.mock.calls[0][0].features.length).toBeLessThan(original.features.length);
+    await waitFor(() => expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95));
+    mapBehavior.projectionScale = 10000;
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
+    await waitFor(() => expect(source.setData).toHaveBeenCalledTimes(2));
+    expect(source.setData.mock.calls[1][0]).toEqual(original);
+  });
+
+  test("waits for a final-camera render and its private route tiles before revealing ready arrows", async () => {
+    const { map } = await mountDirections();
+    const source = map.getSource(directionLayer);
+    let complete!: () => void;
+    source.setData.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    act(() => map.handlers.get("moveend")?.());
+    await act(async () => complete());
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: directionLayer }));
+    expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+    mapBehavior.routeSourceLoaded = false;
+    act(() => map.handlers.get("render")?.());
+    expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+    mapBehavior.routeSourceLoaded = true;
+    mapBehavior.tilesLoaded = false;
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
+    expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+    map.setPaintProperty.mockClear();
+    act(() => {
+      for (let i = 0; i < 5; i++) map.handlers.get("render")?.();
+    });
+    expect(map.setPaintProperty).not.toHaveBeenCalled();
+    expect(map.areTilesLoaded).not.toHaveBeenCalled();
+  });
+
+  test.each(["pending", "active"])(
+    "explicit focus cancels a %s preview of a different route",
+    async (preview) => {
+      const { map } = await mountDirections();
+      await userEvent.hover(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+      if (preview === "active")
+        await waitFor(() =>
+          expect(map.getSource("private-workout-route-endpoints").data).toEqual(
+            buildRawRouteEndpoints(secondPoints.points),
+          ),
+        );
+      // Keyboard/programmatic activation need not move the pointer off the old preview.
+      fireEvent.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
+      });
+      await waitFor(() =>
+        expect(map.getSource(directionLayer).setData.mock.calls.at(-1)?.[0]).toEqual(
+          buildRawRouteDirectionMarkers(buildSegmentedRawRoute(firstPoints.points)!, ([x, y]) => ({
+            x: x * mapBehavior.projectionScale,
+            y: -y * mapBehavior.projectionScale,
+          })),
+        ),
+      );
+      const endpoints = map.getSource("private-workout-route-endpoints");
+      expect(endpoints.setData.mock.calls.at(-1)?.[0] ?? endpoints.data).toEqual(
+        buildRawRouteEndpoints(firstPoints.points),
+      );
+    },
+  );
 
   test("skips late route projection during zoom-out and waits for the final worker and source tiles", async () => {
     const { view, props, map, resolveSecondRoute } = await mountDirections(true);
@@ -2776,8 +2930,11 @@ describe("direction marker camera readiness", () => {
     map.setPaintProperty.mockClear();
     map.setLayoutProperty.mockClear();
     // movestart can precede isMoving becoming true.
-    act(() => map.handlers.get("movestart")?.());
-    expect(map.setPaintProperty.mock.calls).toEqual([
+    act(() => {
+      map.handlers.get("movestart")?.();
+      map.handlers.get("zoomstart")?.();
+    });
+    expect(map.setPaintProperty.mock.calls.slice(-2)).toEqual([
       [directionLayer, "icon-opacity-transition", { duration: 0, delay: 0 }],
       [directionLayer, "icon-opacity", 0],
     ]);
@@ -2822,15 +2979,19 @@ describe("direction marker camera readiness", () => {
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
     mapBehavior.directionSourceLoaded = true;
     mapBehavior.tilesLoaded = false;
+    mapBehavior.routeSourceLoaded = false;
     act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+    mapBehavior.routeSourceLoaded = true;
     act(() =>
-      map.handlers.get("sourcedata")?.({ sourceId: directionLayer, isSourceLoaded: false }),
+      map.handlers.get("sourcedata")?.({
+        sourceId: "private-workout-routes",
+        isSourceLoaded: true,
+      }),
     );
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
-    expect(map.isSourceLoaded.mock.calls.every(([id]: string[]) => id === directionLayer)).toBe(
-      true,
-    );
+    expect(map.isSourceLoaded).toHaveBeenCalledWith(directionLayer);
+    expect(map.isSourceLoaded).toHaveBeenCalledWith("private-workout-routes");
     expect(map.areTilesLoaded).not.toHaveBeenCalled();
   });
 
@@ -2840,6 +3001,7 @@ describe("direction marker camera readiness", () => {
     source.setData.mockClear();
     act(() => {
       map.handlers.get("movestart")?.();
+      map.handlers.get("zoomstart")?.();
       map.handlers.get("moveend")?.();
       map.handlers.get("movestart")?.();
       map.handlers.get("movestart")?.();
@@ -2856,6 +3018,96 @@ describe("direction marker camera readiness", () => {
     expect(completions).toHaveLength(3);
     await act(async () => completions[2]());
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+  });
+
+  test.each(["zoomstart", "rotatestart", "pitchstart"])(
+    "keeps ready arrows visible during panning but invalidates them for %s",
+    async (cameraEvent) => {
+      const { map, view, props } = await mountDirections();
+      const source = map.getSource(directionLayer);
+      source.setData.mockClear();
+      map.project.mockClear();
+      map.setPaintProperty.mockClear();
+      mapBehavior.dragging = true;
+      act(() =>
+        map.handlers.get("movestart")?.({
+          originalEvent: new MouseEvent("mousemove", { buttons: 1 }),
+        }),
+      );
+      mapBehavior.moving = true;
+      act(() => map.handlers.get("sourcedata")?.({ sourceId: directionLayer }));
+      view.rerender(<MapPage {...props} preferences={{ ...preferences, clockFormat: "12h" }} />);
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+      expect(source.setData).not.toHaveBeenCalled();
+      expect(map.project).not.toHaveBeenCalled();
+      mapBehavior.moving = false;
+      mapBehavior.dragging = false;
+      act(() => map.handlers.get("moveend")?.());
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+      expect(source.setData).not.toHaveBeenCalled();
+      expect(map.project).not.toHaveBeenCalled();
+      expect(map.setPaintProperty.mock.calls).not.toContainEqual([
+        directionLayer,
+        "icon-opacity",
+        0,
+      ]);
+      const { completions } = deferDirections(map);
+      act(() => {
+        map.handlers.get("movestart")?.();
+        map.handlers.get(cameraEvent)?.();
+      });
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+      act(() => map.handlers.get("moveend")?.());
+      expect(completions).toHaveLength(1);
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+      await act(async () => completions[0]());
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+      view.unmount();
+      expect(map.off).toHaveBeenCalledWith(cameraEvent, expect.any(Function));
+    },
+  );
+
+  test.each([undefined, "click", "mousemove"])(
+    "hides ready arrows during programmatic pan without zoom (original event: %s)",
+    async (originalEvent) => {
+      const { map, view, props } = await mountDirections();
+      const { source, completions } = deferDirections(map);
+      source.setData.mockClear();
+      map.project.mockClear();
+      act(() =>
+        map.handlers.get("movestart")?.(
+          originalEvent
+            ? { originalEvent: new MouseEvent(originalEvent, { buttons: 1 }) }
+            : undefined,
+        ),
+      );
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+      mapBehavior.moving = true;
+      view.rerender(<MapPage {...props} preferences={{ ...preferences, clockFormat: "12h" }} />);
+      act(() => map.handlers.get("sourcedata")?.({ sourceId: directionLayer }));
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+      expect(source.setData).not.toHaveBeenCalled();
+      expect(map.project).not.toHaveBeenCalled();
+      mapBehavior.moving = false;
+      act(() => map.handlers.get("moveend")?.());
+      expect(completions).toHaveLength(1);
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
+      await act(async () => completions[0]());
+      expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+    },
+  );
+
+  test("programmatic movement invalidates arrows even when a mouse drag is still active", async () => {
+    const { map } = await mountDirections();
+    mapBehavior.dragging = true;
+    act(() =>
+      map.handlers.get("movestart")?.({
+        originalEvent: new MouseEvent("mousemove", { buttons: 1 }),
+      }),
+    );
+    expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
+    act(() => map.handlers.get("movestart")?.());
+    expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
   });
 
   test("hides stationary route replacements until fresh data completes and ignores replaced sources", async () => {
@@ -2943,16 +3195,30 @@ describe("direction marker camera readiness", () => {
     const start = map.getLayer("private-workout-route-start");
     const finish = map.getLayer("private-workout-route-finish");
     const vector = map.getLayer("private-workout-routes");
-    act(() => map.handlers.get("movestart")?.());
-    expect(layer().paint["icon-opacity-transition"]).toEqual({ duration: 0, delay: 0 });
-    expect(layer().paint["icon-opacity"]).toBe(0);
+    mapBehavior.dragging = true;
+    act(() =>
+      map.handlers.get("movestart")?.({
+        originalEvent: new MouseEvent("mousemove", { buttons: 1 }),
+      }),
+    );
+    mapBehavior.moving = true;
+    expect(layer().paint["icon-opacity-transition"]).toEqual({ duration: 400, delay: 0 });
+    expect(layer().paint["icon-opacity"]).toBe(0.95);
     expect(map.getLayer("coverage-diagnostic-raw-route")).toBe(raw);
     expect(raw.paint["line-opacity"]).toBe(1);
     expect(map.getLayer("private-workout-route-start")).toBe(start);
     expect(map.getLayer("private-workout-route-finish")).toBe(finish);
     expect(map.getLayer("private-workout-routes")).toBe(vector);
     fireEvent.keyDown(window, { key: " ", code: "Space" });
+    expect(layer().paint["icon-opacity"]).toBe(0);
+    fireEvent.keyUp(window, { key: " ", code: "Space" });
+    expect(layer().paint["icon-opacity"]).toBe(0.95);
+    act(() => map.handlers.get("zoomstart")?.());
+    expect(layer().paint["icon-opacity-transition"]).toEqual({ duration: 0, delay: 0 });
+    expect(layer().paint["icon-opacity"]).toBe(0);
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
     const { completions } = deferDirections(map);
+    mapBehavior.moving = false;
     await act(async () => map.handlers.get("moveend")?.());
     await act(async () => completions[0]());
     expect(layer().paint["icon-opacity"]).toBe(0);
@@ -4935,6 +5201,7 @@ describe("MapPage", () => {
       { mapDataStatus: "ready", processingStatus: "stale", resultStatus: "stale" },
       { mapDataStatus: "pending", processingStatus: "unprocessed", resultStatus: "none" },
       { mapDataStatus: "ready", processingStatus: "queued", resultStatus: "none" },
+      { mapDataStatus: "ready", processingStatus: "running", resultStatus: "none" },
       { mapDataStatus: "ready", processingStatus: "failed", resultStatus: "none" },
       { mapDataStatus: "unavailable", processingStatus: "unprocessed", resultStatus: "none" },
       { mapDataStatus: "ready", processingStatus: "unprocessed", resultStatus: "none" },
@@ -4973,23 +5240,91 @@ describe("MapPage", () => {
 
     expect(document.querySelectorAll(".coverage-route-status--current")).toHaveLength(1);
     expect(document.querySelectorAll(".coverage-route-status--stale")).toHaveLength(1);
-    expect(document.querySelectorAll(".coverage-route-status--pending")).toHaveLength(2);
+    expect(document.querySelectorAll(".coverage-route-status--pending")).toHaveLength(4);
     expect(document.querySelectorAll(".coverage-route-status--failed")).toHaveLength(1);
     expect(document.querySelectorAll(".coverage-route-status--unavailable")).toHaveLength(1);
     expect(document.querySelector(".coverage-route-status--current")).toHaveTextContent("✓");
     expect(document.querySelector(".coverage-route-status--failed")).toHaveTextContent("!");
     expect(document.querySelector(".coverage-route-status--unavailable")).toHaveTextContent("×");
-    expect(document.querySelector(".coverage-route-status--unprocessed")).toHaveTextContent("-");
-    expect(screen.getByRole("button", { name: /Coverage unprocessed.*Running/ })).toBeDisabled();
+    expect(document.querySelector(".coverage-route-status--unprocessed")).not.toBeInTheDocument();
+    const unprocessed = screen.getByRole("button", { name: /Coverage pending.*8\/01\/2026/ });
+    expect(unprocessed).toBeDisabled();
+    expect(unprocessed.querySelector(".coverage-route-status--pending")).toBeInTheDocument();
+    for (const indicator of document.querySelectorAll(".coverage-route-status--pending"))
+      expect(indicator.querySelector('[aria-hidden="true"]')).toBeEmptyDOMElement();
     expect(screen.getByText("Waiting for map data")).toHaveAttribute("role", "tooltip");
-    expect(screen.getAllByText("Waiting for coverage update")).toHaveLength(2);
+    expect(screen.getAllByText("Waiting for coverage update")).toHaveLength(3);
     for (const tooltip of screen.getAllByText("Waiting for coverage update"))
       expect(tooltip).toHaveAttribute("role", "tooltip");
     expect(screen.getByText("Coverage update failed")).toHaveAttribute("role", "tooltip");
     expect(screen.getByText("Map data not available")).toHaveAttribute("role", "tooltip");
+    for (const tooltip of document.querySelectorAll(".tooltip-content--portal"))
+      expect(tooltip.parentElement).toBe(document.body);
 
     fireEvent.click(screen.getByRole("button", { name: /Coverage current.*Running/ }));
     expect(new URL(window.location.href).searchParams.get("workoutId")).toBe("D".repeat(32));
+  });
+
+  test("maps all 54 Coverage readiness combinations to circular status kinds", async () => {
+    const readinessStates = (["ready", "pending", "unavailable"] as const).flatMap(
+      (mapDataStatus) =>
+        (["unprocessed", "queued", "running", "current", "failed", "stale"] as const).flatMap(
+          (processingStatus) =>
+            (["none", "current", "stale"] as const).map((resultStatus) => ({
+              mapDataStatus,
+              processingStatus,
+              resultStatus,
+            })),
+        ),
+    );
+    const workouts = readinessStates.map((coverageReadiness, index) => ({
+      ...selection.workouts[0],
+      id: (256 + index).toString(16).padStart(32, "0").toUpperCase(),
+      coverageReadiness,
+    }));
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/map-selections" && init?.method === "POST")
+        return Promise.resolve(json({ ...selection, workouts }));
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+    render(
+      <MapPage
+        config={config}
+        preferences={{ ...preferences, coverageDiagnosticsEnabled: false }}
+        csrfToken="csrf-map"
+        dateRange="last30Days"
+        onDateRangeSelected={vi.fn()}
+      />,
+    );
+    expect(await screen.findAllByRole("checkbox", { name: /Show Running/ })).toHaveLength(54);
+    const coverageMode = screen.getByRole("button", { name: "Coverage" });
+    await waitFor(() => expect(coverageMode).toBeEnabled());
+    fireEvent.click(coverageMode);
+
+    for (const workout of workouts) {
+      const { resultStatus, mapDataStatus, processingStatus } = workout.coverageReadiness;
+      const expectedKind =
+        resultStatus !== "none"
+          ? resultStatus
+          : mapDataStatus === "unavailable"
+            ? "unavailable"
+            : mapDataStatus === "ready" && processingStatus === "failed"
+              ? "failed"
+              : "pending";
+      const row = document.querySelector(`[data-workout-id="${workout.id}"]`)!;
+      expect(row.querySelectorAll(".coverage-route-status")).toHaveLength(1);
+      expect(row.querySelector(".coverage-route-status")).toHaveClass(
+        `coverage-route-status--${expectedKind}`,
+      );
+      const trigger = row.querySelector(".tooltip-trigger");
+      expect(trigger !== null).toBe(resultStatus === "none");
+      if (!trigger) continue;
+      const tooltip = document.getElementById(trigger.getAttribute("aria-describedby")!)!;
+      expect(tooltip.parentElement).toBe(document.body);
+      if (tooltip.textContent === "Waiting for coverage update")
+        expect(expectedKind).toBe("pending");
+    }
   });
 
   test("shows delayed exact road coverage stats after one transient failure without exposing a raw focused route", async () => {

@@ -447,13 +447,53 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 		}
 		_ = tx.Rollback(ctx)
 	}
+	for _, checkpoint := range []int64{28, 29} {
+		if _, err := provider.UpTo(ctx, checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		t.Run(fmt.Sprintf("native schema%d ingest readiness", checkpoint), func(t *testing.T) {
+			for _, role := range []string{"workouts_api", "workouts_worker", "workouts_coverage_worker"} {
+				tx := begin(t, role, live.account)
+				for _, query := range []string{runtimeReadinessSQL, runtimeIngestPhaseReadinessSQL} {
+					var ready bool
+					if err := tx.QueryRow(ctx, query, checkpoint).Scan(&ready); err != nil || !ready {
+						t.Fatalf("schema%d %s readiness=%t err=%v", checkpoint, role, ready, err)
+					}
+				}
+				_ = tx.Rollback(ctx)
+			}
+		})
+	}
+	for _, function := range []string{
+		"app.read_owned_job_files(uuid,integer,integer,boolean)",
+		"app.ingest_outcome_status(text,text,bigint,bigint)",
+		"app.ingest_retry_ancestor_jobs(uuid,uuid,uuid)",
+	} {
+		t.Run("schema29 requires "+function, func(t *testing.T) {
+			for _, role := range []string{"workouts_api", "workouts_worker", "workouts_coverage_worker"} {
+				tx, err := admin.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tx.Rollback(ctx)
+				if _, err := tx.Exec(ctx, "ALTER FUNCTION "+function+" RENAME TO missing_ingest_status_function; SET LOCAL ROLE "+role); err != nil {
+					t.Fatal(err)
+				}
+				var ready bool
+				if err := tx.QueryRow(ctx, runtimeReadinessSQL, 29).Scan(&ready); err != nil || ready {
+					t.Fatalf("%s schema29 readiness=%t err=%v", role, ready, err)
+				}
+				_ = tx.Rollback(ctx)
+			}
+		})
+	}
 	if _, err := provider.UpTo(ctx, SupportedSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=33 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
+	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("current schema metadata: %t %v", preserved, err)
 	}
-	for _, runtime := range []int{30, 31, 32} {
+	for _, runtime := range []int{27, 28, 29} {
 		t.Run(fmt.Sprintf("current schema rejects obsolete runtime %d", runtime), func(t *testing.T) {
 			tx := begin(t, "workouts_worker", live.account)
 			defer tx.Rollback(ctx)
@@ -463,7 +503,7 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 			}
 			var rejected *pgconn.PgError
 			if err := fence(t, tx, runtime); !errors.As(err, &rejected) || rejected.Code != "55000" {
-				t.Fatalf("runtime%d bypassed min33: %v", runtime, err)
+				t.Fatalf("runtime%d bypassed min30: %v", runtime, err)
 			}
 		})
 	}
@@ -483,7 +523,7 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 		_, err := actions(tx, live.job, live.lease, "runtime-capability-worker")
 		var rejected *pgconn.PgError
 		if !errors.As(err, &rejected) || rejected.Code != "55000" {
-			t.Fatalf("standalone26 bypassed min33: %v", err)
+			t.Fatalf("standalone26 bypassed min30: %v", err)
 		}
 	})
 	check := func(t *testing.T, fault string, want bool) {

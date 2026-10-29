@@ -123,26 +123,31 @@ func TestCoverageReconcilerReplicaFreshnessIntegration(t *testing.T) {
 				makeDue()
 				var worked bool
 				worked, err = r.RunOnce(f.ctx)
-				if !worked {
-					t.Fatal("lagged campaign was not claimed")
+				if worked {
+					t.Fatal("lagged observation must be rejected before claiming a campaign")
 				}
 			}
 			if !errors.Is(err, osm.ErrMatcherReplicaNotReady) {
 				t.Fatalf("lagged reconciliation error=%v", err)
 			}
-			if f.osmDB.Stat().AcquiredConns() != 0 {
-				t.Fatal("lagged lookup retained its snapshot")
-			}
+			f.wait("lagged lookup releases its snapshot", func(context.Context) (bool, error) {
+				return f.osmDB.Stat().AcquiredConns() == 0, nil
+			})
 			tx := f.accountTx(f.ctx, f.adminDB)
 			var untouched bool
+			failureCode := "coverage-reconciliation-failed"
+			if !afterClaim {
+				failureCode = "fixture-retry"
+			}
 			f.scan(tx, `SELECT cursor_workout_id=$2 AND completed_revision<active_revision AND active_revision=$3
-				AND worker_id IS NULL AND lease_token IS NULL AND last_failure_code='coverage-reconciliation-failed'
-				AND next_scan_at BETWEEN clock_timestamp()+interval '4 minutes' AND clock_timestamp()+interval '6 minutes'
+				AND worker_id IS NULL AND lease_token IS NULL AND last_failure_code=$7
+				AND (($8 AND next_scan_at BETWEEN clock_timestamp()+interval '4 minutes' AND clock_timestamp()+interval '6 minutes')
+				    OR (NOT $8 AND next_scan_at<clock_timestamp()))
 				AND NOT EXISTS(SELECT 1 FROM app.jobs WHERE account_id=$1 AND kind='coverage_update_route')
 				AND (SELECT desired_osm_generation=$5 FROM app.workout_coverage_regions WHERE account_id=$1 AND workout_id=$4 AND region_id=$6)
 				AND (SELECT target_job_id IS NULL AND target_generations IS NULL FROM app.workout_coverage_states WHERE account_id=$1 AND workout_id=$4)
 				FROM app.coverage_reconciliation_accounts WHERE account_id=$1`,
-				[]any{f.accountID, first, claim.revision, second, f.generation, f.regionID}, &untouched)
+				[]any{f.accountID, first, claim.revision, second, f.generation, f.regionID, failureCode, afterClaim}, &untouched)
 			f.commit(tx)
 			if !untouched {
 				t.Fatal("lag advanced/completed the cursor, changed a target, queued a job, or lost the campaign retry")

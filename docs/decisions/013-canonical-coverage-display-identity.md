@@ -1,6 +1,6 @@
 # ADR 0013: Canonical coverage display identity
 
-- Status: Accepted policy; implemented in source, undeployed
+- Status: Accepted; implemented and deployed
 - Date: 10/24/2026
 - Owners: Product and engineering
 
@@ -13,11 +13,17 @@ highlighting just one component gives inconsistent table, hover and map results.
 This is a generally applicable read-model policy for every account, not a patch
 for particular names, routes or data. No owner data is needed to specify it.
 
-Live remains backend **42**, UI **43**, schema/minimum runtime **32**, baseline
-**27**, ledger **0-32**. Migration
-[033_canonical_coverage_display.sql](../../api/migrations/sql/033_canonical_coverage_display.sql)
-and the coordinated API/UI contract are **source-only, not deployed**. Applied
-**001-032 are immutable**. See [release status](../development-progress.md#canonical-display-identity-033-source-only).
+The policy and coordinated API/UI behavior are **implemented and deployed**;
+current source combines them with compact display facts and targeted stats in
+[030_coverage_display.sql](../../api/migrations/sql/030_coverage_display.sql).
+Final source/runtime `SupportedSchemaVersion=30`, schema/minimum runtime **30**,
+baseline **27** and ledger **0-30** define the source contract, not a completed live
+rewrite. See the [history mapping](../database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](../database-migrations.md#pre-cutover-live-status).
+The original ADR date records the policy decision, not a deployment receipt.
+See [current release status](../development-progress.md#current-status)
+and [Milestone 8 closeout](../development-progress.md#milestone-8-closeout) for
+current verification and acceptance boundaries.
 
 ## Decision
 
@@ -66,7 +72,7 @@ source kind and UUID for geometry qualification and hit prioritization.
 
 Membership is resolved for a date context, not stored as a permanent
 source-to-canonical assignment. Source names and base locality use all eligible
-history as in 032. In-range state/national-park context overrides path locality;
+history through compact facts in 030. In-range state/national-park context overrides path locality;
 region uses the in-range evidence minimum when available. Context-only evidence
 still participates even when its segment does not qualify for path statistics.
 
@@ -111,7 +117,7 @@ logical/physical deletion, route presence, applied-result eligibility and region
 catalog labels, including context-only evidence. Timestamp-only/no-input changes
 need not invalidate. Coalesce **one display revision and one public generation
 advance per affected account/transaction**, using deferred flush, not eager
-context rebuilding. Keep generation-before-revision lock order and 032's
+context rebuilding. Keep generation-before-revision lock order and 030's
 post-serialization segment-key expansion. Do not take an account generation lock
 at the beginning of ingest/provider work. Both READ COMMITTED commit orders must
 see correct evidence; stale Repeatable Read must propagate `40001` rather than
@@ -140,11 +146,11 @@ priority and source geometry; a path feature can represent a canonical park
 group. Never hash tile-local labels. Account/session/expiry/current-generation
 authorization remains mandatory; Martin identity, flags and private proxy remain
 unchanged. Earlier click-highlight responsiveness/cancellation/cache improvements
-ship as part of this pending coordinated release, not a separate deployed feature.
+are deployed as part of this coordinated release, not a separate release contract.
 
 ## Consequences And Release Gates
 
-033 advances schema/minimum runtime to **33**, retaining baseline **27**. Native
+030 advances schema/minimum runtime to **30**, retaining baseline **27**. Native
 migration seeds display revisions and advances public generation once per account
 to invalidate source-ID selections. It does not rewrite workouts, GPS, manifests,
 match evidence, job history, matcher states/rules/generation vectors or OSM data.
@@ -157,13 +163,18 @@ for this release means warming/rebuilding canonical read-model contexts from
 existing evidence during selection preparation, not creating route jobs.
 
 Source verification, protected actual-backup restore/migration/rollback rehearsal,
-fresh backups and matching old images, coordinated runtime migration and explicit
-**MAIN cutover** remain release gates. 033 is forward-only; rollback restores the
+fresh backups and matching old images, and coordinated runtime migration/cutover
+are release safety requirements. The policy is deployed under historical numbering;
+the separately authorized source-squash reconciliation is still pending here.
+030 is forward-only; rollback restores the
 matching database and images together. Do not change resource/concurrency/retry
 budgets, source auto-sync, admin-password debug, TLS/OSM replica policy or Martin
 flags/identity. Keep all dumps/archives on the approved NFS temporary archive tree,
 linked from the matching private `deploy/internal` bundle; monitor workspace,
 `/tmp`, NFS and application-PG filesystem space/inodes regularly. Public examples
 and test evidence must be synthetic; private operational identifiers and data do
-not belong here. See [migration gates](../database-migrations.md#canonical-coverage-display-033-source-only)
-and [pending operations](../implementation-plan.md#canonical-display-identity-033-pending-release).
+not belong here. See [migration requirements](../database-migrations.md#canonical-coverage-display-030),
+[current release status](../development-progress.md#current-status) and
+[Milestone 8 closeout](../development-progress.md#milestone-8-closeout).
+Historical source-only test checkpoints do not establish the current release's
+browser or milestone acceptance outcome.

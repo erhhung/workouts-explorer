@@ -45,6 +45,32 @@ if (
   );
 if (/\.coverage-button/.test(css))
   throw new Error("Unimplemented Coverage controls must not ship in Map CSS");
+if (!/\.coverage-route-status\s*\{[^}]*border-radius:\s*50%/.test(css))
+  throw new Error("Every Coverage readiness indicator must share a circular frame");
+if (
+  !/\.tooltip-content--portal\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*50[^}]*bottom:\s*auto/.test(
+    css,
+  ) ||
+  !/\.tooltip-content--portal\.is-open\s*\{[^}]*visibility:\s*visible[^}]*transition-delay:\s*750ms/.test(
+    css,
+  )
+)
+  throw new Error("Portaled readiness tooltips must escape list clipping and retain their delay");
+if (
+  !/\.coverage-route-status--unavailable > span\[aria-hidden="true"\]\s*\{[^}]*transform:\s*translate\(0,\s*-2px\)/.test(
+    css,
+  )
+)
+  throw new Error("The unavailable Coverage X must retain its corrected optical alignment");
+if (
+  !/\.coverage-route-status--pending\s*\{[^}]*background:\s*conic-gradient\([^}]*animation:\s*coverage-status-spin 1s linear infinite/.test(
+    css,
+  ) ||
+  !/@media \(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.coverage-route-status--pending\s*\{\s*animation:\s*none/.test(
+    css,
+  )
+)
+  throw new Error("Pending Coverage must use the ring spinner with a reduced-motion fallback");
 if (
   !/\.coverage-diagnostic-card\s*\{[^}]*position:\s*absolute[^}]*z-index:\s*6[^}]*max-height:[^}]*overflow-y:\s*auto/.test(
     css,

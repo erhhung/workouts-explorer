@@ -95,7 +95,7 @@ As a user, I want display preferences to persist so that the product matches how
 
 ### Behavior
 
-1. The Preferences dialog allows changing full display name, theme, units, default timezone, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary and Road Coverage.
+1. The Preferences dialog allows changing full display name, theme, units, default time zone, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary and Road Coverage.
 2. Dark theme is the default; light theme is available.
 3. Imperial units, Monday week start, and 12-hour time are defaults.
 4. The last-used date-range preference is restored on a later session.
@@ -103,7 +103,7 @@ As a user, I want display preferences to persist so that the product matches how
 
 ### Validation
 
-- Default timezone must be an IANA timezone name.
+- Default time zone must be an IANA time zone name.
 - Page size cannot exceed the operator-configured maximum.
 - Theme, units, week start, and clock format accept documented enum values only.
 
@@ -220,19 +220,28 @@ requires a trust token; the application additionally requires cookies from
 completed external authentication. Exact limits and private owner setup are in
 [iCloud Source Setup](icloud-source-setup.md).
 
-The source implementation is deployed, and owner-operated ingest and available-map
-Coverage recovery are verified. M8 owner acceptance remains separate and pending.
+The source implementation is deployed, and ingest and available-map Coverage
+recovery are verified. [Milestone 8 closeout](development-progress.md#milestone-8-closeout)
+owns current acceptance and browser-verification status; deployment alone does not
+establish milestone acceptance or multi-user capacity.
 The [initial recorded results](implementation-plan.md#verification-results-10122026)
 retain their original synthetic/disposable-database scope; later release evidence
-belongs in [Development Progress](development-progress.md). The schema-28 pipeline
-is live in `dev-20261020`, Helm revision 29, with schema/Goose/minimum runtime 28 and
+belongs in [current status](development-progress.md#current-status). Current source
+ends at **030**, with final source/runtime `SupportedSchemaVersion=30`,
+schema/minimum runtime **30**, baseline **27**, ledger **0-30**. Combined **029**
+contains ingest status/reprocessing/phases; **030** contains compact/canonical
+display. See the [history mapping](database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status);
+approved live reconciliation remains pending here, not a source-30 deployment.
+At the historical 10/20/2026 checkpoint, the schema-28
+pipeline was live at Helm revision 29, with schema/Goose/minimum runtime 28 and
 `migration_baseline=27`; repaired-contract postdeployment verification passed. Deployment
-does not close M8 owner acceptance or certify multi-user capacity.
+evidence from that checkpoint retains its original scope.
 
-The approved active sequence remains **001-028**, with **no active 029**. New 028
-folds the generation-lock fix, strict eligible cohorts and mixed-failure automatic
+At that checkpoint, the approved active sequence was **001-028**, with **no active
+029**. Folded 028 combines the generation-lock fix, strict eligible cohorts and mixed-failure automatic
 policy into the pipeline. Source `SupportedSchemaVersion`, schema and minimum
-runtime are **28**, marker **27**. Generation locking, exact eligible cohorts,
+runtime were **28**, marker **27**. Generation locking, exact eligible cohorts,
 mixed-failure automatic retry, exact parking repair and the UI follow-up are
 **deployed**. Equal numeric versions do not establish compatibility.
 Native Goose does not replay applied 028. Old-contract 28 requires a new private
@@ -246,9 +255,9 @@ credentials. Retain backups/artifacts; rollback requires the old database contra
 and images, not images alone. The approved exact actual-profile repair passed
 protected actual-backup rehearsal and live transactional application under the
 real non-superuser migration login. New readiness and original-tuple/ledger
-preservation passed. Available-map yearly recovery now has independent closure;
-owner acceptance and capacity certification remain separate. See
-[migration recovery](database-migrations.md) and [current progress](development-progress.md).
+preservation passed. Available-map yearly recovery has independent closure;
+capacity certification is not implied. See [migration recovery](database-migrations.md)
+and [Milestone 8 closeout](development-progress.md#milestone-8-closeout) for current acceptance status.
 
 ### Validation
 
@@ -341,7 +350,7 @@ As a data owner, I want new workout exports imported automatically without daily
 
 - Given two auto-sync sources, when the cadence fires, then one parent with two source children is created.
 - Given no new file, when incremental sync completes, then the child succeeds with zero imported workouts.
-- Given a terminal ingest with a failed child and at least one created or updated workout, then its status is partially_succeeded; successful reads, skips and unchanged workouts alone do not qualify under schema 030.
+- Given a terminal ingest with a failed child and at least one created or updated workout, then its status is partially_succeeded; successful reads, skips and unchanged workouts alone do not qualify under migration 029.
 
 ## Feature: Run Manual Sync
 
@@ -404,6 +413,7 @@ As an operator, I want ingest to use bounded temporary storage so that historica
 7. Defaults are two files per account, two per worker, and four globally.
 8. Connection checks and deletion jobs bypass ingest-file concurrency.
 9. Same-job candidate actions and metadata are frozen for recovery. Terminal file checkpoints never reopen; restored committed events/counters do not count adoptions or live-owner skips twice.
+10. After file processing and transport cleanup, publish its ingest counters before draining post-file Coverage work. Parent and source progress must not wait for Coverage readiness lookups. Recovered files still drain their durable Coverage obligations without counting their outcomes twice.
 
 ### Validation
 
@@ -605,9 +615,9 @@ As a user, I want explicit dates and common shortcuts so that Summary and Map sh
 1. Desktop uses a Grafana-inspired date control near the view selectors.
 2. Supported shortcuts are This week, Last week, Last 7 days, Last 30 days, This month, Last month, This year, and Last year.
 3. API reads require either explicit start/end dates or one `dateRangeEnum`.
-4. `tz` overrides the user's default timezone for enum resolution.
+4. `tz` overrides the user's default time zone for enum resolution.
 5. `tz` is silently ignored with explicit dates.
-6. Resolved dates and timezone are returned in response metadata.
+6. Resolved dates and time zone are returned in response metadata.
 7. Summary and Map share the same selection.
 8. Explicit and shortcut boundaries are inclusive calendar dates.
 9. Workout membership uses the workout's local start date.
@@ -619,7 +629,7 @@ As a user, I want explicit dates and common shortcuts so that Summary and Map sh
 
 - Explicit dates must appear together.
 - Enum and explicit dates are mutually exclusive.
-- Unknown enums and IANA timezones are rejected.
+- Unknown enums and IANA time zones are rejected.
 
 ### Failure cases
 
@@ -646,7 +656,7 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 5. The API supports multiple sort columns even though the UI normally uses one.
 6. Null values sort last.
 7. Desktop shows preferred columns.
-8. Mobile shows date/timezone, workout type, and duration, with tap-to-expand details.
+8. Mobile shows date/time zone, workout type, and duration, with tap-to-expand details.
 9. Elevation fields are available for all routes and shown by default for configured types such as Hiking.
 10. Pagination keeps the current table mounted at full opacity while the next page loads, reserves its measured height so a short final page does not collapse the document, swaps rows in place, and restores the captured document scroll position.
 11. The Workouts card pairs the total workout count with an equally prominent, right-aligned count labeled With routes. The labels By workout type and With routes share the footer row. These counts remain counts in averages mode; measured distance without GPS does not imply a route.
@@ -843,7 +853,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 1. Coverage generates nearby eligible segment candidates for ordered route points and sequence-decodes connected traversals; it does not independently attribute each point to its nearest segment.
 2. All relevant path classes are candidates, including roads, trails, cycleways, unnamed paths, driveways, and parking aisles under the accepted matcher policy.
 3. Deterministic OSM-derived segments remain the match-evidence and rendered-geometry units; they are not the user-facing counting or table-row identity.
-4. Source logical paths group graph-connected named segments by normalized name within one attribution scope, including road/path transitions, branches, and source-way transitions. Named road segments within one scope/name also connect within 15 meters, extended to 50 meters only when both are explicitly one-way, so divided carriageways remain one attribution. The scope is the containing named park when attributed, otherwise authoritative municipality, otherwise county, otherwise provider region. In a synthetic example, Example Boulevard in Example Borough and in Sample Borough remain separate source paths. Pending 033 adds display grouping over these unchanged source identities, as specified below.
+4. Source logical paths group graph-connected named segments by normalized name within one attribution scope, including road/path transitions, branches, and source-way transitions. Named road segments within one scope/name also connect within 15 meters, extended to 50 meters only when both are explicitly one-way, so divided carriageways remain one attribution. The scope is the containing named park when attributed, otherwise authoritative municipality, otherwise county, otherwise provider region. In a synthetic example, Example Boulevard in Example Borough and in Sample Borough remain separate source paths. Source 030 adds display grouping over these unchanged source identities, as specified below.
 5. Segment-to-locality assignment uses imported administrative boundaries and deterministic geometry rules. Segment derivation splits at locality boundaries where needed rather than assigning a cross-boundary geometry wholly to the wrong locality.
 6. Connected unnamed segments share one logical identity within the same attribution scope and road/path class across simple two-segment continuations, even when source lineage changes. At a larger branch, one source way remains connected and the only two incident segments of one exact broad class may continue across source ways; other cross-source branches remain separate. Disconnected components always receive separate identities, including when they shared an incoming legacy ID. Driveway, parking-aisle, and parking-area logical paths remain rendered but are omitted from user-facing statistics/history.
 6a. A non-road municipality piece of at most 25 meters is treated as a municipal-boundary sliver and reassigned to county scope only when the immediately adjacent pieces of the same clipped source segment both belong to that county and preserve the same name state and exact broad class. Park-attributed pieces and road pieces never use this exception.
@@ -874,15 +884,59 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. These row indicators identify omitted checked workouts; a separate omission summary is not required. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable no-result workouts alone do not keep polling active. Once every checked workout has a current or stale applied result, ten-second processing polling stops. While applied results are displayed, background generation checks continue at the public polling interval clamped to 10-60 seconds (normally 30 seconds), so committed replacements renew private capabilities even when readiness labels are unchanged. Both checks pause in hidden tabs and stop outside production Coverage mode. Unchanged capabilities are discarded without replacing map sources or resetting focus/camera state.
 26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
 27. Coverage processing creates bounded account-owned parent runs with one child per eligible workout route. New ingest cohorts may mix regions, with per-route vectors authoritative. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful. See [committed-route pipelining](#feature-pipeline-committed-routes-to-coverage).
-28. Display precomputations preserve exact results for named periods, all-time history and arbitrary custom dates without separate year/month datasets. Compact qualification partials are deduplicated by display entity/workout before counts; educational grounds spanning source paths still count once. Regional-park context and park bounds remain independent of path exclusions. Metadata, workout-local dates, visibility and applied-result eligibility remain live joins. Logical deletion hides a workout before physical cleanup; failed rematching preserves prior applied coverage. Deferred, transaction-batched maintenance commits evidence and projections atomically. See the [schema-32 design](architecture.md#coverage-display-precomputations-requires-32). This implementation is deployed with released/applied 032 and coordinated backend-42/UI-43; matcher policy is unchanged. Scripted deployed-browser verification passed; owner acceptance/milestone and capacity remain separate.
+28. Display precomputations preserve exact results for named periods, all-time history and arbitrary custom dates without separate year/month datasets. Compact qualification partials are deduplicated by display entity/workout before counts; educational grounds spanning source paths still count once. Regional-park context and park bounds remain independent of path exclusions. Metadata, workout-local dates, visibility and applied-result eligibility remain live joins. Logical deletion hides a workout before physical cleanup; failed rematching preserves prior applied coverage. Deferred, transaction-batched maintenance commits evidence and projections atomically. See the [030 compact-fact design](architecture.md#coverage-display-precomputations-requires-30). The same combined migration defines final canonical grouping and cache scope below; matcher policy is unchanged. Earlier backend-42/UI-43 browser receipts remain historical, not fresh squash or current acceptance evidence. See [current status](development-progress.md#current-status) and [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
 
-### Canonical Display Identity (033, Undeployed)
+### Background Coverage Reconciliation
 
-**Source-only contract, not live behavior:** live remains backend-42/UI-43,
-schema/minimum runtime **32**, baseline **27**. Pending 033 requires coordinated
-runtime **33** and retains baseline **27**; applied **001-032 stay immutable**.
+**Implementation BUILT; genuine PostgreSQL and live deployment verification
+PENDING.** [ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md)
+defines the new source-029 behavior, shipped with complete APP runtime 30 and
+separate OSM 010. This refines the folded-028 fingerprint rule in
+[pipeline behavior 6](#feature-pipeline-committed-routes-to-coverage), not its
+historical deployment receipt.
+
+1. Unchanged route input, catalog selection and effective matching target require
+   no GPS scan/hash, region lookup, state rewrite or new Coverage job. The default
+   30-second reconciler idle poll checks only catalog-head/claim metadata. A daily
+   24-hour interval no longer triggers historical work. Executor/health control
+   queries remain; this is not zero database traffic or UI 10-second job polling.
+2. New or changed canonical route input triggers exact-route proof repair and
+   eligible matching, including telemetry edits with unchanged point count/bounds.
+   Catalog changes trigger metadata-filtered campaigns. Generation-only changes
+   reuse exact selected IDs without GPS only when complete selection proof/policy
+   remain equal; competing/unconfigured boundaries or configured-active presence
+   changes invalidate selection and require full-route resolution.
+3. Rules, sampling, path policy, minimum traversal and production matcher contract
+   are an immutable complete job descriptor. Compare actual successful applied
+   provenance, not preparation/enqueue or a later setting, before declaring a
+   target current. A changed descriptor can reuse valid selection without GPS.
+4. Persist real pending/unavailable selection proof so unchanged negative results
+   do not repeatedly scan. Unknown history may need a bounded initial bootstrap;
+   never infer an old negative catalog baseline from today's catalog. Exact retained
+   successful immutable job history may prove applied work, not negative selection.
+5. Interrupted ingest recovers committed handoffs and prepared tails through
+   exact-account queue-only claims. Partial sealing still requires the visible
+   root/all source siblings terminal and due preparation exhausted. Queue recovery
+   preserves campaign cursors and causes no ordinary follow-up scan. It neither
+   revives cancelled identical targets nor bypasses established retry budgets.
+6. Lagged replica metadata, lost leases and changed input/descriptor CAS retain
+   durable obligations without applying stale results or advancing progress.
+   Acceptance combines absence of redundant work beyond the former daily interval
+   with application-attributed CPU/query evidence after necessary work drains;
+   no arbitrary five-minute settlement guarantee applies while updates are queued.
+
+These are behavior/acceptance requirements, not a new live receipt. Last reported
+live state remains APP schema/minimum **34/33**, OSM **9**, Helm **60**; Main must
+report verified cutover before changing
+[implementation status](development-progress.md#metadata-driven-coverage-reconciliation).
+
+### Canonical Display Identity (030)
+
+**Implemented behavior already deployed; squashed source cutover pending:** final
+source schema/minimum runtime **30**, baseline **27**, ledger **0-30**. See the
+[mapping and live boundary](database-migrations.md#source-history-mapping).
 This section supersedes source-entity display grouping and cache scope above
-only when the pending release is deployed. It applies to all accounts, not to
+in the deployed release. It applies to all accounts, not to
 particular names or routes. See [ADR 0013](decisions/013-canonical-coverage-display-identity.md).
 
 1. A named displayed entity is unique by region plus normalized actual DISPLAY
@@ -925,13 +979,13 @@ particular names or routes. See [ADR 0013](decisions/013-canonical-coverage-disp
    evidence, not new route jobs. There is no OSM derivation, matcher or path-policy
    bump and **no OSM regeneration or rematching is needed**.
 
-### Unreleased Click-Highlight Follow-Up (Undeployed)
+### Click-Highlight Follow-Up
 
-**Future normative change, not deployed UI-43 behavior:** the following refines
-entity-name clicking in behavior 20 once released. Live backend-42/UI-43 and
-schema-32 release evidence does not establish this source follow-up's deployment
-or full 033 verification. This follow-up is folded into the pending canonical
-release above. Visit-date navigation and existing hover/table interactions remain;
+**Implemented and deployed:** the following refines entity-name clicking in
+behavior 20, retained by canonical display source 030. Historical backend-42/UI-43
+receipts retain their checkpoint scope; current verification and
+acceptance status belongs in [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
+Visit-date navigation and existing hover/table interactions remain;
 their cache validity additionally includes display policy/revision.
 
 1. An entity-name click must immediately close Road Coverage and focus the existing
@@ -971,14 +1025,14 @@ their cache validity additionally includes display policy/revision.
    reopens Road Coverage and chooses again. It must not silently refresh and
    replay the stale click. Other failures/timeouts allow a manual detail retry.
 
-The existing detail endpoint and response remain unchanged. The source API calls
+The existing detail endpoint and response remain unchanged. The deployed API calls
 the six-argument stored `app.map_selection_coverage_entity_detail`, replaced by
-033 with canonical whole-group geometry gated on indexed metadata in one
+030 with canonical whole-group geometry gated on indexed metadata in one
 correlated `LATERAL` statement snapshot. It supersedes the earlier API-local
 source-only geometry query. The transaction stays read-only with critical
 transaction-local `SET LOCAL jit=off`. The combined release requires schema/minimum
-runtime **33**, baseline **27**, with applied **001-032 unchanged**. See the
-[source-only architecture](architecture.md#click-highlight-follow-up-unreleased-source-only).
+runtime **30**, baseline **27**, with source ledger **0-30**. See the
+[deployed architecture](architecture.md#click-highlight-follow-up).
 
 ### Matching Bounds And Diagnostic Parity
 
@@ -1030,7 +1084,7 @@ runtime **33**, baseline **27**, with applied **001-032 unchanged**. See the
 - Account coverage cannot include another account's attribution.
 - Segment identity, logical-path identity, locality identity, derivation version, and map-data version are retained for refresh diagnostics.
 - Source attribution deduplicates by logical path/workout. Display statistics are
-  independent of the checked/focused workout subset; pending 033 unions distinct
+  independent of the checked/focused workout subset; source 030 unions distinct
   workouts across all context-resolved canonical members before summarizing.
 - Road Coverage statistics use all eligible workouts in the resolved range,
   independent of checked routes; display-entity/workout deduplication precedes
@@ -1039,11 +1093,10 @@ runtime **33**, baseline **27**, with applied **001-032 unchanged**. See the
   failed responses never produce a partial table presented as complete.
 - Stats validate account/session/selection liveness and current generation in the
   same database statement snapshot as the read; foreign, expired, stale or
-  unavailable selections/entities return 404. In deployed 032, park stats retain the detail
-  endpoint's requirement for canonical-text matched geometry from an eligible
-  in-range workout, even if a list row exists. Mixed noncanonical UUID-cast
-  evidence still contributes to raw bounds, not expanded fit bounds.
-- Pending 033 list/stats share ready canonical metadata and an in-range-visit gate;
+  unavailable selections/entities return 404. The compact-fact foundation retains
+  canonical-text matched-geometry availability and raw bounds independently;
+  final canonical list/stats availability is defined by ready context metadata below.
+- Source 030 list/stats share ready canonical metadata and an in-range-visit gate;
   detail separately requires actual matched geometry. A mixed park/path group's
   representative kind must not exclude path members or their geometry/history.
 
@@ -1150,7 +1203,7 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 
 ### Behavior
 
-1. The SPA fetches immediately after commands and polls active jobs at the configured interval, default 30 seconds.
+1. The SPA fetches immediately after commands. The selected Running job detail polls every 10 seconds, or faster if the configured interval is shorter. Queued job detail, Task history and the Data Sync summary retain the configured interval, default 30 seconds. Background detail polling pauses; terminal ingest detail stops interval polling. Terminal Coverage details that can change retry eligibility retain their configured-interval refresh behavior.
 2. Job details show hierarchy, status, counts, attempts, safe events, and timestamps.
 3. Parent cancellation cancels queued children and cooperatively stops running children.
 4. Completed child data is not rolled back by parent cancellation.
@@ -1165,6 +1218,51 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 13. A route has one authoritative current target, but may appear in several historical jobs/chains after genuine input, map-generation or matching-policy changes. Supersession does not authorize fabricated retry links or deletion of history. Incomplete, failed, foreign or unproven replacement work does not qualify for green Superseded presentation.
 14. History status filtering uses the displayed status before counting and pagination. The Superseded filter selects resolved historical parents; Failed and Partially completed filters exclude them. Coverage detail and history, including empty filtered pages, continue refreshing when independent work can change terminal-parent eligibility/display state or totals.
 15. Run-detail Files, Events and Logs pagination retains current rows and controls while a requested page loads. Full pages reserve the measured list height; only a loaded final partial page releases it. Cached page changes anchor the controls immediately even during background refetch. Deliberate scrolling overrides automatic anchoring. A failed request retains the displayed page and disables navigation until Try again succeeds, rather than skipping a page. Closing the disclosure or selecting another run cancels pending scroll restoration and isolates its page data.
+15a. Each successful run-detail refresh also refreshes the open Files page, including when the detail response is unchanged. When the job or a source child has recorded ingest activity, also refresh the open Events page, including the final successful detail refresh after the job becomes terminal. Preserve disclosure pages, the Files failure filter and scroll position; mark closed Files and applicable Events pages stale without fetching them. Logs remain manually refreshed. Opening or paging Files on an active run also refreshes the run counters. Failed detail refreshes do not initiate Files or Events refreshes. These remain separately sampled HTTP responses, not an atomic multi-endpoint snapshot.
+16. Manual and Automated sync show the actual current ingest activity after file counters and results, whether zero, one or many files were processed. File-counter completion does not imply job completion. Source details show their own activity; the root repeats the single active source's activity or labels each active source separately when several are active. Cancellation and terminal status take precedence over the last recorded phase.
+
+### Ingest Activity Messages
+
+The following wording is the user-facing contract. Phase names are internal keys,
+not additional job lifecycle statuses. Imported-route analysis can occur between
+files, so importing and analysis may repeat rather than advance once in a strict
+sequence.
+
+| State or phase | Exact message |
+|---|---|
+| Queued | Waiting for sync job to start. |
+| `resuming` | Resuming incomplete sync job. |
+| `preparing` | Preparing to read workout files. |
+| `discovering` | Looking for workout files that need to be processed. |
+| `importing` | Parsing workout files and importing new and changed workouts. |
+| `analyzing_imported_routes` | Analyzing map data for imported routes. |
+| `analyzing_existing_routes` | Analyzing map data for existing routes. |
+| `updating_time_zones` | Determining and updating workout time zones. |
+| `cleanup` | Cleaning up temporary files. |
+| Succeeded with created or updated workouts | Sync job completed successfully. |
+| Succeeded with no created or updated workouts | Sync job completed, but no new data were imported. |
+
+- Existing-route analysis includes previously imported routes from the source,
+  even for New data only, a restricted file-date range or a run with no imports.
+  It checks map availability and prepares later coverage work; it is not street
+  matching and does not promise that Coverage results are complete.
+- Route-analysis activity shows `Routes checked: X`, or `Routes checked: X of Y`
+  only when the total is known. Known zero is displayed; unknown totals never
+  become fabricated percentages. Already-current routes can be checked from
+  saved metadata; other routes count after their readiness outcome is committed.
+- The final time zone step can update previously imported workouts across the
+  account. Cleanup also covers closing the source and saving connection updates;
+  its message is not a successful terminal result.
+- Phases are recorded before their work starts, and detail shows the latest
+  persisted phase from the current execution attempt. Brief phases can finish
+  between polls; their persisted Events remain inspectable. Do not delay work to
+  make a phase visible or replay completed phases as current activity. Historical
+  jobs without phase records must not acquire guessed activity or event history.
+- User-facing terminology is **time zone** or **time zones**, including errors.
+  Code identifiers, field names and command names may retain `timezone`.
+
+See [ingest activity state semantics](job-state-machine.md#ingest-activity-phases-requires-29)
+and the [progress architecture](architecture.md#ingest-activity-and-refresh).
 
 ### Validation
 
@@ -1214,6 +1312,17 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 - Given an already-current retry conflict followed by a failed detail refresh,
   cached eligible metadata does not re-enable Retry or expose private error text.
 - Given a user ingest job, when an admin requests its logs, then access is denied.
+- Given a selected Running job, detail refreshes after 10 seconds while Task
+  history keeps its default 30-second cadence; a queued detail retains that
+  cadence, a hidden tab pauses detail polling, and terminal ingest stops it.
+- Given a complete file counter and no imported files, an active route-analysis
+  phase still appears after the results; success appears only after the job's
+  terminal commit.
+- Given several phases complete between detail polls, the next refresh shows
+  current activity and refreshes an open Events page with the recorded steps,
+  including terminal catch-up, without fetching closed panels or refreshing Logs.
+- Given multiple active sources in different phases, each source's current
+  activity is identified rather than reporting one phase for the whole job.
 
 ## Feature: Receive And Dismiss Notifications
 

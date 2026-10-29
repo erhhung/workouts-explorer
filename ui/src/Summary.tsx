@@ -290,7 +290,7 @@ function localInstant(
           shifted,
         ),
         zoneLabel: offsetLabel(offset, true),
-        zoneTitle: `${offsetLabel(offset)} recorded | timezone unavailable`,
+        zoneTitle: `${offsetLabel(offset)} recorded | time zone unavailable`,
         unavailable: false,
       };
     }
@@ -301,7 +301,7 @@ function localInstant(
       dateTime: `${new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(date)} at time unavailable`,
       weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date),
       zoneLabel: "TZ unavailable",
-      zoneTitle: "Recorded offset/timezone unavailable",
+      zoneTitle: "Recorded offset/time zone unavailable",
       unavailable: true,
     };
   }
@@ -309,7 +309,7 @@ function localInstant(
     dateTime: "Unavailable",
     weekday: "---",
     zoneLabel: "TZ unavailable",
-    zoneTitle: "Recorded offset/timezone unavailable",
+    zoneTitle: "Recorded offset/time zone unavailable",
     unavailable: true,
   };
 }

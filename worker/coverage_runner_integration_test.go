@@ -204,6 +204,12 @@ func newCoverageIntegrationFixture(t testing.TB) *coverageIntegrationFixture {
 	f.exec(tx, `INSERT INTO app.jobs(id,parent_job_id,account_id,kind,priority,parameters) VALUES($1,$2,$3,'manual_ingest_source',80,$4)`, f.ingestID, parentID, f.accountID, parameters)
 	f.exec(tx, `INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, f.ingestID, f.accountID, f.sourceID, []byte("fixture"))
 	f.exec(tx, `INSERT INTO app.job_source_contexts(job_id,account_id,source_id,source_generation,display_name,source_type) VALUES($1,$2,$3,1,'Coverage fixture','health-auto-export-local')`, f.ingestID, f.accountID, f.sourceID)
+	// This harness models retained historical file provenance, not a new receipt.
+	hash := sha256.Sum256([]byte(f.sourceID.String()))
+	f.exec(tx, `SET LOCAL session_replication_role='replica'`)
+	f.exec(tx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at)
+		VALUES($1,$2,$3,$4,'coverage-fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, f.fileID, f.accountID, f.sourceID, f.ingestID, hash[:])
+	f.exec(tx, `SET LOCAL session_replication_role='origin'`)
 	f.commit(tx)
 	tx = f.accountTx(ctx, f.workerDB)
 	defer coverageIntegrationRollback(tx)
@@ -213,9 +219,6 @@ func newCoverageIntegrationFixture(t testing.TB) *coverageIntegrationFixture {
 		t.Fatal("fixture ingest claim rejected")
 	}
 	f.fence(tx)
-	hash := sha256.Sum256([]byte(f.sourceID.String()))
-	f.exec(tx, `INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,checksum_sha256,state,processing_started_at,processed_at)
-		VALUES($1,$2,$3,$4,'coverage-fixture.json',1,$5,'succeeded',transaction_timestamp(),transaction_timestamp())`, f.fileID, f.accountID, f.sourceID, f.ingestID, hash[:])
 	f.exec(tx, `INSERT INTO app.workout_types(id,account_id,type_key,provider_label) VALUES($1,$2,'running','Running')`, f.typeID, f.accountID)
 	f.commit(tx)
 	return f
@@ -368,6 +371,11 @@ func (f *coverageIntegrationFixture) seedOSM() (string, int64) {
 	})
 	if f.regionID == "" {
 		f.regionID, f.generation, f.segments, f.paths = region, generation, segments, paths
+	}
+	// Publish the real freshly seeded head and this fixture's supported matcher
+	// before creating jobs; cleanup of earlier synthetic heads may prune events.
+	if err := NewCoverageReconciler(f.coverageDB, f.osmDB, slog.Default(), CoverageReconcilerOptions{}).observe(f.ctx); err != nil {
+		f.t.Fatal(err)
 	}
 	return region, generation
 }
@@ -633,6 +641,20 @@ func (f *coverageIntegrationFixture) assertTerminal(job coverageIntegrationJob, 
 	}
 	if processed != wantSucceeded+wantFailed+wantSuperseded || succeeded != wantSucceeded || failed != wantFailed || cancelled != wantCancelled || superseded != wantSuperseded || (status != "cancelled" && !duration) {
 		f.t.Fatalf("incorrect progress processed/succeeded/failed/cancelled/superseded=%d/%d/%d/%d/%d duration=%v", processed, succeeded, failed, cancelled, superseded, duration)
+	}
+	proofTx := f.accountTx(f.ctx, f.adminDB)
+	var stamped bool
+	f.scan(proofTx, `SELECT EXISTS (SELECT 1 FROM app.coverage_applied_match_proofs proof
+		JOIN app.coverage_route_job_contexts context ON context.job_id=proof.job_id AND context.account_id=proof.account_id
+		JOIN app.jobs child ON child.id=context.job_id
+		JOIN app.coverage_job_contexts parent ON parent.job_id=child.parent_job_id
+		WHERE proof.account_id=$1 AND proof.job_id=$2 AND proof.workout_id=context.workout_id
+		AND proof.route_input_revision=context.route_input_revision AND proof.route_input_sha256=context.route_input_sha256
+		AND proof.matching_descriptor=parent.matching_descriptor
+		AND app.coverage_generation_vectors_equal(proof.generations,context.target_generations))`, []any{f.accountID, job.childID}, &stamped)
+	f.commit(proofTx)
+	if stamped != (outcome == "applied" || outcome == "no_evidence") {
+		f.t.Fatalf("actual matching provenance stamp=%t for outcome %s", stamped, outcome)
 	}
 	f.assertNoSlots()
 }

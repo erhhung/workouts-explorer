@@ -12,7 +12,7 @@ import (
 
 func canonicalDisplayMigration(t *testing.T) string {
 	t.Helper()
-	raw, err := migrations.Files.ReadFile("033_canonical_coverage_display.sql")
+	raw, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,19 +20,29 @@ func canonicalDisplayMigration(t *testing.T) string {
 }
 
 func canonicalDisplayFunctions(source string) [][]string {
-	return regexp.MustCompile(`(?s)CREATE (?:OR REPLACE )?FUNCTION app\.(\w+)\s*\((.*?)\)\s*RETURNS\s+(.*?)\s+AS \$function\$(.*?)\$function\$;`).FindAllStringSubmatch(source, -1)
+	functions := regexp.MustCompile(`(?s)CREATE (?:OR REPLACE )?FUNCTION app\.(\w+)\s*\((.*?)\)\s*RETURNS\s+(.*?)\s+AS \$function\$(.*?)\$function\$;`).FindAllStringSubmatch(source, -1)
+	var canonical [][]string
+	for _, function := range functions {
+		switch function[1] {
+		case "rebuild_coverage_display_precomputations", "flush_coverage_display_precomputations", "flush_coverage_display_dirty_account":
+			// These evidence-only helpers have their own readiness contract.
+		default:
+			canonical = append(canonical, function)
+		}
+	}
+	return canonical
 }
 
 func TestCanonicalCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 33 {
-		t.Fatalf("supported schema=%d, want 33", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 30 {
+		t.Fatalf("supported schema=%d, want 30", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ")"
-	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 33 OR (") {
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ")"
+	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("Ready must compose all previous contracts and the version-gated canonical contract")
 	}
 	for _, required := range []string{
-		"minimum_runtime_version>=33", "migration_baseline=27", "BETWEEN 180000 AND 189999",
+		"schema_version>=30", "minimum_runtime_version>=30", "migration_baseline=27", "BETWEEN 180000 AND 189999",
 		"current_setting('server_encoding')='UTF8'", "to_regcollation('pg_catalog.pg_c_utf8')", "collprovider='b'",
 		"collencoding=pg_char_to_encoding('UTF8')", "coverage-display-identity-v1",
 	} {
@@ -87,7 +97,7 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 		}
 	}
 	source := canonicalDisplayMigration(t)
-	tables := regexp.MustCompile(`CREATE TABLE app\.(coverage_display_\w+)`).FindAllStringSubmatch(source, -1)
+	tables := regexp.MustCompile(`CREATE TABLE app\.(coverage_display_(?:revisions|contexts|members|visits|entities|invalidations))`).FindAllStringSubmatch(source, -1)
 	if len(tables) != 6 {
 		t.Fatalf("want six private tables, got %d", len(tables))
 	}
@@ -99,7 +109,7 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 			t.Errorf("restricted readiness must not query private rows in %s", table[1])
 		}
 	}
-	indexes := regexp.MustCompile(`CREATE INDEX (\w+)\s+ON (app\.\w+)\s*\(([^)]+)\)`).FindAllStringSubmatch(source, -1)
+	indexes := regexp.MustCompile(`CREATE INDEX (\w+)\s+ON (app\.(?:coverage_display_\w+|map_selections))\s*\(([^)]+)\)`).FindAllStringSubmatch(source, -1)
 	if len(indexes) != 6 {
 		t.Fatalf("want six canonical lookup/GC indexes, got %d", len(indexes))
 	}
@@ -115,7 +125,7 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	fingerprints := regexp.MustCompile(`(?s)\('app\.([a-z_]+)\([^']*\)'.*?,'([a-f0-9]{32})'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
 	if len(functions) != 21 || len(fingerprints) != len(functions) {
-		t.Fatalf("want 21 protected 033 functions including detail/MVT/focus; migration=%d readiness=%d", len(functions), len(fingerprints))
+		t.Fatalf("want 21 protected canonical functions including detail/MVT/focus in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
 	}
 	for _, function := range functions {
 		t.Run(function[1], func(t *testing.T) {
@@ -133,7 +143,7 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 				pattern := regexp.MustCompile(`(?s)\('app\.` + function[1] + `\([^']*\)'.*?,'([a-f0-9]{32})'\)`)
 				old := pattern.FindStringSubmatch(runtimeCoverageDisplayReadinessSQL)
 				if len(old) != 2 || old[1] != want {
-					t.Errorf("source-facts contract must require the replacement 033 body for %s", function[1])
+					t.Errorf("source-facts contract must require the canonical 030 body for %s", function[1])
 				}
 			}
 		})
@@ -142,7 +152,7 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	// either a policy literal or whether the deferred barrier is commented out.
 	for _, fixture := range []struct{ name, old, replacement string }{
 		{"coverage_display_identity", "'coverage-display-identity-v1'", "'coverage-display-identity- v1'"},
-		{"flush_coverage_display_invalidations", "-- only writes; otherwise a 032 evidence flush could invert these locks.\n        UPDATE", "-- only writes; otherwise a 032 evidence flush could invert these locks. UPDATE"},
+		{"flush_coverage_display_invalidations", "-- only writes; otherwise an evidence flush could invert these locks.\n        UPDATE", "-- only writes; otherwise an evidence flush could invert these locks. UPDATE"},
 	} {
 		var body string
 		for _, function := range functions {
@@ -158,7 +168,7 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 }
 
 func TestCanonicalCoverageDisplayReadinessPhysicalColumns(t *testing.T) {
-	tables := regexp.MustCompile(`(?s)CREATE TABLE app\.(coverage_display_\w+) \((.*?)\n\);`).FindAllStringSubmatch(canonicalDisplayMigration(t), -1)
+	tables := regexp.MustCompile(`(?s)CREATE TABLE app\.(coverage_display_(?:revisions|contexts|members|visits|entities|invalidations)) \((.*?)\n\);`).FindAllStringSubmatch(canonicalDisplayMigration(t), -1)
 	if len(tables) != 6 {
 		t.Fatalf("want six complete private table definitions, got %d", len(tables))
 	}
@@ -246,7 +256,7 @@ func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 			parallel, fmt.Sprint(returnsSet), fmt.Sprint(defaults), result, config, fmt.Sprint(api), fmt.Sprint(function[1] == "coverage_mvt")}
 		for i, expected := range want {
 			if tuple[i+2] != expected {
-				t.Errorf("%s attribute %d=%q, embedded033=%q", function[1], i, tuple[i+2], expected)
+				t.Errorf("%s attribute %d=%q, embedded030=%q", function[1], i, tuple[i+2], expected)
 			}
 		}
 	}

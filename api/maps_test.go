@@ -226,17 +226,17 @@ func TestRoadCoverageEntityDetailSQLExecutionGateAndGeometryContract(t *testing.
 }
 
 func TestRoadCoverageEntityDetailCanonicalStoredGeometryContract(t *testing.T) {
-	source, err := migrations.Files.ReadFile("033_canonical_coverage_display.sql")
+	source, err := migrations.Files.ReadFile("030_coverage_display.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, body, found := strings.Cut(strings.ToLower(string(source)), "function app.map_selection_coverage_entity_detail(")
 	if !found {
-		t.Fatal("033 canonical detail function missing")
+		t.Fatal("030 canonical detail function missing")
 	}
 	_, body, found = strings.Cut(body, "as $function$")
 	if !found {
-		t.Fatal("033 canonical detail body missing")
+		t.Fatal("030 canonical detail body missing")
 	}
 	body, _, _ = strings.Cut(body, "$function$;")
 	for _, required := range []string{"map_selection_coverage_entity_stats(", "lateral", "offset 0", "source_kind", "source_id",

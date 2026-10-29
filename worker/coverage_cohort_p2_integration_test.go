@@ -66,7 +66,7 @@ func TestEligibleCohortCatalogLookupSnapshotIntegration(t *testing.T) {
 	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, region, cohortSmallBoundary); err != nil {
 		t.Fatal(err)
 	}
-	before, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0)
+	before, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,15 +88,15 @@ func TestEligibleCohortCatalogLookupSnapshotIntegration(t *testing.T) {
 	}
 	t.Cleanup(reader.Close)
 	points := []osm.RouteCoordinate{{Longitude: -122, Latitude: 37}, {Longitude: -121.999, Latitude: 37}}
-	readiness, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, reader, points, 0)
+	readiness, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, reader, points, 0, 0)
 	if err != nil || !changed.Load() || readiness.State != "map_data_ready" || readiness.CatalogFingerprint != before.Fingerprint || len(readiness.Regions) != 1 || readiness.Regions[0].RegionID != f.regionID {
 		t.Fatalf("catalogue and ROI did not share old RR snapshot: readiness=%+v changed=%t err=%v", readiness, changed.Load(), err)
 	}
-	after, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0)
+	after, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0, 0)
 	if err != nil || after.Fingerprint == before.Fingerprint {
 		t.Fatalf("committed catalogue change invisible: %v", err)
 	}
-	current, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, f.osmDB, points, 0)
+	current, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, f.osmDB, points, 0, 0)
 	if err != nil || current.CatalogFingerprint != after.Fingerprint || len(current.Regions) != 1 || current.Regions[0].RegionID != region {
 		t.Fatalf("new snapshot did not choose smaller configured B: %+v %v", current, err)
 	}
@@ -156,7 +156,7 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 				t.Fatal(err)
 			}
 			assertCountQuery(t, f.osmAdminDB, 1, `SELECT count(*) FROM osm_catalog.generations WHERE id=$1 AND state='active'`, f.generation)
-			current, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0)
+			current, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0, 0)
 			if err != nil || current.Fingerprint == stored {
 				t.Fatalf("full-catalogue proof ignored %s: %v", change, err)
 			}
@@ -169,7 +169,11 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 			if worked, err := recovery.RunOnce(f.ctx); err != nil || !worked {
 				t.Fatalf("catalogue-cut recovery: %v", err)
 			}
-			if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{13}) || lookups.Load() != 13 || snapshots.Load() != 13 || ordinary.Load() != 13 {
+			wantLookups := int64(13)
+			if change == "unconfigured head" {
+				wantLookups = 0
+			}
+			if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{13}) || lookups.Load() != wantLookups || snapshots.Load() != wantLookups || ordinary.Load() != 0 {
 				t.Fatalf("cached ROI was sealed or ordinary sweep hid stale first seal: sizes=%v cohortROI=%d snapshots=%d ordinary=%d", sizes, lookups.Load(), snapshots.Load(), ordinary.Load())
 			}
 			assertCountQuery(t, f.adminDB, 13, `SELECT count(*) FROM app.coverage_route_job_contexts WHERE account_id=$1 AND target_generations=jsonb_build_array(jsonb_build_object('regionId',$2::text,'generation',$3::bigint))`, f.accountID, wantRegion, wantGeneration)

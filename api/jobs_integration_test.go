@@ -33,7 +33,7 @@ func TestJobFilesRejectInvalidFailuresOnly(t *testing.T) {
 }
 
 // Malformed failed paths are synthetic legacy read-model rows for redaction,
-// not schema-31 discovery inputs. Successful rows use real frozen candidates.
+// not schema-29 discovery inputs. Successful rows use real frozen candidates.
 func TestJobFailedFilePaginationIntegration(t *testing.T) {
 	databaseURL, migrationURL := os.Getenv("API_DATABASE_URL"), os.Getenv("MIGRATION_DATABASE_URL")
 	if databaseURL == "" || migrationURL == "" {

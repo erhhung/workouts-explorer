@@ -510,6 +510,21 @@ export interface JobProgress {
   workoutsRejected: number;
 }
 
+export interface IngestActivity {
+  phase:
+    | "resuming"
+    | "preparing"
+    | "discovering"
+    | "importing"
+    | "analyzing_imported_routes"
+    | "analyzing_existing_routes"
+    | "updating_time_zones"
+    | "cleanup";
+  current?: number;
+  total?: number;
+  updatedAt: string;
+}
+
 export interface JobSourceContext {
   sourceId: string;
   generation: number;
@@ -596,6 +611,7 @@ export interface JobDetail extends JobSummary {
   latestRetryOrdinal?: number;
   retryEligibility?: CoverageRetryEligibility;
   attempt: number;
+  activity?: IngestActivity;
   source?: JobSourceContext;
   coverage?: CoverageJobContext;
   coverageRoute?: CoverageRouteContext;

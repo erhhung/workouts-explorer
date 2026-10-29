@@ -67,7 +67,7 @@ func run(ctx context.Context) error {
 				FROM osm_catalog.timezone_datasets dataset
 				CROSS JOIN LATERAL (SELECT osm_active.timezone_at($1,$2) AS name) zone
 				WHERE dataset.state='active'`, item.longitude, item.latitude).Scan(&name, &release); err != nil {
-				return fmt.Errorf("resolve workout %s timezone: %w", item.workoutID, err)
+				return fmt.Errorf("resolve workout %s time zone: %w", item.workoutID, err)
 			}
 			var offset *int
 			if item.offsetMinutes != nil {
@@ -85,7 +85,7 @@ func run(ctx context.Context) error {
 			}
 			if err := appDB.QueryRow(ctx, `SELECT app.set_workout_route_timezone($1,$2,$3,$4)`,
 				item.accountID, item.workoutID, name, release).Scan(&changed); err != nil {
-				return fmt.Errorf("persist workout %s timezone: %w", item.workoutID, err)
+				return fmt.Errorf("persist workout %s time zone: %w", item.workoutID, err)
 			}
 			processed++
 		}
@@ -95,7 +95,7 @@ func run(ctx context.Context) error {
 	}
 	var inferred int
 	if err := appDB.QueryRow(ctx, `SELECT app.reconcile_all_workout_timezones()`).Scan(&inferred); err != nil {
-		return fmt.Errorf("reconcile nearest workout timezones: %w", err)
+		return fmt.Errorf("reconcile nearest workout time zones: %w", err)
 	}
 	_, err = fmt.Fprintf(os.Stdout, "processed %d routed workouts: %d boundary matches, %d nearest-workout updates\n", processed, resolved, inferred)
 	return err
@@ -104,19 +104,19 @@ func run(ctx context.Context) error {
 func readBatch(ctx context.Context, db *pgxpool.Pool, afterAccount, afterWorkout *uuid.UUID, batchSize int) ([]candidate, error) {
 	rows, err := db.Query(ctx, `SELECT * FROM app.read_workout_timezone_backfill($1,$2,$3)`, afterAccount, afterWorkout, batchSize)
 	if err != nil {
-		return nil, fmt.Errorf("read timezone backfill batch: %w", err)
+		return nil, fmt.Errorf("read time zone backfill batch: %w", err)
 	}
 	defer rows.Close()
 	result := make([]candidate, 0, batchSize)
 	for rows.Next() {
 		var item candidate
 		if err := rows.Scan(&item.accountID, &item.workoutID, &item.startedAt, &item.offsetMinutes, &item.longitude, &item.latitude); err != nil {
-			return nil, fmt.Errorf("scan timezone backfill candidate: %w", err)
+			return nil, fmt.Errorf("scan time zone backfill candidate: %w", err)
 		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read timezone backfill candidates: %w", err)
+		return nil, fmt.Errorf("read time zone backfill candidates: %w", err)
 	}
 	return result, nil
 }

@@ -2581,7 +2581,7 @@ describe("authenticated shell", () => {
     const timeZone = await screen.findByLabelText("Time zone");
     expect(timeZone).toHaveValue("America/Los_Angeles");
     expect(timeZone.tagName).toBe("SELECT");
-    expect(screen.queryByLabelText("IANA timezone")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("IANA time zone")).not.toBeInTheDocument();
   });
 
   test("preserves an intentionally initialized UTC time zone", async () => {

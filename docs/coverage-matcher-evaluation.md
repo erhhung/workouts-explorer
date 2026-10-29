@@ -11,13 +11,19 @@ and labels and remain available for route-level review. Early hard-gap isolation
 is implemented and deployed in Helm revision 41. This is a scoped correctness and
 query-footprint fix, not new capacity certification or replacement benchmark evidence.
 
-Source-only [canonical display policy 033](decisions/013-canonical-coverage-display-identity.md)
+[Canonical display policy 030](decisions/013-canonical-coverage-display-identity.md)
 is a separate application read-model change, **not** an OSM derivation, matcher or
 path-policy version bump. It needs no OSM regeneration/download or route rematch.
 Coverage recomputation means warming/rebuilding context from existing evidence,
-not new route jobs. Live remains backend-42/UI-43, schema/minimum runtime 32, baseline 27;
-source support/schema/minimum 33 is pending coordinated MAIN deployment. Existing
-matcher benchmarks and historical acceptance evidence are not 033 verification.
+not new route jobs or provider checks; job behavior, generation policy and matcher
+policy are unchanged. Current source ends at **030**, with final source/runtime
+support and schema/minimum runtime **30**, baseline **27**, ledger **0-30**.
+Combined **029** contains ingest status/reprocessing/phases; **030** contains
+compact/canonical display. See the [history mapping](database-migrations.md#source-history-mapping)
+and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+Approved live reconciliation is pending here. Existing matcher benchmarks and
+historical acceptance evidence are not fresh squash verification. M8 acceptance belongs
+only to [Milestone 8 Closeout](development-progress.md#milestone-8-closeout).
 
 ## Scope
 
@@ -75,8 +81,9 @@ Diagnostics and production share `routepipeline.OriginalPointLimit` (50,000 raw
 route points) and `routepipeline.DefaultLimits()` (12,000 sampled observations),
 with unchanged limits of 10,000 evidence portions, 4,096 segments, 256 generations and 64 unavailable
 regions. Canonical migration 027 widens the diagnostic count checks to match;
-the deployed schema and minimum runtime are 32. Migration 032 optimizes coverage
-display reads without changing these matching limits. The raw-point guard runs before matcher admission.
+the source schema and minimum runtime are **30**. The combined 030 display
+projections and canonical read model do not change these matching
+limits. The raw-point guard runs before matcher admission.
 Equal input, OSM snapshot, movement mode, sampling, matching rules and road
 geometry settings produce the same matching counts and evidence in both
 adapters. This is matching-limit parity, not equal execution budgets: the
@@ -141,7 +148,7 @@ without publishing partial Coverage.
 This repairs the existing intended split behavior without changing
 `coverage-path-policy-experimental-v82`, `coverage-sampling-experimental-v1`,
 `coverage-experimental-v1` or `coverage-production-v1`. It requires no database
-migration or minimum-runtime change; the existing schema-31 contract is
+migration or minimum-runtime change; the ingest contract now in 029 is
 independent. It adds no global cache buster or automatic recomputation.
 Previously successful disjoint-route results are **not universally
 output-equivalent**: restarting windows per leg can change alignment, local
@@ -225,8 +232,8 @@ formed whole-route windows of at most 128 observations, potentially spanning
 disjoint legs before decoder splitting. Adjacent windows shared one observation
 without counting it twice. The approved early hard-gap design retains whole-route
 sampling but forms those overlapping windows separately within each continuous
-leg, before candidate lookup or graph construction; it is not yet deployment
-evidence.
+leg, before candidate lookup or graph construction. Deployment is recorded
+separately in the revision-41 receipt above, not established by this tool description.
 
 Each non-empty workout has one bounded two-minute context and one read-only,
 repeatable-read OSM matcher snapshot shared by all of its windows. The snapshot

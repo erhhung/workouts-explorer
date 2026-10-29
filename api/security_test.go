@@ -53,6 +53,20 @@ func TestPreferencesUseEmbeddedIANAData(t *testing.T) {
 	}
 }
 
+func TestPreferencesTimeZoneValidationMessages(t *testing.T) {
+	server := &Server{}
+	for _, zone := range []string{"Local", "/etc/localtime", "../UTC", "Mars/Olympus"} {
+		t.Run(zone, func(t *testing.T) {
+			field, message := server.validatePreferences(generated.Preferences{
+				Theme: "dark", Units: "imperial", FirstWeekday: "monday", ClockFormat: "12h", Timezone: zone,
+			})
+			if field != "timezone" || message != "time zone must be an IANA time zone name" {
+				t.Fatalf("field=%q message=%q", field, message)
+			}
+		})
+	}
+}
+
 func TestDateRangePreferenceValidation(t *testing.T) {
 	for _, value := range []string{"thisWeek", "last30Days", "lastYear", "2024-02-29/2024-03-01", "2026-01-01/2026-01-01"} {
 		if !validDateRangePreference(value) {

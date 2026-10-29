@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"hash"
 	"math"
 	"time"
@@ -85,7 +83,8 @@ func writeTime(digest hash.Hash, value *time.Time) {
 
 func routeReadinessForAutoAddPolicy(readiness osm.RouteRegionReadiness, autoAddRegions bool) osm.RouteRegionReadiness {
 	if readiness.State == "pending" && !autoAddRegions {
-		return osm.RouteRegionReadiness{State: "unavailable", Reason: "no_provider_region", Regions: []osm.RegionGeneration{}}
+		readiness.State, readiness.Reason = "unavailable", "no_provider_region"
+		readiness.Regions = []osm.RegionGeneration{}
 	}
 	return readiness
 }
@@ -101,12 +100,13 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 	if r.osmDB == nil {
 		return nil
 	}
+	if job.ingestPhase != nil && job.ingestPhase.phase != phaseAnalyzingExistingRoutes {
+		if err := r.recordIngestPhase(ctx, job, phaseAnalyzingExistingRoutes, &job.ingestPhase.existing, nil); err != nil {
+			return err
+		}
+	}
 	if err := r.drainIngestCoverage(ctx, job, false); err != nil {
 		return err
-	}
-	activeGenerations, err := osm.ActiveRegionGenerations(ctx, r.osmDB)
-	if err != nil {
-		return database.RedactOSMConnectionError(err)
 	}
 	var cursor *uuid.UUID
 	for {
@@ -119,19 +119,16 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 			rows, err := listTx.Query(ctx, `WITH pending_adoptions AS MATERIALIZED (
 		SELECT workout_id FROM app.read_pending_adopted_workout_coverage_refreshes($1,$2,$3,$4)
 		UNION SELECT workout_id FROM app.read_pending_ingest_coverage_workouts($1,$2,$3,$4)
-	) SELECT route.workout_id,state.readiness_state,
-		COALESCE(jsonb_object_agg(region.region_id,region.desired_osm_generation)
-			FILTER (WHERE region.region_id IS NOT NULL),'{}'::jsonb)
+	) SELECT route.workout_id
 		FROM app.workout_routes route
 		JOIN app.workouts workout ON workout.id=route.workout_id AND workout.account_id=route.account_id
-		LEFT JOIN app.workout_coverage_states state ON state.account_id=route.account_id AND state.workout_id=route.workout_id
-		LEFT JOIN app.workout_coverage_regions region ON region.account_id=route.account_id AND region.workout_id=route.workout_id
 		WHERE route.account_id=$1 AND workout.deletion_requested_at IS NULL
 		AND workout.source_id=app.read_ingest_coverage_source_id($1,$2,$3,$4)
 		AND ($5::uuid IS NULL OR route.workout_id>$5)
 		AND NOT EXISTS (SELECT 1 FROM pending_adoptions pending
 			WHERE pending.workout_id=route.workout_id)
-		GROUP BY route.workout_id,state.readiness_state ORDER BY route.workout_id LIMIT 25`, job.accountID, job.id, r.workerID, job.lease, cursor)
+		AND app.ingest_coverage_route_needs_proof($1,$2,$3,$4,route.workout_id)
+		ORDER BY route.workout_id LIMIT 25`, job.accountID, job.id, r.workerID, job.lease, cursor)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -139,21 +136,11 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 			var next *uuid.UUID
 			for rows.Next() {
 				var id uuid.UUID
-				var state *string
-				var encodedRegions []byte
-				if err := rows.Scan(&id, &state, &encodedRegions); err != nil {
+				if err := rows.Scan(&id); err != nil {
 					rows.Close()
 					return nil, nil, err
 				}
 				next = &id
-				regions := make(map[string]int64)
-				if err := json.Unmarshal(encodedRegions, &regions); err != nil {
-					rows.Close()
-					return nil, nil, fmt.Errorf("decode workout coverage regions: %w", err)
-				}
-				if state != nil && *state == "map_data_ready" && coverageGenerationsCurrent(regions, activeGenerations) {
-					continue
-				}
 				workoutIDs = append(workoutIDs, id)
 			}
 			rows.Close()
@@ -167,6 +154,15 @@ func (r *Runner) repairCoverageReadiness(ctx context.Context, job claimedJob) er
 		}
 		if next == nil {
 			return nil
+		}
+		if job.ingestPhase != nil {
+			progress := job.ingestPhase
+			if progress.pendingExisting == nil {
+				progress.pendingExisting = make(map[uuid.UUID]bool)
+			}
+			for _, workoutID := range workoutIDs {
+				progress.pendingExisting[workoutID] = true
+			}
 		}
 		for _, workoutID := range workoutIDs {
 			if err := r.repairWorkoutCoverageReadiness(ctx, job, workoutID); err != nil {

@@ -29,8 +29,14 @@ func commitEligibleCohortFile(t *testing.T, f *coverageIntegrationFixture, runne
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := runner.resolveCandidateActions(f.ctx, job, source.sourceID, files); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := runner.recordFileManifest(f.ctx, job, files); err != nil || state == "mismatch" {
+		t.Fatalf("freeze synthetic manifest: %s %v", state, err)
+	}
 	if outcome := runner.processSourceFile(f.ctx, job, source.sourceID, source.root, files[index], nil); outcome.fatal != nil || !outcome.succeeded {
-		t.Fatalf("commit synthetic cohort file: %+v", outcome)
+		t.Fatalf("commit synthetic cohort file: %+v cause=%v", outcome, outcome.fatal)
 	}
 }
 
@@ -55,8 +61,8 @@ func traceEligibleCohortOSM(t *testing.T, f *coverageIntegrationFixture, appDB *
 	return db
 }
 
-// Cohort replay must reuse prepared ROI. The following ordinary reconciliation
-// scan still resolves ROI, including newly configured overlapping regions.
+// Cohort replay must reuse prepared ROI. An ordinary campaign may recheck changed
+// selections, but terminal queue-only recovery never repeats the ordinary scan.
 func traceEligibleCohortRecovery(t *testing.T, f *coverageIntegrationFixture, lookups *atomic.Int64) (*pgxpool.Pool, *pgxpool.Pool, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
 	var ordinary atomic.Bool
@@ -194,8 +200,8 @@ func TestEligibleCohortTailAfterTerminalCommitIntegration(t *testing.T) {
 	if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{25, 25, 13}) || lookups.Load() != 0 {
 		t.Fatalf("terminal tail must reuse prepared ROI: sizes=%v ROI=%d", sizes, lookups.Load())
 	}
-	if ordinaryLookups.Load() != 63 || sourceSnapshots.Load() != 0 {
-		t.Fatalf("ordinary/replayed-source reads=%d/%d, want63/0", ordinaryLookups.Load(), sourceSnapshots.Load())
+	if ordinaryLookups.Load() != 0 || sourceSnapshots.Load() != 0 {
+		t.Fatalf("ordinary/replayed-source reads=%d/%d, want0/0", ordinaryLookups.Load(), sourceSnapshots.Load())
 	}
 }
 
@@ -291,8 +297,8 @@ func TestEligibleCohortPreparedSurvivesNewLeaseIntegration(t *testing.T) {
 	if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{13}) || lookups.Load() != 0 {
 		t.Fatalf("failed-source tail must retain prepared cache: sizes=%v ROI=%d", sizes, lookups.Load())
 	}
-	if ordinaryLookups.Load() != 13 || sourceSnapshots.Load() != 0 {
-		t.Fatalf("ordinary/replayed-source reads=%d/%d, want13/0", ordinaryLookups.Load(), sourceSnapshots.Load())
+	if ordinaryLookups.Load() != 0 || sourceSnapshots.Load() != 0 {
+		t.Fatalf("ordinary/replayed-source reads=%d/%d, want0/0", ordinaryLookups.Load(), sourceSnapshots.Load())
 	}
 }
 
@@ -419,8 +425,8 @@ func TestEligibleCohortStalePreparedVectorsRecomputeROIIntegration(t *testing.T)
 	if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{13}) || lookups.Load() != 13 {
 		t.Fatalf("stale vectors must invalidate before fresh ROI: sizes=%v ROI=%d", sizes, lookups.Load())
 	}
-	if ordinaryLookups.Load() != 13 || sourceSnapshots.Load() != 13 {
-		t.Fatalf("ordinary/recomputed-source reads=%d/%d, want13/13", ordinaryLookups.Load(), sourceSnapshots.Load())
+	if ordinaryLookups.Load() != 0 || sourceSnapshots.Load() != 13 {
+		t.Fatalf("ordinary/recomputed-source reads=%d/%d, want0/13", ordinaryLookups.Load(), sourceSnapshots.Load())
 	}
 	assertCountQuery(t, f.adminDB, 13, `SELECT count(*) FROM app.coverage_route_job_contexts
 		WHERE account_id=$1 AND target_generations=jsonb_build_array(jsonb_build_object('regionId',$2::text,'generation',$3::bigint))`, f.accountID, region, generation)

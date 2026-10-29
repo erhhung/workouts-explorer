@@ -162,7 +162,10 @@ func (s *Server) GetJob(w http.ResponseWriter, r *http.Request, jobID generated.
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "job ID is invalid")
 		return
 	}
-	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	// Keep status, attempt, children and activity in one snapshot during recovery.
+	tx, err := s.accountTransactionWithOptions(r.Context(), *session.accountID, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
 		writeJobUnavailable(w, r)
 		return
@@ -789,6 +792,9 @@ func readJobDetail(ctx context.Context, tx pgx.Tx, id uuid.UUID) (generated.JobD
 			displayStatus := generated.JobDisplayStatusSuperseded
 			detail.DisplayStatus = &displayStatus
 		}
+	}
+	if err = readIngestActivities(ctx, tx, &detail); err != nil {
+		return generated.JobDetail{}, err
 	}
 	return detail, nil
 }

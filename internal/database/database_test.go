@@ -18,8 +18,34 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 33 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 33", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 30 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 30", SupportedSchemaVersion)
+	}
+}
+
+func TestRuntimeReadinessFeatureThresholds(t *testing.T) {
+	// The immutable pipeline checkpoint stays at 28; all ingest status features
+	// arrive together at 29, followed by both display contracts at 30.
+	for _, check := range []struct {
+		name, sql, predicate string
+	}{
+		{"pipeline", runtimeReadinessSQL, "minimum_runtime_version >= 28"},
+		{"ingest status", runtimeReadinessSQL, "AND ($1 < 29 OR"},
+		{"phase", runtimeIngestPhaseReadinessSQL, "SELECT $1 < 29 OR ("},
+		{"precomputations", runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR ("},
+		{"canonical", runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR ("},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			if !strings.Contains(check.sql, check.predicate) {
+				t.Fatalf("missing feature threshold %q", check.predicate)
+			}
+		})
+	}
+	if got := strings.Count(runtimeReadinessSQL, "AND ($1 < 29 OR"); got != 3 {
+		t.Fatalf("partial success, outcomes and reprocessing must all start at 29, got %d gates", got)
+	}
+	if strings.Contains(runtimeReadinessSQL, "AND ($1 < 30 OR") {
+		t.Fatal("ingest outcomes must not remain gated at the display checkpoint")
 	}
 }
 
@@ -50,7 +76,7 @@ func TestIngestOutcomeReadiness(t *testing.T) {
 
 func TestIngestReprocessingReadiness(t *testing.T) {
 	for _, required := range []string{
-		"minimum_runtime_version >= 31",
+		"minimum_runtime_version >= 29",
 		"source_files_success_receipt",
 		"source_files_receipt_before_write",
 		"to_regprocedure('app.ingest_retry_ancestor_jobs(uuid,uuid,uuid)')",

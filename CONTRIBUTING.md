@@ -138,7 +138,25 @@ or repository.
 The migration command holds a PostgreSQL advisory lock and is idempotent. API
 and worker never migrate on startup. Kubernetes receives these URLs from an
 existing Secret selected by Helm values; the chart never creates credentials.
-The user-approved active API sequence is **001-028**, with **no active 029**.
+The source API sequence is **001-030**, with final source/runtime
+`SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and
+ledger **0-30**. Migrations **001-028 are unchanged**; **029** combines ingest
+status/reprocessing/phases and **030** combines display precomputations/canonical
+identity. See the [history mapping](docs/database-migrations.md#source-history-mapping).
+Live reconciliation is authorized but pending: the last reported actual state is
+revision **60**, schema **34/minimum 33**, ledger **0-34**, in **pre-squash historical
+numbering** ([mapping](docs/database-migrations.md#source-history-mapping)). Do not
+deploy source-30 binaries against that unreconciled history or improvise ledger edits.
+Context warming changes no job, generation or matcher policy and requires no
+provider check, new ingest, OSM regeneration/download or route rematching.
+M8 acceptance is governed only by
+[Milestone 8 Closeout](docs/development-progress.md#milestone-8-closeout), including
+its browser gate. Existing closeout authorization needs no renewed owner request
+after that gate; this guide does not certify acceptance or capacity.
+
+The following **10/20/2026 folded-028 release checkpoint is historical**, not the
+current active inventory or new repair instructions. At that checkpoint the
+approved sequence was **001-028**, with **no active 029**.
 Ordinary static 027 and 001-027 stay unchanged; new 028 folds the lock fix, strict
 eligible cohorts and mixed-failure automatic policy into the pipeline. Source
 `SupportedSchemaVersion`, schema and minimum runtime are **28**, marker **27**.
@@ -157,7 +175,7 @@ runtime-28 readiness fails and new runtime-28 readiness requires private builder
 Do not claim a rolling DB-only upgrade or reuse old images. Preserve ledger 0-28
 IDs/timestamps without DML/rewrite, application data, retry roots/budgets, sources
 and credentials. Retain old images/backups; rollback needs the old DB contract
-and images, not images alone. The current release's separately approved exact
+and images, not images alone. That release's separately approved exact
 actual-profile repair passed protected actual-backup rehearsal and live
 transactional application under the real non-superuser migration login with its
 existing security-owner SET capability. Full old-tuple/ledger preservation and
@@ -165,10 +183,11 @@ new readiness passed; native Goose confirmed applied 028 without replay. This
 frozen-corpus qualification is not generic SQL-lexer equivalence or permission to
 weaken exact repair guards. Old artifacts were deleted only after verified local
 rollback exports; incompatible-image rollback requires the whole old database
-restore plus matching old OCI images. Final yearly closure and M8 owner acceptance
-are separate from deployment. All release-manifest source/chart files stay frozen;
-for this documentation-only update, edit only the Helm README template and
-regenerate its README, not values or runtime chart files.
+restore plus matching old OCI images. Yearly closure and M8 acceptance were
+separate from that deployment receipt. Its frozen release-manifest source/chart
+boundary remains historical. For this documentation-only update, edit tracked
+Markdown and the Helm README template, regenerate its README, and leave values
+comments and runtime chart files unchanged.
 See the [migration and recovery contract](docs/database-migrations.md) before deployment.
 Schema 9 requires the PostGIS extension to be installed by a database
 administrator before migration. Migrations fail unless `workouts_api`,
@@ -210,13 +229,14 @@ attempt (0-20); manual retries and normal reconciliation never reset it.
 
 Earlier isolated lock/commit/snapshot and Coverage tests are scoped synthetic
 evidence, not a fresh pass of the final folded-028 contract, repair or broad DB
-suite. Unrelated scheduler/stale-target and broader API fixture failures remain
+suite. The historical scheduler/stale-target and broader API fixture failures are
 documented in
 [Development Progress](docs/development-progress.md#deferred-generation-fix-source-only).
 Never use deployed databases or private source profiles to rerun fixture-writing
 tests. Documentation work needs no live credentials, cloud calls, migration,
-image publication or cluster commands. Chart semantics remain frozen/not started;
-edit only values comments and the README template, then regenerate with pinned
+image publication or cluster commands. The old chart-frozen/not-started wording
+belongs to that checkpoint, not current status. For docs-only changes, leave values,
+templates and hooks untouched; edit the README template and regenerate with pinned
 `helm-docs` as described in [the chart README](helm/README.md#regenerate-documentation).
 
 For an existing Milestone 1 database, infrastructure must provision the new
@@ -332,8 +352,9 @@ private image project, create a pull Secret in `workouts-explorer` and set
 ## iCloud Source Verification
 
 Read [iCloud Source Setup](docs/icloud-source-setup.md) before working on M8.
-Implementation and synthetic verification are ready for owner review; owner
-acceptance and the milestone completion checkbox remain pending. Do not use real
+The source implementation is deployed. Acceptance and browser closeout are
+tracked only in [Milestone 8 Closeout](docs/development-progress.md#milestone-8-closeout),
+not certified by the historical synthetic results below. Do not use real
 Apple credentials or host rclone configs for automated tests. Helpers use
 synthetic processes/exports; no cloud or deployment command is needed.
 
@@ -407,10 +428,10 @@ failure blocks that attempt's terminal writes and that worker's new claims/readi
 confirmed cleanup. They do not guarantee distributed cleanup, lost-volume
 recovery or immediate physical erasure under permanent filesystem faults.
 Arm64 execution, read-only-root-filesystem/seccomp behavior and full worker
-startup were not verified. Owner acceptance remains pending; optional
-owner-operated cloud smoke tests outside CI and image publication/redeployment
-need explicit authorization, not further implementation work. No production
-validation is claimed.
+startup were not verified by those historical checks. They do not claim production
+validation or supersede current deployment evidence. The already-authorized M8
+closeout needs no renewed owner request after its browser gate; unrelated cloud
+operations and future rollouts remain separately authorized actions.
 
 ## OSM Reader Verification
 

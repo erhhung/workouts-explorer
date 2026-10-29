@@ -20,226 +20,115 @@ func coverageEntityStatsCTE(t *testing.T, body, name string) string {
 
 func TestCoverageEntityStatsSignatureAndSecurity(t *testing.T) {
 	source := coverageDisplaySQL(t)
-	signature := "app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid)"
 	definition := regexp.MustCompile(`(?s)CREATE FUNCTION app\.map_selection_coverage_entity_stats\s*\(.*?\$function\$;`).FindString(source)
-	for _, required := range []string{
+	canonicalRequire(t, definition,
 		`CREATE FUNCTION app.map_selection_coverage_entity_stats (
             target_account_id uuid, target_session_id uuid, target_selection_id uuid,
             target_generation bigint, target_entity_kind text, target_entity_id uuid
         ) RETURNS TABLE (`,
-		") LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, app SET jit = off AS $function$",
-	} {
-		if !strings.Contains(compactSQL(definition), compactSQL(required)) {
-			t.Errorf("missing stats function contract %q", required)
-		}
-	}
-	result := regexp.MustCompile(`(?s)RETURNS TABLE \((.*?)\) LANGUAGE`)
-	statsResult := result.FindStringSubmatch(definition)
-	listResult := result.FindStringSubmatch(source)
-	if len(statsResult) != 2 || len(listResult) != 2 || compactSQL(statsResult[1]) != compactSQL(listResult[1]) {
-		t.Fatal("stats must return the list reader's exact ordered column names and types")
-	}
-	oldDetail, err := migrations.Files.ReadFile("020_facility_coverage_identity.sql")
+		") LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, app SET jit = off AS $function$")
+	old, err := migrations.Files.ReadFile("020_facility_coverage_identity.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	detailResult := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION app\.map_selection_coverage_entity_detail\(.*?RETURNS TABLE \((.*?)\)\s*LANGUAGE`).FindStringSubmatch(string(oldDetail))
-	if len(detailResult) != 2 {
-		t.Fatal("missing shipped detail result")
+	result := regexp.MustCompile(`(?s)RETURNS TABLE \((.*?)\)\s*LANGUAGE`)
+	statsResult := result.FindStringSubmatch(definition)
+	detail := regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION app\.map_selection_coverage_entity_detail\(.*?\$function\$;`).FindString(string(old))
+	detailResult := result.FindStringSubmatch(detail)
+	if len(statsResult) != 2 || len(detailResult) != 2 {
+		t.Fatal("missing shipped detail or current stats result ABI")
 	}
 	metadata, _, found := strings.Cut(detailResult[1], ",\n    geometry jsonb")
 	if !found || compactSQL(metadata) != compactSQL(statsResult[1]) {
-		t.Fatal("stats must preserve every detail metadata field, excluding geometry and fit bounds only")
+		t.Fatal("stats must retain all 21 shipped detail metadata columns in order")
 	}
-	for _, required := range []string{
-		"GRANT CREATE ON SCHEMA app TO workouts_security_owner;\nALTER FUNCTION " + signature + " OWNER TO workouts_security_owner;\nREVOKE CREATE ON SCHEMA app FROM workouts_security_owner;",
-		"REVOKE ALL ON FUNCTION " + signature + "\nFROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;",
-		"GRANT EXECUTE ON FUNCTION " + signature + " TO workouts_api;",
-	} {
-		if !strings.Contains(source, required) {
-			t.Errorf("missing hardened stats ownership/ACL %q", required)
-		}
+	canonicalRequire(t, source,
+		"ALTER FUNCTION app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid) OWNER TO workouts_security_owner;",
+		"REVOKE ALL ON FUNCTION app.coverage_display_normalize(text)",
+		"app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid)",
+		"app.map_selection_coverage_entity_members(uuid, uuid, uuid, bigint, text, uuid) TO workouts_api;")
+	grants := regexp.MustCompile(`(?is)\bGRANT\s+EXECUTE\b[^;]+;`).FindAllString(source, -1)
+	if len(grants) != 1 || !strings.Contains(grants[0], "app.map_selection_coverage_entity_stats(") {
+		t.Fatal("stats must appear in the one API-only runtime execute allowlist")
 	}
-	grants := regexp.MustCompile(`(?is)\bGRANT\s+[^;]+;`).FindAllString(source, -1)
-	for _, grant := range grants {
-		if grant != "GRANT CREATE ON SCHEMA app TO workouts_security_owner;" &&
-			grant != "GRANT EXECUTE ON FUNCTION "+signature+" TO workouts_api;" {
-			t.Errorf("unexpected runtime or table privilege: %s", grant)
-		}
-	}
-	if strings.Contains(definition, "public") || strings.Contains(source, "CREATE OR REPLACE FUNCTION app.map_selection_coverage_entity_detail") {
-		t.Fatal("stats must not trust public or replace the shipped geometry reader")
-	}
+	canonicalForbid(t, grants[0], "workouts_worker", "workouts_tiles", "workouts_coverage_worker")
 }
 
 func TestCoverageEntityStatsAuthorizationBeforeFacts(t *testing.T) {
-	source := coverageDisplaySQL(t)
-	stats := coverageDisplayFunction(t, source, "map_selection_coverage_entity_stats")
-	reader := coverageDisplayFunction(t, source, "map_selection_coverage_entities")
-	_, validation, found := strings.Cut(stats, "BEGIN\n")
+	stats := coverageDisplayFunction(t, coverageDisplaySQL(t), "map_selection_coverage_entity_stats")
+	validation, query, found := strings.Cut(stats, "IF authorized_id IS NULL THEN RETURN; END IF;")
 	if !found {
-		t.Fatal("missing procedural authorization barrier")
+		t.Fatal("invalid selection must return before accessing cached facts")
 	}
-	validation, query, found := strings.Cut(validation, ";\n    IF NOT FOUND THEN\n        RETURN;\n    END IF;\n\n    RETURN QUERY\n")
-	if !found {
-		t.Fatal("invalid selection must return before executing the fact query")
-	}
-	validation = strings.Replace(validation, " INTO selected_start_date, selected_end_date", "", 1)
-	if compactSQL(validation) != compactSQL(coverageEntityStatsCTE(t, reader, "selected")) {
-		t.Fatal("stats must retain exact selection/session/account/generation authorization before any fact reads")
-	}
-	if compactSQL(coverageEntityStatsCTE(t, query, "selected")) != compactSQL("SELECT selected_start_date start_date, selected_end_date end_date") {
-		t.Fatal("range query must use the dates from the validated selection")
-	}
-	eligible := coverageEntityStatsCTE(t, query, "eligible")
-	eligible = strings.Replace(eligible, "FROM candidate_workout_ids candidate\n        JOIN app.workouts workout ON workout.id = candidate.workout_id", "FROM app.workouts workout", 1)
-	if compactSQL(eligible) != compactSQL(coverageEntityStatsCTE(t, reader, "eligible")) {
-		t.Fatal("stats must retain live list eligibility, including adopted coverage and pending deletion rules")
-	}
+	canonicalRequire(t, validation, "authorized_id := app.coverage_display_authorized_context(target_account_id, target_session_id, target_selection_id, target_generation)")
+	canonicalForbid(t, validation, "FROM app.coverage_display_entities")
+	canonicalRequire(t, query, "RETURN QUERY SELECT", "entity.account_id = target_account_id", "entity.context_id = authorized_id")
+	authorized := coverageDisplayFunction(t, coverageDisplaySQL(t), "coverage_display_authorized_context")
+	canonicalRequire(t, authorized, "app.coverage_display_selection_scope(", "context.ready",
+		"context.revision = scope.revision", "context.generation = target_generation",
+		"context.start_date = scope.start_date", "context.end_date = scope.end_date")
 }
 
-func TestCoverageEntityStatsCandidateWorkouts(t *testing.T) {
+func TestCoverageEntityStatsCanonicalPointProbe(t *testing.T) {
 	stats := coverageDisplayFunction(t, coverageDisplaySQL(t), "map_selection_coverage_entity_stats")
-	if !strings.Contains(stats, "candidate_workout_ids AS MATERIALIZED (") {
-		t.Fatal("stats must build entity-targeted candidate workout IDs before live eligibility")
-	}
-	candidates := coverageEntityStatsCTE(t, stats, "candidate_workout_ids")
-	// Independent context/bounds workouts must survive even when they have no
-	// qualifying path visit or park attribution; UNION deduplicates the IDs.
-	want := `
-        SELECT partial.workout_id
-        FROM app.workout_path_display_partials partial
-        WHERE partial.account_id = target_account_id
-            AND target_entity_kind = 'path' AND partial.entity_id = target_entity_id
-        UNION
-        SELECT context.workout_id
-        FROM app.workout_path_display_context context
-        WHERE context.account_id = target_account_id
-            AND target_entity_kind = 'path' AND context.entity_id = target_entity_id
-        UNION
-        SELECT attribution.workout_id
-        FROM app.workout_park_attributions attribution
-        WHERE attribution.account_id = target_account_id
-            AND target_entity_kind = 'park' AND attribution.park_id = target_entity_id
-        UNION
-        SELECT bounds.workout_id
-        FROM app.workout_park_display_bounds bounds
-        WHERE bounds.account_id = target_account_id
-            AND target_entity_kind = 'park' AND bounds.park_id = target_entity_id`
-	if compactSQL(candidates) != compactSQL(want) {
-		t.Fatal("candidate IDs must union all four independently targeted fact sources without qualification, attribution, canonical-region or date restrictions")
-	}
-	eligible := coverageEntityStatsCTE(t, stats, "eligible")
-	if !strings.Contains(compactSQL(eligible), compactSQL(`
-        FROM candidate_workout_ids candidate
-        JOIN app.workouts workout ON workout.id = candidate.workout_id
-        JOIN app.workout_routes route`)) {
-		t.Fatal("live eligibility must depend on candidate workout IDs, not all account history")
+	canonicalRequire(t, stats, "entity.canonical_id = target_entity_id", "entity.entity_kind = target_entity_kind",
+		"entity.range_workout_count > 0")
+	canonicalForbid(t, stats, "app.workouts", "app.workout_routes", "app.workout_park_attributions",
+		"app.workout_path_display_partials", "app.workout_path_display_context", "app.workout_park_display_bounds",
+		"count(", "GROUP BY", "source_visits(", "prepare_coverage", "flush_coverage", "rebuild_coverage",
+		"INSERT INTO", "UPDATE app.", "DELETE FROM")
+	if regexp.MustCompile(`(?i)\bst_\w+\s*\(`).MatchString(stats) {
+		t.Fatal("warm stats may not perform geometry work")
 	}
 }
 
 func TestCoverageEntityStatsTargetedFactsAndIndexes(t *testing.T) {
 	source := coverageDisplaySQL(t)
-	stats := coverageDisplayFunction(t, source, "map_selection_coverage_entity_stats")
-	for _, forbidden := range []string{
-		"app.map_selection_coverage_entities(", "app.map_selection_coverage_entity_detail(",
-		"app.workout_segment_matches", "app.path_segments", ".geom", "fit_", "count(DISTINCT",
-		"flush_coverage_display", "rebuild_coverage_display",
-	} {
-		if strings.Contains(compactSQL(stats), compactSQL(forbidden)) {
-			t.Errorf("stats must not use full-list/detail/geometry or maintenance work: %s", forbidden)
-		}
-	}
-	if regexp.MustCompile(`(?i)\bst_\w+\s*\(`).MatchString(stats) {
-		t.Fatal("stats must aggregate compact numeric facts, not geometry")
-	}
-	for _, target := range []struct{ cte, predicate string }{
-		{"path_visits", "AND target_entity_kind = 'path' AND partial.entity_id = target_entity_id"},
-		{"park_visits", "AND target_entity_kind = 'park' AND attribution.park_id = target_entity_id"},
-		{"park_bounds", "AND target_entity_kind = 'park' AND bounds.park_id = target_entity_id"},
-		{"regional_park_path_context", "AND target_entity_kind = 'path' AND context.entity_id = target_entity_id"},
-		{"path_identity", "WHERE target_entity_kind = 'path' AND visit.entity_id = target_entity_id"},
-	} {
-		cte := coverageEntityStatsCTE(t, stats, target.cte)
-		beforeAggregate, _, _ := strings.Cut(cte, "GROUP BY")
-		if !strings.Contains(compactSQL(beforeAggregate), compactSQL(target.predicate)) {
-			t.Errorf("%s must filter entity and kind before aggregation", target.cte)
-		}
-	}
-	for _, index := range []string{
-		"CREATE INDEX workout_path_display_partials_entity_idx ON app.workout_path_display_partials (account_id, entity_id, workout_id);",
-		"CREATE INDEX workout_path_display_context_entity_idx ON app.workout_path_display_context (account_id, entity_id, workout_id);",
-		"CREATE INDEX workout_park_display_bounds_park_idx ON app.workout_park_display_bounds (account_id, park_id, workout_id);",
-	} {
-		if !strings.Contains(compactSQL(source), compactSQL(index)) {
-			t.Errorf("missing entity-first fact access path %q", index)
-		}
-	}
-	attribution, err := migrations.Files.ReadFile("018_park_attribution.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(compactSQL(string(attribution)), compactSQL("ON app.workout_park_attributions (account_id, park_id, workout_id)")) {
-		t.Fatal("park attribution lookup also requires its existing entity-first index")
-	}
+	canonicalRequire(t, source, "PRIMARY KEY (account_id, context_id, canonical_id)",
+		"ON app.coverage_display_entities(account_id, context_id, canonical_id) WHERE range_workout_count > 0",
+		"ON app.workout_path_display_partials (account_id, entity_id, workout_id)",
+		"ON app.workout_path_display_context (account_id, entity_id, workout_id)",
+		"ON app.workout_park_display_bounds (account_id, park_id, workout_id)")
+	prepare := coverageDisplayFunction(t, source, "prepare_coverage_display_context")
+	canonicalRequire(t, prepare, "FROM app.coverage_display_members member",
+		"member.account_id = target_account_id AND member.context_id = prepared_id",
+		"AND member.canonical_id = summary.canonical_id")
 }
 
 func TestCoverageEntityStatsListSemanticsParity(t *testing.T) {
 	source := coverageDisplaySQL(t)
 	stats := coverageDisplayFunction(t, source, "map_selection_coverage_entity_stats")
-	reader := coverageDisplayFunction(t, source, "map_selection_coverage_entities")
-	// Only target pushdowns and the canonical-geometry availability gate may
-	// differ; compare all count, identity, bounds and tie-break expressions.
-	withoutComments := regexp.MustCompile(`--[^\n]*`)
-	for _, cte := range []struct{ name, pushdown string }{
-		{"path_visits", "AND target_entity_kind = 'path' AND partial.entity_id = target_entity_id"},
-		{"park_visits", "AND target_entity_kind = 'park' AND attribution.park_id = target_entity_id"},
-		{"path_range", ""}, {"path_all", ""}, {"park_range", ""}, {"park_all", ""},
-		{"park_bounds", "AND target_entity_kind = 'park' AND bounds.park_id = target_entity_id"},
-		{"regional_park_path_context", "AND target_entity_kind = 'path' AND context.entity_id = target_entity_id"},
-		{"path_identity", "WHERE target_entity_kind = 'path' AND visit.entity_id = target_entity_id"},
-		{"entities", ""},
-	} {
-		got := withoutComments.ReplaceAllString(coverageEntityStatsCTE(t, stats, cte.name), "")
-		want := withoutComments.ReplaceAllString(coverageEntityStatsCTE(t, reader, cte.name), "")
-		if cte.pushdown != "" {
-			got = strings.Replace(got, cte.pushdown, "", 1)
+	list := coverageDisplayFunction(t, source, "map_selection_coverage_entities")
+	projection := func(body string) string {
+		t.Helper()
+		_, body, found := strings.Cut(body, "RETURN QUERY SELECT ")
+		if !found {
+			t.Fatal("missing read-only result projection")
 		}
-		if cte.name == "park_bounds" {
-			got = strings.Replace(got, "HAVING bool_or(bounds.region_id IS NOT NULL)", "", 1)
+		body, _, found = strings.Cut(body, "FROM app.coverage_display_entities entity")
+		if !found {
+			t.Fatal("missing cached entity source")
 		}
-		if compactSQL(got) != compactSQL(want) {
-			t.Errorf("%s differs from list semantics beyond targeting/canonical availability", cte.name)
-		}
+		return compactSQL(body)
+	}
+	if projection(stats) != projection(list) {
+		t.Fatal("stats and list must project the same cached 21-column metadata")
 	}
 }
 
 func TestCoverageEntityStatsCanonicalParkAvailability(t *testing.T) {
 	source := coverageDisplaySQL(t)
-	stats := coverageDisplayFunction(t, source, "map_selection_coverage_entity_stats")
-	bounds := coverageEntityStatsCTE(t, stats, "park_bounds")
-	for _, required := range []string{
-		"FROM eligible JOIN selected ON eligible.local_start_date BETWEEN selected.start_date AND selected.end_date",
-		"GROUP BY bounds.park_id", "HAVING bool_or(bounds.region_id IS NOT NULL)",
-	} {
-		if !strings.Contains(bounds, required) {
-			t.Errorf("missing range-only canonical park availability check %q", required)
-		}
-	}
-	beforeGroup, _, _ := strings.Cut(bounds, "GROUP BY")
-	if strings.Contains(beforeGroup, "region_id IS NOT NULL") || strings.Contains(bounds, "attribution") {
-		t.Fatal("canonical availability must not shrink UUID-cast list bounds or require attribution on the geometry workout")
-	}
-	if !strings.Contains(stats, "JOIN park_bounds bounds USING (entity_id)") {
-		t.Fatal("parks without canonical range geometry must remain unavailable as in 020 detail")
-	}
+	visits := coverageDisplayFunction(t, source, "coverage_display_source_visits")
+	bounds := coverageEntityStatsCTE(t, visits, "park_bounds")
+	canonicalRequire(t, bounds, "FROM eligible JOIN app.workout_park_display_bounds bounds",
+		"FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end)",
+		"min(bounds.region_id COLLATE \"C\") historical_region_id")
+	canonicalForbid(t, bounds, "app.workout_park_attributions", "HAVING", "ST_")
+	prepare := coverageDisplayFunction(t, source, "prepare_coverage_display_context")
+	canonicalRequire(t, prepare, "WHERE summary.range_workout_count = 0 OR (representative.region_id IS NOT NULL",
+		"representative.canonical_minimum_longitude IS NOT NULL", "representative.canonical_maximum_latitude IS NOT NULL")
 	rebuild := coverageDisplayFunction(t, source, "rebuild_coverage_display_precomputations")
-	for _, required := range []string{
+	canonicalRequire(t, rebuild,
 		"min(region_id) FILTER (WHERE tags->>'workouts:park_id' = ((tags->>'workouts:park_id')::uuid)::text)",
-		"GROUP BY account_id, workout_id, (tags->>'workouts:park_id')::uuid",
-	} {
-		if !strings.Contains(rebuild, required) {
-			t.Errorf("compact park facts must distinguish canonical geometry from UUID-cast bounds: %s", required)
-		}
-	}
+		"GROUP BY account_id, workout_id, (tags->>'workouts:park_id')::uuid")
 }

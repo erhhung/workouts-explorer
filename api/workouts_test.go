@@ -74,6 +74,26 @@ func TestResolveRangeValidation(t *testing.T) {
 	}
 }
 
+func TestResolveRangeTimeZoneValidationMessages(t *testing.T) {
+	date := openapi_types.Date{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}
+	shortcut := generated.ThisMonth
+	for _, test := range []struct {
+		name, field, message string
+		input                rangeInput
+		zone                 string
+	}{
+		{"invalid stored zone", "timezone", "stored time zone is invalid", rangeInput{start: &date, end: &date}, "Mars/Olympus"},
+		{"invalid override", "tz", "must be a valid IANA time zone", rangeInput{shortcut: &shortcut, timezone: stringPointer("Mars/Olympus")}, "UTC"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, field, err := resolveRange(test.input, readPreferences{test.zone, "monday", 25}, time.Now())
+			if field != test.field || err == nil || err.Error() != test.message {
+				t.Fatalf("field=%q err=%v", field, err)
+			}
+		})
+	}
+}
+
 func TestWorkoutSortValidation(t *testing.T) {
 	valid := []string{"date:desc", "distance:asc", "heartRate:desc"}
 	got, err := parseWorkoutSort(&valid)

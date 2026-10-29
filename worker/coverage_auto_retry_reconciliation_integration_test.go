@@ -1,9 +1,13 @@
 package worker
 
 import (
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -218,6 +222,9 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 		 jsonb_build_object('sourceId',upper(replace(source_id::text,'-','')),'generation',1,'mode','incremental') FROM app.workouts WHERE id=$4`, []any{ingest, parent, f.account, f.workouts[0]}},
 			{`INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope)
 		 SELECT $1,workout.account_id,source.id,source.generation,source.config_envelope FROM app.workouts workout JOIN app.sources source ON source.id=workout.source_id WHERE workout.id=$2`, []any{ingest, f.workouts[0]}},
+			{`INSERT INTO app.job_source_contexts(job_id,account_id,source_id,source_generation,display_name,source_type)
+		 SELECT $1,workout.account_id,source.id,source.generation,source.display_name,source.type FROM app.workouts workout
+		 JOIN app.sources source ON source.id=workout.source_id WHERE workout.id=$2`, []any{ingest, f.workouts[0]}},
 		} {
 			if _, err := seed.Exec(f.ctx, statement.q, statement.args...); err != nil {
 				t.Fatal(err)
@@ -240,9 +247,12 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 			args []any
 		}{
 			{`SELECT app.claim_job($1,'synthetic-adoption',$2,interval '2 minutes')`, []any{ingest, ingestLease}},
-			{`SELECT * FROM app.fence_ingest_job($1,'synthetic-adoption',$2,28)`, []any{ingest, ingestLease}},
-			{`INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,state,processing_started_at)
-		 SELECT $1,account_id,source_id,$2,'synthetic-adoption.json',1,'processing',clock_timestamp() FROM app.workouts WHERE id=$3`, []any{file, ingest, f.workouts[0]}},
+			{`SELECT * FROM app.fence_ingest_job($1,'synthetic-adoption',$2,$3)`, []any{ingest, ingestLease, database.SupportedSchemaVersion}},
+			{`SELECT app.record_ingest_file_manifest($1,'synthetic-adoption',$2,jsonb_build_array(jsonb_build_object(
+		 'name','HealthAutoExport-2026-08-01.json','export_date','2026-08-01','size',1,'modified_sec',1785542400,'modified_ns',0,
+		 'device',0,'inode',0,'ctime_sec',0,'ctime_ns',0,'action','process')))`, []any{ingest, ingestLease}},
+			{`INSERT INTO app.source_files(id,account_id,source_id,job_id,relative_name,size_bytes,modified_at,state,processing_started_at)
+		 SELECT $1,account_id,source_id,$2,'HealthAutoExport-2026-08-01.json',1,'2026-08-01 00:00:00+00','processing',clock_timestamp() FROM app.workouts WHERE id=$3`, []any{file, ingest, f.workouts[0]}},
 			{`UPDATE app.workouts SET source_file_id=$2 WHERE id=$1`, []any{f.workouts[0], file}},
 			{`INSERT INTO app.workout_import_events(id,account_id,source_id,workout_id,source_file_id,job_id,kind,content_sha256,has_route)
 		 SELECT $1,account_id,source_id,id,$2,$3,'adopted',content_sha256,true FROM app.workouts WHERE id=$4`, []any{importEvent, file, ingest, f.workouts[0]}},
@@ -264,18 +274,49 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 		if err := finish.Commit(f.ctx); err != nil {
 			t.Fatal(err)
 		}
+		osmConfig, err := pgxpool.ParseConfig(os.Getenv("PROJECT_COVERAGE_AUTO_RETRY_OSM_TEST_DATABASE_URL"))
+		if err != nil || !strings.HasPrefix(osmConfig.ConnConfig.Database, "workouts_coverage_auto_retry_test_") ||
+			(osmConfig.ConnConfig.Host != "127.0.0.1" && osmConfig.ConnConfig.Host != "::1") {
+			t.Fatal("explicit paired synthetic auto-retry OSM scratch database is required")
+		}
+		osmDB, err := pgxpool.NewWithConfig(f.ctx, osmConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer osmDB.Close()
+		var coordinatesJSON []byte
+		if err := f.admin.QueryRow(f.ctx, `SELECT jsonb_agg(jsonb_build_array(longitude,latitude) ORDER BY sequence)
+		 FROM app.workout_route_points WHERE workout_id=$1`, f.workouts[0]).Scan(&coordinatesJSON); err != nil {
+			t.Fatal(err)
+		}
+		var pairs [][2]float64
+		if err := json.Unmarshal(coordinatesJSON, &pairs); err != nil {
+			t.Fatal(err)
+		}
+		points := make([]osm.RouteCoordinate, len(pairs))
+		for i, pair := range pairs {
+			points[i] = osm.RouteCoordinate{Longitude: pair[0], Latitude: pair[1]}
+		}
+		readiness, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, osmDB, points, 0, 0)
+		if err != nil || readiness.State != "map_data_ready" || len(readiness.Regions) != 1 || readiness.Regions[0].RegionID != "geofabrik:test" || readiness.Regions[0].Generation != 1 {
+			t.Fatalf("actual unchanged-target ROI proof: %+v %v", readiness, err)
+		}
+		vector, _ := json.Marshal(readiness.Regions)
+		descriptor, _ := json.Marshal(productionMatchingDescriptor(5))
 		var payload []byte
 		if err := f.admin.QueryRow(f.ctx, `SELECT jsonb_build_array(jsonb_build_object('workoutId',workout.id,'eventId',request.event_id,'origin','adopted',
 		 'contentSha256',encode(workout.content_sha256,'hex'),'routeDigest',encode(state.route_input_sha256,'hex'),'ownershipEpoch',account.workout_ownership_epoch,
-		 'readiness','map_data_ready','reason',NULL,'catalogFingerprint',repeat('a',64),'generations','[{"regionId":"geofabrik:test","generation":1}]'::jsonb))
+		 'readiness','map_data_ready','reason',NULL,'catalogFingerprint',$2::text,'catalogRevision',$3::bigint,
+		 'selectionFingerprint',$4::text,'selectionPolicy',$5::text,'matchingDescriptor',$6::jsonb,'generations',$7::jsonb,
+		 'mutationVersion',COALESCE((SELECT mutation_version FROM app.coverage_route_changes change WHERE change.account_id=workout.account_id AND change.workout_id=workout.id),0)))
 		 FROM app.workouts workout JOIN app.accounts account ON account.id=workout.account_id
-		 JOIN app.workout_coverage_states state ON state.workout_id=workout.id JOIN app.adopted_workout_coverage_refreshes request ON request.workout_id=workout.id WHERE workout.id=$1`, f.workouts[0]).Scan(&payload); err != nil {
+		 JOIN app.workout_coverage_states state ON state.workout_id=workout.id JOIN app.adopted_workout_coverage_refreshes request ON request.workout_id=workout.id WHERE workout.id=$1`, f.workouts[0], readiness.CatalogFingerprint, readiness.CatalogRevision, readiness.SelectionFingerprint, coverageSelectionPolicy(false), descriptor, vector).Scan(&payload); err != nil {
 			t.Fatal(err)
 		}
 		tx := beginWorkerTestAccount(t, f.worker, f.account)
 		defer tx.Rollback(f.ctx)
 		if _, err := tx.Exec(f.ctx, `SELECT * FROM app.apply_ingest_coverage_batch($1,NULL,'synthetic-reconciler',$2,$3,$4,
-		 'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5,28)`, f.account, lease, revision, payload); err != nil {
+		 'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5,$5)`, f.account, lease, revision, payload, database.SupportedSchemaVersion); err != nil {
 			t.Fatal(err)
 		}
 		var builder uuid.UUID
@@ -286,7 +327,18 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 		var freshParent *uuid.UUID
 		var routeCount int
 		var outcome string
-		if err := tx.QueryRow(f.ctx, `SELECT * FROM app.seal_ingest_coverage_cohort($1,NULL,'synthetic-reconciler',$2,$3,$4,$5,28)`, f.account, lease, revision, builder, targets).Scan(&freshParent, &routeCount, &outcome); err != nil || outcome != "sealed" || routeCount != 1 {
+		var refreshed []map[string]any
+		if err := json.Unmarshal(targets, &refreshed); err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range refreshed {
+			target["matchingDescriptor"] = productionMatchingDescriptor(5)
+		}
+		targets, err = json.Marshal(refreshed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(f.ctx, `SELECT * FROM app.seal_ingest_coverage_cohort($1,NULL,'synthetic-reconciler',$2,$3,$4,$5,$6)`, f.account, lease, revision, builder, targets, database.SupportedSchemaVersion).Scan(&freshParent, &routeCount, &outcome); err != nil || outcome != "sealed" || routeCount != 1 {
 			t.Fatalf("forced cohort seal: %s %d %v", outcome, routeCount, err)
 		}
 		if err := tx.Commit(f.ctx); err != nil {

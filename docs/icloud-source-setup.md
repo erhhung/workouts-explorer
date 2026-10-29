@@ -2,41 +2,45 @@
 
 ## Scope And Status
 
-The current [ingest-reprocessing contract](ingest-reprocessing.md) is deployed with
-migrations **001-032**, deployed schema/minimum runtime **32**, and marker
-**27**. New bounded sync skips unchanged successful metadata by default; the
-bounded-only **Reprocess all files in this date range** checkbox opts into force.
-Coordinated backend **42** and UI **43** are accepted; scripted deployed-browser
-verification passed. Owner acceptance/milestone and capacity remain separate.
-Source configuration is preserved with auto-sync off; this
-release made no provider checks and started no new ingest or matching. The
-folded-028 release observations below are historical, **prior to 031/032**, not
+The [029 ingest-reprocessing contract](ingest-reprocessing.md) retains deployed
+behavior in the approved source sequence **001-030**, final source/runtime support
+and schema/minimum runtime **30**, baseline **27**, ledger **0-30**. See the
+[history mapping](database-migrations.md#source-history-mapping) and
+[pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The authorized live reconciliation remains pending here; source preparation is
+not deployed schema 30. New bounded sync skips unchanged successful metadata
+by default; the bounded-only **Reprocess all files in this date range** checkbox
+opts into force.
+Milestone acceptance is governed only by
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout); this guide
+does not independently certify browser acceptance or capacity.
+Source configuration and auto-sync policy are unchanged by display-context
+warming. The folded-028 release observations below predate explicit reprocessing, not
 verification of the current contract.
 
-Source-only [033 display identity](decisions/013-canonical-coverage-display-identity.md)
-requires coordinated schema/minimum runtime **33**, baseline **27**, but is not
-deployed. It changes no iCloud credentials, source configuration, ingest/retry
-rules or auto-sync setting. Adoption only needs canonical context warm/rebuild
-from retained evidence, not a provider check, new import, OSM regeneration or
-route rematch. Live backend-42/UI-43/schema-32 remains authoritative until MAIN
-cutover completes; the historical setup/recovery receipts below remain unchanged.
+[030 display identity](decisions/013-canonical-coverage-display-identity.md)
+combines canonical identity with compact display projections. It changes no iCloud
+credentials, source configuration, ingest/retry rules, job behavior, generation
+policy, matcher policy or auto-sync setting. Canonical contexts warm/rebuild from
+retained evidence, without a provider check, new import, OSM regeneration/download
+or route rematch. The historical setup/recovery receipts below remain unchanged.
 
-Milestone 8 source implementation is deployed; owner-operated iCloud ingest and
-available-map Coverage recovery are verified. M8 remains unchecked pending
-explicit owner acceptance, separate from those operational results. The
+Milestone 8 source implementation is deployed; historical ingestion and
+available-map Coverage recovery receipts retain their original scope. The
 [initial verification](implementation-plan.md#verification-results-10122026)
 retains its dated synthetic/disposable-database scope. The schema-28 committed-route
-pipeline's **folded contract is live in `dev-20261020`, Helm revision 29**, with
+pipeline's **folded contract deployed in `dev-20261020`, Helm revision 29**, with
 schema/Goose/minimum runtime **28** and `migration_baseline=27`. The rollout receipt
 is dated **10/20/2026 at 1:54:53 AM PDT** (`2026-10-20T08:54:53.992Z`). All five
-deployments are Ready/Available and new runtime-role readiness passed. Release
+deployments were Ready/Available and new runtime-role readiness passed. Release
 verification did not probe iCloud authentication, change source configuration or
-start an import. Stored source state remains connected with auto-sync disabled.
+start an import. At that checkpoint stored source state was connected with
+auto-sync disabled.
 
 Historical recovery has independent closure for available map data, including
 authorized automatic/manual retries. Final metrics stay
 in private operator records; missing-map routes remain unavailable. This does not
-close M8 owner acceptance, certify capacity or authorize another yearly import.
+independently certify M8 acceptance or capacity, or authorize another yearly import.
 See [independent closure](development-progress.md#independent-yearly-recovery-closure-10202026).
 
 New folded-028 behavior (generation locking, strict eligible cohorts and mixed
@@ -455,16 +459,18 @@ including permanent/unknown/null-code failures, into the next latest-only attemp
 Successes never rerun; cancellations are not automatically revived. All-permanent/
 unknown parents stop. The additional automatic count defaults to 1 (0-20), durable
 per root; manual retry never resets it and normal failed-target scans cannot
-create fresh roots to bypass it. The prior-to-031 release evidence is recorded
+create fresh roots to bypass it. The pre-reprocessing release evidence is recorded
 in Scope And Status; this paragraph is not a new rollout receipt.
 
-At the prior-to-031 checkpoint, deployment verification was complete. For an owner-operated next yearly backfill, leave
+At the pre-reprocessing checkpoint, deployment verification was complete. The
+historical next-batch guidance was: for an owner-operated next yearly backfill, leave
 `autoSyncEnabled=false`, select an inclusive January 1 through December 31 file
 range, and review ingestion and Coverage separately before the next batch. A
 completed prior batch satisfies the historical readiness gate; no extra import
 is needed merely to unlock the pipeline. The next batch was not started at the
 deployment checkpoint; later dataset status stays private. This guide submits no
-jobs. M8 owner acceptance remains separate.
+jobs. Current M8 acceptance is governed only by
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout).
 
 Known trust/authentication/explicit PCS approval failures during ingest set a
 generation-fenced `connection-failed` status, notify the owner and block future
@@ -520,7 +526,8 @@ database cleanup also does not erase encrypted values already in WAL/backups.
 
 The worker Dockerfile packages the native binary from the pinned 1.75.2 release
 archive and checks architecture-specific SHA-256 for both amd64 and arm64. The
-full local Buildah worker-image build passed, including all seven commands;
+full local Buildah worker-image build at the **10/12/2026 historical checkpoint**
+passed, including all seven commands;
 amd64 checksum/version and native execution as UID 65532 inside Alpine were
 verified. The local image is `localhost/workouts-worker:m8-verification`; it was
 not published or deployed. Arm64 execution, read-only-root-filesystem/seccomp
@@ -528,23 +535,26 @@ behavior and full worker startup were not verified by these checks.
 
 ## Schema And Verification
 
-Current deployment uses **001-032**, schema/minimum runtime **32**,
-and `migration_baseline=27`. Source support is **33** for the separate pending
-[canonical display release](database-migrations.md#canonical-coverage-display-033-source-only),
-not yet deployed. Migration 031 defines ingest reprocessing; 032 adds
-atomically maintained coverage display precomputations without changing source
-discovery or ingest policy. Applied 001-032 are immutable. Use protected backups,
+Current source uses **001-030**, final schema/minimum runtime **30**,
+`migration_baseline=27` and contiguous ledger **0-30**. Combined **029** defines
+ingest status/reprocessing/phases; **030** combines compact/canonical display.
+Display migration 030 changes neither source discovery nor ingest policy.
+Live reconciliation is authorized but pending; see the
+[pre-cutover actual state](database-migrations.md#pre-cutover-live-status).
+Use protected backups,
 the native migration entry point and coordinated compatible API/worker images.
 Preserve queued historical jobs, original parameters and frozen manifests.
-032 was applied through a standalone restricted native migration before the
-accepted full-values backend-42/UI-43 rollout with `--no-hooks`. Actual API/worker
+Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
+032 was applied through a standalone restricted native migration
+before the accepted full-values backend-42/UI-43 rollout with `--no-hooks`. Actual API/worker
 readiness and original-data/configuration preservation passed. Full pre-32 backups
 and old images remain retained; image-only rollback is unsupported. Scripted
-deployed-browser verification passed; owner acceptance/milestone and capacity
-remain separate, with no new provider or ingest verification claimed. See
-[migration requirements](database-migrations.md#coverage-display-precomputations-032).
+deployed-browser verification passed at that checkpoint, not as a new 033 browser
+receipt. Current acceptance belongs only to
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout), with no new
+provider or ingest verification claimed. See [migration requirements](database-migrations.md).
 
-The following migration/release evidence is historical, **prior to 031**.
+The following migration/release evidence is historical, **before explicit ingest reprocessing**.
 At that checkpoint active migrations were **001-028**. Migration 021 introduced iCloud, 022 legacy-route
 bootstrap, 023 coordinated readers, and 024-026 provider identity, owner-aware
 inventory and adoption. Ordinary static 027 advances 26 to 27; it has no legacy
@@ -579,8 +589,8 @@ below tested schema 21 and must not be relabeled as schema-22 verification.
 
 ### Verified Results (10/12/2026)
 
-These observations are **prior to 031** and retain their original scope, not a
-verification receipt for bounded defaults or retry receipts introduced in 031.
+These observations are **before explicit ingest reprocessing** and retain their original scope, not a
+verification receipt for bounded defaults or retry receipts included in source 029.
 
 | Scope | Result and boundary |
 |---|---|
@@ -598,13 +608,12 @@ not a deployment or live backend. Temporary receipts are not durable backup
 evidence; this documentation records only their scoped summary.
 
 See [contributor verification](../CONTRIBUTING.md#icloud-source-verification)
-for commands and disposable-database guards. Owner acceptance remains pending.
-An optional owner-operated real-cloud smoke test outside CI and any image
-publication/redeployment require explicit authorization; they are not outstanding
-implementation blockers or claims of production validation. The separate
-owner-account repair/retry verification gate is now satisfied, but does not itself
-authorize M8 builds or rollout. The linked reader/telemetry guides record verified
-headless DNS/TCP and a separate direct-backend TLS/authentication client, not
+for commands and disposable-database guards. M8 closeout follows
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout), including
+the required browser gate; the existing authorization needs no renewed owner
+request after that gate. This does not authorize new cloud operations or unrelated
+rollouts. At the historical checkpoint, the linked reader/telemetry guides recorded
+verified headless DNS/TCP and a separate direct-backend TLS/authentication client, not
 in-pod TLS/authentication, mTLS, live-cloud or production acceptance. Reader
 activation at that earlier checkpoint was not established by those receipts;
 later deployment evidence belongs in Development Progress.

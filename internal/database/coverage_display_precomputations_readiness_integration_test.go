@@ -49,8 +49,8 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(320032,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("explicit scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=33 AND minimum_runtime_version=33 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("mutation harness requires current schema33/min33/marker27 metadata: %v", err)
+	if err := admin.QueryRow(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
+		t.Fatalf("mutation harness requires current schema30/min30/marker27 metadata: %v", err)
 	}
 
 	roles := []struct{ name, env string }{
@@ -86,27 +86,27 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 			t.Fatalf("%s is not a genuine restricted login: %v", role.name, err)
 		}
 		if !Ready(ctx, pool) {
-			t.Fatalf("complete runtime33 schema must be ready for %s", role.name)
+			t.Fatalf("complete runtime30 schema must be ready for %s", role.name)
 		}
-		for _, runtime := range []int{31, 32} {
+		for _, runtime := range []int{28, 29} {
 			var oldReady bool
 			if err := pool.QueryRow(ctx, runtimeFullReadinessSQL, runtime).Scan(&oldReady); err != nil || oldReady {
 				t.Fatalf("runtime%d must be rejected for %s: ready=%t err=%v", runtime, role.name, oldReady, err)
 			}
 		}
 		var gated bool
-		if err := pool.QueryRow(ctx, runtimeCoverageDisplayReadinessSQL, 31).Scan(&gated); err != nil || !gated {
-			t.Fatalf("display object checks must remain gated below runtime32 for %s: %v", role.name, err)
+		if err := pool.QueryRow(ctx, runtimeCoverageDisplayReadinessSQL, 29).Scan(&gated); err != nil || !gated {
+			t.Fatalf("display object checks must remain gated below runtime30 for %s: %v", role.name, err)
 		}
 		pools = append(pools, pool)
 	}
 
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
-		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=32 WHERE singleton`,
-			`UPDATE app.schema_metadata SET minimum_runtime_version=33 WHERE singleton`},
-		{"minimum runtime raised", `UPDATE app.schema_metadata SET schema_version=34,minimum_runtime_version=34 WHERE singleton`,
-			`UPDATE app.schema_metadata SET schema_version=33,minimum_runtime_version=33 WHERE singleton`},
+		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`,
+			`UPDATE app.schema_metadata SET minimum_runtime_version=30 WHERE singleton`},
+		{"minimum runtime raised", fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=%d WHERE singleton`, SupportedSchemaVersion+1, SupportedSchemaVersion+1),
+			`UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`},
 		{"extra source invalidator", `CREATE TRIGGER extra_display_dirty AFTER UPDATE ON app.path_segments FOR EACH ROW EXECUTE FUNCTION app.mark_coverage_display_dirty()`,
 			`DROP TRIGGER extra_display_dirty ON app.path_segments`},
 		{"extra deferred callback", `CREATE TRIGGER extra_display_flush AFTER INSERT ON app.coverage_display_dirty FOR EACH ROW EXECUTE FUNCTION app.flush_coverage_display_dirty_account()`,
@@ -388,12 +388,12 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		if !Ready(ctx, pool) {
 			t.Errorf("restored schema must be ready for %s", roles[i].name)
 		}
-		for _, runtime := range []int{31, 32} {
+		for _, runtime := range []int{28, 29} {
 			var oldReady bool
 			if err := pool.QueryRow(ctx, runtimeFullReadinessSQL, runtime).Scan(&oldReady); err != nil || oldReady {
 				t.Errorf("restored schema must reject runtime%d for %s: ready=%t err=%v", runtime, roles[i].name, oldReady, err)
 			}
 		}
 	}
-	t.Logf("verified %d committed mutations through each of three restricted runtime logins; runtime31/32 rejected", len(mutations))
+	t.Logf("verified %d committed mutations through each of three restricted runtime logins; runtime28/29 rejected", len(mutations))
 }

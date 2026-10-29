@@ -1962,11 +1962,7 @@ h2 {
 .coverage-route-status--unavailable > span[aria-hidden="true"] {
   font-size: calc(1em + 5px);
   font-weight: 400;
-  transform: translate(1px, -1px);
-}
-.coverage-route-status--unprocessed {
-  border: 0;
-  font-size: 1rem;
+  transform: translate(0, -2px);
 }
 @keyframes coverage-status-spin {
   to {
@@ -2720,6 +2716,17 @@ h2 {
 }
 .tooltip-trigger:hover + .tooltip-content,
 .tooltip-trigger:focus-visible + .tooltip-content {
+  visibility: visible;
+  opacity: 1;
+  transition-delay: 750ms;
+}
+.tooltip-content--portal {
+  position: fixed;
+  z-index: 50;
+  right: auto;
+  bottom: auto;
+}
+.tooltip-content--portal.is-open {
   visibility: visible;
   opacity: 1;
   transition-delay: 750ms;

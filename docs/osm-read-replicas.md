@@ -2,6 +2,26 @@
 
 ## Scope And Status
 
+**Current status:** strict replica-only enforcement is deployed; the chart
+default remains **false**. Current source ends at **030**, schema/minimum runtime
+**30**, baseline **27**, ledger **0-30**, with ingest status/reprocessing/phases in
+**029** and compact/canonical display in **030**. See the
+[history mapping](database-migrations.md#source-history-mapping) and
+[pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+The approved live reconciliation is pending here. Context warming changes no
+job, generation or matcher policy and needs no provider check, OSM
+regeneration/download or route rematch.
+
+[Milestone 8 Closeout](development-progress.md#milestone-8-closeout) alone governs
+M8 acceptance, including the browser gate; existing authorization requires no
+renewed owner request after that gate. This guide does not certify acceptance,
+capacity or failover. The dated 10/13 checkpoint and old rollout procedure below
+are retained as history, **not current rollout instructions or pending gates**.
+Configuration/selector contracts remain useful; select current schema-compatible
+images and follow [database migrations](database-migrations.md) for new operations.
+
+### Historical Checkpoint (10/13/2026)
+
 Status: 10/13/2026 (`America/Los_Angeles`). Strict replica-only OSM reads are
 implemented in the current code and Helm chart, but are **off by default**.
 Recorded configuration, protocol/TLS/privacy fixtures and disposable
@@ -324,7 +344,56 @@ OSM snapshot has the target generations. API diagnostics retain their bounded
 synchronous timeout/admission contract; they do not gain the durable runner's
 catch-up wait policy.
 
+## Metadata Fences (OSM 010)
+
+**Implementation BUILT; genuine PostgreSQL and live deployment verification
+PENDING.** [ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md)
+adds catalog revision fencing to the existing promotion-event fence. Separate
+OSM **010**, schema/minimum runtime **10/10**, is coordinated with APP feature
+**029** in complete source/runtime **30**. Last reported live OSM remains **9**,
+APP schema/minimum **34/33**, Helm **60**; existing replica-policy deployment
+receipts do not establish this metadata contract as deployed.
+
+`osm_catalog.route_region_catalog_state` provides a singleton transactional
+revision, legacy-compatible full fingerprint, selection fingerprint, active heads
+and configured-region metadata. Generated `boundary_sha256` and
+`geographic_area_m2` are calculated on catalog writes, not per GPS point. Relevant
+region/generation triggers serialize head publication, suppress unchanged head
+UPDATEs and exclude progress/timestamp/storage-only changes. Selection proof covers
+every catalog ID, configured flag, boundary and configured-active presence,
+including competing/unconfigured polygons, but excludes replacement generation
+numbers. Exact selection proof can therefore rebind selected active heads without
+GPS; missing/changed proof cannot.
+
+`ReadRouteRegionCatalog` and `ResolveRouteRegionsWithCatalog` read catalog head,
+promotion head and any ROI data in one physical backend's read-only Repeatable
+Read snapshot. Both the APP-observed event floor and catalog revision floor must
+be visible. The latter also includes the maximum durable route-proof revision,
+so a newer source-preparation proof cannot be overwritten by an older global
+observation. APP rechecks that floor under its catalog lock; lower revision/event
+is rejected, and equal revision with a different full fingerprint raises `40001`.
+An input-valid raw selection proof must be rebound against this fenced catalog
+before reuse, even when it predates global observation.
+
+Lagged snapshots are discarded for reacquisition, never treated as proof of
+unavailable maps, obsolete selection or permission to advance a campaign cursor.
+Strict replica-only policy has **no primary/writer fallback** and no legacy
+unfenced catalog path. Independent APP/OSM snapshots still do not provide
+cross-database latest-state atomicity. Default 30-second idle catalog/claim polling
+requires no provider geometry or GPS scans when unchanged; executor preflight,
+health and role-check queries remain. UI Running-job polling is unrelated.
+
+OSM 009-to-010 migration/readiness, streaming lag/concurrent-head behavior and
+restricted-role APP 029-to-030 checks remain pending. Follow the
+[migration contract](database-migrations.md#metadata-driven-coverage-reconciliation-029-and-osm-010),
+not the historical rollout instructions below; operator cutover evidence is
+separate from built code or documentation validation.
+
 ## Capacity And Authorized Rollout
+
+The capacity limits remain unchanged. The numbered rollout procedure records
+the historical 10/13 schema-22/minimum-21 gate, not the current deployed schema or
+a new authorization request for M8 closeout. Current status is linked above.
 
 This flag does not increase worker threads, Deployment replicas or matcher-slot
 limits. Shuffling distributes **new connections**, not individual jobs, and does
@@ -343,7 +412,9 @@ there is no executed concurrent-capacity benchmark pass for this feature.
 
 1. Review the current [README status](../README.md) and obtain explicit permission
    for image publication and rollout. The completed repair gate alone does not
-   authorize either; M8 acceptance stays unchecked until the owner closes it.
+   authorize either. M8 acceptance was still pending at this historical checkpoint;
+   its current [closeout](development-progress.md#milestone-8-closeout) does not
+   authorize another rollout.
 2. Select appropriate coordinated API and worker images containing the reader
    implementation and schema-22 runtime support. Both components must support
    minimum runtime 21 before normal Goose runs migrations 021 and 022. The old

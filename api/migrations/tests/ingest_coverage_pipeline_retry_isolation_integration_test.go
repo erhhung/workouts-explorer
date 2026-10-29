@@ -54,7 +54,7 @@ func TestCoveragePipelineChainedRetryIsolationPostgreSQL(t *testing.T) {
 	db := testDatabases{ctx: ctx, migration: pool("workouts_migration"), api: pool("workouts_api"),
 		worker: pool("workouts_worker"), coverage: pool("workouts_coverage_worker")}
 	var empty bool
-	if err := db.migration.QueryRow(ctx, `SELECT (SELECT schema_version=$1 AND minimum_runtime_version=33 FROM app.schema_metadata WHERE singleton)
+	if err := db.migration.QueryRow(ctx, `SELECT (SELECT schema_version=$1 AND minimum_runtime_version=30 FROM app.schema_metadata WHERE singleton)
 		AND NOT EXISTS(SELECT 1 FROM app.jobs)`, database.SupportedSchemaVersion).Scan(&empty); err != nil || !empty {
 		t.Fatalf("retry isolation requires an empty migrated supported scratch database: %v", err)
 	}

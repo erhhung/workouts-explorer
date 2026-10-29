@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   type DataSync as DataSyncModel,
+  type IngestActivity,
   type JobDetail,
   type JobEventList,
   type JobFileList,
@@ -146,6 +147,52 @@ const eligibleCoverageRetry = {
   currentCoverageJobIds: [],
 };
 
+const zeroProgress: JobProgress = {
+  current: 0,
+  total: 0,
+  filesDiscovered: 0,
+  filesSkipped: 0,
+  filesSucceeded: 0,
+  filesFailed: 0,
+  workoutsCreated: 0,
+  workoutsUpdated: 0,
+  workoutsUnchanged: 0,
+  workoutsRejected: 0,
+};
+const activityLabels: Record<IngestActivity["phase"], string> = {
+  resuming: "Resuming incomplete sync job.",
+  preparing: "Preparing to read workout files.",
+  discovering: "Looking for workout files that need to be processed.",
+  importing: "Parsing workout files and importing new and changed workouts.",
+  analyzing_imported_routes: "Analyzing map data for imported routes.",
+  analyzing_existing_routes: "Analyzing map data for existing routes.",
+  updating_time_zones: "Determining and updating workout time zones.",
+  cleanup: "Cleaning up temporary files.",
+};
+
+function sourceRun(overrides: Partial<JobDetail> = {}): JobDetail {
+  return {
+    ...detail,
+    status: "running",
+    progress: zeroProgress,
+    results: undefined,
+    terminalAt: undefined,
+    source: {
+      sourceId: SOURCE_A,
+      generation: 1,
+      displayName: "Activity source",
+      sourceType: "health-auto-export-local",
+    },
+    ...overrides,
+  };
+}
+
+async function advanceSyncTimers(milliseconds: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -248,6 +295,544 @@ function artifactPage(
 }
 
 describe("DataSync", () => {
+  describe("ingest activity", () => {
+    test.each(
+      Object.entries(activityLabels).flatMap(([phase, label]) =>
+        [0, 1, 100].map((files) => [phase as IngestActivity["phase"], label, files] as const),
+      ),
+    )("shows %s (%s) after results for %i files", async (phase, label, files) => {
+      const child = sourceRun({
+        id: "F".repeat(32),
+        parentJobId: JOB_ID,
+        activity: { phase, current: 0, updatedAt: detail.updatedAt },
+        progress: {
+          ...zeroProgress,
+          current: files,
+          total: files,
+          filesSucceeded: files,
+        },
+      });
+      baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}`
+          ? json({
+              ...child,
+              id: JOB_ID,
+              source: undefined,
+              activity: undefined,
+              children: [child],
+            })
+          : undefined,
+      );
+      renderDataSync(JOB_ID);
+      const messages = await screen.findAllByText(label);
+      expect(messages).toHaveLength(2);
+      for (const message of messages) {
+        expect(message).toHaveAttribute("role", "status");
+        expect(message).toHaveAttribute("aria-live", "polite");
+        const result = message.parentElement!.previousElementSibling!;
+        expect(result).toHaveClass(files === 0 ? "sync-no-data" : "result-counts");
+        expect(result).toHaveTextContent(
+          files === 0 ? "No files were processed." : "Files Processed",
+        );
+        expect(result.previousElementSibling).toHaveClass("sync-progress");
+      }
+      const region = screen.getByRole("region", { name: "Selected run" });
+      expect(region).not.toHaveAttribute("aria-live");
+      expect(region.querySelector(".job-detail-card")).not.toHaveAttribute("aria-live");
+      expect(within(region).queryByText(/Sync job completed/)).not.toBeInTheDocument();
+    });
+
+    test.each([
+      [undefined, undefined, undefined],
+      [null, 12, undefined],
+      [0, undefined, "Routes checked: 0"],
+      [3, null, "Routes checked: 3"],
+      [0, 0, "Routes checked: 0 of 0"],
+      [2, 7, "Routes checked: 2 of 7"],
+    ])(
+      "renders actual route counts %s / %s without a live counter",
+      async (current, total, copy) => {
+        baseFetch((path) =>
+          path === `/api/jobs/${JOB_ID}`
+            ? json({
+                ...sourceRun(),
+                activity: {
+                  phase: "analyzing_existing_routes",
+                  current,
+                  total,
+                  updatedAt: detail.updatedAt,
+                },
+              })
+            : undefined,
+        );
+        renderDataSync(JOB_ID);
+        const message = await screen.findByText(activityLabels.analyzing_existing_routes);
+        expect(message).not.toHaveTextContent("Routes checked");
+        if (copy) {
+          const count = screen.getByText(copy);
+          expect(count.closest('[aria-live], [role="status"]')).toBeNull();
+        } else expect(screen.queryByText(/Routes checked/)).not.toBeInTheDocument();
+        expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      },
+    );
+
+    test.each(["importing", "updating_time_zones", "cleanup"] as const)(
+      "does not reinterpret %s counts as route or time zone counters",
+      async (phase) => {
+        baseFetch((path) =>
+          path === `/api/jobs/${JOB_ID}`
+            ? json(
+                sourceRun({
+                  activity: { phase, current: 3, total: 9, updatedAt: detail.updatedAt },
+                }),
+              )
+            : undefined,
+        );
+        renderDataSync(JOB_ID);
+        await screen.findByText(activityLabels[phase]);
+        expect(screen.queryByText(/Routes checked|3 of 9/)).not.toBeInTheDocument();
+      },
+    );
+
+    test("shows per-source current phases at the root and after each source's results", async () => {
+      const children = [
+        sourceRun({ id: SOURCE_A, activity: { phase: "importing", updatedAt: detail.updatedAt } }),
+        sourceRun({
+          id: SOURCE_B,
+          source: { ...sourceRun().source!, sourceId: SOURCE_B, displayName: "Other source" },
+          activity: { phase: "updating_time_zones", updatedAt: detail.updatedAt },
+        }),
+      ];
+      baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}`
+          ? json(sourceRun({ source: undefined, children }))
+          : undefined,
+      );
+      renderDataSync(JOB_ID);
+      await screen.findByText(`Activity source: ${activityLabels.importing}`);
+      expect(screen.getByText(`Other source: ${activityLabels.updating_time_zones}`)).toBeVisible();
+      const sources = document.querySelectorAll<HTMLElement>(".source-run");
+      expect(within(sources[0]).getByText(activityLabels.importing)).toBeVisible();
+      expect(within(sources[1]).getByText(activityLabels.updating_time_zones)).toBeVisible();
+    });
+
+    test.each([
+      [0, 0, 0, "Sync job completed, but no new data were imported."],
+      [100, 0, 0, "Sync job completed, but no new data were imported."],
+      [1, 1, 0, "Sync job completed successfully."],
+      [1, 0, 1, "Sync job completed successfully."],
+    ] as const)(
+      "uses terminal status for success with %i files, %i created, %i updated",
+      async (files, created, updated, copy) => {
+        let run = sourceRun({
+          progress: {
+            ...zeroProgress,
+            current: files,
+            total: files,
+            filesSucceeded: files,
+            workoutsCreated: created,
+            workoutsUpdated: updated,
+          },
+          activity: { phase: "cleanup", updatedAt: detail.updatedAt },
+        });
+        baseFetch((path) => (path === `/api/jobs/${JOB_ID}` ? json(run) : undefined));
+        const { client } = renderDataSync(JOB_ID);
+        await screen.findByText(activityLabels.cleanup);
+        expect(screen.queryByText(/Sync job completed/)).not.toBeInTheDocument();
+        run = { ...run, status: "succeeded", results: run.progress };
+        await act(async () => client.refetchQueries({ queryKey: ["job", JOB_ID] }));
+        expect(await screen.findByText(copy)).toBeVisible();
+        expect(screen.queryByText(activityLabels.cleanup)).not.toBeInTheDocument();
+        expect(screen.queryByText("No new data.")).not.toBeInTheDocument();
+        expect(screen.queryByText("No files were processed.")).not.toBeInTheDocument();
+        expect(screen.getAllByText(/Sync job completed/)).toHaveLength(1);
+      },
+    );
+
+    test.each(["failed", "cancelled", "partially_succeeded"] as const)(
+      "never presents stale cleanup or success for %s",
+      async (status) => {
+        baseFetch((path) =>
+          path === `/api/jobs/${JOB_ID}`
+            ? json(
+                sourceRun({
+                  status,
+                  progress: { ...progress, current: 100, total: 100 },
+                  activity: { phase: "cleanup", updatedAt: detail.updatedAt },
+                  failureSummary: "A file could not be imported.",
+                }),
+              )
+            : undefined,
+        );
+        renderDataSync(JOB_ID);
+        await screen.findByText("A file could not be imported.");
+        expect(screen.queryByText(activityLabels.cleanup)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Sync job completed/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry run" })).toBeEnabled();
+      },
+    );
+
+    test("prioritizes cancellation and queued status over persisted phases without guessing historical phases", async () => {
+      const run = sourceRun({
+        progress: { ...progress, current: 100, total: 100 },
+        activity: {
+          phase: "analyzing_imported_routes",
+          current: 1,
+          total: 2,
+          updatedAt: detail.updatedAt,
+        },
+      });
+      baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}` ? json({ ...run, cancelRequested: true }) : undefined,
+      );
+      const { client } = renderDataSync(JOB_ID);
+      await screen.findByText("Cancelling...", { selector: '[role="status"]' });
+      expect(screen.queryByText(activityLabels.analyzing_imported_routes)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Routes checked/)).not.toBeInTheDocument();
+      act(() => client.setQueryData(["job", JOB_ID], { ...run, status: "queued" }));
+      expect(await screen.findByText("Waiting for sync job to start.")).toBeVisible();
+      act(() => client.setQueryData(["job", JOB_ID], { ...run, activity: undefined }));
+      await waitFor(() =>
+        expect(screen.queryByText("Waiting for sync job to start.")).not.toBeInTheDocument(),
+      );
+      for (const label of Object.values(activityLabels))
+        expect(screen.queryByText(label)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Sync job completed/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("detail polling and phase history", () => {
+    test("polls running details every 10 seconds but history and snapshot every 30 seconds", async () => {
+      vi.useFakeTimers();
+      const fetchMock = baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}` ? json(sourceRun()) : undefined,
+      );
+      const view = renderDataSync(JOB_ID);
+      const reads = (path: string) =>
+        fetchMock.mock.calls.filter(([input]) => input === path).length;
+      try {
+        await advanceSyncTimers(0);
+        expect(reads(`/api/jobs/${JOB_ID}`)).toBe(1);
+        await advanceSyncTimers(9_999);
+        expect(reads(`/api/jobs/${JOB_ID}`)).toBe(1);
+        await advanceSyncTimers(2);
+        expect(reads(`/api/jobs/${JOB_ID}`)).toBe(2);
+        await advanceSyncTimers(10_000);
+        expect(reads(`/api/jobs/${JOB_ID}`)).toBe(3);
+        expect(reads("/api/jobs?page=1&pageSize=25")).toBe(1);
+        expect(reads("/api/data-sync")).toBe(1);
+        await advanceSyncTimers(10_000);
+        expect(reads(`/api/jobs/${JOB_ID}`)).toBe(4);
+        expect(reads("/api/jobs?page=1&pageSize=25")).toBe(2);
+        expect(reads("/api/data-sync")).toBe(2);
+        expect(view.navigate).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    });
+
+    test("switches queued/running intervals in place and stops terminal ingest polling", async () => {
+      vi.useFakeTimers();
+      let status: JobDetail["status"] = "queued";
+      let detailReads = 0;
+      baseFetch((path) => {
+        if (path !== `/api/jobs/${JOB_ID}`) return undefined;
+        detailReads += 1;
+        return json(sourceRun({ status }));
+      });
+      const view = renderDataSync(JOB_ID);
+      try {
+        await advanceSyncTimers(0);
+        const region = screen.getByRole("region", { name: "Selected run" });
+        status = "running";
+        await advanceSyncTimers(29_999);
+        expect(detailReads).toBe(1);
+        await advanceSyncTimers(2);
+        expect(detailReads).toBe(2);
+        expect(within(region).getByText("Running", { selector: ".sync-status" })).toBeVisible();
+        status = "queued";
+        await advanceSyncTimers(10_001);
+        expect(detailReads).toBe(3);
+        expect(within(region).getByText("Waiting for sync job to start.")).toBeVisible();
+        status = "running";
+        await advanceSyncTimers(29_997);
+        expect(detailReads).toBe(3);
+        await advanceSyncTimers(4);
+        expect(detailReads).toBe(4);
+        status = "succeeded";
+        await advanceSyncTimers(10_001);
+        expect(detailReads).toBe(5);
+        expect(
+          within(region).getByText("Sync job completed, but no new data were imported."),
+        ).toBeVisible();
+        await advanceSyncTimers(60_000);
+        expect(detailReads).toBe(5);
+        expect(screen.getByRole("region", { name: "Selected run" })).toBe(region);
+        expect(view.navigate).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    });
+
+    test("pauses hidden-tab polls, refetches on focus, and cleans up after navigation and unmount", async () => {
+      vi.useFakeTimers();
+      focusManager.setFocused(undefined);
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const nextJobId = "F".repeat(32);
+      const fetchMock = baseFetch((path) =>
+        path === `/api/jobs/${JOB_ID}` || path === `/api/jobs/${nextJobId}`
+          ? json(sourceRun({ id: path.split("/").at(-1)! }))
+          : undefined,
+      );
+      const view = renderDataSync(JOB_ID);
+      const reads = (jobId: string) =>
+        fetchMock.mock.calls.filter(([path]) => path === `/api/jobs/${jobId}`).length;
+      try {
+        await advanceSyncTimers(0);
+        visibility.mockReturnValue("hidden");
+        fireEvent(document, new Event("visibilitychange", { bubbles: true }));
+        const initialReads = fetchMock.mock.calls.length;
+        await advanceSyncTimers(30_001);
+        expect(fetchMock.mock.calls).toHaveLength(initialReads);
+        visibility.mockReturnValue("visible");
+        fireEvent(document, new Event("visibilitychange", { bubbles: true }));
+        await advanceSyncTimers(1);
+        expect(reads(JOB_ID)).toBe(2);
+        view.rerenderJob(nextJobId);
+        await advanceSyncTimers(1);
+        expect(reads(nextJobId)).toBe(1);
+        await advanceSyncTimers(10_001);
+        expect(reads(JOB_ID)).toBe(2);
+        expect(reads(nextJobId)).toBe(2);
+        view.unmount();
+        const unmountedReads = fetchMock.mock.calls.length;
+        await advanceSyncTimers(60_000);
+        expect(fetchMock.mock.calls).toHaveLength(unmountedReads);
+      } finally {
+        view.unmount();
+        visibility.mockRestore();
+        focusManager.setFocused(undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    test("retains the 30 second terminal Coverage eligibility poll", async () => {
+      vi.useFakeTimers();
+      let reads = 0;
+      baseFetch((path) => {
+        if (path !== `/api/jobs/${JOB_ID}`) return undefined;
+        reads += 1;
+        return json({ ...coverageFailure, retryEligibility: eligibleCoverageRetry });
+      });
+      const view = renderDataSync(JOB_ID);
+      try {
+        await advanceSyncTimers(0);
+        await advanceSyncTimers(29_999);
+        expect(reads).toBe(1);
+        await advanceSyncTimers(2);
+        expect(reads).toBe(2);
+        expect(screen.getByRole("button", { name: "Retry run" })).toBeEnabled();
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    });
+
+    test("aborts an in-flight detail poll on navigation without applying its late phases", async () => {
+      vi.useFakeTimers();
+      let signal: AbortSignal | null | undefined;
+      let resolvePoll!: (response: Response) => void;
+      let reads = 0;
+      const nextJobId = "F".repeat(32);
+      baseFetch((path, init) => {
+        if (path === `/api/jobs/${nextJobId}`)
+          return json(sourceRun({ id: nextJobId, status: "queued" }));
+        if (path !== `/api/jobs/${JOB_ID}`) return undefined;
+        if (++reads === 1) return json(sourceRun());
+        signal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          resolvePoll = resolve;
+        });
+      });
+      const view = renderDataSync(JOB_ID);
+      try {
+        await advanceSyncTimers(0);
+        await advanceSyncTimers(10_000);
+        expect(signal?.aborted).toBe(false);
+        view.rerenderJob(nextJobId);
+        await advanceSyncTimers(1);
+        expect(signal?.aborted).toBe(true);
+        await act(async () =>
+          resolvePoll(
+            json(
+              sourceRun({
+                activity: { phase: "cleanup", updatedAt: detail.updatedAt },
+              }),
+            ),
+          ),
+        );
+        await advanceSyncTimers(1);
+        expect(screen.getByText("Waiting for sync job to start.")).toBeVisible();
+        expect(screen.queryByText(activityLabels.cleanup)).not.toBeInTheDocument();
+        await advanceSyncTimers(10_001);
+        expect(reads).toBe(2);
+        expect(view.navigate).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    });
+
+    test("does not refresh Events from cached activity after a detail 404 or refetch it on focus", async () => {
+      vi.useFakeTimers();
+      let missing = false;
+      let detailReads = 0;
+      const fetchMock = baseFetch((path) => {
+        if (path === `/api/jobs/${JOB_ID}`) {
+          detailReads += 1;
+          return missing
+            ? json({ title: "Not found" }, 404)
+            : json(
+                sourceRun({
+                  activity: { phase: "preparing", updatedAt: detail.updatedAt },
+                }),
+              );
+        }
+        if (path.includes("/events?")) return json(artifactPage("events", 1));
+        return undefined;
+      });
+      const view = renderDataSync(JOB_ID);
+      const eventReads = () =>
+        fetchMock.mock.calls.filter(([path]) => String(path).includes("/events?")).length;
+      try {
+        await advanceSyncTimers(0);
+        fireEvent.click(screen.getByRole("button", { name: /^Events/ }));
+        await advanceSyncTimers(1);
+        expect(eventReads()).toBe(1);
+        missing = true;
+        await advanceSyncTimers(10_001);
+        expect(detailReads).toBe(2);
+        expect(eventReads()).toBe(1);
+        expect(view.navigate).toHaveBeenCalledWith("/data-sync", true);
+        act(() => {
+          focusManager.setFocused(false);
+          focusManager.setFocused(true);
+        });
+        await advanceSyncTimers(30_000);
+        expect(detailReads).toBe(2);
+        expect(eventReads()).toBe(1);
+      } finally {
+        view.unmount();
+        focusManager.setFocused(undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    test.each([false, true])(
+      "refreshes open Events through fast phases and terminal catchup (root: %s), never Logs",
+      async (root) => {
+        vi.useFakeTimers();
+        let run = sourceRun({ activity: { phase: "preparing", updatedAt: detail.updatedAt } });
+        let unavailable = false;
+        const phases: IngestActivity["phase"][] = ["preparing"];
+        const fetchMock = baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}`) {
+            if (unavailable) return json({ title: "Unavailable" }, 503);
+            return json(
+              root
+                ? {
+                    ...run,
+                    activity: undefined,
+                    source: undefined,
+                    children: [{ ...run, id: SOURCE_A }],
+                  }
+                : run,
+            );
+          }
+          if (path.includes(`/${JOB_ID}/events?`)) {
+            const events = artifactPage("events", 1, phases.length, 1) as JobEventList;
+            events.items = phases.map((phase, index) => ({
+              ...events.items[index],
+              code: `ingest-${phase}`,
+              message: `Recorded phase: ${activityLabels[phase]}`,
+            }));
+            return json(events);
+          }
+          for (const kind of ["files", "logs"] as const)
+            if (path.includes(`/${JOB_ID}/${kind}?`)) return json(artifactPage(kind, 1));
+          return undefined;
+        });
+        const view = renderDataSync(JOB_ID);
+        const reads = (kind: string) =>
+          fetchMock.mock.calls.filter(([path]) => String(path).includes(`/${kind}?`)).length;
+        try {
+          await advanceSyncTimers(0);
+          for (const name of ["Events", "Logs", "Files"]) {
+            fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
+            await advanceSyncTimers(1);
+          }
+          const before = { events: reads("events"), files: reads("files"), logs: reads("logs") };
+          phases.push("discovering", "importing", "analyzing_imported_routes");
+          run = {
+            ...run,
+            activity: {
+              phase: "analyzing_imported_routes",
+              current: 0,
+              updatedAt: detail.updatedAt,
+            },
+          };
+          await advanceSyncTimers(10_001);
+          for (const phase of phases)
+            expect(
+              screen.getByText(`info: Recorded phase: ${activityLabels[phase]}`),
+            ).toBeVisible();
+          expect(reads("events")).toBe(before.events + 1);
+          expect(reads("files")).toBe(before.files + 1);
+          expect(reads("logs")).toBe(before.logs);
+          expect(
+            screen.queryByText(activityLabels.importing, { selector: '[role="status"]' }),
+          ).not.toBeInTheDocument();
+          unavailable = true;
+          await advanceSyncTimers(18_000);
+          expect(reads("events")).toBe(before.events + 1);
+          expect(reads("files")).toBe(before.files + 1);
+          unavailable = false;
+          phases.push("analyzing_existing_routes", "updating_time_zones", "cleanup");
+          run = {
+            ...run,
+            status: "succeeded",
+            activity: { phase: "cleanup", updatedAt: detail.updatedAt },
+          };
+          await advanceSyncTimers(10_001);
+          expect(screen.getByText(`info: Recorded phase: ${activityLabels.cleanup}`)).toBeVisible();
+          expect(
+            screen.queryByText(activityLabels.cleanup, { selector: '[role="status"]' }),
+          ).not.toBeInTheDocument();
+          expect(reads("events")).toBe(before.events + 2);
+          expect(reads("files")).toBe(before.files + 2);
+          expect(reads("logs")).toBe(before.logs);
+          fireEvent.click(screen.getByRole("button", { name: /^Events/ }));
+          await act(async () => view.client.refetchQueries({ queryKey: ["job", JOB_ID] }));
+          await advanceSyncTimers(1);
+          expect(reads("events")).toBe(before.events + 2);
+          expect(
+            view.client.getQueryState(["job-artifacts", JOB_ID, "events", 1])?.isInvalidated,
+          ).toBe(true);
+          fireEvent.click(screen.getByRole("button", { name: /^Events/ }));
+          await advanceSyncTimers(1);
+          expect(reads("events")).toBe(before.events + 3);
+          await advanceSyncTimers(30_000);
+          expect(reads("events")).toBe(before.events + 3);
+        } finally {
+          view.unmount();
+          vi.useRealTimers();
+        }
+      },
+    );
+  });
+
   test.each([
     ["manual", "running"],
     ["scheduled", "running"],
@@ -1138,7 +1723,9 @@ describe("DataSync", () => {
           document.querySelector(".sync-status--succeeded, .sync-status-text--succeeded"),
         ).toBeNull();
       } else {
-        expect(within(region).getAllByText("No new data.")).toHaveLength(2);
+        expect(
+          within(region).getAllByText("Sync job completed, but no new data were imported."),
+        ).toHaveLength(2);
         expect(within(region).queryByRole("button", { name: "Retry run" })).toBeNull();
       }
     },
@@ -1619,7 +2206,9 @@ describe("DataSync", () => {
     );
     renderDataSync(JOB_ID);
     const region = await screen.findByRole("region", { name: "Selected run" });
-    expect(await within(region).findByText("No new data.")).toBeInTheDocument();
+    expect(
+      await within(region).findByText("Sync job completed, but no new data were imported."),
+    ).toBeInTheDocument();
     expect(within(region).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(within(region).queryByText(/Discovering files/)).not.toBeInTheDocument();
     const queued = [...region.querySelectorAll(".job-metadata dt")]
@@ -2239,9 +2828,10 @@ describe("DataSync", () => {
       const next = within(nav).getByRole("button", { name: "Next" });
       expect(nav).toHaveTextContent("Page 1 of 1");
       expect(next).toBeDisabled();
-      expect(
-        fetchMock.mock.calls.filter(([path]) => String(path).includes("/files?")),
-      ).toHaveLength(2);
+      await waitFor(() => expect(nav.parentElement).toHaveAttribute("aria-busy", "false"));
+      const readsBefore = fetchMock.mock.calls.filter(([path]) =>
+        String(path).includes("/files?"),
+      ).length;
 
       run = { ...run, progress: { ...run.progress, filesFailed: 26 } };
       await act(async () => {
@@ -2259,9 +2849,11 @@ describe("DataSync", () => {
       expect(nav).toHaveTextContent("Page 2 of 2");
       expect(within(nav.parentElement!).getAllByRole("listitem")).toHaveLength(1);
       expect(screen.getByRole("checkbox", { name: "Show failures only" })).toBeChecked();
-      expect(fetchMock.mock.calls.filter(([path]) => String(path).includes("/files?"))).toEqual([
-        [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25`, expect.anything()],
-        [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`, expect.anything()],
+      expect(
+        fetchMock.mock.calls
+          .filter(([path]) => String(path).includes("/files?"))
+          .slice(readsBefore, readsBefore + 2),
+      ).toEqual([
         [`/api/jobs/${JOB_ID}/files?page=1&pageSize=25&failuresOnly=true`, expect.anything()],
         [`/api/jobs/${JOB_ID}/files?page=2&pageSize=25&failuresOnly=true`, expect.anything()],
       ]);
@@ -2301,27 +2893,128 @@ describe("DataSync", () => {
         if (filtered) {
           await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
           await waitFor(() =>
-            expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(1),
-          );
-          await waitFor(() =>
             expect(
               screen.getByRole("navigation", { name: "Files pages" }).parentElement,
             ).toHaveAttribute("aria-busy", "false"),
           );
         }
+        await waitFor(() =>
+          expect(
+            screen.getByRole("navigation", { name: "Files pages" }).parentElement,
+          ).toHaveAttribute("aria-busy", "false"),
+        );
+        const readsBefore = fetchMock.mock.calls.filter(([path]) => path === filesUrl).length;
         run = { ...run, status: "partially_succeeded" };
         await act(async () => {
           await client.refetchQueries({ queryKey: ["job", JOB_ID] });
         });
         await screen.findByText("final-export.json");
-        expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toEqual([
-          [filesUrl, expect.anything()],
-          [filesUrl, expect.anything()],
-        ]);
+        expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(
+          readsBefore + 1,
+        );
         await act(async () => {
           await client.refetchQueries({ queryKey: ["job", JOB_ID] });
         });
-        expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(2);
+        await waitFor(() =>
+          expect(fetchMock.mock.calls.filter(([path]) => path === filesUrl)).toHaveLength(
+            readsBefore + 2,
+          ),
+        );
+      },
+    );
+
+    test.each([false, true])(
+      "refreshes the open file page with successful polls, not failed polls or closed panels (filtered: %s)",
+      async (filtered) => {
+        vi.useFakeTimers();
+        let run: JobDetail = {
+          ...detail,
+          status: "running",
+          progress: { ...progress, filesFailed: 30 },
+          results: undefined,
+        };
+        let unavailable = false;
+        const fetchMock = baseFetch((path) => {
+          if (path === `/api/jobs/${JOB_ID}`)
+            return unavailable ? json({ title: "Unavailable" }, 503) : json(run);
+          if (path.startsWith(`/api/jobs/${JOB_ID}/files?`)) {
+            const url = new URL(path, "http://localhost");
+            const page = Number(url.searchParams.get("page"));
+            if (url.searchParams.has("failuresOnly")) {
+              const data = failedPage(page, page === 1 ? 25 : 5);
+              data.pagination.totalItems = 30;
+              return json(data);
+            }
+            return json(artifactPage("files", page));
+          }
+          if (path.endsWith("/events?page=1&pageSize=25")) return json(artifactPage("events", 1));
+          if (path.endsWith("/logs?page=1&pageSize=25")) return json(artifactPage("logs", 1));
+          return undefined;
+        });
+        const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+        const view = renderDataSync(JOB_ID, vi.fn(), 1);
+        const advance = async (milliseconds: number) => {
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(milliseconds);
+          });
+        };
+        try {
+          await advance(0);
+          for (const name of ["Files", "Events", "Logs"]) {
+            fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
+            await advance(0);
+          }
+          await advance(0);
+          if (filtered) {
+            fireEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
+            await advance(0);
+          }
+          const nav = screen.getByRole("navigation", { name: "Files pages" });
+          fireEvent.click(within(nav).getByRole("button", { name: "Next" }));
+          await advance(20);
+          const pageLabel = `Page 2 of ${filtered ? 2 : 3}`;
+          expect(nav).toHaveTextContent(pageLabel);
+          scroll.mockClear();
+          const fileReads = () =>
+            fetchMock.mock.calls.filter(([path]) => String(path).includes("/files?")).length;
+          const previousReads = fileReads();
+          run = {
+            ...run,
+            progress: { ...run.progress, filesSucceeded: run.progress.filesSucceeded + 1 },
+          };
+          await advance(1000);
+          expect(fileReads()).toBe(previousReads + 1);
+          expect(screen.getByText("Files Processed").nextElementSibling).toHaveTextContent(
+            String(run.progress.filesSucceeded + run.progress.filesFailed),
+          );
+          expect(screen.getByRole("navigation", { name: "Files pages" })).toBe(nav);
+          expect(nav).toHaveTextContent(pageLabel);
+          const filter = screen.getByRole("checkbox", { name: "Show failures only" });
+          if (filtered) expect(filter).toBeChecked();
+          else expect(filter).not.toBeChecked();
+          expect(scroll).not.toHaveBeenCalled();
+          // Identical detail responses must still refresh Files, without a request loop.
+          await advance(1000);
+          expect(fileReads()).toBe(previousReads + 2);
+          await advance(50);
+          expect(fileReads()).toBe(previousReads + 2);
+          unavailable = true;
+          await advance(8000);
+          expect(fileReads()).toBe(previousReads + 2);
+          expect(nav).toHaveTextContent(pageLabel);
+          expect(scroll).not.toHaveBeenCalled();
+          for (const kind of ["events", "logs"])
+            expect(
+              fetchMock.mock.calls.filter(([path]) => String(path).includes(`/${kind}?`)),
+            ).toHaveLength(1);
+          fireEvent.click(screen.getByRole("button", { name: /^Files/ }));
+          unavailable = false;
+          await advance(10000);
+          expect(fileReads()).toBe(previousReads + 2);
+        } finally {
+          view.unmount();
+          vi.useRealTimers();
+        }
       },
     );
 

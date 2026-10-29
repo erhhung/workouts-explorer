@@ -49,7 +49,7 @@ func TestCoveragePipelineClaimLockOrderPostgreSQL(t *testing.T) {
 	db := testDatabases{ctx: ctx, migration: pool("workouts_migration"), api: pool("workouts_api"), worker: pool("workouts_worker"), coverage: pool("workouts_coverage_worker")}
 	var empty bool
 	if err := db.migration.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM app.jobs) AND
-		(SELECT schema_version=$1 AND minimum_runtime_version=33 FROM app.schema_metadata WHERE singleton)`, database.SupportedSchemaVersion).Scan(&empty); err != nil || !empty {
+		(SELECT schema_version=$1 AND minimum_runtime_version=30 FROM app.schema_metadata WHERE singleton)`, database.SupportedSchemaVersion).Scan(&empty); err != nil || !empty {
 		t.Fatalf("requires an empty migrated supported scratch database: %v", err)
 	}
 	for _, authority := range []string{"ingest", "reconciliation"} {

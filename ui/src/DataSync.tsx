@@ -17,6 +17,7 @@ import {
   type DataSync as DataSyncModel,
   type DataSyncSource,
   type IngestAccepted,
+  type IngestActivity,
   type IngestCreate,
   type JobDetail,
   type JobDisplayStatus,
@@ -37,6 +38,16 @@ import { InfoTip, instantZone, ZoneBadge } from "./Tooltip";
 import { completeDateRangeOnBlur } from "./dateRange";
 
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "running"]);
+const ACTIVITY_LABELS: Record<IngestActivity["phase"], string> = {
+  resuming: "Resuming incomplete sync job.",
+  preparing: "Preparing to read workout files.",
+  discovering: "Looking for workout files that need to be processed.",
+  importing: "Parsing workout files and importing new and changed workouts.",
+  analyzing_imported_routes: "Analyzing map data for imported routes.",
+  analyzing_existing_routes: "Analyzing map data for existing routes.",
+  updating_time_zones: "Determining and updating workout time zones.",
+  cleanup: "Cleaning up temporary files.",
+};
 const RETRYABLE_STATUSES = new Set<JobStatus>(["failed", "cancelled", "partially_succeeded"]);
 const RETRY_EXPLANATIONS = {
   already_current:
@@ -263,7 +274,7 @@ function Progress({
   if (progress.total === 0 && ACTIVE_STATUSES.has(status))
     return (
       <p className="sync-progress sync-progress--unknown" style={style}>
-        Discovering files; total not yet known
+        File total not yet known.
       </p>
     );
   if (progress.total === 0) return null;
@@ -296,11 +307,7 @@ function Results({
     (values.workoutsUnchanged ?? 0) === 0 &&
     (values.workoutsRejected ?? 0) === 0;
   if (noData)
-    return (
-      <p className="sync-no-data">
-        {status === "succeeded" ? "No new data." : "No files were processed."}
-      </p>
-    );
+    return status === "succeeded" ? null : <p className="sync-no-data">No files were processed.</p>;
   return (
     <dl className="result-counts">
       <div>
@@ -347,6 +354,70 @@ function Results({
         </span>
       </div>
     </dl>
+  );
+}
+
+function SyncActivity({
+  job,
+  cancelling = false,
+  sourceName,
+}: {
+  job: JobDetail;
+  cancelling?: boolean;
+  sourceName?: string;
+}) {
+  const active = ACTIVE_STATUSES.has(job.status);
+  const values = job.results ?? job.progress;
+  let message: string | undefined;
+  if (active && (cancelling || job.cancelRequested)) message = "Cancelling...";
+  else if (job.status === "succeeded" && (job.displayStatus ?? job.status) === "succeeded")
+    message =
+      (values.workoutsCreated ?? 0) + (values.workoutsUpdated ?? 0) === 0
+        ? "Sync job completed, but no new data were imported."
+        : "Sync job completed successfully.";
+  else if (job.status === "queued") message = "Waiting for sync job to start.";
+  else if (job.status === "running") {
+    const activeChildren = job.children.filter((child) => ACTIVE_STATUSES.has(child.status));
+    if (activeChildren.length > 0)
+      return (
+        <>
+          {activeChildren.map((child) => (
+            <SyncActivity
+              key={child.id}
+              job={child}
+              sourceName={
+                activeChildren.length > 1
+                  ? (child.source?.displayName ?? "Source unavailable")
+                  : undefined
+              }
+            />
+          ))}
+        </>
+      );
+    if (job.activity) message = ACTIVITY_LABELS[job.activity.phase];
+  }
+  if (!message) return null;
+  const activity = job.activity;
+  const routes =
+    job.status === "running" &&
+    !cancelling &&
+    !job.cancelRequested &&
+    (activity?.phase === "analyzing_imported_routes" ||
+      activity?.phase === "analyzing_existing_routes") &&
+    activity.current != null;
+  return (
+    <div className="sync-no-data">
+      <p role="status" aria-live="polite">
+        {sourceName && `${sourceName}: `}
+        {message}
+      </p>
+      {routes && (
+        <p>
+          Routes checked: {activity.current}
+          {activity.total != null ? ` of ${activity.total}` : ""}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -454,7 +525,6 @@ function ArtifactDisclosure({
   jobStatus?: JobStatus;
 }) {
   const queryClient = useQueryClient();
-  const previousRun = useRef({ filesFailed, jobStatus });
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [showFailuresOnly, setShowFailuresOnly] = useState(false);
@@ -508,18 +578,6 @@ function ArtifactDisclosure({
       ? retainedData
       : (query.data ?? retainedData);
 
-  useEffect(() => {
-    const previous = previousRun.current;
-    previousRun.current = { filesFailed, jobStatus };
-    if (
-      kind === "files" &&
-      (previous.filesFailed !== filesFailed ||
-        (previous.jobStatus !== jobStatus && jobStatus && !ACTIVE_STATUSES.has(jobStatus)))
-    ) {
-      void queryClient.invalidateQueries({ queryKey: ["job-artifacts", jobId, "files"] });
-    }
-  }, [filesFailed, jobStatus, kind, jobId, queryClient]);
-
   useLayoutEffect(
     () => () => {
       pendingScroll.current = undefined;
@@ -560,6 +618,11 @@ function ArtifactDisclosure({
     if (height) setResultsMinHeight((previous) => Math.max(previous ?? 0, height));
   }
 
+  function refreshActiveRun() {
+    if (kind === "files" && jobStatus && ACTIVE_STATUSES.has(jobStatus))
+      void queryClient.invalidateQueries({ queryKey: ["job", jobId], exact: true });
+  }
+
   function changePage(nextPage: number) {
     const pagination = paginationRef.current?.getBoundingClientRect();
     pendingScroll.current = {
@@ -572,6 +635,7 @@ function ArtifactDisclosure({
     reserveHeight();
     if (data) setRetainedPage({ page: nextPage, failuresOnly, data });
     setPage(nextPage);
+    refreshActiveRun();
   }
 
   function close() {
@@ -628,7 +692,13 @@ function ArtifactDisclosure({
         type="button"
         className="artifact-trigger"
         aria-expanded={open}
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => {
+          if (open) close();
+          else {
+            setOpen(true);
+            refreshActiveRun();
+          }
+        }}
       >
         {label}
         <span aria-hidden="true">{open ? "-" : "+"}</span>
@@ -905,11 +975,9 @@ function JobDetailCard({
       {coverage ? (
         <CoverageResults job={job} />
       ) : (
-        !deletion &&
-        (!ACTIVE_STATUSES.has(job.status) || job.progress.current > 0) && (
-          <Results progress={job.progress} results={job.results} status={job.status} />
-        )
+        !deletion && <Results progress={job.progress} results={job.results} status={job.status} />
       )}
+      {!coverage && !deletion && <SyncActivity job={job} cancelling={busy === "cancel"} />}
       {job.failureSummary && (
         <p className="failure-copy">
           <strong>{superseded ? "Historical run issue:" : "Run issue:"}</strong>{" "}
@@ -1016,8 +1084,11 @@ function JobDetailCard({
                   style={{ margin: ".7rem 0 -.3rem 0" }}
                 />
               )}
-              {!coverage && (!ACTIVE_STATUSES.has(child.status) || child.progress.current > 0) && (
+              {!coverage && (
                 <Results progress={child.progress} results={child.results} status={child.status} />
+              )}
+              {!coverage && !deletion && (
+                <SyncActivity job={child} cancelling={busy === "cancel" || job.cancelRequested} />
               )}
               {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
             </article>
@@ -1249,11 +1320,40 @@ export function DataSync({
         (query.state.data.operation === "coverage_update" &&
           !query.state.data.parentJobId &&
           RETRYABLE_STATUSES.has(query.state.data.status)))
-        ? pollingIntervalSeconds * 1000
+        ? query.state.data.status === "running"
+          ? Math.min(10_000, pollingIntervalSeconds * 1000)
+          : pollingIntervalSeconds * 1000
         : false,
+    refetchIntervalInBackground: false,
   });
   const detailUpdateCount =
     queryClient.getQueryState(["job", effectiveJobId])?.dataUpdateCount ?? 0;
+  const previousDetailUpdate = useRef<{ jobId: string; count: number } | undefined>(undefined);
+  useEffect(() => {
+    if (!effectiveJobId || !detail.isSuccess || detail.isFetching || detail.error) return;
+    const previous = previousDetailUpdate.current;
+    if (previous?.jobId === effectiveJobId && previous.count === detailUpdateCount) return;
+    previousDetailUpdate.current = { jobId: effectiveJobId, count: detailUpdateCount };
+    // Refresh the open file page with each successful snapshot, even if counts match.
+    void queryClient.invalidateQueries(
+      { queryKey: ["job-artifacts", effectiveJobId, "files"] },
+      { cancelRefetch: false },
+    );
+    // Persisted phase events preserve transitions that happened between polls.
+    if (detail.data?.activity || detail.data?.children.some((child) => child.activity))
+      void queryClient.invalidateQueries(
+        { queryKey: ["job-artifacts", effectiveJobId, "events"] },
+        { cancelRefetch: false },
+      );
+  }, [
+    effectiveJobId,
+    detailUpdateCount,
+    detail.isSuccess,
+    detail.isFetching,
+    detail.error,
+    detail.data,
+    queryClient,
+  ]);
   useEffect(() => {
     if (
       blockedRetry &&

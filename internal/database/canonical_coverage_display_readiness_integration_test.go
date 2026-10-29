@@ -50,14 +50,14 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(330033,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=33 AND minimum_runtime_version=33 AND migration_baseline=27
+	if err := admin.QueryRow(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27
 		FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("mutation harness requires fully migrated runtime33 metadata: %v", err)
+		t.Fatalf("mutation harness requires fully migrated runtime30/min30 metadata: %v", err)
 	}
 	if err := admin.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM app.accounts account
 		LEFT JOIN app.coverage_display_revisions revision ON revision.account_id=account.id
 		WHERE revision.account_id IS NULL OR revision.revision<=0)`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("migration33 must seed a positive display revision for every account: %v", err)
+		t.Fatalf("migration30 must seed a positive display revision for every account: %v", err)
 	}
 	roles := []struct{ name, env string }{
 		{"workouts_api", prefix + "API_DATABASE_URL"},
@@ -94,27 +94,27 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		}
 		for _, query := range []string{runtimeCanonicalCoverageDisplayReadinessSQL, runtimeCoverageDisplayReadinessSQL, runtimeFullReadinessSQL} {
 			var ready bool
-			if err := pool.QueryRow(ctx, query, 33).Scan(&ready); err != nil || !ready {
-				t.Fatalf("runtime33 must pass each readiness component for %s: ready=%t err=%v", role.name, ready, err)
+			if err := pool.QueryRow(ctx, query, 30).Scan(&ready); err != nil || !ready {
+				t.Fatalf("runtime30 must pass each readiness component for %s: ready=%t err=%v", role.name, ready, err)
 			}
 		}
 		if !Ready(ctx, pool) {
-			t.Fatalf("runtime33 Ready must succeed for %s", role.name)
+			t.Fatalf("runtime30 Ready must succeed for %s", role.name)
 		}
 		var oldReady, gated bool
-		if err := pool.QueryRow(ctx, runtimeFullReadinessSQL, 32).Scan(&oldReady); err != nil || oldReady {
-			t.Fatalf("runtime32 must be rejected for %s: ready=%t err=%v", role.name, oldReady, err)
+		if err := pool.QueryRow(ctx, runtimeFullReadinessSQL, 29).Scan(&oldReady); err != nil || oldReady {
+			t.Fatalf("runtime29 must be rejected for %s: ready=%t err=%v", role.name, oldReady, err)
 		}
-		if err := pool.QueryRow(ctx, runtimeCanonicalCoverageDisplayReadinessSQL, 32).Scan(&gated); err != nil || !gated {
-			t.Fatalf("canonical-only catalog guard must be gated below33 for %s: %v", role.name, err)
+		if err := pool.QueryRow(ctx, runtimeCanonicalCoverageDisplayReadinessSQL, 29).Scan(&gated); err != nil || !gated {
+			t.Fatalf("canonical-only catalog guard must be gated below30 for %s: %v", role.name, err)
 		}
 		pools = append(pools, pool)
 	}
 
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
-		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=32 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=33 WHERE singleton`},
-		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=32,minimum_runtime_version=32 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=33,minimum_runtime_version=33 WHERE singleton`},
+		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=30 WHERE singleton`},
+		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`},
 		{"selection context nullable", `UPDATE pg_attribute SET attnotnull=true WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`, `UPDATE pg_attribute SET attnotnull=false WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`},
 		{"selection context default", `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id SET DEFAULT gen_random_uuid()`, `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id DROP DEFAULT`},
 		{"selection extra context FK", `ALTER TABLE app.map_selections ADD CONSTRAINT unexpected_canonical_fk FOREIGN KEY (account_id,coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id,id) ON DELETE CASCADE`, `ALTER TABLE app.map_selections DROP CONSTRAINT unexpected_canonical_fk`},
@@ -390,7 +390,7 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 			})
 			for i, pool := range pools {
 				var ready bool
-				if err := pool.QueryRow(ctx, runtimeCanonicalCoverageDisplayReadinessSQL, 33).Scan(&ready); err != nil || ready {
+				if err := pool.QueryRow(ctx, runtimeCanonicalCoverageDisplayReadinessSQL, 30).Scan(&ready); err != nil || ready {
 					t.Errorf("%s canonical readiness=%t want false, err=%v", roles[i].name, ready, err)
 				}
 				if Ready(ctx, pool) {
@@ -403,8 +403,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	}
 	for i, pool := range pools {
 		if !Ready(ctx, pool) {
-			t.Errorf("restored runtime33 schema must be ready for %s", roles[i].name)
+			t.Errorf("restored runtime30 schema must be ready for %s", roles[i].name)
 		}
 	}
-	t.Logf("verified %d committed mutations through three restricted runtime logins; runtime32 rejected", len(mutations))
+	t.Logf("verified %d committed mutations through three restricted runtime logins; runtime29 rejected", len(mutations))
 }

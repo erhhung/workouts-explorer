@@ -58,7 +58,7 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayCheck(t, db, `SELECT schema_version=33 AND minimum_runtime_version=33
+	coverageDisplayCheck(t, db, `SELECT schema_version=30 AND minimum_runtime_version=30
 		AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`)
 
 	t.Run("DisconnectedClassesAndCityReentry", func(t *testing.T) {
@@ -484,7 +484,7 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 		}
 		_, query, found := strings.Cut(body, "RETURN QUERY ")
 		if !found || !strings.HasSuffix(strings.TrimSpace(query), "END;") {
-			t.Fatal("033 point reader must expose its actual RETURN QUERY for nested-plan inspection")
+			t.Fatal("display30 point reader must expose its actual RETURN QUERY for nested-plan inspection")
 		}
 		query = strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), "END;")), ";")
 		query = strings.NewReplacer("target_account_id", "'"+f.account.String()+"'::uuid", "authorized_id", "'"+s.context.String()+"'::uuid",
@@ -1038,7 +1038,7 @@ type canonicalDisplayScope struct {
 	revision int64
 }
 
-// Local 033 fixture: the pinned 032 fixture/fence/oracles must remain unchanged.
+// Canonical grouping fixture complements the independent raw-projection fixture.
 // Coordinates and names are invented; no retained workout or OSM input is read.
 func newCanonicalDisplayFixture(t *testing.T, db testDatabases) coverageDisplayFixture {
 	t.Helper()
@@ -1089,8 +1089,8 @@ func newCanonicalDisplayFixture(t *testing.T, db testDatabases) coverageDisplayF
 func canonicalDisplayFence(t *testing.T, db testDatabases, tx pgx.Tx, f coverageDisplayFixture) {
 	t.Helper()
 	var source uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,33)`, f.job, reprocessingWorker, f.lease).Scan(&source); err != nil || source == uuid.Nil {
-		t.Fatalf("runtime-33 synthetic ingest fence: source=%s err=%v", source, err)
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, f.job, reprocessingWorker, f.lease).Scan(&source); err != nil || source == uuid.Nil {
+		t.Fatalf("runtime-30 synthetic ingest fence: source=%s err=%v", source, err)
 	}
 }
 

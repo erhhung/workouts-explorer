@@ -191,6 +191,7 @@ func matcherReplicaTestPool(t *testing.T, firstGeneration int64) (*pgxpool.Pool,
 				return
 			}
 			status := byte('I')
+			catalogRead, readOnlyRepeatable := false, false
 			for {
 				message, err := backend.Receive()
 				if err != nil {
@@ -204,10 +205,40 @@ func matcherReplicaTestPool(t *testing.T, firstGeneration int64) (*pgxpool.Pool,
 				switch {
 				case strings.HasPrefix(lower, "begin"):
 					status = 'T'
+					catalogRead = false
+					readOnlyRepeatable = strings.Contains(lower, "repeatable read") && strings.Contains(lower, "read only")
 					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("BEGIN")})
 				case strings.HasPrefix(lower, "rollback"):
 					status = 'I'
 					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("ROLLBACK")})
+				case strings.Contains(lower, "osm_catalog.route_region_catalog_state"):
+					if status != 'T' || !readOnlyRepeatable {
+						t.Error("catalog proof was read outside its read-only repeatable-read transaction")
+					}
+					catalogRead = true
+					var fields []pgproto3.FieldDescription
+					for _, oid := range []uint32{20, 17, 17, 3802, 3802, 20} {
+						fields = append(fields, pgproto3.FieldDescription{DataTypeOID: oid, DataTypeSize: -1})
+					}
+					backend.Send(&pgproto3.RowDescription{Fields: fields})
+					backend.Send(&pgproto3.DataRow{Values: [][]byte{
+						[]byte(strconv.FormatInt(generation, 10)),
+						[]byte(`\x` + strings.Repeat("01", 32)), []byte(`\x` + strings.Repeat("02", 32)),
+						[]byte(`{"fixture:region":2,"fixture:unconfigured":3}`),
+						[]byte(`[{"regionId":"fixture:region","displayName":"Region"}]`), []byte("7"),
+					}})
+					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")})
+				case strings.Contains(lower, "with route_point"):
+					if status != 'T' || !catalogRead || !readOnlyRepeatable {
+						t.Error("ROI did not share the catalog proof snapshot")
+					}
+					var fields []pgproto3.FieldDescription
+					for _, oid := range []uint32{23, 25, 20, 16} {
+						fields = append(fields, pgproto3.FieldDescription{DataTypeOID: oid, DataTypeSize: -1})
+					}
+					backend.Send(&pgproto3.RowDescription{Fields: fields})
+					backend.Send(&pgproto3.DataRow{Values: [][]byte{[]byte("1"), []byte("fixture:region"), []byte("2"), []byte("t")}})
+					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")})
 				case strings.Contains(lower, "osm_catalog.generations"):
 					fields := []pgproto3.FieldDescription{
 						{Name: []byte("region_id"), DataTypeOID: 25, DataTypeSize: -1},

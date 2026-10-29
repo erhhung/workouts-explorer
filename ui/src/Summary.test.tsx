@@ -353,7 +353,7 @@ describe("Summary", () => {
     expect(offsetOnlyBadge).not.toHaveAttribute("title");
     expect(
       document.getElementById(offsetOnlyBadge.getAttribute("aria-describedby")!),
-    ).toHaveTextContent("UTC-6:00 recorded | timezone unavailable");
+    ).toHaveTextContent("UTC-6:00 recorded | time zone unavailable");
     expect(rows[0]).not.toHaveTextContent("MDT");
 
     const offsetBadge = rows[1].querySelector<HTMLElement>(".timezone-badge .tooltip-trigger")!;
@@ -361,7 +361,7 @@ describe("Summary", () => {
     expect(offsetBadge).not.toHaveAttribute("title");
     expect(
       document.getElementById(offsetBadge.getAttribute("aria-describedby")!),
-    ).toHaveTextContent("UTC-7:00 recorded | timezone unavailable");
+    ).toHaveTextContent("UTC-7:00 recorded | time zone unavailable");
     expect(rows[1]).not.toHaveTextContent("America/Denver");
     expect(rows[1].querySelector(".tooltip-trigger")?.textContent).toBe("UTC-7");
 
@@ -2622,7 +2622,7 @@ describe("Summary", () => {
     expect(mobileButton).toHaveTextContent("2026");
     expect(mobileButton).toHaveTextContent("time unavailable");
     expect(
-      within(mobileButton).getByLabelText("Recorded offset/timezone unavailable"),
+      within(mobileButton).getByLabelText("Recorded offset/time zone unavailable"),
     ).toHaveTextContent("TZ unavailable");
     expect(mobileButton.querySelector(".workout-date")).toHaveClass("unavailable");
     expect(within(mobileButton).getByText(longType)).toBeInTheDocument();

@@ -12,11 +12,33 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if MinimumSchemaVersion != 8 {
-		t.Fatalf("MinimumSchemaVersion = %d, want 8", MinimumSchemaVersion)
+	if MinimumSchemaVersion != 10 {
+		t.Fatalf("MinimumSchemaVersion = %d, want 10", MinimumSchemaVersion)
 	}
-	if SupportedSchemaVersion != 9 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 9", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 10 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 10", SupportedSchemaVersion)
+	}
+}
+
+func TestRouteCatalogReadinessContract(t *testing.T) {
+	for _, required := range []string{
+		"osm_catalog.route_region_catalog_state", "revision >= 1", "octet_length(fingerprint) = 32",
+		"octet_length(selection_fingerprint) = 32", "jsonb_typeof(active_generations) = 'object'",
+		"jsonb_typeof(configured_regions) = 'array'", "'boundary_sha256','geographic_area_m2'",
+		"attgenerated = 's' AND attnotnull", "tgenabled = 'O'", "count(*) = 7",
+		"regions_lock_route_catalog", "regions_refresh_route_catalog", "generations_lock_route_catalog",
+		"generations_refresh_route_catalog", "route_catalog_deny_truncate",
+		"schema_version BETWEEN $1 AND $2 AND minimum_runtime_version BETWEEN $1 AND $2",
+	} {
+		if !strings.Contains(osmReadinessSQL, required) {
+			t.Errorf("OSM readiness lacks %q", required)
+		}
+	}
+	if strings.Contains(osmReadinessSQL, "ST_Area") || strings.Contains(osmReadinessSQL, "ST_AsEWKB") {
+		t.Fatal("startup readiness must not recompute boundary metadata")
+	}
+	if Ready(context.Background(), nil) {
+		t.Fatal("missing OSM pool is ready")
 	}
 }
 
