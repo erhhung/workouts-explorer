@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -21,9 +20,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	openapi_types "github.com/oapi-codegen/runtime/types"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -731,12 +727,40 @@ func (s *Server) GetMapSelectionCoverageTile(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, mapSelectionID generated.MapSelectionID, generation int64, z, x, y int, source string) {
-	session, ok := s.requireSession(w, r, "user")
-	if !ok {
+	privateTileHeaders(w)
+	tiles := s.mapTiles()
+	ctx, cancel := context.WithTimeout(r.Context(), tiles.config.RequestTimeout)
+	defer cancel()
+	stopShutdown := context.AfterFunc(tiles.ctx, cancel)
+	defer stopShutdown()
+	r = r.WithContext(ctx)
+	deadline, _ := ctx.Deadline()
+	key := mapTileKey{generation: generation, coverage: source == "app.coverage_mvt", z: z, x: x, y: y}
+	// The outgoing client's timeout does not bound a slow downstream write.
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		writeMapTileResult(w, r, key.kind(), tileUnavailable("write_deadline"), nil)
+		return
+	}
+	if !tiles.admit() {
+		tiles.metrics.event(ctx, key, "request_limit")
+		writeMapTileResult(w, r, key.kind(), tileUnavailable("request_limit"), nil)
+		return
+	}
+	defer func() { <-tiles.requests }()
+	session, err := s.authenticate(ctx, r)
+	if err != nil {
+		if !errors.Is(err, errUnauthenticated) {
+			w.Header().Set("Retry-After", "1")
+		}
+		writeSessionError(w, r, err)
+		return
+	}
+	if session.role != "user" {
+		writeProblem(w, r, http.StatusForbidden, "Forbidden", "this identity cannot access the resource")
 		return
 	}
 	id, valid := parseCompactUUID(string(mapSelectionID))
-	if !valid || z < 0 || z > 22 || x < 0 || y < 0 {
+	if !valid || generation < 1 || z < 0 || z > 22 || x < 0 || y < 0 {
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "tile coordinates are invalid")
 		return
 	}
@@ -745,95 +769,23 @@ func (s *Server) getMapSelectionTile(w http.ResponseWriter, r *http.Request, map
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "tile coordinates are invalid")
 		return
 	}
-	tx, err := s.sessionAccountTransactionWithOptions(r.Context(), session, pgx.TxOptions{})
-	if err != nil {
-		writeMapUnavailable(w, r)
+	key.account, key.session, key.selection = *session.accountID, session.sessionID, id
+	expires, authorized := s.authorizeMapTile(w, r, session, key)
+	if !authorized {
 		return
 	}
-	defer tx.Rollback(r.Context())
-	var exists bool
-	err = tx.QueryRow(r.Context(), `
-		SELECT EXISTS(
-			SELECT 1 FROM app.map_selections selection
-			JOIN app.account_data_generations current_generation ON current_generation.account_id=selection.account_id
-			WHERE selection.account_id=$1 AND selection.id=$2 AND selection.session_id=$3
-			  AND selection.generation=$4 AND current_generation.generation=$4
-			  AND selection.expires_at>transaction_timestamp()
-		)`, *session.accountID, id, session.sessionID, generation).Scan(&exists)
-	if err != nil || tx.Commit(r.Context()) != nil {
-		writeMapUnavailable(w, r)
+	result := tiles.get(ctx, key, expires)
+	defer result.releaseBody()
+	if ctx.Err() != nil {
+		writeMapTileResult(w, r, key.kind(), tileUnavailable("canceled"), nil)
 		return
 	}
-	if !exists {
-		writeProblem(w, r, http.StatusNotFound, "Not Found", "map selection is unavailable")
-		return
-	}
-	upstream, err := mapTileFunctionUpstreamURL(s.config.TileServerURL, source, id, *session.accountID, session.sessionID, generation, z, x, y)
-	if err != nil {
-		writeMapUnavailable(w, r)
-		return
-	}
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream, nil)
-	if err != nil {
-		writeMapUnavailable(w, r)
-		return
-	}
-	s.proxyMapSelectionTile(w, r, request, source)
-}
-
-func (s *Server) proxyMapSelectionTile(w http.ResponseWriter, r, request *http.Request, source string) {
-	duration, err := otel.Meter("github.com/erhhung/workouts-explorer/api").Float64Histogram(
-		"workouts.api.tile.duration", metric.WithDescription("Private tile forwarding through response body write"),
-		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(.01, .05, .1, .25, .5, 1, 2.5, 5, 10))
-	if err != nil {
-		otel.Handle(err)
-	}
-	tileKind := "route"
-	if source == "app.coverage_mvt" {
-		tileKind = "coverage"
-	}
-	client := s.tileClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	}
-	status, outcome := http.StatusBadGateway, "upstream_error"
-	started := time.Now()
-	defer func() {
-		if duration != nil {
-			duration.Record(r.Context(), time.Since(started).Seconds(), metric.WithAttributes(
-				attribute.String("tile_kind", tileKind), attribute.String("outcome", outcome),
-				attribute.Int("http.response.status_code", status)))
-		}
-	}()
-	response, err := client.Do(request)
-	if err != nil {
-		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
-		return
-	}
-	defer response.Body.Close()
-	if !validMVTResponse(response.StatusCode, response.Header.Get("Content-Type")) {
-		outcome = "invalid_response"
-		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maximumTileBytes+1))
-	if err != nil || len(body) > maximumTileBytes {
-		outcome = "body_error"
-		if len(body) > maximumTileBytes {
-			outcome = "too_large"
-		}
-		writeProblem(w, r, http.StatusBadGateway, "Bad Gateway", "private map tiles are temporarily unavailable")
-		return
-	}
-	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Vary", "Cookie, Authorization")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	status, outcome = http.StatusOK, "success"
-	if _, err := w.Write(body); err != nil {
-		outcome = "write_error"
-	}
+	// Every successful delivery, including cache hits, rechecks authorization
+	// after fetch and encoder admission. No transaction spans either wait.
+	writeMapTileResult(w, r, key.kind(), result, func() bool {
+		_, authorized := s.authorizeMapTile(w, r, session, key)
+		return authorized
+	})
 }
 
 func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID, generation int64, z, x, y int) (string, error) {
@@ -842,7 +794,8 @@ func mapTileUpstreamURL(base string, selectionID, accountID, sessionID uuid.UUID
 
 func mapTileFunctionUpstreamURL(base, source string, selectionID, accountID, sessionID uuid.UUID, generation int64, z, x, y int) (string, error) {
 	parsed, err := url.Parse(base)
-	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("invalid tile service URL")
 	}
 	if source != "app.raw_route_mvt" && source != "app.coverage_mvt" {

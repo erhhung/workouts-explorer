@@ -8,7 +8,7 @@ import (
 )
 
 func TestIngestPhaseReadinessContract(t *testing.T) {
-	if SupportedSchemaVersion != 30 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeIngestPhaseReadinessSQL+")") {
+	if SupportedSchemaVersion != 31 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeIngestPhaseReadinessSQL+")") {
 		t.Fatal("runtime30 must compose the schema29 phase contract")
 	}
 	for _, required := range []string{

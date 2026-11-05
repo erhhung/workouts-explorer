@@ -12,6 +12,13 @@ data:
   MAP_FIT_PADDING_PIXELS: {{ .Values.api.publicConfig.mapFitPaddingPixels | quote }}
   BASE_MAPS_JSON: {{ mustToJson .Values.api.publicConfig.baseMaps | quote }}
   TILE_SERVER_URL: "http://workouts-explorer-tiles:3000"
+  MAP_TILE_CONCURRENCY: {{ .Values.api.mapTiles.concurrency | int | quote }}
+  MAP_TILE_QUEUE_SIZE: {{ .Values.api.mapTiles.queueSize | int | quote }}
+  MAP_TILE_CACHE_BYTES: {{ .Values.api.mapTiles.cacheBytes | int | quote }}
+  MAP_TILE_CACHE_ENTRIES: {{ .Values.api.mapTiles.cacheEntries | int | quote }}
+  MAP_TILE_CACHE_TTL: {{ .Values.api.mapTiles.cacheTtl | quote }}
+  MAP_TILE_QUEUE_TIMEOUT: {{ .Values.api.mapTiles.queueTimeout | quote }}
+  MAP_TILE_REQUEST_TIMEOUT: {{ .Values.api.mapTiles.requestTimeout | quote }}
   PASSWORD_MINIMUM_LENGTH: {{ .Values.api.passwordMinimumLength | quote }}
   ALLOW_ADMIN_PASSWORD: {{ .Values.api.allowAdminPassword | quote }}
   SESSION_LIFETIME: {{ .Values.api.sessionLifetime | quote }}

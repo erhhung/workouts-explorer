@@ -323,9 +323,101 @@ Kinds: `route`, `coverage`. Outcomes: `success`, `upstream_error`,
 success/write-error, 502 for the other failures; upstream 204 becomes API 200.
 A write failure can therefore occur with status 200: use `outcome`, not only 5xx.
 Timing starts just before Martin forwarding and ends after body processing/write.
-Authentication, validation and capability renewal are outside this boundary;
+Initial authentication, validation and capability renewal are outside this boundary;
 it is neither full logical tile availability nor browser-render latency.
 Buckets: `.01,.05,.1,.25,.5,1,2.5,5,10,+Inf` seconds.
+
+#### Source-031 Tile Lifecycle Metrics
+
+Introduced at Helm 65 in [tile_metrics.go](../api/tile_metrics.go), retained at
+current **Helm 67 / APP 31/minimum 31 / OSM 10/minimum 10**, baseline **27**,
+ledger **0-31**.
+This deployment record does not establish live delivery/collection of every new
+instrument or SLO attainment. The historical duration
+boundary remains **forward start through response-body write**, excluding cache
+hits, pre-forward queue/admission and initial authentication/capability validation.
+Coalesced deliveries may each record from the shared forward start; this is not
+a unique-upstream-job counter or end-to-end request/browser latency. Do not blend
+new cache/admission outcomes into the historical forwarding SLI denominator.
+
+| OTel Name | Expected Prometheus Family | Meaning / Dimensions |
+| --- | --- | --- |
+| `workouts.api.tile.events` | `workouts_api_tile_events_total` | Cache/admission/cancellation/authorization events; `tile_kind`, `outcome` |
+| `workouts.api.tile.active` | `workouts_api_tile_active` | Active upstream calls; no dimensions |
+| `workouts.api.tile.occupied` | `workouts_api_tile_occupied` | Occupied render/delivery body slots, including retained slow writers; no dimensions |
+| `workouts.api.tile.queued` | `workouts_api_tile_queued` | FIFO queued distinct jobs, not follower HTTP requests; no dimensions |
+| `workouts.api.tile.queue.duration` | `workouts_api_tile_queue_duration_seconds` | Enqueue-to-start/removal, including immediate starts; no dimensions |
+
+Event outcomes are low-cardinality `cache_hit`, `cache_miss`, `coalesced`,
+`request_limit`, `waiter_limit`, `queue_full`, `queue_timeout`, `deadline`,
+`canceled`, `shutdown`, `abandoned`, `authorization_error`, `authorization_denied`
+and terminal delivery outcomes. Events can overlap for one request; they are not
+an exactly-once request ledger. Queue buckets are
+`.01,.05,.1,.25,.5,1,2,3,+Inf` seconds. No account/session/selection/workout UUID,
+z/x/y, private URL, GPS or raw error becomes a new metric label or log field.
+
+Default **4 occupied slots**, **64 queued jobs**, **256 admitted requests**,
+**64 waiters/job** and **1s queue / 6s request / 5s upstream** budgets are distinct
+from Martin's unchanged pool. An independent **six-body-job ceiling** limits the
+configured concurrency maximum of 16. Cache-hit pins and last-writer release keep
+retained payload charged; active transport reaching zero need not free an occupied
+slot. [Architecture](architecture.md#tile-local-rendering-031) defines payload-memory
+bounds, not RSS. Role-default **4s statement / 250ms lock / 5s idle transaction**
+limits with RLS on were verified effective through a fresh actual tile login;
+Martin connections were recycled during the approved cutover with its 1.15.0 pin,
+pool 4 and cache off unchanged. HTTP abort is not proof of immediate PostgreSQL
+cancellation; actual-role timeout tests passed.
+Source tests and synthetic cardinality results do not establish live burst/p95,
+browser initial render or focus latency, nor a new SLO or M9 capacity pass.
+The original 031 deployment record did not claim authenticated viewport capacity.
+For the later authorized real-account reproduction and scoped final 67 result,
+see the [current verification boundary](development-progress.md#tile-rendering-and-delivery-031).
+
+#### Delivery Interpretation (031)
+
+The earlier pre-fix normal/4K reproduction linked server queue expiry to 503 and SQL
+statement expiry to **`57014`**, while the old source-wide retry budget exhausted.
+Private counts, account/location/route identifiers and measurements stay private.
+MapLibre's `areTilesLoaded()` includes failed tiles: corroborate it with successful
+tile-set completeness and visible geometry, not just a loaded-source event.
+
+The browser's **4 active / 128 jobs / 64 waiters**, **60s initial queue** and **15s
+first-dispatch service/retry** budgets are separate from unchanged API **4 occupied /
+64 queued / 1s queue / 6s HTTP / 5s upstream / 4s SQL** limits. Browser queueing,
+transport, retry/backoff, parse/render and observation overhead are not SQL timing.
+`coverage_mvt`'s function-local **32MB work_mem** can multiply across operations
+and four slots; it is not a total-query memory cap or resource-limit increase.
+No CPU/memory, server timeout/queue, Martin pool or resource knob changed.
+
+Streaming gzip in [tile_compression.go](../api/tile_compression.go) uses four
+process-wide encoders, including cache-hit deliveries. Forward-start-through-write
+timing remains unchanged: for forwarded successes it includes encoder admission,
+final authorization after admission, encoding and body write; cache hits still do
+not enter that histogram. Authorization denial preserves its own Problem response.
+Cancellation during encoder admission can produce a forwarded **503 / canceled**
+outcome; do not classify every non-success forwarding outcome as an upstream 502.
+No full compressed copy or extra cached compressed variant is introduced; raw
+5 MiB payload accounting remains distinct from encoder/runtime RSS. All responses
+retain private/no-store and `Vary: Cookie, Authorization, Accept-Encoding`.
+
+Both strict-HTTPS origins verified eight frozen distribution-file hashes. The
+canonical authorized desktop/4K run then reached all target cameras and completed
+all required tile sets without observed HTTP/non-abort transport errors, client
+deadlines or required errored tiles at settlement. Expected mode/zoom aborts are
+separate; unavailable bodies stay unknown, not inferred empty. **Dense high-zoom
+raw completion remained slow**, despite complete Coverage early/settled 4K samples.
+
+Observed large paired responses used gzip and estimated transfer fell, but encoded
+size included unseparated header overhead: not exact compressed-body bytes. Matched
+high-zoom decoded sizes and feature/layer counts were unchanged; do not interpret
+wire savings as geometry pruning or improved HTTPS/browser p95. Scheduling stalls
+extended nominal observation windows, so neither exact-window nor time-to-usable-
+render acceptance follows. Software/remote-browser limits and CPU causality remain
+unisolated. No source-wide manual reload, repeat-until-green or cache flushing was
+used; ordinary same-context renewal and cleanup were recorded separately.
+The [final scoped result](coverage-acceptance-results.md#tile-delivery-status-031)
+does not certify M9 capacity, a universal SLO or faster raw rendering. It supports
+continued dense raw client investigation, not resource/timeout/body-limit increases.
 
 ### Coverage Worker
 

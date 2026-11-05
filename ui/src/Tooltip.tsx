@@ -1,6 +1,7 @@
 import {
   type FocusEvent,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
   useId,
@@ -9,29 +10,84 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+let activePortalTooltip: { id: string; close: () => void } | undefined;
+
 export function Tooltip({
+  id,
   content,
   children,
   className = "",
   focusable = true,
   label,
   portal = false,
+  enabled = true,
+  singleLine = false,
+  multiline = false,
+  offsetY = 0,
+  keyboardFocusOnly = false,
+  dismissOnPointerDown = false,
 }: {
+  id?: string;
   content: string;
   children: ReactNode;
   className?: string;
   focusable?: boolean;
   label?: string;
   portal?: boolean;
+  enabled?: boolean;
+  singleLine?: boolean;
+  multiline?: boolean;
+  offsetY?: number;
+  keyboardFocusOnly?: boolean;
+  dismissOnPointerDown?: boolean;
 }) {
-  const tooltipId = useId();
+  const generatedId = useId();
+  const tooltipId = id ?? generatedId;
   const triggerRef = useRef<HTMLSpanElement>(null);
   const bubbleRef = useRef<HTMLSpanElement>(null);
-  const interaction = useRef({ hovered: false, focused: false });
+  const interaction = useRef<{
+    hovered: boolean;
+    focused: boolean;
+    pointerDismissed: boolean;
+    pointer?: { x: number; y: number };
+  }>({ hovered: false, focused: false, pointerDismissed: false });
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
 
-  function place() {
+  function close() {
+    if (activePortalTooltip?.id === tooltipId) activePortalTooltip = undefined;
+    setOpen(false);
+  }
+
+  function rememberPointer(event: { clientX: number; clientY: number }) {
+    if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY))
+      interaction.current.pointer = { x: event.clientX, y: event.clientY };
+  }
+
+  function pointerInside() {
+    const pointer = interaction.current.pointer;
+    if (!pointer) return interaction.current.hovered;
+    const hit = document.elementFromPoint(pointer.x, pointer.y);
+    return Boolean(hit && triggerRef.current?.contains(hit));
+  }
+
+  function acceptsFocus(target: EventTarget | null) {
+    if (!keyboardFocusOnly) return true;
+    const modality = document.documentElement.dataset.inputModality;
+    if (modality) return modality === "keyboard";
+    return target instanceof Element && target.matches(":focus-visible");
+  }
+
+  function place(activate = false) {
+    if (!enabled || interaction.current.pointerDismissed) return;
+    if (!activate && activePortalTooltip?.id !== tooltipId) {
+      setOpen(false);
+      return;
+    }
+    if (!interaction.current.hovered && !interaction.current.focused) {
+      close();
+      return;
+    }
     const trigger = triggerRef.current;
     if (!trigger || !bubbleRef.current) return;
     const anchor = trigger.getBoundingClientRect();
@@ -62,9 +118,11 @@ export function Tooltip({
       anchor.bottom <= top ||
       anchor.top >= bottom
     ) {
-      setOpen(false);
+      close();
       return;
     }
+    if (activePortalTooltip?.id !== tooltipId) activePortalTooltip?.close();
+    activePortalTooltip = { id: tooltipId, close };
     setPosition({
       left: Math.max(
         8,
@@ -85,29 +143,57 @@ export function Tooltip({
   }
 
   useEffect(() => {
-    if (!portal || !open) return;
-    function escape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+    if (interaction.current.focused && !acceptsFocus(document.activeElement)) {
+      interaction.current.focused = false;
+      if (!interaction.current.hovered) close();
     }
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
+    if (!enabled) close();
+    else if (portal && (interaction.current.hovered || interaction.current.focused)) {
+      if (interaction.current.hovered) interaction.current.hovered = pointerInside();
+      if (!activePortalTooltip || activePortalTooltip.id === tooltipId) place(!activePortalTooltip);
+    }
+  }, [enabled, portal, content, singleLine, multiline, tooltipId, keyboardFocusOnly]);
+
+  useEffect(
+    () => () => {
+      if (activePortalTooltip?.id === tooltipId) activePortalTooltip = undefined;
+    },
+    [tooltipId],
+  );
+
+  useEffect(() => {
+    if (!portal || !enabled || !open) return;
+    function escape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") close();
+    }
+    function follow() {
+      // Wheel scrolling can move disabled controls without a reliable pointerleave.
+      if (interaction.current.hovered) interaction.current.hovered = pointerInside();
+      place();
+    }
+    function pointerDown(event: globalThis.PointerEvent) {
+      interaction.current.focused = false;
+      if (!(event.target instanceof Node && triggerRef.current?.contains(event.target)))
+        interaction.current.hovered = false;
+      if (!interaction.current.hovered) close();
+    }
+    window.addEventListener("scroll", follow, true);
+    window.addEventListener("resize", follow);
     window.addEventListener("keydown", escape);
+    if (keyboardFocusOnly) window.addEventListener("pointerdown", pointerDown, true);
     return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", follow, true);
+      window.removeEventListener("resize", follow);
       window.removeEventListener("keydown", escape);
+      if (keyboardFocusOnly) window.removeEventListener("pointerdown", pointerDown, true);
     };
-  }, [portal, open]);
+  }, [portal, enabled, open, keyboardFocusOnly]);
 
   const bubble = (
     <span
       ref={portal ? bubbleRef : undefined}
-      className={
-        portal
-          ? `tooltip-content tooltip-content--portal${open ? " is-open" : ""}`
-          : "tooltip-content"
-      }
-      style={portal ? position : undefined}
+      className={`tooltip-content${portal ? " tooltip-content--portal" : ""}${singleLine ? " tooltip-content--single-line" : ""}${multiline ? " tooltip-content--multiline" : ""}${portal && open ? " is-open" : ""}`}
+      style={portal ? { ...position, top: position.top + offsetY } : undefined}
       id={tooltipId}
       role="tooltip"
     >
@@ -118,35 +204,48 @@ export function Tooltip({
     <span className={`tooltip ${className}`.trim()}>
       <span
         className="tooltip-trigger"
-        tabIndex={focusable ? 0 : undefined}
-        aria-describedby={tooltipId}
+        tabIndex={focusable && enabled ? 0 : undefined}
+        aria-describedby={enabled ? tooltipId : undefined}
         aria-label={label}
         ref={portal ? triggerRef : undefined}
         {...(portal
           ? {
-              onPointerEnter: () => {
+              onPointerEnter: (event: ReactPointerEvent<HTMLSpanElement>) => {
+                rememberPointer(event);
                 interaction.current.hovered = true;
-                place();
+                interaction.current.pointerDismissed =
+                  dismissOnPointerDown && Boolean(event.buttons);
+                place(true);
               },
+              onPointerDownCapture: () => {
+                if (!dismissOnPointerDown) return;
+                // Cancel the CSS reveal delay and stay dismissed for this hover.
+                interaction.current.pointerDismissed = true;
+                interaction.current.focused = false;
+                close();
+              },
+              onPointerMove: rememberPointer,
               onPointerLeave: () => {
                 interaction.current.hovered = false;
-                if (!interaction.current.focused) setOpen(false);
+                if (!interaction.current.focused) close();
               },
-              onFocus: () => {
-                interaction.current.focused = true;
-                place();
+              onFocus: (event: FocusEvent<HTMLSpanElement>) => {
+                interaction.current.focused = acceptsFocus(event.target);
+                if (interaction.current.focused) interaction.current.pointerDismissed = false;
+                if (interaction.current.focused || interaction.current.hovered) place(true);
+                else close();
               },
               onBlur: (event: FocusEvent<HTMLSpanElement>) => {
                 if (event.currentTarget.contains(event.relatedTarget)) return;
                 interaction.current.focused = false;
-                if (!interaction.current.hovered) setOpen(false);
+                if (!interaction.current.hovered) close();
               },
             }
           : {})}
       >
         {children}
       </span>
-      {portal ? createPortal(bubble, document.body) : bubble}
+      {enabled && (portal ? createPortal(bubble, document.body) : bubble)}
     </span>
   );
 }

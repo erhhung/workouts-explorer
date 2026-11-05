@@ -20,6 +20,10 @@ data:
     ALTER ROLE workouts_coverage_worker SET lock_timeout='5s';
     ALTER ROLE workouts_coverage_worker SET idle_in_transaction_session_timeout='30s';
     CREATE ROLE workouts_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    ALTER ROLE workouts_tiles SET row_security=on;
+    ALTER ROLE workouts_tiles SET statement_timeout='4s';
+    ALTER ROLE workouts_tiles SET lock_timeout='250ms';
+    ALTER ROLE workouts_tiles SET idle_in_transaction_session_timeout='5s';
     CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     ALTER DATABASE workouts OWNER TO workouts_migration;
     GRANT CONNECT, TEMPORARY ON DATABASE workouts TO workouts_migration;

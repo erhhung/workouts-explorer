@@ -60,6 +60,12 @@ func ProvisionRoles(ctx context.Context, db *pgxpool.Pool) error {
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_auth_members memberships JOIN pg_roles member_role ON member_role.oid=memberships.member WHERE member_role.rolname='workouts_tiles')`).Scan(&tileHasMemberships); err != nil || tileHasMemberships {
 		return errors.New("existing tile role has unsafe memberships")
 	}
+	if _, err := tx.Exec(ctx, `ALTER ROLE workouts_tiles SET row_security=on;
+		ALTER ROLE workouts_tiles SET statement_timeout='4s';
+		ALTER ROLE workouts_tiles SET lock_timeout='250ms';
+		ALTER ROLE workouts_tiles SET idle_in_transaction_session_timeout='5s'`); err != nil {
+		return errors.New("tile role defaults could not be configured")
+	}
 	err = tx.QueryRow(ctx, `SELECT rolcanlogin,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname='workouts_security_owner'`).Scan(&canLogin, &superuser, &createRole, &createDB, &replication, &bypassRLS)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `CREATE ROLE workouts_security_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`); err != nil {

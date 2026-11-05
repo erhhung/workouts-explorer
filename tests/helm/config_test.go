@@ -245,6 +245,36 @@ func TestHelmConfigurationSchema(t *testing.T) {
 		valid  bool
 	}
 	cases := []schemaCase{{path: "coverageWorker.jobConcurrency", remove: true}}
+	tileDefaults := api["mapTiles"].(map[string]any)
+	tileProperties := apiProperties["mapTiles"].(map[string]any)["properties"].(map[string]any)
+	for _, field := range []struct {
+		name    string
+		valid   []any
+		invalid []any
+	}{
+		{"concurrency", []any{1, 4, 16}, []any{0, -1, 17, 1.5, "4"}},
+		{"queueSize", []any{0, 64, 256}, []any{-1, 257, 1.5, "64"}},
+		{"cacheBytes", []any{0, 33554432, 134217728}, []any{-1, 134217729, 1.5, "33554432"}},
+		{"cacheEntries", []any{1, 512, 4096}, []any{0, -1, 4097, 1.5, "512"}},
+		{"cacheTtl", []any{"1s", "30s", "299s", "300s", "1m", "5m"}, []any{"0s", "999ms", "301s", "6m", "1h", "1.5s", "1m1s", "01s", "1s\n", 30}},
+		{"queueTimeout", []any{"100ms", "999ms", "1000ms", "2999ms", "3000ms", "1s", "3s"}, []any{"0s", "99ms", "3001ms", "4s", "1m", "0.1s", "1s1ms", "0100ms", "1s\n", 1}},
+		{"requestTimeout", []any{"5s", "6s", "10s", "15s"}, []any{"0s", "4s", "16s", "1m", "5000ms", "5.5s", "05s", "5s\n", 6}},
+	} {
+		path := "api.mapTiles." + field.name
+		wantDefault, _ := json.Marshal(tileDefaults[field.name])
+		if got, _ := json.Marshal(tileProperties[field.name].(map[string]any)["default"]); !bytes.Equal(got, wantDefault) {
+			t.Errorf("%s schema default=%s want %s", path, got, wantDefault)
+		}
+		cases = append(cases, schemaCase{path: path, remove: true})
+		for _, value := range field.valid {
+			cases = append(cases, schemaCase{path: path, value: value, valid: true})
+		}
+		for _, value := range append(field.invalid, "", true, nil, []any{}, map[string]any{}) {
+			cases = append(cases, schemaCase{path: path, value: value})
+		}
+	}
+	cases = append(cases, schemaCase{path: "api.mapTiles", remove: true},
+		schemaCase{path: "api.mapTiles.unknown", value: true}, schemaCase{path: "api.publicConfig.mapTiles", value: tileDefaults})
 	for _, value := range []any{1, 2, 8} {
 		cases = append(cases, schemaCase{path: "coverageWorker.jobConcurrency", value: value, valid: true})
 	}

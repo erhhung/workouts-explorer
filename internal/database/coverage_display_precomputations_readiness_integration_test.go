@@ -49,8 +49,8 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(320032,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("explicit scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("mutation harness requires current schema30/min30/marker27 metadata: %v", err)
+	if err := admin.QueryRow(ctx, `SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
+		t.Fatalf("mutation harness requires current schema31/min31/marker27 metadata: %v", err)
 	}
 
 	roles := []struct{ name, env string }{
@@ -104,9 +104,9 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
 		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`,
-			`UPDATE app.schema_metadata SET minimum_runtime_version=30 WHERE singleton`},
+			`UPDATE app.schema_metadata SET minimum_runtime_version=31 WHERE singleton`},
 		{"minimum runtime raised", fmt.Sprintf(`UPDATE app.schema_metadata SET schema_version=%d,minimum_runtime_version=%d WHERE singleton`, SupportedSchemaVersion+1, SupportedSchemaVersion+1),
-			`UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`},
+			`UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`},
 		{"extra source invalidator", `CREATE TRIGGER extra_display_dirty AFTER UPDATE ON app.path_segments FOR EACH ROW EXECUTE FUNCTION app.mark_coverage_display_dirty()`,
 			`DROP TRIGGER extra_display_dirty ON app.path_segments`},
 		{"extra deferred callback", `CREATE TRIGGER extra_display_flush AFTER INSERT ON app.coverage_display_dirty FOR EACH ROW EXECUTE FUNCTION app.flush_coverage_display_dirty_account()`,

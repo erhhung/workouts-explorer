@@ -182,6 +182,9 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	}
 	userToken := bearerSession.AccessToken
 	initialPreferences := getPreferences(t, server, userToken)
+	if initialPreferences.CustomDateRangeLimit != 3 || len(initialPreferences.RecentCustomDateRanges) != 0 {
+		t.Fatalf("custom date range defaults: %+v", initialPreferences)
+	}
 	if initialPreferences.Initialized || initialPreferences.CoverageDiagnosticsEnabled || initialPreferences.Theme != "dark" || initialPreferences.Units != "imperial" || initialPreferences.Timezone != "UTC" ||
 		initialPreferences.FirstWeekday != "monday" || initialPreferences.ClockFormat != "12h" || initialPreferences.PageSize != 25 ||
 		len(initialPreferences.WorkoutColumns) != 4 || initialPreferences.WorkoutColumns[0] != "date" || initialPreferences.WorkoutColumns[1] != "type" ||
@@ -292,6 +295,31 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	if dateRangeExplicit.recorder.Code != http.StatusOK || !strings.Contains(dateRangeExplicit.recorder.Body.String(), `"dateRange":"2024-02-29/2024-03-03"`) {
 		t.Fatalf("explicit date-range set: %d %s", dateRangeExplicit.recorder.Code, dateRangeExplicit.recorder.Body.String())
 	}
+	for _, dateRange := range []string{"2022-01-01/2026-11-01", "2026-01-01/2026-01-31", "2024-02-29/2024-03-03"} {
+		request := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"`+dateRange+`"}`, userToken, "")
+		server.UpdateMyPreferences(request.recorder, request.request, generated.UpdateMyPreferencesParams{})
+		if request.recorder.Code != http.StatusOK {
+			t.Fatalf("custom range history patch: %d %s", request.recorder.Code, request.recorder.Body.String())
+		}
+		validateRecordedResponse(t, http.MethodPatch, "/api/me/preferences", request.recorder)
+	}
+	recent := getPreferences(t, server, userToken)
+	if strings.Join(recent.RecentCustomDateRanges, ",") != "2024-02-29/2024-03-03,2026-01-01/2026-01-31,2022-01-01/2026-11-01" {
+		t.Fatalf("persistent MRU order/uniqueness: %v", recent.RecentCustomDateRanges)
+	}
+	shrink := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"customDateRangeLimit":1}`, userToken, "")
+	server.UpdateMyPreferences(shrink.recorder, shrink.request, generated.UpdateMyPreferencesParams{})
+	recent = getPreferences(t, server, userToken)
+	if shrink.recorder.Code != http.StatusOK || recent.CustomDateRangeLimit != 1 || len(recent.RecentCustomDateRanges) != 1 || recent.RecentCustomDateRanges[0] != "2024-02-29/2024-03-03" {
+		t.Fatalf("persistent history limit: %d %+v", shrink.recorder.Code, recent)
+	}
+	for _, limit := range []string{"0", "6", "1.5", "null"} {
+		invalid := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"customDateRangeLimit":`+limit+`}`, userToken, "")
+		handler.ServeHTTP(invalid.recorder, invalid.request)
+		if invalid.recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid history limit %s: %d", limit, invalid.recorder.Code)
+		}
+	}
 	for _, invalidRange := range []string{"last-30-days", "2023-02-29/2023-03-01", "2026-03-02/2026-03-01"} {
 		invalid := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateRange":"`+invalidRange+`"}`, userToken, "")
 		server.UpdateMyPreferences(invalid.recorder, invalid.request, generated.UpdateMyPreferencesParams{})
@@ -302,6 +330,21 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	var userAccountID uuid.UUID
 	if err := db.QueryRow(context.Background(), `SELECT account_id FROM app.users u JOIN app.authentication_principals p ON p.id=u.principal_id WHERE p.canonical_email=$1`, email).Scan(&userAccountID); err != nil {
 		t.Fatal(err)
+	}
+	grow := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"customDateRangeLimit":3}`, userToken, "")
+	server.UpdateMyPreferences(grow.recorder, grow.request, generated.UpdateMyPreferencesParams{})
+	if grow.recorder.Code != http.StatusOK {
+		t.Fatalf("history limit grow: %d", grow.recorder.Code)
+	}
+	historyPatches := concurrentPreferencePatches(t, server, adminDB, userAccountID, userToken,
+		`{"dateRange":"2022-01-01/2026-11-01"}`, `{"dateRange":"2026-01-01/2026-01-31"}`)
+	for _, response := range historyPatches {
+		if response.recorder.Code != http.StatusOK {
+			t.Fatalf("concurrent custom range: %d %s", response.recorder.Code, response.recorder.Body.String())
+		}
+	}
+	if ranges := getPreferences(t, server, userToken).RecentCustomDateRanges; strings.Join(ranges, ",") != "2026-01-01/2026-01-31,2022-01-01/2026-11-01,2024-02-29/2024-03-03" {
+		t.Fatalf("concurrent custom ranges lost history or lock order: %v", ranges)
 	}
 	disjoint := concurrentPreferencePatches(t, server, adminDB, userAccountID, userToken,
 		`{"dateRange":"last7Days"}`,
@@ -742,6 +785,7 @@ func getPreferences(t *testing.T, server *Server, token string) generated.Prefer
 	if response.recorder.Code != http.StatusOK {
 		t.Fatalf("get preferences: %d %s", response.recorder.Code, response.recorder.Body.String())
 	}
+	validateRecordedResponse(t, http.MethodGet, "/api/me/preferences", response.recorder)
 	var preferences generated.Preferences
 	if err := json.Unmarshal(response.recorder.Body.Bytes(), &preferences); err != nil {
 		t.Fatal(err)

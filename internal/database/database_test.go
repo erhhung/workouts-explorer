@@ -18,8 +18,8 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 30 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 30", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 31 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 31", SupportedSchemaVersion)
 	}
 }
 
@@ -90,10 +90,12 @@ func TestIngestReprocessingReadiness(t *testing.T) {
 	}
 }
 
-func TestRuntimeReadinessBackwardCompatibleSchema(t *testing.T) {
+func TestRuntimeReadinessCurrentSchema(t *testing.T) {
 	sql := strings.Join(strings.Fields(runtimeReadinessSQL), " ")
 	for _, required := range []string{
-		"COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1",
+		"COALESCE(max(version_id) FILTER (WHERE is_applied), 0) = $1",
+		"SELECT schema_version = $1 FROM app.schema_metadata WHERE singleton",
+		"NOT EXISTS(SELECT 1 FROM public.goose_db_version WHERE version_id > $1)",
 		"WHERE singleton AND schema_version >= $1 AND minimum_runtime_version <= $1",
 		"migration_baseline = 27",
 		"has_column_privilege('workouts_coverage_worker','app.jobs','created_at','SELECT')",
@@ -103,11 +105,6 @@ func TestRuntimeReadinessBackwardCompatibleSchema(t *testing.T) {
 	} {
 		if !strings.Contains(sql, required) {
 			t.Errorf("runtime readiness SQL is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"schema_version = $1", "schema_version <= $1", "schema_version BETWEEN", "max(version_id) FILTER (WHERE is_applied), 0) = $1"} {
-		if strings.Contains(sql, forbidden) {
-			t.Errorf("runtime readiness SQL rejects compatible newer schemas: %q", forbidden)
 		}
 	}
 }

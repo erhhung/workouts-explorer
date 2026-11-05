@@ -34,10 +34,10 @@ func canonicalDisplayFunctions(source string) [][]string {
 }
 
 func TestCanonicalCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 30 {
-		t.Fatalf("supported schema=%d, want 30", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 31 {
+		t.Fatalf("supported schema=%d, want 31", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("Ready must compose all previous contracts and the version-gated canonical contract")
 	}
@@ -129,7 +129,19 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	}
 	for _, function := range functions {
 		t.Run(function[1], func(t *testing.T) {
-			want := fmt.Sprintf("%x", md5.Sum([]byte(function[4])))
+			body := function[4]
+			if function[1] == "coverage_mvt" {
+				raw, err := migrations.Files.ReadFile("031_tile_rendering.sql")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, replacement := range canonicalDisplayFunctions(string(raw)) {
+					if replacement[1] == "coverage_mvt" {
+						body = replacement[4]
+					}
+				}
+			}
+			want := fmt.Sprintf("%x", md5.Sum([]byte(body)))
 			var got string
 			for _, fingerprint := range fingerprints {
 				if fingerprint[1] == function[1] {
@@ -202,7 +214,21 @@ func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 	if len(tuples) != 21 {
 		t.Fatalf("want 21 complete function attribute tuples, got %d", len(tuples))
 	}
-	for _, function := range canonicalDisplayFunctions(canonicalDisplayMigration(t)) {
+	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
+	tile, err := migrations.Files.ReadFile("031_tile_rendering.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range canonicalDisplayFunctions(string(tile)) {
+		if current[1] == "coverage_mvt" {
+			for i := range functions {
+				if functions[i][1] == current[1] {
+					functions[i] = current
+				}
+			}
+		}
+	}
+	for _, function := range functions {
 		header := strings.Join(strings.Fields(function[3]), " ")
 		var tuple []string
 		for _, candidate := range tuples {
@@ -250,13 +276,16 @@ func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 		if strings.Contains(header, "SET jit = off") {
 			config += ",'jit=off'"
 		}
+		if workMem := regexp.MustCompile(`SET work_mem = '([^']+)'`).FindStringSubmatch(header); len(workMem) == 2 {
+			config += ",'work_mem=" + workMem[1] + "'"
+		}
 		api := function[1] == "prepare_coverage_display_context" || strings.HasPrefix(function[1], "map_selection_coverage_")
 		want := []string{strings.Join(types, ","), language[1], volatility,
 			fmt.Sprint(strings.Contains(header, "SECURITY DEFINER")), fmt.Sprint(strings.Contains(header, "STRICT")),
 			parallel, fmt.Sprint(returnsSet), fmt.Sprint(defaults), result, config, fmt.Sprint(api), fmt.Sprint(function[1] == "coverage_mvt")}
 		for i, expected := range want {
 			if tuple[i+2] != expected {
-				t.Errorf("%s attribute %d=%q, embedded030=%q", function[1], i, tuple[i+2], expected)
+				t.Errorf("%s attribute %d=%q, current contract=%q", function[1], i, tuple[i+2], expected)
 			}
 		}
 	}

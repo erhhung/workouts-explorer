@@ -40,6 +40,7 @@ import {
 } from "./Tooltip";
 import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
 import { formatDateOnly } from "./date";
+import { RecentDateRangeItems, useRecentDateRanges } from "./RecentDateRanges";
 
 const DATE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
   ["thisWeek", "This week"],
@@ -1114,6 +1115,7 @@ export function Summary({
   onShowOnMap,
   onWorkoutsDeleted,
   onDateRangeSaved,
+  onRecentDateRangesSaved,
 }: {
   preferences: Preferences;
   csrfToken: string;
@@ -1126,8 +1128,10 @@ export function Summary({
   onShowOnMap?: (workoutId: string) => void;
   onWorkoutsDeleted?: (deletion: AcceptedWorkoutDeletion) => void;
   onDateRangeSaved: (dateRange: DateRangePreference) => void;
+  onRecentDateRangesSaved?: (ranges: string[]) => void;
 }) {
   const queryClient = useQueryClient();
+  const recentRanges = useRecentDateRanges(preferences, onRecentDateRangesSaved);
   const [range, setRange] = useState<DateRangePreference>(
     () => selectedDateRange ?? initialRange(preferences.dateRange),
   );
@@ -1201,6 +1205,7 @@ export function Summary({
         csrfToken,
       ),
     onSuccess: (saved, selection) => {
+      recentRanges.saved(saved.recentCustomDateRanges);
       if (selection.sequence === latestSelection.current) {
         if (saved.dateRange === selection.dateRange) {
           setSaveNotice("");
@@ -1634,7 +1639,13 @@ export function Summary({
             <span aria-hidden="true">v</span>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
-            <DropdownMenu.Content className="menu-content range-menu" align="end" sideOffset={8}>
+            <DropdownMenu.Content
+              className="menu-content range-menu"
+              align="start"
+              sideOffset={12}
+              avoidCollisions={false}
+              collisionPadding={12}
+            >
               {DATE_SHORTCUTS.map(([value, label]) => (
                 <DropdownMenu.Item key={value} onSelect={() => selectRange(value)}>
                   {label}
@@ -1645,6 +1656,11 @@ export function Summary({
               <DropdownMenu.Item onSelect={() => setCustomOpen(true)}>
                 Custom...{explicit && <span aria-label="selected">&#10003;</span>}
               </DropdownMenu.Item>
+              <RecentDateRangeItems
+                ranges={recentRanges.history}
+                current={range}
+                onSelect={selectRange}
+              />
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>

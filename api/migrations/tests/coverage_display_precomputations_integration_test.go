@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/api/migrations"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -70,7 +71,7 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayMigrate30(t, ctx)
+	coverageDisplayMigrateCurrent(t, ctx)
 	coverageDisplayCheck(t, db, `SELECT to_regclass('app.workout_path_display_partials') IS NOT NULL
 		AND to_regclass('app.coverage_display_dirty') IS NOT NULL`)
 
@@ -578,7 +579,7 @@ func TestCoverageDisplayPrecomputationsPostgreSQL(t *testing.T) {
 	}
 }
 
-func coverageDisplayMigrate30(t *testing.T, ctx context.Context) {
+func coverageDisplayMigrateCurrent(t *testing.T, ctx context.Context) {
 	t.Helper()
 	config, err := pgx.ParseConfig(os.Getenv("MIGRATION_DATABASE_URL"))
 	if err != nil {
@@ -590,14 +591,14 @@ func coverageDisplayMigrate30(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 30); err != nil {
+	if _, err := provider.UpTo(ctx, int64(database.SupportedSchemaVersion)); err != nil {
 		t.Fatal(err)
 	}
 	var historical bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27
-		AND (SELECT count(*)=31 AND count(DISTINCT version_id)=31 AND min(version_id)=0 AND max(version_id)=30 AND bool_and(is_applied)
-			FROM public.goose_db_version) FROM app.schema_metadata WHERE singleton`).Scan(&historical); err != nil || !historical {
-		t.Fatalf("display tests require an isolated Goose schema30/min30/marker27 fixture: %t %v", historical, err)
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=31 AND migration_baseline=27
+		AND (SELECT count(*)=$1+1 AND count(DISTINCT version_id)=$1+1 AND min(version_id)=0 AND max(version_id)=$1 AND bool_and(is_applied)
+			FROM public.goose_db_version) FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion).Scan(&historical); err != nil || !historical {
+		t.Fatalf("display tests require an isolated current Goose fixture: %t %v", historical, err)
 	}
 }
 
@@ -922,7 +923,7 @@ func coverageDisplayFence(t *testing.T, db testDatabases, tx pgx.Tx, f coverageD
 	t.Helper()
 	var source uuid.UUID
 	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`,
-		f.job, reprocessingWorker, f.lease, 30).Scan(&source); err != nil {
+		f.job, reprocessingWorker, f.lease, database.SupportedSchemaVersion).Scan(&source); err != nil {
 		t.Fatalf("fence synthetic source job for header mutation/purge: %v", err)
 	}
 }

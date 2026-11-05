@@ -42,6 +42,7 @@ type API struct {
 	MapFitPaddingPixels    int
 	BaseMaps               BaseMaps
 	TileServerURL          string
+	MapTiles               MapTiles
 	SessionLifetime        time.Duration
 	PasswordMinimum        int
 	AllowAdminPassword     bool
@@ -218,6 +219,10 @@ func LoadAPI() (API, error) {
 		return API{}, err
 	}
 	publicURL := env("PUBLIC_URL", "http://localhost:5173")
+	mapTiles, err := loadMapTiles()
+	if err != nil {
+		return API{}, err
+	}
 	browserSigninOrigins, err := loadBrowserSigninOrigins(publicURL, localDevelopment)
 	if err != nil {
 		return API{}, err
@@ -230,6 +235,7 @@ func LoadAPI() (API, error) {
 		MapFitPaddingPixels:    padding,
 		BaseMaps:               baseMaps,
 		TileServerURL:          env("TILE_SERVER_URL", "http://127.0.0.1:3000"),
+		MapTiles:               mapTiles,
 		SessionLifetime:        sessionLifetime,
 		PasswordMinimum:        passwordMinimum,
 		AllowAdminPassword:     allowAdminPassword,

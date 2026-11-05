@@ -36,8 +36,8 @@ A milestone is complete when:
 combines compact/canonical display in **030** and ingest status/reprocessing/phases
 in **029**, with **001-028 unchanged**. Final source/runtime support and
 schema/minimum runtime are **30**, baseline **27**, ledger **0-30**. See the
-[history mapping](database-migrations.md#source-history-mapping) and
-[pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+[history mapping](database-migrations.md#current-source-layout) and
+[pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 The authorized live reconciliation is pending here. M8 is complete with explicit user
 approval and the final qualified live browser gate **PASS**; see
 [authoritative closeout](development-progress.md#milestone-8-closeout).
@@ -46,7 +46,7 @@ The following are enduring release requirements, not a new deployment receipt.
 Protected actual-backup migration/preservation, actual-role readiness and matching
 database/image rollback proof, retention and completed deployment evidence are
 recorded in the private canonical migration handoff under **pre-squash historical
-numbering** ([mapping](database-migrations.md#source-history-mapping)). These are
+numbering** ([mapping](database-migrations.md#current-source-layout)). These are
 not fresh squash proofs. The earlier **521 UI tests**
 and focused **219 MapPage tests** receipts remain historical within their original
 scope, not a new full-suite pass or a substitute for database/browser proof.
@@ -93,25 +93,6 @@ matched-evidence partials, independent regional context and park bounds; live
 eligibility/metadata joins and entity/workout deduplication precede summarization
 for arbitrary date ranges. Dirty-key maintenance batches replacement work at
 transaction commit, including underlying evidence and segment updates.
-
-The following rollout paragraph uses **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)) for the **032/backend-42/UI-43**
-checkpoint. Its schema and pending-acceptance statements are superseded by
-[current 030 source status](#canonical-display-identity-030) and
-[M8 closeout](development-progress.md#milestone-8-closeout); original verification
-boundaries are unchanged.
-
-Implementation and synthetic verification passed; the implementation deployed
-with released/applied immutable 032, schema/minimum runtime **32**,
-marker **27** and ledger **0-32**. All four application images were rebuilt with
-native artifacts and published with strict TLS verification. A standalone
-restricted native migration preceded coordinated backend **42** and UI **43**,
-using full values and `--no-hooks` while preserving separate Martin, original data
-and configuration. Full pre-32 backups and old images remain retained; image-only
-rollback is unsupported. Scripted deployed-browser verification passed; owner
-acceptance/milestone and capacity remain separate. See
-[architecture](architecture.md#coverage-display-precomputations-requires-30) and
-[current progress](development-progress.md#coverage-display-optimization).
 
 ## Ingest Reprocessing Follow-Up (029)
 
@@ -847,7 +828,7 @@ not removed requirements or a production-readiness claim.
 gate **PASS** close all three M8 closeout items; no further owner decision is
 pending. iCloud ingest and independent available-map Coverage recovery are
 verified. Current source targets **001-030**, schema/minimum runtime **30**, baseline
-**27**, ledger **0-30**; the [authorized live reconciliation](database-migrations.md#pre-cutover-live-status)
+**27**, ledger **0-30**; the [authorized live reconciliation](database-migrations.md#historical-deployment-checkpoints)
 is pending here, without reopening M8. The authoritative
 [Milestone 8 closeout](development-progress.md#milestone-8-closeout) records the
 deployed behavior, image lineage, browser/cleanup boundaries and private evidence

@@ -153,7 +153,7 @@ func TestDeferredAccountGenerationPostgreSQL(t *testing.T) {
 				t.Fatal(err)
 			}
 			var valid bool
-			if err := db.migration.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=30 AND migration_baseline=27
+			if err := db.migration.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=31 AND migration_baseline=27
 				AND (SELECT count(*)=$1+1 AND count(DISTINCT version_id)=$1+1 AND min(version_id)=0 AND max(version_id)=$1 AND bool_and(is_applied) FROM public.goose_db_version)
 				FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion).Scan(&valid); err != nil || !valid {
 				t.Fatalf("current schema/min30/marker27 exact ledger: %t %v", valid, err)

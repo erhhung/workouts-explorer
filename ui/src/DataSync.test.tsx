@@ -43,6 +43,8 @@ const preferences: Preferences = {
   clockFormat: "24h",
   workoutColumns: ["date", "type", "duration"],
   pageSize: 25,
+  customDateRangeLimit: 3,
+  recentCustomDateRanges: [],
   coverageDiagnosticsEnabled: false,
   initialized: true,
 };
@@ -198,6 +200,12 @@ function json(body: unknown, status = 200) {
     status,
     headers: { "Content-Type": status >= 400 ? "application/problem+json" : "application/json" },
   });
+}
+
+function calendarLabel(value: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(
+    new Date(`${value}T00:00:00Z`),
+  );
 }
 
 function renderDataSync(
@@ -4149,6 +4157,142 @@ describe("DataSync", () => {
     expect(second).toBeChecked();
   });
 
+  test("uses each source's latest export date in both stale messages, not its warning date", async () => {
+    const sources = [
+      {
+        ...snapshot.sources[1],
+        displayName: "Local exports",
+        autoSyncEnabled: true,
+        freshness: { lastNewExportDate: "2026-08-07", staleSince: "2026-08-13" },
+      },
+      {
+        ...snapshot.sources[0],
+        displayName: "Cloud exports",
+        freshness: {
+          lastNewExportDate: "2026-08-05",
+          lastNewExportDiscoveredAt: "2026-08-08T16:00:00Z",
+          lastSyncSucceededAt: "2026-08-12T16:00:00Z",
+          staleSince: "2026-08-11",
+        },
+      },
+    ];
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            sources,
+            notifications: [SOURCE_A, SOURCE_B].map((sourceId, index) => ({
+              ...snapshot.notifications[0],
+              id: String(index + 1).repeat(32),
+              sourceId,
+              title: "No recent source data",
+              message: "No new export data has been found for this source recently.",
+            })),
+          })
+        : undefined,
+    );
+    renderDataSync();
+    expect(
+      await screen.findByText(
+        `No new export has been discovered for Cloud exports since ${calendarLabel("2026-08-05")}.`,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        `No new export has been discovered for Local exports since ${calendarLabel("2026-08-07")}.`,
+      ),
+    ).toBeVisible();
+    const card = screen.getByRole("heading", { name: "Schedule & freshness" }).closest("section")!;
+    for (const [name, date] of [
+      ["Cloud exports", calendarLabel("2026-08-05")],
+      ["Local exports", calendarLabel("2026-08-07")],
+    ]) {
+      const source = within(card).getByText(name).closest("article")!;
+      expect(within(source).getByText("Stale")).toBeVisible();
+      expect(within(source).getByText("Latest export date").closest("div")).toHaveTextContent(date);
+      expect(
+        within(source).getByText(`No new export has been discovered since ${date}.`),
+      ).toBeVisible();
+    }
+    for (const source of sources)
+      expect(
+        screen.queryByText(
+          `No new export has been discovered since ${calendarLabel(source.freshness.staleSince)}.`,
+        ),
+      ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No new export data has been found for this source/),
+    ).not.toBeInTheDocument();
+  });
+
+  test("does not invent a latest export date for a stale source with no recorded export", async () => {
+    baseFetch();
+    renderDataSync();
+    expect(
+      await screen.findByText("No recent export has been discovered for Old folder."),
+    ).toBeVisible();
+    const source = screen
+      .getByText("Old folder", { selector: ".freshness-list strong" })
+      .closest("article")!;
+    expect(within(source).getByText("Latest export date").closest("div")).toHaveTextContent(
+      "Never",
+    );
+    expect(within(source).getByText("No recent export has been discovered.")).toBeVisible();
+    expect(source).not.toHaveTextContent("discovered since");
+  });
+
+  test("refreshes stale messages with the source's current name and latest export date", async () => {
+    let updated = false;
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            sources: [
+              {
+                ...snapshot.sources[0],
+                displayName: updated ? "Renamed exports" : "Cloud exports",
+                freshness: {
+                  lastNewExportDate: updated ? "2026-08-06" : "2026-08-05",
+                  staleSince: "2026-08-11",
+                },
+              },
+            ],
+            notifications: [{ ...snapshot.notifications[0], sourceId: SOURCE_A }],
+          })
+        : undefined,
+    );
+    const { client } = renderDataSync(undefined, undefined, 30, {
+      ...preferences,
+      timezone: "America/Los_Angeles",
+    });
+    await screen.findByText(
+      `No new export has been discovered for Cloud exports since ${calendarLabel("2026-08-05")}.`,
+    );
+    updated = true;
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["data-sync"] });
+    });
+    expect(
+      await screen.findByText(
+        `No new export has been discovered for Renamed exports since ${calendarLabel("2026-08-06")}.`,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(`No new export has been discovered since ${calendarLabel("2026-08-06")}.`),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(`No new export has been discovered since ${calendarLabel("2026-08-05")}.`),
+    ).not.toBeInTheDocument();
+  });
+
+  test("preserves the stored message when a stale notification has no matching source", async () => {
+    baseFetch((path) =>
+      path === "/api/data-sync" ? json({ ...snapshot, sources: [] }) : undefined,
+    );
+    renderDataSync();
+    expect(await screen.findByText("No new export has arrived.")).toBeVisible();
+  });
+
   test("uses exact freshness fields and Never copy", async () => {
     baseFetch();
     renderDataSync();
@@ -5159,7 +5303,12 @@ describe("DataSync", () => {
 
     await userEvent.click(operationTrigger);
     await screen.findByRole("menuitemradio", { name: "All operations" });
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Automated sync" }));
+    expect(screen.getByRole("menuitemradio", { name: "All operations" })).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("menuitemradio", { name: "Coverage update" })).toHaveFocus();
+    await userEvent.keyboard("{Home}{ArrowDown}{ArrowDown}");
+    expect(screen.getByRole("menuitemradio", { name: "Automated sync" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
     await waitFor(() =>
       expect(requests).toContain(
         "/api/jobs?page=1&pageSize=25&operation=automated_sync&status=failed",

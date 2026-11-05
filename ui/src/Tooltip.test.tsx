@@ -1,7 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Tooltip } from "./Tooltip";
+
+const originalElementFromPoint = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
+afterEach(() => {
+  if (originalElementFromPoint)
+    Object.defineProperty(document, "elementFromPoint", originalElementFromPoint);
+  else Reflect.deleteProperty(document, "elementFromPoint");
+});
 
 function rect(x: number, y: number, width: number, height: number) {
   return {
@@ -93,6 +100,45 @@ describe("Tooltip", () => {
     expect(screen.getByText("Route readiness")).toBe(bubble);
   });
 
+  test("enables a single-line portal without remounting its focused child and removes disabled help", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("tooltip-content")
+        ? rect(0, 0, 500, 24)
+        : rect(140, 120, 100, 20);
+    });
+    const content = "North Meadow Regional Preserve and Cedar Valley County Park";
+    const renderTooltip = (enabled: boolean) => (
+      <Tooltip portal singleLine enabled={enabled} focusable={false} content={content}>
+        <button>Park</button>
+      </Tooltip>
+    );
+    const view = render(renderTooltip(false));
+    const button = screen.getByRole("button", { name: "Park" });
+    const trigger = button.parentElement!;
+    fireEvent.focus(button);
+    fireEvent.pointerEnter(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+    expect(trigger).not.toHaveAttribute("tabindex");
+    button.focus();
+    view.rerender(renderTooltip(true));
+    const bubble = screen.getByRole("tooltip");
+    expect(bubble).toHaveClass("tooltip-content--single-line", "is-open");
+    expect(bubble).toHaveTextContent(content);
+    expect(trigger).toHaveAttribute("aria-describedby", bubble.id);
+    expect(screen.getByRole("button", { name: "Park" })).toBe(button);
+    expect(button).toHaveFocus();
+    view.rerender(renderTooltip(false));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+    fireEvent.pointerLeave(trigger);
+    fireEvent.blur(button);
+    view.rerender(renderTooltip(true));
+    expect(screen.getByRole("tooltip")).not.toHaveClass("is-open");
+  });
+
   test("flips below a trigger near the viewport top", () => {
     const { trigger, bubble } = setup(rect(140, 10, 20, 20));
     fireEvent.focus(trigger);
@@ -146,6 +192,71 @@ describe("Tooltip", () => {
     move(rect(140, 240, 20, 20));
     fireEvent.scroll(window);
     expect(bubble).not.toHaveClass("is-open");
+  });
+
+  test("wheel scrolling hides a disabled row that moved away without pointerleave", () => {
+    const { trigger, bubble, scroller, move } = setup();
+    let hit: Element | null = trigger;
+    const hitTest = vi.fn(() => hit);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: hitTest });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", {
+        bubbles: true,
+        clientX: 150,
+        clientY: 130,
+      }),
+    );
+    expect(bubble).toHaveClass("is-open");
+    move(rect(140, 110, 20, 20));
+    fireEvent.scroll(scroller);
+    expect(bubble).toHaveClass("is-open");
+    hit = scroller;
+    move(rect(140, 80, 20, 20));
+    fireEvent.scroll(scroller);
+    expect(bubble).not.toHaveClass("is-open");
+    expect(hitTest).toHaveBeenCalledWith(150, 130);
+    fireEvent.scroll(scroller);
+    expect(bubble).not.toHaveClass("is-open");
+  });
+
+  test("new disabled-row hover owns the only portal even while an older row keeps keyboard focus", () => {
+    const view = render(
+      <div>
+        <Tooltip portal content="Map data not available">
+          <button disabled>First route</button>
+        </Tooltip>
+        <Tooltip portal content="Map data not available">
+          <button disabled>Second route</button>
+        </Tooltip>
+      </div>,
+    );
+    const [first, second] = view.container.querySelectorAll<HTMLElement>(".tooltip-trigger");
+    const bubbles = screen.getAllByRole("tooltip");
+    for (const trigger of [first, second])
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(140, 120, 100, 20));
+    for (const bubble of bubbles)
+      vi.spyOn(bubble, "getBoundingClientRect").mockReturnValue(rect(0, 0, 180, 24));
+    let hit: Element | null = first;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
+    act(() => first.focus());
+    expect(bubbles[0]).toHaveClass("is-open");
+    hit = second;
+    fireEvent(
+      second,
+      new MouseEvent("pointerover", {
+        bubbles: true,
+        clientX: 150,
+        clientY: 130,
+      }),
+    );
+    expect(first).toHaveFocus();
+    expect(bubbles[0]).not.toHaveClass("is-open");
+    expect(bubbles[1]).toHaveClass("is-open");
+    fireEvent.scroll(window);
+    expect(document.querySelectorAll(".tooltip-content--portal.is-open")).toHaveLength(1);
+    fireEvent.pointerLeave(second);
+    expect(document.querySelectorAll(".tooltip-content--portal.is-open")).toHaveLength(0);
   });
 
   test("preserves pointer/focus overlap and dismisses on Escape or final blur", async () => {

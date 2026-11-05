@@ -102,7 +102,13 @@ CREATE TABLE app.preferences (
         OR length(date_range) <= 64
     ),
     initialized_at timestamptz,
-    updated_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+    updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    custom_date_range_limit integer NOT NULL DEFAULT 3 CHECK (custom_date_range_limit BETWEEN 1 AND 5),
+    recent_custom_date_ranges text[] NOT NULL DEFAULT '{}',
+    CONSTRAINT preferences_custom_date_ranges_bounded CHECK (
+        cardinality(recent_custom_date_ranges) <= custom_date_range_limit
+        AND array_position(recent_custom_date_ranges, NULL) IS NULL
+    )
 );
 
 ALTER TABLE app.preferences ENABLE ROW LEVEL SECURITY;

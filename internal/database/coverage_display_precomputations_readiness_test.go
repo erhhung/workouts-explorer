@@ -11,10 +11,10 @@ import (
 )
 
 func TestCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 30 {
-		t.Fatalf("supported schema = %d, want 30", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 31 {
+		t.Fatalf("supported schema = %d, want 31", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("full readiness must compose the version-gated display contract with all existing contracts")
 	}

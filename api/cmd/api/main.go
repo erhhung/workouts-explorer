@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	apiapp "github.com/erhhung/workouts-explorer/api"
 	"github.com/erhhung/workouts-explorer/internal/config"
@@ -23,6 +25,8 @@ func main() {
 }
 
 func run(ctx context.Context, logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	cfg, err := config.LoadAPI()
 	if err != nil {
 		return err

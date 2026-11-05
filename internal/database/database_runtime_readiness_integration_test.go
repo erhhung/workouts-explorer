@@ -490,7 +490,7 @@ func TestRuntimeCapabilityPostgreSQL(t *testing.T) {
 	if _, err := provider.UpTo(ctx, SupportedSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
+	if err := admin.QueryRow(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, SupportedSchemaVersion).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("current schema metadata: %t %v", preserved, err)
 	}
 	for _, runtime := range []int{27, 28, 29} {

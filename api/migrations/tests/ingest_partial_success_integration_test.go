@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/api/migrations"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -187,7 +188,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 		t.Helper()
 		tx := beginAccount(t, db.ctx, db.worker, f.account)
 		var source uuid.UUID
-		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, c.id, worker, c.lease).Scan(&source); err != nil || source != c.source {
+		if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, c.id, worker, c.lease, database.SupportedSchemaVersion).Scan(&source); err != nil || source != c.source {
 			t.Fatalf("file fence source=%s err=%v", source, err)
 		}
 		var frozen string
@@ -284,7 +285,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 
 	t.Run("MetadataAndInternalSecurity", func(t *testing.T) {
 		var safe bool
-		if err := db.migration.QueryRow(db.ctx, `SELECT (SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+		if err := db.migration.QueryRow(db.ctx, `SELECT (SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT bool_and(p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog, app']
 			 AND pg_get_userbyid(p.proowner)=expected.owner
 			 AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')

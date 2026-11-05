@@ -53,7 +53,7 @@ func TestCoverageEntityStatsPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayMigrate30(t, ctx)
+	coverageDisplayMigrateCurrent(t, ctx)
 
 	t.Run("Full21FieldsEducationDedupAndCheckedSubsetIndependence", func(t *testing.T) {
 		f := newCoverageDisplayFixture(t, db)

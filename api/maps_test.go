@@ -445,8 +445,8 @@ func TestMapTileUpstreamURLUsesOnlyValidatedScope(t *testing.T) {
 		t.Fatalf("unexpected query: %s", parsed.RawQuery)
 	}
 	for key, value := range want {
-		if parsed.Query().Get(key) != value {
-			t.Errorf("%s=%q, want %q", key, parsed.Query().Get(key), value)
+		if values := parsed.Query()[key]; len(values) != 1 || values[0] != value {
+			t.Errorf("%s=%v, want [%q]", key, values, value)
 		}
 	}
 	coverageRaw, err := mapTileFunctionUpstreamURL("http://workouts-explorer-tiles:3000/internal", "app.coverage_mvt",
@@ -458,11 +458,18 @@ func TestMapTileUpstreamURLUsesOnlyValidatedScope(t *testing.T) {
 	if coverageURL.Path != "/internal/app.coverage_mvt/12/655/1582" || coverageURL.RawQuery != parsed.RawQuery {
 		t.Fatalf("unexpected upstream coverage route: %s", coverageRaw)
 	}
-	if _, err := mapTileFunctionUpstreamURL("http://tiles.invalid", "app.hostile", selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
-		t.Fatal("unknown tile function was accepted")
+	for _, source := range []string{"public.raw_route_mvt", "public.coverage_mvt", "app.other_route_mvt", "app.other_coverage_mvt", "app.hostile", ""} {
+		if _, err := mapTileFunctionUpstreamURL("http://tiles.invalid", source, selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
+			t.Errorf("unapproved tile function %q was accepted", source)
+		}
 	}
 	if _, err := mapTileUpstreamURL("/relative", selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
 		t.Fatal("relative internal tile service URL must be rejected")
+	}
+	for _, base := range []string{"file://tiles/private", "http://user:private@tiles.invalid", "http://tiles.invalid?private=scope", "http://tiles.invalid#private"} {
+		if _, err := mapTileUpstreamURL(base, selectionID, accountID, sessionID, 1, 0, 0, 0); err == nil {
+			t.Fatal("unsafe internal tile service URL was accepted")
+		}
 	}
 }
 

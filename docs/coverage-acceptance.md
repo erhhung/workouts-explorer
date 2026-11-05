@@ -316,3 +316,80 @@ make coverage-worker-test
 
 Administrator OSM status/refresh API work belongs to Milestone 9, not these
 Milestone 7 acceptance profiles.
+
+## Tile-Local Source Verification (031)
+
+Reproduction uses checked-in tests, never an actual-data clone or ambient live
+URLs. First provision a **synthetic loopback test database**, the restricted roles
+and extensions, and migrate it natively to current schema 31/minimum 31. Explicit `MIGRATION_DATABASE_URL`,
+`API_DATABASE_URL` and `WORKER_DATABASE_URL` must address that same test database.
+With those private test URLs already set, run the structural comparison:
+
+```bash
+TILE_GEOMETRY_TEST_DISPOSABLE=1 go test ./api/migrations/tests \
+  -run '^TestTileLocalScaleComparisonPostgreSQL$' -count=1 -v
+```
+
+[The checked-in comparison](../api/migrations/tests/tile_local_scale_integration_test.go)
+extracts the actual old/new input producers from 014/030/031 and asserts
+cardinality, not timing. It does **not** run the old full global-union tile
+function. It separately decodes actual new tiles and checks raw workout IDs/order,
+canonical/source properties, full-range counts and absence of embedded focus.
+
+Related suites use `TILE_GEOMETRY_TEST_DISPOSABLE=1` for geometry/security and
+`TILE_GEOMETRY_UPGRADE_DATABASE_URL` for a separate **empty** synthetic upgrade
+database; readiness uses `PROJECT_TILE_READINESS_DISPOSABLE=1` with
+`PROJECT_TILE_READINESS_DATABASE_URL`; API authorization uses
+`MAP_TILE_TEST_DISPOSABLE=1` with actual API/migration login URLs. See
+[geometry/upgrade tests](../api/migrations/tests/tile_local_geometry_integration_test.go),
+[catalog mutation tests](../internal/database/tile_readiness_integration_test.go) and
+[authorization integration](../api/tile_rendering_integration_test.go) for exact
+guards. Missing opt-ins skip tests and must not be reported as passes.
+
+Future separately authorized capacity measurements must distinguish cold/hit/
+coalesced requests, positive/empty tiles, queue/forward/body-write time, offered
+HTTP concurrency versus occupied render/delivery slots, and actual SQL work.
+Measure both modes' parallel bursts and p95, browser initial **usable render** and
+focus latency. Retain failures and original profile bindings; do not infer these
+outcomes from cardinality, local EXPLAIN timings, API payload bounds or deployment
+health. The approved actual-data rehearsal/cutover is recorded with its
+[031 recovery limits](database-migrations.md#tile-local-geometry-031); it does not
+certify authenticated browser performance or provide an ongoing pre-start rollback.
+
+## Tile Verification (031)
+
+For checked-in synthetic SQL correctness, keep the existing loopback/disposable
+guards unchanged. Explicit migration/API/worker URLs must address the same named
+synthetic database at schema 31/minimum 31; authorization also requires its explicit
+`TILE_DATABASE_URL` for the tile role. No actual-data clone or live endpoint:
+
+```bash
+TILE_GEOMETRY_TEST_DISPOSABLE=1 go test ./api/migrations/tests \
+  -run '^TestDenseTile.*PostgreSQL$' -count=1 -v
+```
+
+[Geometry/auth tests](../api/migrations/tests/dense_tile_rendering_integration_test.go)
+and [scale tests](../api/migrations/tests/dense_tile_scale_integration_test.go) cover
+closed loops, components/gaps/dots, identity/security and bounded cold-plan inputs.
+Migration/readiness and browser checks have their own recorded scopes; no skipped
+opt-in case is a pass, and an extracted producer query is not full endpoint p95.
+The [scheduler](../ui/src/privateTiles.ts), [scheduler tests](../ui/src/privateTiles.test.ts)
+and [MapPage integration](../ui/src/MapPage.tsx) define browser behavior.
+
+Future actual-account runs require **explicit user authorization**, separate from
+these fixture opt-ins. Keep account, date range, route count/location/IDs, complete
+measurements and screenshots in approved private ignored storage, not public docs.
+Check requested-versus-complete successful tile sets and visible geometry:
+`areTilesLoaded()` includes failed tiles and cannot certify completeness. Separate
+**60s initial queue** from **15s first-dispatch service/retry** budget, source errors,
+server admission/SQL time, browser transport/render and observation overhead.
+Do not infer browser latency from a fast server query, or blame SQL from unresolved
+browser timing. The recorded final run establishes scoped completeness, not fast
+raw rendering or compression-latency improvement. Scheduling stalls extended nominal
+observation windows, so do not treat them as exact-window or time-to-usable-render
+acceptance. Keep unavailable bodies unknown rather than treating errors as empty.
+Preserve the non-repeat-until-green/no-cache-flush/no-manual-reload method, ordinary
+background renewal provenance and verified owned-scope cleanup. Native headless
+4K software tests and this bounded live run are not a universal production SLO;
+remaining dense raw client completion requires investigation, not an assumed
+server-resource increase.

@@ -249,7 +249,7 @@ func TestIngestPhaseProgressPostgreSQL(t *testing.T) {
 		for _, metadata := range []struct {
 			schema, minimum int
 			allowed         bool
-		}{{28, 28, false}, {29, 29, true}, {30, 30, true}, {future, 30, true}, {future, future, false}} {
+		}{{28, 28, false}, {29, 29, true}, {30, 30, true}, {31, 31, true}, {future, 31, true}, {future, future, false}} {
 			tx := beginAccount(t, ctx, db.migration, f.account)
 			defer tx.Rollback(ctx)
 			reprocessingExec(t, db, tx, `UPDATE app.schema_metadata SET schema_version=$1,minimum_runtime_version=$2 WHERE singleton`, metadata.schema, metadata.minimum)
@@ -261,8 +261,8 @@ func TestIngestPhaseProgressPostgreSQL(t *testing.T) {
 					t.Fatalf("phase writer rejected schema/minimum %d/%d: ok=%t err=%v", metadata.schema, metadata.minimum, ok, err)
 				}
 				var runtime int
-				if err := tx.QueryRow(ctx, `SELECT runtime_version FROM app.ingest_write_capabilities WHERE backend_pid=pg_backend_pid() AND transaction_id=txid_current()`).Scan(&runtime); err != nil || runtime != 30 {
-					t.Fatalf("phase writer must use its literal runtime30 fence: runtime=%d err=%v", runtime, err)
+				if err := tx.QueryRow(ctx, `SELECT runtime_version FROM app.ingest_write_capabilities WHERE backend_pid=pg_backend_pid() AND transaction_id=txid_current()`).Scan(&runtime); err != nil || runtime != 31 {
+					t.Fatalf("phase writer must use its literal runtime31 fence: runtime=%d err=%v", runtime, err)
 				}
 			} else {
 				reprocessingError(t, err, "55000")

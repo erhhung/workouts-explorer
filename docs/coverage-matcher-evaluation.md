@@ -19,8 +19,8 @@ not new route jobs or provider checks; job behavior, generation policy and match
 policy are unchanged. Current source ends at **030**, with final source/runtime
 support and schema/minimum runtime **30**, baseline **27**, ledger **0-30**.
 Combined **029** contains ingest status/reprocessing/phases; **030** contains
-compact/canonical display. See the [history mapping](database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+compact/canonical display. See the [history mapping](database-migrations.md#current-source-layout)
+and [pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 Approved live reconciliation is pending here. Existing matcher benchmarks and
 historical acceptance evidence are not fresh squash verification. M8 acceptance belongs
 only to [Milestone 8 Closeout](development-progress.md#milestone-8-closeout).

@@ -552,11 +552,12 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 		writeFieldError(w, r, field, "invalid", message)
 		return
 	}
+	updateCustomDateRangeHistory(&current, patch)
 	columns := make([]string, len(current.WorkoutColumns))
 	for index := range current.WorkoutColumns {
 		columns[index] = string(current.WorkoutColumns[index])
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,coverage_diagnostics_enabled=$9,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$10`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), current.CoverageDiagnosticsEnabled, *session.accountID)
+	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,coverage_diagnostics_enabled=$9,custom_date_range_limit=$10,recent_custom_date_ranges=$11,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$12`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), current.CoverageDiagnosticsEnabled, current.CustomDateRangeLimit, current.RecentCustomDateRanges, *session.accountID)
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
@@ -847,11 +848,11 @@ func readPreferencesTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, forU
 	var result generated.Preferences
 	var columns []string
 	var dateRange *string
-	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,coverage_diagnostics_enabled,initialized_at IS NOT NULL FROM app.preferences WHERE account_id=$1`
+	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,coverage_diagnostics_enabled,initialized_at IS NOT NULL,custom_date_range_limit,recent_custom_date_ranges FROM app.preferences WHERE account_id=$1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.CoverageDiagnosticsEnabled, &result.Initialized)
+	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.CoverageDiagnosticsEnabled, &result.Initialized, &result.CustomDateRangeLimit, &result.RecentCustomDateRanges)
 	if err != nil {
 		return generated.Preferences{}, err
 	}
@@ -887,6 +888,9 @@ func applyPreferencesPatch(value *generated.Preferences, patch generated.Prefere
 	}
 	if patch.PageSize != nil {
 		value.PageSize = *patch.PageSize
+	}
+	if patch.CustomDateRangeLimit != nil {
+		value.CustomDateRangeLimit = *patch.CustomDateRangeLimit
 	}
 	if patch.CoverageDiagnosticsEnabled != nil {
 		value.CoverageDiagnosticsEnabled = *patch.CoverageDiagnosticsEnabled
@@ -928,6 +932,9 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 	if value.PageSize < 10 || value.PageSize > maximum {
 		return "pageSize", fmt.Sprintf("page size must be between 10 and %d", maximum)
 	}
+	if value.CustomDateRangeLimit < 1 || value.CustomDateRangeLimit > 5 {
+		return "customDateRangeLimit", "custom date ranges must be between 1 and 5"
+	}
 	if value.DateRange.IsSpecified() && !value.DateRange.IsNull() && !validDateRangePreference(value.DateRange.MustGet()) {
 		return "dateRange", "date range must be a supported shortcut or an inclusive YYYY-MM-DD/YYYY-MM-DD range"
 	}
@@ -940,6 +947,28 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 		seen[string(column)] = true
 	}
 	return "", ""
+}
+
+func updateCustomDateRangeHistory(value *generated.Preferences, patch generated.PreferencesPatch) {
+	history := make([]string, 0, value.CustomDateRangeLimit)
+	if patch.DateRange.IsSpecified() && !patch.DateRange.IsNull() {
+		if dateRange := patch.DateRange.MustGet(); strings.Contains(dateRange, "/") {
+			history = append(history, dateRange)
+		}
+	}
+	for _, previous := range value.RecentCustomDateRanges {
+		if len(history) == value.CustomDateRangeLimit {
+			break
+		}
+		duplicate := false
+		for _, included := range history {
+			duplicate = duplicate || previous == included
+		}
+		if !duplicate {
+			history = append(history, previous)
+		}
+	}
+	value.RecentCustomDateRanges = history
 }
 
 func validDateRangePreference(value string) bool {

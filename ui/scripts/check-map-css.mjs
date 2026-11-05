@@ -6,6 +6,26 @@ const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8").
 );
 const mapHost = /\.map-stage\s*>\s*\.map-canvas\.maplibregl-map\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
 
+if (
+  !/\.coverage-cell-tooltip\.tooltip,\s*\.coverage-cell-tooltip > \.tooltip-trigger\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%/.test(
+    css,
+  ) ||
+  !/\.tooltip-content--single-line\s*\{[^}]*max-width:\s*none[^}]*white-space:\s*nowrap/.test(css)
+)
+  throw new Error(
+    "Truncated Road Coverage values need bounded triggers and full single-line tooltips",
+  );
+
+if (
+  !/\.coverage-cell-value\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/.test(
+    css,
+  ) ||
+  !/\.coverage-table-link\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*padding:\s*0/.test(
+    css,
+  )
+)
+  throw new Error("Road Coverage values must truncate within the padded column content area");
+
 for (const declaration of ["position: absolute", "inset: 0", "width: 100%", "height: 100%"])
   if (!mapHost.includes(declaration))
     throw new Error(`Map host must declare ${declaration} with greater specificity than MapLibre`);
@@ -48,7 +68,7 @@ if (/\.coverage-button/.test(css))
 if (!/\.coverage-route-status\s*\{[^}]*border-radius:\s*50%/.test(css))
   throw new Error("Every Coverage readiness indicator must share a circular frame");
 if (
-  !/\.tooltip-content--portal\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*50[^}]*bottom:\s*auto/.test(
+  !/\.tooltip-content--portal\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*\d+[^}]*bottom:\s*auto/.test(
     css,
   ) ||
   !/\.tooltip-content--portal\.is-open\s*\{[^}]*visibility:\s*visible[^}]*transition-delay:\s*750ms/.test(
@@ -56,12 +76,25 @@ if (
   )
 )
   throw new Error("Portaled readiness tooltips must escape list clipping and retain their delay");
+const portalTooltipLayer = Number(
+  /\.tooltip-content--portal\s*\{[^}]*z-index:\s*(\d+)/.exec(css)?.[1],
+);
+const dialogLayer = Number(/\.dialog-content\s*\{[^}]*z-index:\s*(\d+)/.exec(css)?.[1]);
+if (!(portalTooltipLayer > dialogLayer))
+  throw new Error("Portaled tooltips must paint above modal dialogs, not underneath their content");
 if (
-  !/\.coverage-route-status--unavailable > span\[aria-hidden="true"\]\s*\{[^}]*transform:\s*translate\(0,\s*-2px\)/.test(
+  !/\.coverage-route-status--unavailable\s*\{[^}]*border:\s*0[^}]*background:\s*transparent/.test(
     css,
-  )
+  ) ||
+  !/\.coverage-route-status--unavailable > svg\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*100%/.test(
+    css,
+  ) ||
+  /\.coverage-route-status--unavailable[^{}]*\{[^}]*(?:transform|font-size|font-weight):/.test(
+    css,
+  ) ||
+  /\.coverage-route-status--unavailable\s*>\s*span/.test(css)
 )
-  throw new Error("The unavailable Coverage X must retain its corrected optical alignment");
+  throw new Error("The unavailable Coverage badge must use a full-size SVG without text offsets");
 if (
   !/\.coverage-route-status--pending\s*\{[^}]*background:\s*conic-gradient\([^}]*animation:\s*coverage-status-spin 1s linear infinite/.test(
     css,

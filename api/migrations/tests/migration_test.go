@@ -44,13 +44,25 @@ func compactSQL(value string) string {
 }
 
 var migrationFiles = []string{
-	"001_job_foundations.sql", "002_account_lifecycle.sql", "003_sources_and_job_snapshots.sql",
-	"004_ingest_workouts.sql", "005_worker_job_log_context.sql", "006_durable_data_sync.sql",
-	"007_workout_route_summaries.sql", "008_durable_workout_deletion.sql", "009_raw_route_map.sql",
-	"010_segment_route_geometry.sql", "011_workout_split_paces.sql", "012_workout_timezones.sql",
-	"013_coverage_matcher_diagnostics.sql", "014_martin_tile_contract.sql",
-	"015_coverage_route_jobs.sql", "016_durable_route_coverage.sql", "017_coverage_reconciliation.sql",
-	"018_park_attribution.sql", "019_coverage_explorer_reads.sql",
+	"001_job_foundations.sql",
+	"002_account_lifecycle.sql",
+	"003_sources_and_job_snapshots.sql",
+	"004_ingest_workouts.sql",
+	"005_worker_job_log_context.sql",
+	"006_durable_data_sync.sql",
+	"007_workout_route_summaries.sql",
+	"008_durable_workout_deletion.sql",
+	"009_raw_route_map.sql",
+	"010_segment_route_geometry.sql",
+	"011_workout_split_paces.sql",
+	"012_workout_timezones.sql",
+	"013_coverage_matcher_diagnostics.sql",
+	"014_martin_tile_contract.sql",
+	"015_coverage_route_jobs.sql",
+	"016_durable_route_coverage.sql",
+	"017_coverage_reconciliation.sql",
+	"018_park_attribution.sql",
+	"019_coverage_explorer_reads.sql",
 	"020_facility_coverage_identity.sql",
 	"021_icloud_sources.sql",
 	"022_legacy_coverage_bootstrap.sql",
@@ -62,6 +74,7 @@ var migrationFiles = []string{
 	"028_ingest_coverage_pipeline.sql",
 	"029_ingest_status_reporting.sql",
 	"030_coverage_display.sql",
+	"031_tile_rendering.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {

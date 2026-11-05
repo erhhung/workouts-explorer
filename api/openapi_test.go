@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -279,6 +280,32 @@ func TestImplementedResponsesMatchOpenAPI(t *testing.T) {
 				t.Fatalf("response contract validation failed: %v; body=%s", err, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestCoverageFocusMetadataContract(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromData(openAPIDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"FeatureCollection","features":[{
+		"type":"Feature","properties":{
+			"entityId":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","entityKind":"park",
+			"sourceEntityId":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","sourceEntityKind":"path",
+			"broadClass":"park","name":null,"localityName":null,"regionId":"synthetic-region",
+			"rangeWorkoutCount":5,"countBucket":3},
+		"geometry":{"type":"MultiLineString","coordinates":[[[10,20],[10.001,20.001]]]}}]}`), &body); err != nil {
+		t.Fatal(err)
+	}
+	schema := document.Components.Schemas["CoverageFocusFeatureCollection"].Value
+	if err := schema.VisitJSON(body); err != nil {
+		t.Fatalf("canonical identity and source provenance must coexist in focus geometry: %v", err)
+	}
+	properties := body["features"].([]any)[0].(map[string]any)["properties"].(map[string]any)
+	delete(properties, "entityId")
+	if schema.VisitJSON(body) == nil {
+		t.Fatal("focus geometry must carry the canonical identity needed by hover statistics")
 	}
 }
 

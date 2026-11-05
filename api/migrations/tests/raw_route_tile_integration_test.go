@@ -87,6 +87,13 @@ func TestRawRouteTilePrefilterSemantics(t *testing.T) {
 			}
 		}
 	}
+	// Synthetic source rows bypass ingest triggers, so initialize the derived
+	// storage explicitly; normal trigger maintenance has its own regression suite.
+	if _, err := tx.Exec(db.ctx, `INSERT INTO app.raw_route_tile_chunks(account_id,workout_id,component,piece,geom)
+		SELECT route.account_id,route.workout_id,chunk.component,chunk.piece,chunk.geom FROM app.workout_routes route
+		CROSS JOIN LATERAL app.project_tile_chunks(route.route) chunk WHERE route.account_id=$1`, account); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(db.ctx, `SET LOCAL session_replication_role='origin'`); err != nil {
 		t.Fatal(err)
 	}
@@ -113,12 +120,12 @@ func TestRawRouteTilePrefilterSemantics(t *testing.T) {
 	}
 	t.Run("supported schema", func(t *testing.T) {
 		var version, minimum int
-		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != database.SupportedSchemaVersion || minimum != 30 {
-			t.Fatalf("metadata=%d/%d, want %d/30 err=%v", version, minimum, database.SupportedSchemaVersion, err)
+		if err := tx.QueryRow(db.ctx, `SELECT schema_version,minimum_runtime_version FROM app.schema_metadata WHERE singleton`).Scan(&version, &minimum); err != nil || version != database.SupportedSchemaVersion || minimum != 31 {
+			t.Fatalf("metadata=%d/%d, want %d err=%v", version, minimum, database.SupportedSchemaVersion, err)
 		}
 		var boundaries bool
 		if err := tx.QueryRow(db.ctx, `SELECT pg_get_userbyid(p.proowner)='workouts_security_owner'
-				AND p.prosecdef AND p.provolatile='s' AND p.proconfig=ARRAY['search_path=pg_catalog, app, public']
+				AND p.prosecdef AND p.provolatile='s' AND p.proconfig=ARRAY['search_path=pg_catalog, app, public','jit=off']
 				AND has_function_privilege('workouts_tiles',p.oid,'EXECUTE')
 				AND NOT EXISTS(SELECT 1 FROM aclexplode(p.proacl) acl WHERE acl.grantee=0)
 				AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')

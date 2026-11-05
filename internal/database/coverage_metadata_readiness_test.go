@@ -54,7 +54,7 @@ func metadataFunction(t *testing.T, feature, name string) string {
 }
 
 func TestCoverageMetadataReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 30 || !strings.HasSuffix(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
+	if SupportedSchemaVersion != 31 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
 		t.Fatal("runtime30 must require the dedicated metadata feature readiness contract")
 	}
 	for _, required := range []string{"SELECT $1 < 29 OR (", "migration_baseline=27", "coverage_route_changes_dirty_idx",
@@ -67,9 +67,11 @@ func TestCoverageMetadataReadinessComposition(t *testing.T) {
 			t.Errorf("missing feature readiness guard %q", required)
 		}
 	}
-	for _,guard:=range []string{"pk.contype='p'", "NOT pk.condeferrable", "i.indisprimary AND i.indisunique AND i.indimmediate",
+	for _, guard := range []string{"pk.contype='p'", "NOT pk.condeferrable", "i.indisprimary AND i.indisunique AND i.indimmediate",
 		"unnest(pk.conkey)", "unnest(i.indkey)", "ARRAY['account_id','transaction_id']", "ARRAY['account_id','workout_id']"} {
-		if !strings.Contains(runtimeCoverageMetadataReadinessSQL,guard) {t.Errorf("missing exact primary-key contract %q",guard)}
+		if !strings.Contains(runtimeCoverageMetadataReadinessSQL, guard) {
+			t.Errorf("missing exact primary-key contract %q", guard)
+		}
 	}
 }
 

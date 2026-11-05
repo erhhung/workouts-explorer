@@ -8,7 +8,7 @@ Current source uses migrations **001-030**, final source/runtime
 `SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and
 ledger **0-30**. Combined **029** defines ingest outcomes/reprocessing/phases;
 **030** defines compact and canonical display. See the
-[history mapping](database-migrations.md#source-history-mapping) and
+[history mapping](database-migrations.md#current-source-layout) and
 [completed revision-61 cutover](database-migrations.md#live-cutover-revision-61).
 APP 30/minimum 30 and OSM 10/minimum 10 are deployed; the separate steady-idle
 measurement remains pending, not established by source numbering or readiness.
@@ -30,15 +30,6 @@ evidence, **not enqueueing `coverage_update`/`coverage_update_route` jobs**. No 
 regeneration/download, rematching or provider check is needed for context warming.
 Existing job lifecycle and historical receipts below retain their original scope;
 they are not new source-30 verification receipts.
-
-**Pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)):
-the **032 release receipt** records a standalone restricted native migration that
-preceded the full-values backend **42** and UI **43** rollouts with `--no-hooks`.
-Actual API/worker readiness and original-data/configuration preservation passed.
-Source auto-sync remained off; no new ingest/matching work or provider checks
-were started. Full pre-32 backups and old images were retained; image-only
-rollback was unsupported. Scripted deployed-browser verification passed for that
-release, not as a new 033 browser receipt or milestone/capacity certification.
 
 The following folded-028 release evidence predates explicit ingest reprocessing.
 At that checkpoint active migrations were **001-028**, with no active 029. New 028 folds the

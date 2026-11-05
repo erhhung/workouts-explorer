@@ -129,7 +129,7 @@ func TestLegacyCoverageBootstrapIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("MetadataACLsAndCampaignWakeup", func(t *testing.T) {
-		wantVersion, wantMinimum := database.SupportedSchemaVersion, 30
+		wantVersion, wantMinimum := database.SupportedSchemaVersion, database.SupportedSchemaVersion
 		if schema20 {
 			wantVersion, wantMinimum = 20, 18
 		}

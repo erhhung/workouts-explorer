@@ -12,8 +12,10 @@ alias omp &> /dev/null || {
   source "$HOME/.bash_profile"
 }
 
-[ "$OPENCODE_CALLER" == vscode ] && \
-  . .vscode/opencode.sh
+if [ "$OPENCODE_CALLER" == vscode ]; then
+  # requires $OPENCODE_SERVER_USERNAME and $OPENCODE_SERVER_PASSWORD
+  exec opencode attach http://localhost:4096 --dir "$PWD" --continue
+fi
 
 git_root() {
   local root

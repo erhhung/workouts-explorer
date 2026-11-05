@@ -5,8 +5,8 @@
 The [029 ingest-reprocessing contract](ingest-reprocessing.md) retains deployed
 behavior in the approved source sequence **001-030**, final source/runtime support
 and schema/minimum runtime **30**, baseline **27**, ledger **0-30**. See the
-[history mapping](database-migrations.md#source-history-mapping) and
-[pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+[history mapping](database-migrations.md#current-source-layout) and
+[pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 The authorized live reconciliation remains pending here; source preparation is
 not deployed schema 30. New bounded sync skips unchanged successful metadata
 by default; the bounded-only **Reprocess all files in this date range** checkbox
@@ -534,25 +534,6 @@ not published or deployed. Arm64 execution, read-only-root-filesystem/seccomp
 behavior and full worker startup were not verified by these checks.
 
 ## Schema And Verification
-
-Current source uses **001-030**, final schema/minimum runtime **30**,
-`migration_baseline=27` and contiguous ledger **0-30**. Combined **029** defines
-ingest status/reprocessing/phases; **030** combines compact/canonical display.
-Display migration 030 changes neither source discovery nor ingest policy.
-Live reconciliation is authorized but pending; see the
-[pre-cutover actual state](database-migrations.md#pre-cutover-live-status).
-Use protected backups,
-the native migration entry point and coordinated compatible API/worker images.
-Preserve queued historical jobs, original parameters and frozen manifests.
-Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
-032 was applied through a standalone restricted native migration
-before the accepted full-values backend-42/UI-43 rollout with `--no-hooks`. Actual API/worker
-readiness and original-data/configuration preservation passed. Full pre-32 backups
-and old images remain retained; image-only rollback is unsupported. Scripted
-deployed-browser verification passed at that checkpoint, not as a new 033 browser
-receipt. Current acceptance belongs only to
-[Milestone 8 Closeout](development-progress.md#milestone-8-closeout), with no new
-provider or ingest verification claimed. See [migration requirements](database-migrations.md).
 
 The following migration/release evidence is historical, **before explicit ingest reprocessing**.
 At that checkpoint active migrations were **001-028**. Migration 021 introduced iCloud, 022 legacy-route

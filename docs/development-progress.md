@@ -15,24 +15,26 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Committed-route Coverage pipeline | Folded-028 contract introduced at Helm revision 29 remains deployed; exact eligible cohorts and mixed-failure automatic recovery active |
 | Metadata-driven Coverage reconciliation | Deployed at Helm 62; initialization complete; selected real PostgreSQL matrix and three live unchanged cycles PASS with no GPS/ROI, new jobs or changed rows |
 | Concurrent coverage and reader coordination | Deployed and focused verification complete; one coverage pod runs two jobs with shared least-active reader assignment |
-| Application database | Current Helm 62 retains the verified revision-61 cutover: SupportedSchemaVersion=30, schema/minimum runtime 30/30, baseline 27, ledger 0-30; original retained ledger rows and row-ID high-water 54 verified |
-| Historical pre-cutover database | Revision 60, schema 34/minimum runtime 33, baseline 27, ledger 0-34 in pre-squash historical numbering; see [mapping](database-migrations.md#source-history-mapping); superseded by the separately verified revision-61 cutover |
+| Application database | Live source/schema/minimum runtime 31/31/31, baseline 27, ledger 0-31; fresh current catalog matched, retained history and sequence high-water preserved |
+| Historical database checkpoints | Superseded; detailed historical source/catalog receipts are private and do not define current compatibility |
 | OSM database | Native OSM 010 Up completed on actual PG17; schema/minimum runtime 10/10 verified on primary and two standbys; isolated matrix used PG18.6 |
-| Folded-028 foundation and source squash | 001-028 unchanged; combined 029 covers ingest outcomes/filtering/reprocessing/phases; combined 030 covers compact display facts/targeted stats/canonical identity; no functional change |
+| Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity in 030 and the complete tile pipeline in 031 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
-| UI follow-up | Deployed with the current pinned UI image; earlier source-only and test-count checkpoints are historical |
+| UI follow-up | Helm 77 fixes mouse-driven tooltip reopening after Apply/Cancel while preserving keyboard help; the route picker retains its 500ms hold, list-top alignment and -2px help offset |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Current release preserves established resource/configuration semantics; backend-42/UI-43 rendering and rollout receipts are historical checkpoints |
+| Chart semantics | Helm 77 preserves all 18 configuration UID/resourceVersion/content tuples and all four non-UI pods; only the UI image rolls |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 62; native API/shared-worker/OSM images under original tag, UI/Martin unchanged, all 18 configuration specifications preserved; deployment and bounded unchanged-cycle acceptance verified |
+| Release | Helm 77, UI-only tooltip focus-restoration fix; Harbor retains only canonical dev-20261102 tags matching deployed references, current image digests and their provenance; all five deployments healthy |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
-| Canonical display identity | Policy `coverage-display-identity-v1` retained in source 030; final source schema/minimum runtime 30, baseline 27; qualified M8 live browser gate PASS at revision 57 remains historical |
+| Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
 | Summary aggregates | Measured-distance totals/averages include route-less types; Workouts pairs the total with a right-aligned GPS-route count |
-| Latest performance comparison | Corrected graph statistics resolved the observed regression under fixed inputs and matching contracts; measurements remain private, not capacity certification |
+| Latest performance comparison | Canonical authorized desktop/4K run completed all required views without observed delivery errors; wire-size benefit observed, no latency-speedup or capacity certification; dense raw completion remains slow |
 | Early hard-gap matcher correction | Implemented, verified and deployed; selective failed-target recovery verified privately; existing bounds and successful Coverage preserved |
 | Coverage display optimization | Compact foundation and canonical identity combined in source 030; deployed hover/cache/overlay behavior unchanged; M8 accepted, capacity not certified |
+| Tile-local map optimization | All six 031 optimizations remain deployed; consolidated 031 LOD/optimized SQL, scheduling and gzip delivery live at 67; scoped completeness verified, not fast dense raw rendering |
+| Raw route continuity | 009 enforces the existing Coverage spatial boundary during ingest-derived geometry and focused display; authorized existing-data scan/repair verified with source observations and valid evidence preserved |
 
 Runtime deployment, the earlier authorized legacy repair and M8 acceptance are
 complete. Explicit user approval and the final qualified live browser pass close
@@ -40,8 +42,11 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [metadata release record](#metadata-driven-coverage-reconciliation) governs
-current release status; the [029 follow-up](#ingest-phase-progress-follow-up-029)
+The [tooltip-focus fix](#route-checkbox-tooltip-focus-restoration) owns
+current deployment status. The [031 delivery record](#tile-rendering-and-delivery-031)
+retains its Helm-67 benchmark scope. The [031 release record](#tile-local-map-optimization-031) retains its
+Helm-65 checkpoint and limits. The [metadata release record](#metadata-driven-coverage-reconciliation)
+retains revision-61/62 evidence; the [029 follow-up](#ingest-phase-progress-follow-up-029)
 retains its phase contract and historical revision-60 receipt.
 [M8 closeout](#milestone-8-closeout) retains its revision-57 acceptance and
 browser PASS unchanged. The [10/20 release checkpoint](#folded-028-production-release-10202026)
@@ -49,6 +54,320 @@ superseded earlier undeployed, pending-repair and old-live-contract wording at
 that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Route Checkbox Tooltip Focus Restoration
+
+**Harbor cleanup 11/4/2026:** all four application repositories retain their
+current release image and its current SBOM/provenance artifacts. Twenty-one
+obsolete artifacts and two extra aliases are removed. `dev-20261102` is the only
+remaining image tag in each repository, matching the current deployed references;
+the UI's additional `dev-20261104` alias is removed. Helm revision 77 and all
+running digests remain unchanged and all five deployments are healthy. Registry
+garbage collection is not triggered by this scoped artifact/tag cleanup.
+
+**Deployed 11/4/2026 at Helm 77.** Pointer Apply/Cancel returns focus to the
+bulk checkbox without reopening its help. This checkbox opts into keyboard-only
+focus activation; hover remains available, pointer leave dismisses it, and
+keyboard Apply restores the keyboard help. Other tooltip callers retain their
+existing focus behavior. Three regression tests reproduce both mouse failures
+before the fix and retain keyboard return behavior.
+
+All 302 focused Map/checkbox/tooltip tests, type checking, CSS guards, formatting
+and the production UI build pass. Chromium and WebKit candidate checks verify
+both viewport sizes against the live backend with real map resources. Live
+desktop/mobile Chromium repeats mouse Apply/Cancel, delayed no-reappearance,
+mouse movement, hover re-entry/leave and keyboard Apply checks against the
+deployed image. Saved preferences remain unchanged and owned verification
+capabilities and the temporary session are cleaned up. Only UI rolls; all five
+deployments are healthy, both strict-TLS origins serve the published bytes, and
+all 18 configuration fingerprints and four non-UI pod identities are preserved.
+
+## Route Checkbox Tooltip Offset
+
+**Deployed 11/4/2026 at Helm 76.** The revised three-line checkbox help text is
+preserved, and only that portal tooltip moves up 2px. Type checking, formatting,
+28 focused checkbox/tooltip tests and the production UI build pass. Live
+desktop/mobile Playwright checks verify the exact -2px placement, three rendered
+lines, unchanged picker anchoring and real basemap rendering without resource
+stubs or saved preference changes. Only UI rolls; all five deployments remain
+healthy, all 18 configuration fingerprints and four non-UI pod identities are
+preserved, and both strict-TLS origins serve the exact published assets.
+
+## Route Picker Timing, Alignment And Help
+
+**Deployed 11/4/2026 at Helm 75.** The type-picker hold threshold is 500ms, and
+the panel's top edge aligns with the scrolling routes list while retaining the
+full frame's left edge and width. Other dropdown offsets remain 12px. The native
+checkbox title is replaced with the shared portal tooltip, using 16px text and
+the requested three-line pointer/keyboard guidance. The actual checkbox links to
+the description; no extra tab stop is introduced, and help hides while the picker
+is open.
+
+All 725 UI tests, type checking, CSS guards, formatting and the UI build pass.
+Chromium and WebKit candidate checks verify both desktop and mobile geometry,
+the three rendered tooltip lines and real basemap rendering. Authenticated live
+Chromium repeats those checks against the deployed image without resource stubs
+or saved preference changes. The rollout changes only the UI image, preserves all
+18 configuration fingerprints and four other pod identities, and leaves all
+five deployments healthy. Both strict-TLS origins serve the exact published
+assets; owned verification capabilities and the temporary session are cleaned up.
+
+## Dropdown And Keyboard Focus Polish
+
+**Deployed 11/4/2026 at Helm 74.** Only the UI image changes. The existing global
+tag and all other image pins, resource/scheduling settings, database schema and
+18 configuration fingerprints are preserved. API, general-worker,
+Coverage-worker and Martin pod identities and restart counts remain unchanged.
+
+Focus rings follow keyboard navigation rather than pointer focus. Preferences
+uses accessible styled selects aligned with the trigger's left/top edges and
+width. Summary/Map date menus and the Map base-map menu match their controls and
+open 12px below them. The one-second workout-type picker matches the full route
+frame, uses equal 12px action insets/gap, and stays in the mobile dialog's
+accessible subtree. Data Sync Operation/Status panels share the full filter-row
+anchor and width; the control gap matches the surrounding card insets.
+
+The 724-test UI suite, type checking, CSS checks, formatting and production build
+pass. Chromium and WebKit candidate checks pass at desktop and mobile sizes with
+the live backend and real basemap resources. Authenticated Chromium checks repeat
+the geometry, keyboard focus and map-rendering verification against the actual
+deployment without UI, worker or tile stubs. Both strict-TLS origins serve the
+exact published UI bytes. Verification leaves saved preferences unchanged and
+removes its owned map capability and temporary session.
+
+## Custom Date Ranges And Workout Type Selection
+
+**Deployed 11/2/2026 at Helm 73 using `dev-20261102`.** The account lifecycle
+foundation includes the bounded recent custom date range list and its 1-5
+preference (default 3). The source/schema/minimum runtime remains 31/31/31,
+baseline 27, ledger 0-31. A guarded, rehearsed update installs the same preference
+columns on the existing database and seeds an existing explicit default range
+without changing prior preference values, account generations or functions.
+
+Summary and Map share the persistent unique MRU list below **Custom...**; an
+explicit range keeps its checkmark on **Custom...**. The Map bulk checkbox retains
+normal all/none behavior and opens **Show workout types** after a 1.5-second hold.
+Its dropdown aligns with the checkbox and uses the other dropdowns' 8px gap.
+Draft type selections apply atomically; compact Cancel/Apply actions, outside
+click and Escape retain normal dropdown behavior.
+
+Fresh native installation through 031, account persistence/concurrent update
+tests, restricted API/worker/Coverage-worker readiness, the Go suite and vet,
+the UI build and generated contract checks pass. The 718-test UI suite and
+desktop/mobile browser proof cover the unchanged UI source included in this
+release. Both strict-TLS live origins serve the exact published UI bytes. All
+five deployments are healthy and all 18 configuration fingerprints are
+preserved; only four intended deployment images change.
+
+Authenticated live desktop/mobile UI checks pass for the history menus, 1-5
+preference choices and the type dropdown's unchanged checkbox state, exact
+left-edge/8px anchoring and compact actions. This is a DOM/control check with
+public provider resources and private tile bodies stubbed, not a new map-rendering
+performance claim. Existing preferences remain unchanged; the temporary owned
+session, map capability and verification Job are cleaned up.
+
+## Consolidated Source And Tooltip Scroll Ownership
+
+**Deployed at Helm 72 using `dev-20261101`.** Raw spatial continuity is defined in
+009 and used by 010; the complete tile pipeline is `031_tile_rendering.sql`.
+Current startup accepts only schema/history 31 and its exact object/privilege
+profile. The fresh native installation and guarded PostgreSQL geometry/auth/count
+tests passed. A protected-data rehearsal verified catalog reconciliation and exact
+checkpoint recovery before the coordinated live cutover.
+
+The live function catalog matches the fresh reference. Business table identities,
+account generations and retained ledger rows were unchanged; sequence high-water
+was preserved. The completed route repair was not repeated. Matching API, worker,
+Coverage-worker and UI consumers are healthy. Martin restarted with only current
+canonical sources while retaining its image, pool/cache and resource settings.
+All 18 configuration fingerprints and application sizing settings are unchanged.
+Both strict-HTTPS origins match the frozen UI distribution.
+
+Portaled tooltips now have one active owner. Captured scroll rechecks the element
+under the remembered pointer, so disabled rows cannot retain stale hover bubbles.
+Scroll/resize handlers cannot reactivate a superseded tooltip; keyboard-focus and
+same-trigger hover overlap remain supported. The actual authorized wheel-scroll
+reproduction changed from accumulating stale bubbles to at most one, with none
+remaining after leaving the list. This is separate from latency/capacity acceptance.
+
+Full **708 UI tests**, including **271 MapPage** and **14 Tooltip** tests, and the
+full Go suite passed. Current images and their provenance remain under the new
+tag; explicitly requested registry cleanup removed non-current artifacts and old
+tag aliases after successful deployment. Historical image rollback availability
+must not be assumed after that cleanup. No broad registry garbage collection was
+triggered. Detailed operational evidence stays private.
+
+## Raw Route Continuity And Overflow Tooltips
+
+The current raw-route policy belongs to 009/010 and is deployed through the
+normal fenced ingest summary writer. Original observations, file hashes and
+Coverage matching versions are retained. [ADR 0015](decisions/015-route-continuity-and-preserved-observations.md)
+explains why spatial splitting follows, rather than resets, temporal components.
+
+An explicitly approved account-scoped scan found timestamp-baseline blind spots.
+The selected repair was rehearsed against private derived data, then applied in
+an atomic guarded transaction with geometry preimages retained. Original point
+row hashes and workout metadata stayed unchanged. Independent edge-multiset
+comparison retained every non-gap edge; exact and LOD chunk projections matched
+their builders. An account-wide derived-geometry verification found no remaining
+connections over the spatial limit. Already proven Coverage evidence/states and
+unstarted/no-evidence states were preserved; no provider reimport or unnecessary
+Coverage campaign was started. Detailed account/date/location manifests remain
+private. Other accounts are not claimed as historically backfilled.
+
+The focused raw renderer applies the same spatial limit to its original-point
+response. Authenticated browser checks on the reported cases verified loaded,
+visible focus sources without oversized connections. Separate actual authorized
+tile probes checked eligible gap-only locations; a location also containing valid
+observed geometry was not falsely required to be empty. These are continuity
+checks, not latency/capacity certification. Runtime providers/styles and isolated
+software-browser limitations are retained in private evidence.
+
+Road Coverage values remain inside padded cells. Styled full-text tooltips appear
+only for truncated values, use a single line, and paint above the modal dialog.
+An actual authenticated before/candidate/deployed hover reproduced the previous
+stacking failure and verified the correction at desktop and narrow widths.
+Temporary verification sessions/selections and the native operator Job were
+cleaned up. All 18 configuration identities/content fingerprints and application
+resources remain unchanged; both strict-HTTPS origins match the frozen UI assets.
+
+Source checks passed **706 UI tests**, including **271 MapPage tests**, full Go
+tests, vet, CSS guards and production typecheck/build. Isolated real PostgreSQL
+tests covered pure splitting, source preservation, idempotence, stationary runs,
+private ACLs and the real fenced ingest writer. Historical milestone acceptance
+and raw-rendering performance limitations remain separate.
+
+## Tile Rendering And Delivery (031)
+
+The complete current tile contract is consolidated in 031. Historical Helm-67
+delivery measurements retain their checkpoint scope; completeness was observed,
+but dense high-zoom raw completion was not a latency acceptance. Those results do
+not define an alternate runtime or migration profile. OSM remains independent.
+
+The [architecture](architecture.md#tile-rendering-and-delivery-031) records
+whole-component LOD bands, cold/generic-plan bounded Coverage probes, display-precision
+deduplication, the public-API browser protocol scheduler, and four-encoder streaming
+gzip with final authorization after admission. Canonical counts and exact detail/
+focus remain unchanged. Synthetic compression alone reduced **373,507 to 49,879
+bytes (86.6%)**; this is not a final live latency measurement.
+
+**Recorded source verification:** **701 UI tests**, including **267 MapPage and
+46 scheduler tests**; **9/9 native MapLibre 5.24 / Chromium 151 cases**, including
+40 delayed tiles whose admission exceeds 15s. Full Go tests, API/config races,
+**24 guarded authorization cases plus eight blocked-encoder invalidations**,
+vet, CSS and TypeScript/build checks passed. Generated consistency remains stable;
+there are no new public OpenAPI property changes after the 65 contract. Guarded
+031 SQL verification covers loops, fresh/upgrade/rollback, auth/ACL and cold plans.
+Incomplete actual-clone Coverage authorization/extracted-query observations are
+not a complete endpoint benchmark or an additional accepted test pass.
+
+**Sanitized live finding:** the earlier authorized pre-fix normal/4K viewport reproduction
+exposed server admission/SQL failures and exhausted the old source-wide retry
+budget. 66 removed the observed HTTP errors in that run but exposed premature
+15s browser **queue** expiry. 67 separates bounded queue wait from service time
+and adds bounded compression. The final canonical run reached every target camera
+and loaded every required tile at settlement, with no observed HTTP/non-abort
+transport errors, client deadlines or required errored tiles. Coverage 4K early/
+settled observations were complete; **dense high-zoom raw client completion was
+still slow, not a latency pass**. Server time and browser time are not fully
+decomposed; the remaining observation is not evidence of slow SQL. Existing CPU/
+memory evidence did not justify raising resource caps. Account/location/date/ID
+details, timings and screenshots stay in private ignored storage.
+
+The run was not repeated until green, with no cache flushing or manual scope/source
+reload. Ordinary background Coverage renewal retained identical context. Expected
+mode/zoom aborts are not delivery errors; unavailable bodies remain unknown, not
+empty. Gzip reduced estimated wire transfer, with header overhead not isolated;
+matched high-zoom responses retained decoded bytes and feature/layer counts. Neither
+compression-latency improvement nor raw viewport p95 improvement is established.
+Scheduling stalls extended nominal observation windows, precluding exact-window
+or time-to-usable-render acceptance; software/remote-browser and CPU causes remain
+unisolated. Owned selections/session were cleaned up and preferences/account/source
+generations preserved. See the [scoped final result](coverage-acceptance-results.md#tile-delivery-status-031).
+
+M8 remains closed; this is not M9 capacity acceptance or a universal production
+SLO. Dense raw client completion remains the next investigation, not a demonstrated
+need for more server resources or changed request-rate/timeout/body limits. No
+benchmark/test rerun, database call or operational execution occurs in this
+documentation task.
+
+## Tile-Local Map Optimization (031)
+
+**Historical Helm-65 checkpoint; the foundation remains deployed.** Current
+schema/delivery status is recorded in the [031 follow-up](#tile-rendering-and-delivery-031).
+
+**All six optimizations implemented and deployed for both maps at Helm 65.**
+The user-approved forward-only [031](database-migrations.md#tile-local-geometry-031) raises source
+`SupportedSchemaVersion`, schema and minimum runtime to **31**, retaining baseline
+**27** and ledger **0-31**. Historical **001-030 are byte-identical**. At that checkpoint live was
+**Helm 65 / APP 31/minimum 31 / OSM 10/minimum 10**, retaining the revision-64 UI
+fix and unchanged SVG. Historical
+pre-squash `031_ingest_reprocessing` is unrelated to this new tile migration.
+
+The [architecture](architecture.md#tile-local-rendering-031) records projected private
+chunks, local clipping/LOD, source-scoped Coverage deduplication, independent exact
+focus, bounded UI geometry caches, and API payload cache/coalescing/admission.
+Canonical whole-range counts, original GPS/evidence and exact Coverage-focus
+GeoJSON are unchanged. Default occupied delivery slots remain four with a separate
+six-body-job ceiling even when configured concurrency allows 16. New private Helm
+settings and tile-role SQL defaults are installed; Martin caching stays off.
+
+**Recorded local verification**, using guarded synthetic loopback PostgreSQL
+**18.6 / PostGIS 3.6.4**, passed native fresh and 30-to-31 migrations, transactional
+rollback/forward-only history, partial/reversed/overlapping evidence, gaps/dots,
+duplicate workout separateness, buffers/LOD, canonical-context invalidation and
+runtime ingest fences. Catalog readiness verification recorded **792 cases**.
+Actual tile-role `pg_sleep` and lock-wait checks verify the **4s SQL statement /
+250ms lock** bounds; HTTP abort is not proof of instantaneous SQL cancellation.
+
+Existing API/config full race checks and new cache-authorization integration
+checks passed, including blocked-transport/slow-writer body-slot lifetime tests.
+Final-source verification passed **651 UI tests**, including **263 MapPage tests**,
+the CSS guards, production build, full-repository Go tests and vet, generated
+OpenAPI consistency, Helm tests and chart checks. The build retains its chunk-size
+warning. OpenAPI focus metadata now describes the actual canonical/source
+properties, and signal cancellation reaches the tile-service lifecycle. Database
+integration checks ran separately against explicit disposable endpoints; passing
+the ordinary Go suite does not mean every opt-in operational fixture executed.
+
+**Approved deployment receipt:** native migration under the actual role took
+**50.77s**, Job **67.65s**, bounded by **90s statement / 500ms lock**. Existing Goose
+tuples were preserved and 031 appended at row **55**, high-water **55**, without
+reset. Native full readiness passed under the actual API/general-worker/Coverage-worker
+roles before writers started and after rollout. Fresh actual tile login verified
+`row_security=on`, **4s statement / 250ms lock / 5s idle transaction** limits.
+Martin's controlled zero-to-one restart refreshed connections while preserving
+its **1.15.0 pin, pool 4 and cache off**.
+
+Three new API/UI/shared-worker images under the original `dev-20261020` tag serve
+four consumers. All five application Deployments returned to their original
+**one replica**, healthy with **zero restarts** at verification. Separate OSM pins,
+settings and pod identities were unchanged. Of **18 configuration specifications**,
+**17 are unchanged**; the API ConfigMap retains its UID and adds only the seven
+tile settings. The UI checksum changed intentionally through the shared API
+template hash; actual nginx ConfigMap bytes are unchanged. Runtime packaging
+permissions were corrected without changing dependency versions or asset bytes.
+
+Authoritative business-data fingerprints across **95 tables / 305 buckets** were
+unchanged; raw GPS was **not dumped, scanned or hashed** by this proof. Actual-data
+native Up rehearsals took **40.866s / 45.053s**. The bounded consistent read-only
+snapshot excluded raw points and was **not a full backup**. Guarded pre-writer
+catalog-checkpoint restoration passed twice at approximately **152s**, restoring
+the exact old catalog without `CASCADE` and preserving sequence high-water.
+**No recovery ran live; resumed writers make that pre-start checkpoint ineligible
+now.** It is not an ongoing rollback guarantee. Actual dataset and storage metrics
+remain private; [migration recovery limits](database-migrations.md#tile-local-geometry-031) apply.
+
+Both strict-HTTPS origins served HTML and all **eight frozen assets** with matching
+hashes. No owner UI login, session, selection or provider was created for this
+verification. **Authenticated tile smoke and viewport capacity are not claimed in
+this deployment record.** Actual signed-in browser validation, parallel bursts,
+p95, initial usable render and focus latency remain separate gates, not missing
+implemented optimizations. The [synthetic comparison](coverage-acceptance-results.md#tile-local-source-verification-031)
+still proves cardinality, not endpoint p95 or a speed multiplier. M8 remains
+closed with its original acceptance/browser receipt; no new M8 pass or M9 capacity
+certification is implied. This documentation closeout performs no operational
+execution and does not rerun the recorded tests.
 
 ## Metadata-Driven Coverage Reconciliation
 
@@ -155,18 +474,7 @@ code or live operations are performed by this documentation change.
 combines phase progress with outcomes, filtering and reprocessing; **030** combines
 compact and canonical display. Final source/runtime `SupportedSchemaVersion=30`,
 schema/minimum runtime **30**, baseline **27**, ledger **0-30**; **001-028 unchanged**.
-See the [source history mapping](database-migrations.md#source-history-mapping).
-
-**Pre-cutover actual state:** Helm revision **60**, schema **34/minimum runtime 33**,
-baseline **27**, ledger **0-34**, in **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)). This remains the
-pre-cutover checkpoint, not revision-61 numbering. The separately recorded
-[revision-61 closeout](#metadata-driven-coverage-reconciliation) establishes the
-actual source-30 cutover; ordinary Goose Up was not used to downgrade this ledger.
-Historical receipts and Git/image history remain evidence of their original
-checkpoints, not a guarantee of current registry retention. The combined source
-contract has no runtime-31-34 compatibility path or phase-only image rollback
-promise; retain matching database and image recovery. M8 remains **PASS**, not reopened.
+See the [source history mapping](database-migrations.md#current-source-layout).
 
 Data Sync shows actual worker activity, not a phase guessed from elapsed time or
 file counters. Approved technical keys and user-facing text are:
@@ -198,30 +506,7 @@ exists, Events refresh without resetting the current page; failed detail request
 do not trigger those refreshes. Separate responses are not an atomic snapshot.
 Logs remain manual-refresh only.
 
-Recorded revision-60 validation, in **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)): **`go test ./...` PASS**, **`npm test` all 628 tests
-PASS**, and genuine isolated PostgreSQL checks **15 top-level / 48 leaf PASS**,
-without counting skipped database tests as passes. Native migration 034 completed
-in **73.09ms**. Only API, shared worker and UI pins were updated under the original
-development tag; OSM and Martin were unchanged, with all **18 configuration
-fingerprints preserved**. Detailed evidence remains in the private operator
-record, not public receipt data. This is progress visibility only: it does **not**
-fix **#3 delayed Coverage job creation** or **OSM timeouts**, and makes no capacity
-claim. No application tests, builds, backups, image-tag changes, deployment or live operations
-were performed by this documentation-only closeout.
-
 ## Canonical Display Identity (030)
-
-**Deployed behavior accepted; current source identity contract is 030.** The
-following receipt uses **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)), not a fresh squash pass.
-At this checkpoint Helm revision was **57**, with
-schema/minimum runtime **33**, baseline **27** and contiguous ledger **0-33**.
-Original private receipts remain unchanged. API/OSM retained the native-033 rollout-44 image pins;
-the shared ingest/Coverage worker image was updated at **54**, and UI at **57**.
-This is not an all-images rebuild at 57.
-[ADR 0013](decisions/013-canonical-coverage-display-identity.md) is the
-generally applicable policy, not an account/data-specific code patch.
 
 Named display identity uses region + normalized actual DISPLAY name/place,
 excluding kind/class/components and internal jurisdiction IDs. PostgreSQL 18 UTF8
@@ -248,16 +533,6 @@ checkpoints, not new full-suite passes. The focused run covered display
 policy/revision cache invalidation and mixed-source hit provenance; it does not
 by itself establish database-backed or deployed-browser proof.
 
-Protected actual-backup native 032-to-033 migration, preservation, actual-role
-readiness and matching database/image rollback proof, backup/image retention and
-the completed coordinated cutover are recorded in the private canonical migration
-handoff. Deployed readiness, ledger and context validation are recorded there;
-the final qualified live browser gate **passed**, as summarized in
-[M8 closeout](#milestone-8-closeout). This documentation change does not rerun
-those operations or authorize further mutation. TLS, migration and Martin
-identity/flags, OSM replica policy, auto-sync, admin-password debug, resources,
-concurrency, timeouts and retry budgets retain their established boundaries.
-
 This is not an OSM derivation/matcher/path-policy bump: **no OSM regeneration,
 download or route rematching is needed**. Coverage recomputation here means
 canonical read-model context warm/rebuild from existing evidence, not new route
@@ -267,13 +542,6 @@ jobs. See [architecture](architecture.md#canonical-display-identity-requires-30)
 and [release requirements](implementation-plan.md#canonical-display-identity-030).
 
 ## Click-Highlight Follow-Up
-
-The following receipt uses **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)).
-**Deployed with canonical display identity 033.** The earlier click-only checkpoint
-was verified without a migration; the combined historical release used schema/minimum runtime
-**33**, baseline **27**, with applied **001-033 immutable**. At this checkpoint UI
-behavior was served by the revision-57 image, not backend-42/UI-43.
 
 Latest [MapPage source](../ui/src/MapPage.tsx) closes Road Coverage and focuses the
 mounted canvas immediately on entity-click intent. Uncached detail shows transient
@@ -329,40 +597,6 @@ operational measurements are included. See the
 and [architecture](architecture.md#click-highlight-follow-up).
 
 ## Coverage Display Optimization
-
-### Historical 032 Release Checkpoint
-
-The rollout and browser receipts below describe the historical
-**032/backend-42/UI-43** checkpoint. Its schema and pending-acceptance statements are superseded by
-the [current 030 source status](#canonical-display-identity-030) and
-[M8 closeout](#milestone-8-closeout), not relabeled as new verification.
-These receipts use **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)); private originals remain immutable.
-
-Released and applied migration 032 (now folded into
-[030 source SQL](../api/migrations/sql/030_coverage_display.sql)) extended the sequence
-through **001-032**, set schema/minimum runtime **32** and retained baseline marker
-**27**. Targeted hover statistics shipped in this released 032, not in 033.
-The historical **033** extension is described above. Those private receipts remain
-immutable; their old numbering is not the current source sequence.
-
-All four application images (API, shared worker, UI and OSM) were rebuilt with
-native artifacts and published with strict TLS verification. A standalone native
-`/app/migrate` Job applied 032 under the actual restricted migration login while
-incompatible runtimes were paused. Coordinated backend revision **42**, followed
-by UI revision **43**, completed with full values and `--no-hooks`; the separate
-external Martin image and workload were preserved.
-
-Accepted read-only receipts verify the contiguous Goose ledger **0-32**, marker
-**27**, schema/minimum runtime **32**, actual API/general-worker/Coverage-worker
-role readiness and healthy workloads. While paused, all **82 original business
-tables** were verified unchanged by original-column hashes, with the prior ledger
-prefix and unrelated relations/roles/functions preserved. All **14 configuration
-objects** were preserved; resources, concurrency, timeouts, matcher/retry budgets
-and source configuration remain unchanged, with source auto-sync off. This rollout
-started no new ingest or matching work and made no provider checks. Strict TLS
-publication/HTTPS checks do not claim application-database TLS or a new OSM mTLS
-handshake.
 
 Full protected pre-32 database/role backups and matching old image exports remain
 retained. **Image-only rollback is unsupported**: recovery requires the matching
@@ -442,17 +676,6 @@ host stacking-context traps and use `pointer-events: none`. Existing map sizing,
 sidebar scrolling and bulk-dialog layout are preserved.
 
 ### Historical Verification Receipts
-
-These receipts use **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)), not fresh squash passes.
-The recorded source verification passed normal project checks and the Go race
-suite. Disposable PostgreSQL checks cover full-row parity against the original reader, populated
-031-to-032 backfill, atomic migration rollback, logical deletion and account
-cascades, savepoints, concurrent source changes in either commit order and stale
-Repeatable Read rejection. Catalog mutation tests verify runtime readiness and
-private projection ownership/ACLs. A synthetic browser check with added request
-latency confirms one complete load and no further coverage requests while paging,
-sorting or filtering; it is not a measurement of the owner's connection.
 
 The subsequent source checkpoint includes **164 MapPage tests**, with all **482
 UI tests** passing. The combined projection/stats database race run passes
@@ -766,7 +989,7 @@ Dataset-specific counts, storage and timings stay in the ignored internal backfi
 ## Coverage Recovery Release (10/17/2026)
 
 This receipt uses **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)); its earlier 027-030
+([mapping](database-migrations.md#current-source-layout)); its earlier 027-030
 recovery numbering was already consolidated into baseline 027, not today's 029/030.
 
 At this historical checkpoint, migrations 027-030 and runtime 30 deployed at revision 23, retaining minimum
@@ -1266,30 +1489,9 @@ intent across the replacement source. Live-cloud owner acceptance remains pendin
 ## Milestone 8 Closeout
 
 The revision-57 acceptance receipt below uses **pre-squash historical numbering**
-([mapping](database-migrations.md#source-history-mapping)); it remains **PASS**,
+([mapping](database-migrations.md#current-source-layout)); it remains **PASS**,
 not a fresh source-30 pass or current cutover receipt. Actual release status is
 tracked in [Current Status](#current-status).
-
-- **M8 is complete.** Explicit user approval and the confirmed final qualified live
-  browser **PASS** close all three closeout items. No further owner acceptance or
-  decision is pending; README retains its completed M8 marker.
-- iCloud ingest and independent available-map Coverage recovery are verified.
-  Canonical display identity `coverage-display-identity-v1`, click highlighting and
-  the then-current UI follow-ups were deployed. Helm revision at acceptance was **57**, with
-  schema/minimum runtime **33**, baseline **27**, contiguous ledger **0-33** and
-  applied **001-033**. API/OSM retained rollout-44 native-033 pins, the
-  shared ingest/Coverage worker image is from **54**, and UI is from **57**.
-- The final live browser gate passed against the exact acceptance-checkpoint UI assets over
-  strict TLS. Both disconnected components passed hover, targeted-stat cache and
-  full-group geometry checks; every natural popup-overlap check passed across
-  desktop and both narrow layouts. The verification-owned capability was cleaned
-  up and its session revoked; credential, principal and pre-existing-session
-  hashes were unchanged. No jobs, provider calls, schema, deployment or persistent
-  preference changes were made by this browser verification.
-- Audit end-to-end telemetry delivery and broader backlog, replay-lag and
-  interactive-latency behavior before claiming capacity or recommending increased
-  concurrency. The follow-up's resource observations are not a capacity
-  certification. Physical promotion/failover remains a separate boundary.
 
 The final qualified receipt and canonical migration handoff are retained privately.
 Earlier incomplete popup probe attempts were placement limitations, not UI

@@ -35,6 +35,8 @@ const preferences = {
   clockFormat: "12h",
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
+  customDateRangeLimit: 3,
+  recentCustomDateRanges: [],
   initialized: true,
   coverageDiagnosticsEnabled: false,
   dateRange: "last30Days",
@@ -2457,7 +2459,13 @@ describe("authenticated shell", () => {
         });
         if (path === "/api/me") return json({ ...profile, fullName: "Avery Summit" });
         if (path === "/api/me/preferences")
-          return json({ ...preferences, theme: "light", units: "metric", pageSize: 50 });
+          return json({
+            ...preferences,
+            theme: "light",
+            units: "metric",
+            pageSize: 50,
+            customDateRangeLimit: 4,
+          });
       }
       return undefined as never;
     });
@@ -2480,19 +2488,32 @@ describe("authenticated shell", () => {
       "First weekday",
       "Clock format",
       "Table rows per page",
+      "Custom date ranges",
     ]) {
-      expect(screen.getByLabelText(label).parentElement).toHaveClass("select-control");
+      expect(screen.getByRole("combobox", { name: label })).toHaveClass(
+        "preference-select-trigger",
+      );
     }
     await user.clear(screen.getByLabelText("Full name"));
     await user.type(screen.getByLabelText("Full name"), "Avery Summit");
-    await user.selectOptions(screen.getByLabelText("Theme"), "light");
-    await user.selectOptions(screen.getByLabelText("Units"), "metric");
+    for (const [label, option] of [
+      ["Theme", "Light"],
+      ["Units", "Metric"],
+    ]) {
+      await user.click(screen.getByRole("combobox", { name: label }));
+      await user.click(screen.getByRole("option", { name: option }));
+    }
+    await user.click(screen.getByRole("combobox", { name: "Table rows per page" }));
     expect(
-      [...screen.getByLabelText("Table rows per page").querySelectorAll("option")].map(
-        (option) => option.value,
-      ),
+      screen.getAllByRole("option").map((option) => option.textContent?.replace("\u2713", "")),
     ).toEqual(["25", "50", "75", "100"]);
-    await user.selectOptions(screen.getByLabelText("Table rows per page"), "50");
+    await user.click(screen.getByRole("option", { name: "50" }));
+    expect(screen.getByLabelText("Custom date ranges")).toHaveTextContent("3");
+    await user.click(screen.getByRole("combobox", { name: "Custom date ranges" }));
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent?.replace("\u2713", "")),
+    ).toEqual(["1", "2", "3", "4", "5"]);
+    await user.click(screen.getByRole("option", { name: "4" }));
     await user.click(screen.getByRole("checkbox", { name: "Distance" }));
     await user.click(screen.getByRole("checkbox", { name: "Pace" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -2512,6 +2533,7 @@ describe("authenticated shell", () => {
       clockFormat: "12h",
       workoutColumns: ["date", "type", "duration", "pace"],
       pageSize: 50,
+      customDateRangeLimit: 4,
     });
     expect(document.documentElement.dataset.theme).toBe("light");
   });
@@ -2579,8 +2601,8 @@ describe("authenticated shell", () => {
     await user.click(screen.getByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
     const timeZone = await screen.findByLabelText("Time zone");
-    expect(timeZone).toHaveValue("America/Los_Angeles");
-    expect(timeZone.tagName).toBe("SELECT");
+    expect(timeZone).toHaveTextContent("America/Los_Angeles");
+    expect(timeZone).toHaveAttribute("role", "combobox");
     expect(screen.queryByLabelText("IANA time zone")).not.toBeInTheDocument();
   });
 
@@ -2594,7 +2616,7 @@ describe("authenticated shell", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
-    expect(await screen.findByLabelText("Time zone")).toHaveValue("UTC");
+    expect(await screen.findByLabelText("Time zone")).toHaveTextContent("UTC");
     expect(
       fetchMock.mock.calls.some(
         ([input, init]) => String(input).includes("initializeOnly") && init?.method === "PATCH",
@@ -2608,12 +2630,13 @@ describe("authenticated shell", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
-    const options = [...(await screen.findByLabelText("Time zone")).querySelectorAll("option")];
-    const values = options.map((option) => option.value);
-    expect(values.indexOf("America/Los_Angeles")).toBeLessThan(values.indexOf("America/Denver"));
-    expect(values.indexOf("America/Denver")).toBeLessThan(values.indexOf("America/Chicago"));
-    expect(values.indexOf("America/Chicago")).toBeLessThan(values.indexOf("America/New_York"));
-    expect(options.find((option) => option.value === "America/Los_Angeles")?.textContent).toMatch(
+    await user.click(await screen.findByLabelText("Time zone"));
+    const options = screen.getAllByRole("option").map((option) => option.textContent ?? "");
+    const index = (zone: string) => options.findIndex((label) => label.startsWith(zone));
+    expect(index("America/Los_Angeles")).toBeLessThan(index("America/Denver"));
+    expect(index("America/Denver")).toBeLessThan(index("America/Chicago"));
+    expect(index("America/Chicago")).toBeLessThan(index("America/New_York"));
+    expect(options.find((option) => option.startsWith("America/Los_Angeles"))).toMatch(
       /^America\/Los_Angeles \(UTC -\d{1,2}:\d{2}\)$/,
     );
   });
@@ -2633,8 +2656,11 @@ describe("authenticated shell", () => {
     await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
     const pageSize = await screen.findByLabelText("Table rows per page");
-    expect(pageSize.tagName).toBe("SELECT");
-    expect([...pageSize.querySelectorAll("option")].map((option) => option.value)).toEqual(["25"]);
+    expect(pageSize).toHaveAttribute("role", "combobox");
+    await user.click(pageSize);
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent?.replace("\u2713", "")),
+    ).toEqual(["25"]);
     expect(patchAttempted).toBe(false);
   });
 

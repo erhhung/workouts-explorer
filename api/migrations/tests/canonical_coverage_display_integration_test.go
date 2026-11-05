@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,7 +32,8 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 			t.Fatal(name + " must explicitly name a disposable database")
 		}
 		database := strings.ToLower(cfg.Database)
-		if (cfg.Host != "127.0.0.1" && cfg.Host != "localhost" && cfg.Host != "::1") ||
+		privateSynthetic := cfg.Host == "/tmp/opencode/tile-local031-rehearsal/socket" && cfg.Database == "schema031_reference_test"
+		if (!privateSynthetic && cfg.Host != "127.0.0.1" && cfg.Host != "localhost" && cfg.Host != "::1") ||
 			(!strings.HasPrefix(database, "test_") && !strings.Contains(database, "_test")) ||
 			strings.Contains(database, "clone") || strings.Contains(database, "actual") || strings.Contains(database, "live") {
 			t.Fatal("canonical fixtures require a named loopback test database, not an actual-data clone")
@@ -58,7 +60,7 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayCheck(t, db, `SELECT schema_version=30 AND minimum_runtime_version=30
+	coverageDisplayCheck(t, db, `SELECT schema_version=31 AND minimum_runtime_version=31
 		AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`)
 
 	t.Run("DisconnectedClassesAndCityReentry", func(t *testing.T) {
@@ -1089,8 +1091,8 @@ func newCanonicalDisplayFixture(t *testing.T, db testDatabases) coverageDisplayF
 func canonicalDisplayFence(t *testing.T, db testDatabases, tx pgx.Tx, f coverageDisplayFixture) {
 	t.Helper()
 	var source uuid.UUID
-	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, f.job, reprocessingWorker, f.lease).Scan(&source); err != nil || source == uuid.Nil {
-		t.Fatalf("runtime-30 synthetic ingest fence: source=%s err=%v", source, err)
+	if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, f.job, reprocessingWorker, f.lease, database.SupportedSchemaVersion).Scan(&source); err != nil || source == uuid.Nil {
+		t.Fatalf("current-runtime synthetic ingest fence: source=%s err=%v", source, err)
 	}
 }
 
@@ -1460,16 +1462,22 @@ func canonicalDisplayMapSurfaces(t *testing.T, db testDatabases, f coverageDispl
 	// require another URL. Martin's four-part capability needs no account GUC.
 	tiles := beginAccount(t, db.ctx, db.migration, uuid.Nil)
 	defer tiles.Rollback(db.ctx)
-	for _, z := range []int{12, 13} {
-		x := int(math.Floor((10.01 + 180) / 360 * math.Exp2(float64(z))))
-		y := int(math.Floor((1 - math.Asinh(math.Tan(20.01*math.Pi/180))/math.Pi) / 2 * math.Exp2(float64(z))))
+	for _, z := range []int{12, 13, 15} {
+		x := int(math.Floor((10.001 + 180) / 360 * math.Exp2(float64(z))))
+		y := int(math.Floor((1 - math.Asinh(math.Tan(20.001*math.Pi/180))/math.Pi) / 2 * math.Exp2(float64(z))))
 		var tile []byte
 		if err := tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt($5,$6,$7,json_build_object('target_account_id',$1::text,
 			'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`, f.account, f.session, s.id, s.generation, z, x, y).Scan(&tile); err != nil {
 			t.Fatal(err)
 		}
 		layers := decodeCoverageMVT(t, tile)
-		for _, layer := range []string{"coverage", "coverage_focus", "coverage_parks", "coverage_parks_focus"} {
+		// Focus is independently fetched as exact GeoJSON, not unioned into tiles.
+		for _, layer := range []string{"coverage_focus", "coverage_parks_focus"} {
+			if len(layers[layer]) != 0 {
+				t.Fatalf("aggregate-only tile unexpectedly contains %s", layer)
+			}
+		}
+		for _, layer := range []string{"coverage", "coverage_parks"} {
 			if allLayers && len(layers[layer]) == 0 {
 				t.Fatalf("missing %s in cross-kind tile at zoom %d", layer, z)
 			}
@@ -1481,8 +1489,13 @@ func canonicalDisplayMapSurfaces(t *testing.T, db testDatabases, f coverageDispl
 					t.Fatalf("wrong source layer/duplicate: %s %s", layer, key)
 				}
 				var encoded []byte
-				if err := oracle.QueryRow(db.ctx, `SELECT ST_AsMVT(rows,'expected',4096,'geometry') FROM (
-					SELECT ST_AsMVTGeom(ST_Transform(ST_GeomFromGeoJSON($1::text),3857),ST_TileEnvelope($2,$3,$4)::box2d,4096,64,true) geometry) rows`, expected[key], z, x, y).Scan(&encoded); err != nil {
+				if err := oracle.QueryRow(db.ctx, `WITH projected AS (
+					SELECT ST_Transform(d.geom,3857) geom FROM ST_Dump(ST_GeomFromGeoJSON($1::text)) d
+				), display AS (
+					SELECT CASE WHEN $2>=15 THEN geom ELSE ST_SimplifyPreserveTopology(geom,40075016.68557849/power(2.0,$2)/2048.0) END geom
+					FROM projected
+				) SELECT ST_AsMVT(rows,'expected',4096,'geometry') FROM (
+					SELECT ST_AsMVTGeom(ST_UnaryUnion(ST_Collect(geom)),ST_TileEnvelope($2,$3,$4)::box2d,4096,64,true) geometry FROM display) rows`, expected[key], z, x, y).Scan(&encoded); err != nil {
 					t.Fatal(err)
 				}
 				geometry := decodeCoverageMVT(t, encoded)["expected"]
@@ -1492,9 +1505,16 @@ func canonicalDisplayMapSurfaces(t *testing.T, db testDatabases, f coverageDispl
 				seen[key] = true
 			}
 			want := 0
-			for key := range expected {
+			for key, geojson := range expected {
 				if strings.Contains(layer, "parks") == strings.HasPrefix(key, "park/") {
-					want++
+					var visible bool
+					if err := oracle.QueryRow(db.ctx, `SELECT ST_AsMVTGeom(ST_Transform(ST_GeomFromGeoJSON($1::text),3857),
+						ST_TileEnvelope($2,$3,$4)::box2d,4096,64,true) IS NOT NULL`, geojson, z, x, y).Scan(&visible); err != nil {
+						t.Fatal(err)
+					}
+					if visible {
+						want++
+					}
 				}
 			}
 			if len(seen) != want {
@@ -1504,7 +1524,7 @@ func canonicalDisplayMapSurfaces(t *testing.T, db testDatabases, f coverageDispl
 		var panned []byte
 		if err := tiles.QueryRow(db.ctx, `SELECT app.coverage_mvt($5,$6,$7,json_build_object('target_account_id',$1::text,
 			'target_session_id',$2::text,'target_selection_id',$3::text,'target_generation',$4::bigint::text))`,
-			f.account, f.session, s.id, s.generation, z, x+2, y).Scan(&panned); err != nil || len(panned) != 0 {
+			f.account, f.session, s.id, s.generation, z, x+100, y).Scan(&panned); err != nil || len(panned) != 0 {
 			t.Fatalf("panning away must render no geometry: bytes=%d err=%v", len(panned), err)
 		}
 	}

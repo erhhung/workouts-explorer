@@ -18,9 +18,12 @@ import MapPage, {
   absoluteRouteTileTemplate,
   buildRawRouteDirectionMarkers,
   buildRawRouteEndpoints,
+  buildRawRouteHighlight,
   buildSegmentedRawRoute,
   COVERAGE_HIGHLIGHT_DURATION_MS,
+  CoverageCellValue,
   CoverageDetailCache,
+  FocusGeometryCache,
   coverageRegionLabel,
   formatRoutePopupDetails,
   formatRoutePopupDistance,
@@ -42,6 +45,13 @@ import MapPage, {
 
 const mapInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
 const popupInstances = vi.hoisted(() => [] as Array<Record<string, any>>);
+const tileProtocols = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      (request: { url: string }, controller: AbortController) => Promise<{ data: ArrayBuffer }>
+    >(),
+);
 const mapBehavior = vi.hoisted(() => ({
   emitInitialStyleLoad: true,
   emitSetStyleLoad: true,
@@ -51,6 +61,7 @@ const mapBehavior = vi.hoisted(() => ({
   tilesLoaded: true,
   directionSourceLoaded: true,
   routeSourceLoaded: true,
+  rawFocusSourceLoaded: true,
   projectionScale: 10000,
 }));
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, "geolocation");
@@ -133,7 +144,9 @@ vi.mock("maplibre-gl", () => ({
           ? mapBehavior.directionSourceLoaded
           : id === "private-workout-routes"
             ? mapBehavior.routeSourceLoaded
-            : true,
+            : id === "private-workout-route-focus"
+              ? mapBehavior.rawFocusSourceLoaded
+              : true,
       );
       queryRenderedFeatures = vi.fn(() => []);
       project = vi.fn((coordinate: [number, number]) => ({
@@ -177,6 +190,16 @@ vi.mock("maplibre-gl", () => ({
     }
     return {
       Map: MockMap,
+      addProtocol: vi.fn(
+        (
+          name: string,
+          handler: (
+            request: { url: string },
+            controller: AbortController,
+          ) => Promise<{ data: ArrayBuffer }>,
+        ) => tileProtocols.set(name, handler),
+      ),
+      removeProtocol: vi.fn((name: string) => tileProtocols.delete(name)),
       NavigationControl: class NavigationControl {},
       Popup: class Popup {
         content?: HTMLElement;
@@ -245,6 +268,8 @@ const preferences: Preferences = {
   clockFormat: "24h",
   workoutColumns: ["date", "type"],
   pageSize: 25,
+  customDateRangeLimit: 3,
+  recentCustomDateRanges: [],
   coverageDiagnosticsEnabled: true,
   initialized: true,
   dateRange: "last30Days",
@@ -393,9 +418,9 @@ const diagnostic = {
 const rawRoutePoints = {
   points: [
     { recordedAt: "2026-01-01T00:00:00Z", longitude: -105.29, latitude: 39.9 },
-    { recordedAt: "2026-01-01T00:00:05Z", longitude: -105.28, latitude: 39.91 },
-    { recordedAt: "2026-01-01T00:00:10Z", longitude: -105.27, latitude: 39.92 },
-    { recordedAt: "2026-01-01T00:05:00Z", longitude: -105.21, latitude: 40.01 },
+    { recordedAt: "2026-01-01T00:00:05Z", longitude: -105.2895, latitude: 39.9005 },
+    { recordedAt: "2026-01-01T00:00:10Z", longitude: -105.289, latitude: 39.901 },
+    { recordedAt: "2026-01-01T00:05:00Z", longitude: -105.2005, latitude: 40.0195 },
     { recordedAt: "2026-01-01T00:05:05Z", longitude: -105.2, latitude: 40.02 },
   ],
 };
@@ -406,11 +431,11 @@ const rawRoute = {
     coordinates: [
       [
         [-105.29, 39.9],
-        [-105.28, 39.91],
-        [-105.27, 39.92],
+        [-105.2895, 39.9005],
+        [-105.289, 39.901],
       ],
       [
-        [-105.21, 40.01],
+        [-105.2005, 40.0195],
         [-105.2, 40.02],
       ],
     ],
@@ -445,6 +470,7 @@ beforeEach(() => {
   mapBehavior.tilesLoaded = true;
   mapBehavior.directionSourceLoaded = true;
   mapBehavior.routeSourceLoaded = true;
+  mapBehavior.rawFocusSourceLoaded = true;
   mapBehavior.projectionScale = 10000;
 });
 afterEach(() => {
@@ -463,6 +489,102 @@ function json(body: unknown, status = 200) {
         headers: { "Content-Type": "application/json" },
       });
 }
+
+function privateTemplate(template: string) {
+  const path = template.startsWith(window.location.origin)
+    ? template.slice(window.location.origin.length)
+    : template;
+  return expect.stringMatching(
+    new RegExp(
+      `^workouts-private-\\d+://tiles/\\d+${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+    ),
+  );
+}
+
+describe("Coverage cell values", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("only exposes the full text on hover when it overflows, including after resizing", () => {
+    let width = 120;
+    const text = "North Meadow Regional Preserve and Cedar Valley County Park";
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(120);
+    let resized = () => {};
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resized = callback;
+        }
+        observe() {}
+        disconnect = disconnect;
+      },
+    );
+    const view = render(
+      <button type="button">
+        <CoverageCellValue text={text} />
+      </button>,
+    );
+    const value = screen.getByText(text);
+    const button = screen.getByRole("button", { name: text });
+    expect(value).not.toHaveAttribute("title");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    button.focus();
+    width = 119;
+    act(resized);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(text);
+    expect(tooltip).toHaveClass("tooltip-content--portal", "tooltip-content--single-line");
+    expect(tooltip.parentElement).toBe(document.body);
+    expect(value).not.toHaveAttribute("title");
+    const trigger = button.querySelector<HTMLElement>(".tooltip-trigger")!;
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      left: 40,
+      right: 159,
+      top: 80,
+      bottom: 100,
+      width: 119,
+      height: 20,
+    } as DOMRect);
+    fireEvent.pointerEnter(trigger);
+    expect(tooltip).toHaveClass("is-open");
+    expect(button).toHaveFocus();
+    width = 200;
+    act(resized);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(value).not.toHaveAttribute("title");
+    expect(within(view.container).getByText(text)).toBe(value);
+    expect(button).toHaveFocus();
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  test("remeasures changed values and omits tooltips for fitting or hidden text", () => {
+    let width = 100;
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return (this.textContent?.length ?? 0) * 8;
+    });
+    const long = "Example County and Surrounding Administrative Region";
+    const view = render(<CoverageCellValue text={long} />);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(long);
+    expect(within(view.container).getByText(long)).not.toHaveAttribute("title");
+    view.rerender(<CoverageCellValue text="Oak Road" />);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(screen.getByText("Oak Road")).not.toHaveAttribute("title");
+    view.rerender(<CoverageCellValue text={long} />);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(long);
+    width = 0;
+    fireEvent.resize(window);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    width = 100;
+    fireEvent.resize(window);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(long);
+  });
+});
 
 describe("map contract helpers", () => {
   test("formats provider region IDs for display", () => {
@@ -997,19 +1119,19 @@ describe("map contract helpers", () => {
     const route = buildSegmentedRawRoute(
       Array.from({ length: 21 }, (_, i) => ({
         recordedAt: new Date(i * 1000).toISOString(),
-        longitude: i,
+        longitude: i / 10000,
         latitude: 0,
       })),
     )!;
     const lowZoom = buildRawRouteDirectionMarkers(
       route,
-      ([x, y]) => ({ x: x * 5, y: -y * 5 }),
+      ([x, y]) => ({ x: x * 50000, y: -y * 50000 }),
       40,
       3,
     );
     const highZoom = buildRawRouteDirectionMarkers(
       route,
-      ([x, y]) => ({ x: x * 20, y: -y * 20 }),
+      ([x, y]) => ({ x: x * 200000, y: -y * 200000 }),
       40,
       3,
     );
@@ -1023,13 +1145,59 @@ describe("map contract helpers", () => {
     expect(marker.data[(13 * marker.width + 5) * 4 + 3]).toBe(255);
   });
 
+  test("cuts spatial jumps even before a timestamp baseline exists, preserving observed runs", () => {
+    const points = [0, 0.0001, 0.1, 0.1001].map((longitude, i) => ({
+      longitude,
+      latitude: 0,
+      recordedAt: new Date(i * 1000).toISOString(),
+    }));
+    const before = structuredClone(points);
+    expect(buildSegmentedRawRoute(points)?.geometry.coordinates).toEqual([
+      [
+        [0, 0],
+        [0.0001, 0],
+      ],
+      [
+        [0.1, 0],
+        [0.1001, 0],
+      ],
+    ]);
+    expect(points).toEqual(before);
+    expect(buildSegmentedRawRoute(points.slice(1, 3))).toBeUndefined();
+  });
+
+  test("drops isolated outlier line fragments without inventing links or removing stationary runs", () => {
+    const points = [0, 0.0001, 0.1, 0.0002, 0.0003].map((longitude, i) => ({
+      longitude,
+      latitude: 0,
+      recordedAt: new Date(i * 1000).toISOString(),
+    }));
+    expect(buildSegmentedRawRoute(points)?.geometry.coordinates).toEqual([
+      [
+        [0, 0],
+        [0.0001, 0],
+      ],
+      [
+        [0.0002, 0],
+        [0.0003, 0],
+      ],
+    ]);
+    const stationary = points.slice(0, 2).map((point) => ({ ...point, longitude: 0 }));
+    expect(buildSegmentedRawRoute(stationary)?.geometry.coordinates).toEqual([
+      [
+        [0, 0],
+        [0, 0],
+      ],
+    ]);
+  });
+
   test("keeps fitted arrow density for dense GPS samples instead of discarding subpixel bearings", () => {
-    const project = ([x, y]: number[]) => ({ x: x * 1024, y: -y * 1024 });
+    const project = ([x, y]: number[]) => ({ x: x * 1048576, y: -y * 1048576 });
     for (const count of [61, 7681]) {
       const route = buildSegmentedRawRoute(
         Array.from({ length: count }, (_, i) => ({
           recordedAt: new Date(i * 1000).toISOString(),
-          longitude: (0.9375 * i) / (count - 1),
+          longitude: (0.00091552734375 * i) / (count - 1),
           latitude: 0,
         })),
       )!;
@@ -2501,12 +2669,18 @@ describe("Show on map coverage fallback", () => {
 });
 
 describe("private tile recovery", () => {
-  async function mountRecovery(selections = [selection]) {
+  async function mountRecovery(
+    selections = [selection],
+    respond: (url: string, init?: RequestInit) => Promise<Response> = async () =>
+      new Response(null, { status: 204 }),
+  ) {
     let posts = 0;
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       if (String(input) === "/api/map-selections" && init?.method === "POST")
         return Promise.resolve(json(selections[Math.min(posts++, selections.length - 1)]));
       if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      if (String(input).startsWith(window.location.origin + "/api/map-selections/"))
+        return respond(String(input), init);
       throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
     });
     const props = {
@@ -2521,20 +2695,21 @@ describe("private tile recovery", () => {
     const map = mapInstances.at(-1)!;
     await waitFor(() => expect(map.sources.has("private-workout-coverage")).toBe(true));
     vi.useFakeTimers();
-    const emit = (kind: "routes" | "coverage", status = 502, template?: string) => {
-      const url =
-        template ?? (kind === "routes" ? selection.routeTileUrl : selection.coverageTileUrl);
-      act(() =>
-        map.handlers.get("error")?.({
-          sourceId: `private-workout-${kind}`,
-          error: {
-            status,
-            url: `${window.location.origin}${url.replace("{z}/{x}/{y}", "12/654/1583")}`,
-          },
-        }),
+    const load = (
+      kind: "routes" | "coverage",
+      x = 654,
+      controller = new AbortController(),
+      template?: string,
+    ) => {
+      const url = (template ?? map.sources.get(`private-workout-${kind}`).tiles[0]).replace(
+        "{z}/{x}/{y}",
+        `12/${x}/1583`,
       );
+      const result = tileProtocols.get(url.split(":")[0])!({ url }, controller);
+      void result.catch(() => undefined);
+      return result;
     };
-    return { view, props, map, fetch, emit };
+    return { view, props, map, fetch, load };
   }
 
   test.each([
@@ -2545,15 +2720,19 @@ describe("private tile recovery", () => {
     ["coverage", 503],
     ["coverage", 504],
   ] as const)(
-    "bounds and coalesces current %s %i reloads without changing UI or capabilities",
+    "retries current %s %i tiles without reloading successes, UI, or capabilities",
     async (kind, status) => {
-      const { view, map, fetch, emit } = await mountRecovery();
+      let attempts = 0;
+      const { view, map, fetch, load } = await mountRecovery([selection], async (url) => {
+        if (url.endsWith("/654/1583.pbf") && ++attempts < 3) return new Response(null, { status });
+        return new Response(null, { status: 204 });
+      });
       fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
       const source = map.sources.get(`private-workout-${kind}`);
       const other = map.sources.get(`private-workout-${kind === "routes" ? "coverage" : "routes"}`);
       const layers = [...map.layers.entries()];
       const visibility = layers.map(([, layer]) => layer.layout?.visibility);
-      const requestCount = fetch.mock.calls.length;
+      const requestCount = fetch.mock.calls.filter(([, init]) => init?.method === "POST").length;
       const mutations = [
         map.addSource,
         map.removeSource,
@@ -2566,18 +2745,17 @@ describe("private tile recovery", () => {
         map.fitBounds,
       ];
       const counts = mutations.map((method) => method.mock.calls.length);
-      emit(kind, status);
-      act(() => vi.advanceTimersByTime(500));
-      for (let i = 0; i < 10; i++) emit(kind, status);
-      act(() => vi.advanceTimersByTime(499));
+      const failed = load(kind);
+      await load(kind, 655);
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      await expect(failed).resolves.toMatchObject({ data: new ArrayBuffer(0) });
+      expect(attempts).toBe(3);
       expect(source.setTiles).not.toHaveBeenCalled();
-      act(() => vi.advanceTimersByTime(1));
-      const template = kind === "routes" ? selection.routeTileUrl : selection.coverageTileUrl;
-      expect(source.setTiles).toHaveBeenCalledExactlyOnceWith([
-        `${window.location.origin}${template}`,
-      ]);
       expect(other.setTiles).not.toHaveBeenCalled();
-      expect(fetch).toHaveBeenCalledTimes(requestCount);
+      expect(fetch.mock.calls.filter(([url]) => String(url).includes("-tiles/"))).toHaveLength(4);
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(
+        requestCount,
+      );
       expect(mutations.map((method) => method.mock.calls.length)).toEqual(counts);
       expect([...map.layers.entries()]).toEqual(layers);
       expect(layers.map(([, layer]) => layer.layout?.visibility)).toEqual(visibility);
@@ -2588,7 +2766,7 @@ describe("private tile recovery", () => {
       expect(screen.getByRole("checkbox", { name: /Show Running/ })).toBeChecked();
       expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
 
-      // Individual tile successes and global style loads do not reset the URL budget.
+      // Source-loaded includes errored tiles; it must not drive retry budgets.
       act(() =>
         map.handlers.get("sourcedata")?.({
           sourceId: `private-workout-${kind}`,
@@ -2596,71 +2774,92 @@ describe("private tile recovery", () => {
         }),
       );
       act(() => map.handlers.get("style.load")?.());
-      for (let i = 0; i < 10; i++) emit(kind, status);
-      act(() => vi.advanceTimersByTime(1999));
-      expect(source.setTiles).toHaveBeenCalledTimes(1);
-      act(() => vi.advanceTimersByTime(1));
-      expect(source.setTiles).toHaveBeenCalledTimes(2);
-      act(() => map.handlers.get("style.load")?.());
-      for (let i = 0; i < 10; i++) emit(kind, status);
-      act(() => vi.advanceTimersByTime(5000));
-      expect(source.setTiles).toHaveBeenCalledTimes(2);
-      expect(fetch).toHaveBeenCalledTimes(requestCount);
+      expect(source.setTiles).not.toHaveBeenCalled();
+      expect(fetch.mock.calls.filter(([url]) => String(url).includes("-tiles/"))).toHaveLength(4);
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(
+        requestCount,
+      );
       expect(mapInstances).toHaveLength(1);
       view.unmount();
     },
   );
 
-  test("keeps independent route and coverage retry budgets", async () => {
-    const { view, map, emit } = await mountRecovery();
-    const route = map.sources.get("private-workout-routes");
-    const coverage = map.sources.get("private-workout-coverage");
-    for (const delay of [1000, 2000]) {
-      emit("routes");
-      act(() => vi.advanceTimersByTime(delay));
-    }
-    emit("routes");
-    emit("coverage", 503);
-    act(() => vi.advanceTimersByTime(1000));
-    expect(route.setTiles).toHaveBeenCalledTimes(2);
-    expect(coverage.setTiles).toHaveBeenCalledTimes(1);
+  test("gives new viewport tiles a fresh budget after earlier failures exhaust attempts", async () => {
+    const { view, load, fetch, map } = await mountRecovery(
+      [selection],
+      async () => new Response(null, { status: 503 }),
+    );
+    const first = load("routes");
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await expect(first).rejects.toMatchObject({ status: 503 });
+    act(() =>
+      map.handlers.get("sourcedata")?.({
+        sourceId: "private-workout-routes",
+        isSourceLoaded: true,
+      }),
+    );
+    const second = load("routes", 655);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await expect(second).rejects.toMatchObject({ status: 503 });
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("/route-tiles/"))).toHaveLength(
+      6,
+    );
     view.unmount();
   });
 
-  test("ignores unauthorized, aborted, public, stale, and non-transient tile errors", async () => {
-    const { view, map, fetch, emit } = await mountRecovery();
+  test.each(["routes", "coverage"] as const)(
+    "handles %s 404 before MapLibre can swallow it and ignores old URLs",
+    async (kind) => {
+      const updated = {
+        ...selection,
+        id: "D".repeat(32),
+        routeTileUrl: selection.routeTileUrl.replace(selection.id, "D".repeat(32)),
+        coverageTileUrl: selection.coverageTileUrl.replace(selection.id, "D".repeat(32)),
+      };
+      const { view, load, map, fetch } = await mountRecovery(
+        [selection, updated],
+        async () => new Response(null, { status: 404 }),
+      );
+      const oldTemplate = map.sources.get(`private-workout-${kind}`).tiles[0];
+      await act(async () => {
+        await expect(load(kind)).rejects.toMatchObject({ status: 410 });
+      });
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+      expect(map.sources.get(`private-workout-${kind}`).tiles[0]).toEqual(
+        privateTemplate(kind === "routes" ? updated.routeTileUrl : updated.coverageTileUrl),
+      );
+      await expect(load(kind, 655, new AbortController(), oldTemplate)).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+      view.unmount();
+    },
+  );
+
+  test("dispatches session expiration once across concurrent route and coverage 401s", async () => {
+    const { view, load, map } = await mountRecovery(
+      [selection],
+      async () => new Response(null, { status: 401 }),
+    );
     const expired = vi.fn();
     window.addEventListener(SESSION_EXPIRED_EVENT, expired);
     try {
-      for (const kind of ["routes", "coverage"] as const) {
-        for (const status of [0, 400, 401, 403, 500]) emit(kind, status);
-        const template = kind === "routes" ? selection.routeTileUrl : selection.coverageTileUrl;
-        const oldURL = template.replace(selection.id, "F".repeat(32));
-        for (const status of [404, 502, 503, 504]) emit(kind, status, oldURL);
-        act(() =>
-          map.handlers.get("error")?.({
-            sourceId: `private-workout-${kind}`,
-            error: {
-              name: "AbortError",
-              status: 502,
-              url: `${window.location.origin}${template.replace("{z}/{x}/{y}", "12/654/1583")}`,
-            },
-          }),
-        );
-      }
+      const results = [load("routes"), load("coverage")];
+      await Promise.allSettled(results);
+      expect(expired).toHaveBeenCalledTimes(1);
       act(() =>
         map.handlers.get("error")?.({
-          error: { status: 503, url: "https://tiles.example.test/12/654/1583.pbf" },
+          error: {
+            name: "PrivateTileError",
+            status: 401,
+            url: window.location.origin + selection.routeTileUrl,
+          },
         }),
       );
-      act(() => vi.advanceTimersByTime(5000));
-      expect(expired).toHaveBeenCalledTimes(2);
-      expect(map.sources.get("private-workout-routes").setTiles).not.toHaveBeenCalled();
-      expect(map.sources.get("private-workout-coverage").setTiles).not.toHaveBeenCalled();
-      expect(fetch).toHaveBeenCalledTimes(1);
-      view.unmount();
+      expect(expired).toHaveBeenCalledTimes(1);
     } finally {
       window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
+      view.unmount();
     }
   });
 
@@ -2671,81 +2870,696 @@ describe("private tile recovery", () => {
       routeTileUrl: selection.routeTileUrl.replace(selection.id, "D".repeat(32)),
       coverageTileUrl: selection.coverageTileUrl.replace(selection.id, "D".repeat(32)),
     };
-    const { view, props, map, emit } = await mountRecovery([selection, updated]);
-    const oldRoute = map.sources.get("private-workout-routes");
-    const oldCoverage = map.sources.get("private-workout-coverage");
-    emit("routes");
-    emit("coverage");
-    act(() => vi.advanceTimersByTime(1000));
-    emit("routes");
-    emit("coverage");
+    const { view, props, map, load, fetch } = await mountRecovery(
+      [selection, updated],
+      async () => new Response(null, { status: 503 }),
+    );
+    const oldRoute = map.sources.get("private-workout-routes").tiles[0];
+    const oldCoverage = map.sources.get("private-workout-coverage").tiles[0];
+    const pending = [load("routes"), load("coverage")];
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     await act(async () => view.rerender(<MapPage {...props} dateRange="last7Days" />));
-    expect(map.sources.get("private-workout-routes")).not.toBe(oldRoute);
-    expect(map.sources.get("private-workout-coverage")).not.toBe(oldCoverage);
-    act(() => vi.advanceTimersByTime(2000));
-    expect(oldRoute.setTiles).toHaveBeenCalledTimes(1);
-    expect(oldCoverage.setTiles).toHaveBeenCalledTimes(1);
-    const route = map.sources.get("private-workout-routes");
-    const coverage = map.sources.get("private-workout-coverage");
-    expect(route.setTiles).not.toHaveBeenCalled();
-    expect(coverage.setTiles).not.toHaveBeenCalled();
-    emit("routes");
-    emit("coverage");
-    act(() => vi.advanceTimersByTime(1000));
-    expect(route.setTiles).not.toHaveBeenCalled();
-    for (const delay of [1000, 2000]) {
-      emit("routes", 502, updated.routeTileUrl);
-      emit("coverage", 503, updated.coverageTileUrl);
-      act(() => vi.advanceTimersByTime(delay));
-    }
-    expect(route.setTiles).toHaveBeenCalledTimes(2);
-    expect(coverage.setTiles).toHaveBeenCalledTimes(2);
+    for (const result of pending)
+      await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await expect(load("routes", 655, new AbortController(), oldRoute)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await expect(load("coverage", 655, new AbortController(), oldCoverage)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("-tiles/"))).toHaveLength(2);
     view.unmount();
   });
 
-  test("cancels retries on a style change without replenishing the URL budget", async () => {
-    const { view, props, map, emit } = await mountRecovery();
-    const source = map.sources.get("private-workout-routes");
-    emit("routes");
-    act(() => vi.advanceTimersByTime(1000));
-    emit("routes");
+  test("cancels backoff on a style change without source-wide reloads", async () => {
+    const { view, props, map, load, fetch } = await mountRecovery(
+      [selection],
+      async () => new Response(null, { status: 503 }),
+    );
+    const pending = load("routes");
+    const oldTemplate = map.sources.get("private-workout-routes").tiles[0];
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     view.rerender(<MapPage {...props} preferences={{ ...props.preferences, theme: "light" }} />);
-    act(() => vi.advanceTimersByTime(2000));
-    expect(source.setTiles).toHaveBeenCalledTimes(1);
-    emit("routes");
-    act(() => vi.advanceTimersByTime(2000));
-    expect(source.setTiles).toHaveBeenCalledTimes(2);
-    emit("routes");
-    act(() => vi.advanceTimersByTime(2000));
-    expect(source.setTiles).toHaveBeenCalledTimes(2);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(load("routes", 655, new AbortController(), oldTemplate)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(map.sources.get("private-workout-routes").tiles[0]).not.toBe(oldTemplate);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("-tiles/"))).toHaveLength(1);
+    expect(map.sources.get("private-workout-routes").setTiles).not.toHaveBeenCalled();
     view.unmount();
   });
 
-  test("does not reload a source replaced before the delayed retry", async () => {
-    const { view, map, emit } = await mountRecovery();
-    const source = map.sources.get("private-workout-routes");
-    emit("routes");
-    const replacement = { setTiles: vi.fn() };
-    map.sources.set("private-workout-routes", replacement);
-    act(() => vi.advanceTimersByTime(1000));
-    expect(source.setTiles).not.toHaveBeenCalled();
-    expect(replacement.setTiles).not.toHaveBeenCalled();
-    view.unmount();
-  });
+  test.each([200, 204])(
+    "retains valid empty %i as data without invalidating the selection",
+    async (status) => {
+      const { view, load, fetch } = await mountRecovery(
+        [selection],
+        async () =>
+          new Response(null, {
+            status,
+            headers: { "Content-Type": "application/vnd.mapbox-vector-tile" },
+          }),
+      );
+      await expect(load("routes")).resolves.toMatchObject({ data: new ArrayBuffer(0) });
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+      view.unmount();
+    },
+  );
 
-  test("clears pending route and coverage timers on unmount", async () => {
-    const { view, map, emit } = await mountRecovery();
-    const route = map.sources.get("private-workout-routes");
-    const coverage = map.sources.get("private-workout-coverage");
-    emit("routes");
-    emit("coverage", 503);
+  test("clears pending route/coverage jobs and protocol registration on unmount", async () => {
+    const { view, map, load } = await mountRecovery(
+      [selection],
+      async () => new Response(null, { status: 503 }),
+    );
+    const pending = [load("routes"), load("coverage")];
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     view.unmount();
+    for (const result of pending)
+      await expect(result).rejects.toMatchObject({ name: "AbortError" });
     expect(vi.getTimerCount()).toBe(0);
-    emit("routes");
-    act(() => vi.advanceTimersByTime(5000));
-    expect(route.setTiles).not.toHaveBeenCalled();
-    expect(coverage.setTiles).not.toHaveBeenCalled();
+    expect(tileProtocols.size).toBe(0);
     expect(map.remove).toHaveBeenCalledTimes(1);
+  });
+
+  test("style-transition AbortErrors do not install a base-map fallback", async () => {
+    const { view, props, map } = await mountRecovery();
+    mapBehavior.emitSetStyleLoad = false;
+    view.rerender(<MapPage {...props} preferences={{ ...props.preferences, theme: "light" }} />);
+    const styles = map.setStyle.mock.calls.length;
+    act(() =>
+      map.handlers.get("error")?.({
+        sourceId: "private-workout-routes",
+        error: { name: "AbortError" },
+      }),
+    );
+    expect(map.setStyle).toHaveBeenCalledTimes(styles);
+    expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
+    view.unmount();
+  });
+});
+
+describe("independent workout focus", () => {
+  const bounds = {
+    minimumLongitude: 0.1,
+    minimumLatitude: 0.01,
+    maximumLongitude: 0.2,
+    maximumLatitude: 0.02,
+  };
+  const fixture: MapSelection = {
+    ...selection,
+    id: "1".repeat(32),
+    dataGeneration: 41,
+    range: { startDate: "2001-01-01", endDate: "2001-01-02" },
+    bounds,
+    focusedWorkoutId: null,
+    routeTileUrl: `/api/map-selections/${"1".repeat(32)}/route-tiles/41/{z}/{x}/{y}.pbf`,
+    coverageTileUrl: `/api/map-selections/${"1".repeat(32)}/coverage-tiles/41/{z}/{x}/{y}.pbf`,
+    workouts: selection.workouts.slice(0, 2).map((workout, index) => ({
+      ...workout,
+      id: String(index + 2).repeat(32),
+      type: {
+        id: String(index + 6).repeat(32),
+        key: `synthetic-${index}`,
+        name: `Synthetic ${index ? "B" : "A"}`,
+      },
+      localStartDate: "2001-01-01",
+      startedAt: "2001-01-01T00:00:00Z",
+      endedAt: "2001-01-01T00:02:00Z",
+      bounds,
+    })),
+  };
+  const points = {
+    points: [
+      ...Array.from({ length: 21 }, (_, i) => ({
+        recordedAt: new Date(Date.UTC(2001, 0, 1, 0, 0, i)).toISOString(),
+        longitude: 0.1 + i * 0.001,
+        latitude: 0.01,
+      })),
+      ...[100, 101].map((i) => ({
+        recordedAt: new Date(Date.UTC(2001, 0, 1, 0, 0, i)).toISOString(),
+        longitude: 0.2,
+        latitude: 0.02,
+      })),
+    ],
+  };
+  const focusGeometry = (marker: number) => ({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {
+          entityId: "4".repeat(32),
+          entityKind: "park",
+          sourceEntityId: "5".repeat(32),
+          sourceEntityKind: "path",
+          broadClass: "park",
+          name: "Synthetic trail",
+          localityName: "Synthetic park",
+          regionId: "synthetic:test",
+          rangeWorkoutCount: 2,
+          countBucket: 2,
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0.1, 0.01],
+            [0.12, 0.01 + marker * 0.001],
+          ],
+        },
+      },
+    ],
+  });
+
+  async function mount(mode: "routes" | "coverage", deferredRaw = false) {
+    let current = fixture;
+    const pending: Array<{
+      kind: "raw" | "coverage";
+      url: string;
+      signal: AbortSignal;
+      resolve: (value: unknown, status?: number) => void;
+    }> = [];
+    const stats: string[] = [];
+    const rawReads: string[] = [];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input);
+      if (url === "/api/map-selections" && init?.method === "POST")
+        return Promise.resolve(json(current));
+      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+      if (url.endsWith("/stats?generation=41")) {
+        stats.push(url);
+        return Promise.resolve(
+          json({
+            ...focusGeometry(0).features[0].properties,
+            regionName: "Synthetic region",
+            bounds,
+            rangeFirstDate: "2001-01-01",
+            rangeLatestDate: "2001-01-02",
+            allTimeFirstDate: "2001-01-01",
+            allTimeLatestDate: "2001-01-02",
+            allTimeWorkoutCount: 2,
+          }),
+        );
+      }
+      if (url.includes("/coverage-focus/") || url.endsWith("/route/points")) {
+        const kind = url.includes("/coverage-focus/") ? "coverage" : "raw";
+        if (kind === "raw") rawReads.push(url);
+        if (kind === "raw" && !deferredRaw) return Promise.resolve(json(points));
+        return new Promise<Response>((resolve) =>
+          pending.push({
+            kind,
+            url,
+            signal: init!.signal as AbortSignal,
+            resolve: (value, status = 200) => resolve(json(value, status)),
+          }),
+        );
+      }
+      throw new Error(`Unexpected ${init?.method ?? "GET"} ${url}`);
+    });
+    function Harness({
+      dateRange = "2001-01-01/2001-01-02",
+      deleted = false,
+    }: {
+      dateRange?: DateRangePreference;
+      deleted?: boolean;
+    }) {
+      const [focused, setFocused] = useState<string | undefined>(fixture.workouts[0].id);
+      const [mapMode, setMapMode] = useState(mode);
+      return (
+        <MapPage
+          config={config}
+          preferences={{ ...preferences, timezone: "UTC", coverageDiagnosticsEnabled: false }}
+          csrfToken="synthetic-csrf"
+          dateRange={dateRange}
+          onDateRangeSelected={vi.fn()}
+          persistedFocusedWorkoutId={focused}
+          onFocusedWorkoutChange={setFocused}
+          persistedMapMode={mapMode}
+          onMapModeChange={setMapMode}
+          deletions={
+            deleted
+              ? { revision: 1, events: [{ workoutIds: [fixture.workouts[0].id] }] }
+              : undefined
+          }
+        />
+      );
+    }
+    const view = render(<Harness />);
+    await screen.findByRole("button", { name: /Synthetic A/ });
+    const map = mapInstances.at(-1)!;
+    const choose = async (name: "A" | "B") => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(`Synthetic ${name}`) }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+    return {
+      view,
+      map,
+      pending,
+      stats,
+      rawReads,
+      choose,
+      posts: () =>
+        fetch.mock.calls.filter(
+          ([url, init]) => String(url) === "/api/map-selections" && init?.method === "POST",
+        ).length,
+      refresh: async (next: MapSelection, deleted = false) => {
+        current = next;
+        view.rerender(<Harness dateRange="2001-01-01/2001-01-03" deleted={deleted} />);
+        await act(async () => {
+          await Promise.resolve();
+        });
+      },
+    };
+  }
+
+  test("bounds focus caches by LRU count, fixed TTL and retained JSON bytes", () => {
+    vi.useFakeTimers();
+    const cache = new FocusGeometryCache<string>();
+    for (let i = 0; i < 16; i++) cache.set(String(i), `geometry-${i}`);
+    expect(cache.get("0")).toBe("geometry-0");
+    cache.set("16", "geometry-16");
+    expect(cache.get("1")).toBeUndefined();
+    vi.advanceTimersByTime(4 * 60_000);
+    expect(cache.get("0")).toBe("geometry-0");
+    vi.advanceTimersByTime(60_000);
+    expect(cache.get("0")).toBeUndefined();
+    cache.clear();
+    cache.set("large-a", "x".repeat(5 * 1024 * 1024));
+    cache.set("large-b", "x".repeat(5 * 1024 * 1024));
+    expect(cache.get("large-a")).toBeUndefined();
+    expect(cache.get("large-b")).toBeDefined();
+    cache.set("oversize", "x".repeat(8 * 1024 * 1024));
+    expect(cache.get("oversize")).toBeUndefined();
+  });
+
+  test("renders segmented raw lines and stationary dots with background tiles pending, preserving Space and hit priority", async () => {
+    mapBehavior.routeSourceLoaded = false;
+    mapBehavior.tilesLoaded = false;
+    const { map, posts, choose } = await mount("routes");
+    await waitFor(() =>
+      expect(map.getLayer("private-workout-route-focus")?.paint["line-opacity"]).toBe(1),
+    );
+    const background = map.getSource("private-workout-routes");
+    const source = map.getSource("private-workout-route-focus");
+    const geometry = source.setData.mock.calls.at(-1)[0];
+    expect(geometry).toEqual(
+      buildRawRouteHighlight(buildSegmentedRawRoute(points.points)!, fixture.workouts[0].id),
+    );
+    expect(geometry.features.map((feature: any) => feature.geometry.type)).toEqual([
+      "LineString",
+      "Point",
+    ]);
+    expect(geometry.features[1].geometry.coordinates).toEqual([0.2, 0.02]);
+    expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(1);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0.95);
+    expect(map.setFilter).toHaveBeenLastCalledWith("private-workout-route-marker-hover", [
+      "all",
+      ["==", ["geometry-type"], "Point"],
+      ["==", ["get", "workoutId"], ""],
+    ]);
+    fireEvent.keyDown(window, { code: "Space" });
+    expect(map.getLayer("private-workout-routes").paint["line-opacity"]).toBe(0);
+    expect(map.getLayer("private-workout-route-markers").paint["circle-opacity"]).toBe(0);
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(1);
+    expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(1);
+    map.queryRenderedFeatures.mockImplementation(
+      (_point: unknown, { layers }: { layers: string[] }) =>
+        layers.includes("private-workout-route-focus")
+          ? [{ properties: geometry.features[0].properties }]
+          : [],
+    );
+    act(() => map.handlers.get("click")?.({ point: { x: 1, y: 1 } }));
+    expect(map.queryRenderedFeatures).toHaveBeenCalledWith(
+      { x: 1, y: 1 },
+      { layers: ["private-workout-route-focus", "private-workout-route-focus-markers"] },
+    );
+    expect(
+      map.queryRenderedFeatures.mock.calls.every(
+        ([, options]: any[]) => !options.layers.includes("private-workout-routes"),
+      ),
+    ).toBe(true);
+    fireEvent.keyUp(window, { code: "Space" });
+    map.queryRenderedFeatures.mockImplementation(
+      (_point: unknown, { layers }: { layers: string[] }) =>
+        layers.includes("private-workout-routes")
+          ? [
+              { properties: { workoutId: fixture.workouts[0].id, sortOrder: 0 } },
+              { properties: { workoutId: fixture.workouts[1].id, sortOrder: 1 } },
+            ]
+          : [{ properties: { workoutId: fixture.workouts[0].id } }],
+    );
+    act(() => map.handlers.get("click")?.({ point: { x: 1, y: 1 } }));
+    await waitFor(() =>
+      expect(
+        map.getSource("private-workout-route-focus").setData.mock.calls.at(-1)[0].features[0]
+          .properties.workoutId,
+      ).toBe(fixture.workouts[1].id),
+    );
+    await choose("A");
+    expect(map.getSource("private-workout-routes")).toBe(background);
+    expect(background.setTiles).not.toHaveBeenCalled();
+    expect(posts()).toBe(1);
+  });
+
+  test("holds vector fallback and arrows until the independent raw worker and source are ready", async () => {
+    const { map, pending } = await mount("routes", true);
+    const addSource = map.addSource.getMockImplementation();
+    let complete!: () => void;
+    map.addSource.mockImplementation((id: string, spec: object) => {
+      addSource(id, spec);
+      if (id === "private-workout-route-focus")
+        map.getSource(id).setData.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              complete = resolve;
+            }),
+        );
+    });
+    await act(async () => pending[0].resolve(points));
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(0);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0);
+    expect(map.setFilter).toHaveBeenCalledWith("private-workout-route-hover", [
+      "==",
+      ["get", "workoutId"],
+      fixture.workouts[0].id,
+    ]);
+    mapBehavior.rawFocusSourceLoaded = false;
+    await act(async () => complete());
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(0);
+    mapBehavior.rawFocusSourceLoaded = true;
+    mapBehavior.routeSourceLoaded = false;
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" }));
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(1);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0.95);
+  });
+
+  test("does not schedule filter updates on stable renders and reinstalls them for replaced layers or styles", async () => {
+    const { map } = await mount("routes");
+    await waitFor(() =>
+      expect(map.getLayer("coverage-diagnostic-direction")?.paint["icon-opacity"]).toBe(0.95),
+    );
+    map.setFilter.mockClear();
+    map.setPaintProperty.mockClear();
+    act(() => {
+      for (let i = 0; i < 100; i++) {
+        map.handlers.get("render")?.();
+        map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" });
+      }
+    });
+    expect(map.setFilter).not.toHaveBeenCalled();
+    expect(map.setPaintProperty).not.toHaveBeenCalled();
+
+    const layerId = "private-workout-route-hover";
+    map.layers.set(layerId, { ...map.getLayer(layerId) });
+    act(() => map.handlers.get("render")?.());
+    expect(map.setFilter).toHaveBeenCalledExactlyOnceWith(layerId, [
+      "==",
+      ["get", "workoutId"],
+      "",
+    ]);
+    map.setFilter.mockClear();
+    await act(async () => map.handlers.get("style.load")?.());
+    expect(map.setFilter).toHaveBeenCalledTimes(2);
+    map.setFilter.mockClear();
+    act(() => {
+      for (let i = 0; i < 100; i++) map.handlers.get("render")?.();
+    });
+    expect(map.setFilter).not.toHaveBeenCalled();
+  });
+
+  test("keeps current raw lines, dots and arrows visible while user-pan viewport tiles are pending", async () => {
+    mapBehavior.routeSourceLoaded = false;
+    mapBehavior.tilesLoaded = false;
+    const { map } = await mount("routes");
+    await waitFor(() =>
+      expect(map.getLayer("coverage-diagnostic-direction")?.paint["icon-opacity"]).toBe(0.95),
+    );
+    const source = map.getSource("private-workout-route-focus");
+    const background = map.getSource("private-workout-routes");
+    source.setData.mockClear();
+    map.setFilter.mockClear();
+    mapBehavior.dragging = true;
+    act(() =>
+      map.handlers.get("movestart")?.({
+        originalEvent: new MouseEvent("mousemove", { buttons: 1 }),
+      }),
+    );
+    mapBehavior.moving = true;
+    mapBehavior.rawFocusSourceLoaded = false;
+    act(() => {
+      for (let i = 0; i < 10; i++) {
+        map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" });
+        map.handlers.get("render")?.();
+      }
+    });
+    const expectVisible = () => {
+      expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(1);
+      expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(1);
+      expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0.95);
+      expect(map.getSource("private-workout-route-focus")).toBe(source);
+      expect(map.getSource("private-workout-routes")).toBe(background);
+    };
+    expectVisible();
+    mapBehavior.moving = false;
+    mapBehavior.dragging = false;
+    act(() => {
+      map.handlers.get("moveend")?.();
+      map.handlers.get("render")?.();
+    });
+    expectVisible();
+    expect(source.setData).not.toHaveBeenCalled();
+    expect(map.setFilter).not.toHaveBeenCalled();
+
+    // A reused source ID is not proof that its new instance owns the installed geometry.
+    map.sources.set("private-workout-route-focus", { ...source });
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" }));
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(0);
+    expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(0);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0);
+  });
+
+  test("cannot reveal a new raw owner from an old worker completion using the same source ID", async () => {
+    const { map, pending, choose } = await mount("routes", true);
+    const addSource = map.addSource.getMockImplementation();
+    const completions: Array<() => void> = [];
+    map.addSource.mockImplementation((id: string, spec: object) => {
+      addSource(id, spec);
+      if (id === "private-workout-route-focus")
+        map
+          .getSource(id)
+          .setData.mockImplementation(
+            () => new Promise<void>((resolve) => completions.push(resolve)),
+          );
+    });
+    await act(async () => pending[0].resolve(points));
+    const oldSource = map.getSource("private-workout-route-focus");
+    await choose("B");
+    await act(async () => pending[1].resolve(points));
+    const currentSource = map.getSource("private-workout-route-focus");
+    expect(currentSource).not.toBe(oldSource);
+    expect(completions).toHaveLength(2);
+    await act(async () => completions[0]());
+    act(() => {
+      map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" });
+      map.handlers.get("render")?.();
+    });
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(0);
+    expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(0);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0);
+    await act(async () => completions[1]());
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(1);
+    expect(map.getLayer("private-workout-route-focus-markers").paint["circle-opacity"]).toBe(1);
+    expect(map.getLayer("coverage-diagnostic-direction").paint["icon-opacity"]).toBe(0.95);
+    expect(currentSource.setData.mock.calls.at(-1)[0].features[0].properties.workoutId).toBe(
+      fixture.workouts[1].id,
+    );
+  });
+
+  test.each([200, 404])(
+    "ignores aborted Coverage %s responses through A/B/A without caching or renewing tiles",
+    async (status) => {
+      const { map, pending, choose, posts } = await mount("coverage");
+      await waitFor(() => expect(pending).toHaveLength(1));
+      await choose("B");
+      expect(pending[0].signal.aborted).toBe(true);
+      await choose("A");
+      expect(pending).toHaveLength(3);
+      expect(pending[1].signal.aborted).toBe(true);
+      const aggregate = map.getSource("private-workout-coverage");
+      await act(async () => {
+        pending[0].resolve(focusGeometry(9), status);
+        pending[1].resolve(focusGeometry(8));
+      });
+      const focused = map.getSource("private-workout-coverage-focus");
+      expect(focused.setData.mock.calls.at(-1)?.[0] ?? focused.data).toEqual({
+        type: "FeatureCollection",
+        features: [],
+      });
+      expect(posts()).toBe(1);
+      await act(async () => pending[2].resolve(focusGeometry(1)));
+      expect(focused.setData).toHaveBeenLastCalledWith(focusGeometry(1));
+      await choose("B");
+      expect(pending).toHaveLength(4);
+      expect(focused.setData).toHaveBeenLastCalledWith({ type: "FeatureCollection", features: [] });
+      await act(async () => pending[3].resolve(focusGeometry(2)));
+      await choose("A");
+      expect(pending).toHaveLength(4);
+      expect(focused.setData).toHaveBeenLastCalledWith(focusGeometry(1));
+      expect(map.getSource("private-workout-coverage")).toBe(aggregate);
+      expect(aggregate.setTiles).not.toHaveBeenCalled();
+      expect(posts()).toBe(1);
+    },
+  );
+
+  test.each(["selection", "generation", "policy", "revision", "deletion", "unmount"])(
+    "invalidates Coverage ownership on %s before accepting late results",
+    async (change) => {
+      const { view, map, pending, refresh, posts } = await mount("coverage");
+      await waitFor(() => expect(pending).toHaveLength(1));
+      if (change === "unmount") view.unmount();
+      else
+        await refresh(
+          {
+            ...fixture,
+            id: change === "selection" ? "9".repeat(32) : fixture.id,
+            dataGeneration: change === "generation" ? 42 : 41,
+            coverageDisplayPolicy:
+              change === "policy" ? "synthetic-policy-v2" : fixture.coverageDisplayPolicy,
+            coverageDisplayRevision: change === "revision" ? 2 : 1,
+            workouts: change === "deletion" ? [fixture.workouts[1]] : fixture.workouts,
+          },
+          change === "deletion",
+        );
+      expect(pending[0].signal.aborted).toBe(true);
+      const count = posts();
+      map.setPaintProperty.mockClear();
+      await act(async () => pending[0].resolve(focusGeometry(9), 404));
+      expect(posts()).toBe(count);
+      if (change === "unmount") expect(map.setPaintProperty).not.toHaveBeenCalled();
+      else {
+        const source = map.getSource("private-workout-coverage-focus");
+        expect(source?.setData.mock.calls.at(-1)?.[0] ?? source?.data).not.toEqual(
+          focusGeometry(9),
+        );
+      }
+    },
+  );
+
+  test("invalidates raw geometry on generation changes and ignores late points after deletion or unmount", async () => {
+    const { view, map, pending, choose, refresh } = await mount("routes", true);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(points));
+    await choose("B");
+    await act(async () => pending[1].resolve(points));
+    await choose("A");
+    expect(pending).toHaveLength(2);
+    await refresh({ ...fixture, dataGeneration: 42 });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(map.getSource("private-workout-route-focus")).toBeUndefined();
+    await choose("B");
+    expect(pending[2].signal.aborted).toBe(true);
+    await act(async () => pending[2].resolve(points));
+    expect(map.getSource("private-workout-route-focus")).toBeUndefined();
+    view.unmount();
+    expect(pending[3].signal.aborted).toBe(true);
+    map.addSource.mockClear();
+    await act(async () => pending[3].resolve(points));
+    expect(map.addSource).not.toHaveBeenCalled();
+  });
+
+  test("aborts raw points on accepted deletion and cannot restore the deleted overlay", async () => {
+    const { map, pending, refresh } = await mount("routes", true);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await refresh({ ...fixture, workouts: [fixture.workouts[1]], dataGeneration: 42 }, true);
+    expect(pending[0].signal.aborted).toBe(true);
+    await act(async () => pending[0].resolve(points));
+    expect(map.getSource("private-workout-route-focus")).toBeUndefined();
+    expect(screen.queryByRole("button", { name: /Synthetic A/ })).not.toBeInTheDocument();
+  });
+
+  test("keeps an active raw overlay after cache expiry but refetches expired geometry on return", async () => {
+    const { map, rawReads, choose } = await mount("routes");
+    await waitFor(() =>
+      expect(map.getLayer("private-workout-route-focus")?.paint["line-opacity"]).toBe(1),
+    );
+    const source = map.getSource("private-workout-route-focus");
+    vi.useFakeTimers();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+    });
+    await choose("A");
+    expect(map.getSource("private-workout-route-focus")).toBe(source);
+    expect(map.getLayer("private-workout-route-focus").paint["line-opacity"]).toBe(1);
+    expect(rawReads).toHaveLength(1);
+    await choose("B");
+    await choose("A");
+    expect(rawReads).toHaveLength(3);
+  });
+
+  test("prunes successful Coverage cache entries when the selection context changes", async () => {
+    const { pending, choose, refresh } = await mount("coverage");
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(focusGeometry(1)));
+    await choose("B");
+    await act(async () => pending[1].resolve(focusGeometry(2)));
+    await refresh({ ...fixture, id: "9".repeat(32) });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    await act(async () => pending[2].resolve(focusGeometry(3)));
+    await choose("A");
+    expect(pending).toHaveLength(4);
+    expect(pending[3].url).toContain(
+      `/9${"9".repeat(31)}/coverage-focus/${fixture.workouts[0].id}`,
+    );
+  });
+
+  test("uses focused Coverage source attribution when aggregate geometry is missing or Space-hidden", async () => {
+    const { map, pending, stats } = await mount("coverage");
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(focusGeometry(0)));
+    const path = { properties: focusGeometry(0).features[0].properties };
+    const park = {
+      properties: {
+        ...path.properties,
+        entityId: "8".repeat(32),
+        sourceEntityKind: "park",
+        name: "Synthetic park",
+      },
+    };
+    map.queryRenderedFeatures.mockImplementation(
+      (_point: unknown, { layers }: { layers: string[] }) =>
+        layers.includes("private-workout-coverage-focus") ? [park, path] : [],
+    );
+    vi.useFakeTimers();
+    const move = () =>
+      map.handlers.get("mousemove")?.({ point: { x: 1, y: 1 }, lngLat: { lng: 0.1, lat: 0.01 } });
+    act(move);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(750);
+    });
+    expect(stats).toEqual([
+      `/api/map-selections/${fixture.id}/coverage/park/${path.properties.entityId}/stats?generation=41`,
+    ]);
+    expect(popupInstances.at(-1)?.content).toHaveTextContent("Synthetic trail");
+    fireEvent.mouseLeave(map.getCanvas());
+    fireEvent.keyDown(window, { code: "Space" });
+    map.queryRenderedFeatures.mockClear();
+    act(move);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(750);
+    });
+    expect(
+      map.queryRenderedFeatures.mock.calls.every(
+        ([, options]: any[]) => !options.layers.includes("private-workout-coverage"),
+      ),
+    ).toBe(true);
+    expect(map.getLayer("private-workout-coverage-focus").paint["line-opacity"]).toBe(0.94);
+    expect(stats).toHaveLength(1);
+    expect(popupInstances.at(-1)?.content).toHaveTextContent("Synthetic trail");
+    fireEvent.keyUp(window, { code: "Space" });
   });
 });
 
@@ -2754,8 +3568,8 @@ describe("direction marker camera readiness", () => {
   const directionPoints = (latitude: number) => ({
     points: Array.from({ length: 41 }, (_, i) => ({
       recordedAt: new Date(i * 1000).toISOString(),
-      longitude: -105.3 + i * 0.002,
-      latitude: latitude + i * 0.001,
+      longitude: -105.3 + i * 0.001,
+      latitude: latitude + i * 0.0005,
     })),
   });
   const firstPoints = directionPoints(39.9);
@@ -2857,12 +3671,12 @@ describe("direction marker camera readiness", () => {
     expect(source.setData.mock.calls[0][0].features.length).toBeLessThan(original.features.length);
     await waitFor(() => expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95));
     mapBehavior.projectionScale = 10000;
-    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" }));
     await waitFor(() => expect(source.setData).toHaveBeenCalledTimes(2));
     expect(source.setData.mock.calls[1][0]).toEqual(original);
   });
 
-  test("waits for a final-camera render and its private route tiles before revealing ready arrows", async () => {
+  test("waits for a final-camera render and its independent route tiles before revealing ready arrows", async () => {
     const { map } = await mountDirections();
     const source = map.getSource(directionLayer);
     let complete!: () => void;
@@ -2876,12 +3690,13 @@ describe("direction marker camera readiness", () => {
     await act(async () => complete());
     act(() => map.handlers.get("sourcedata")?.({ sourceId: directionLayer }));
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
-    mapBehavior.routeSourceLoaded = false;
+    mapBehavior.rawFocusSourceLoaded = false;
     act(() => map.handlers.get("render")?.());
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
-    mapBehavior.routeSourceLoaded = true;
+    mapBehavior.rawFocusSourceLoaded = true;
+    mapBehavior.routeSourceLoaded = false;
     mapBehavior.tilesLoaded = false;
-    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" }));
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
     map.setPaintProperty.mockClear();
     act(() => {
@@ -2979,19 +3794,20 @@ describe("direction marker camera readiness", () => {
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
     mapBehavior.directionSourceLoaded = true;
     mapBehavior.tilesLoaded = false;
-    mapBehavior.routeSourceLoaded = false;
-    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-routes" }));
+    mapBehavior.rawFocusSourceLoaded = false;
+    act(() => map.handlers.get("sourcedata")?.({ sourceId: "private-workout-route-focus" }));
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0);
-    mapBehavior.routeSourceLoaded = true;
+    mapBehavior.rawFocusSourceLoaded = true;
+    mapBehavior.routeSourceLoaded = false;
     act(() =>
       map.handlers.get("sourcedata")?.({
-        sourceId: "private-workout-routes",
+        sourceId: "private-workout-route-focus",
         isSourceLoaded: true,
       }),
     );
     expect(map.getLayer(directionLayer).paint["icon-opacity"]).toBe(0.95);
     expect(map.isSourceLoaded).toHaveBeenCalledWith(directionLayer);
-    expect(map.isSourceLoaded).toHaveBeenCalledWith("private-workout-routes");
+    expect(map.isSourceLoaded).toHaveBeenCalledWith("private-workout-route-focus");
     expect(map.areTilesLoaded).not.toHaveBeenCalled();
   });
 
@@ -4394,7 +5210,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [`${window.location.origin}${selection.routeTileUrl}`],
+        tiles: [privateTemplate(selection.routeTileUrl)],
       }),
     );
     expect(
@@ -4573,6 +5389,12 @@ describe("MapPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
     expect(await screen.findByRole("dialog", { name: "Road Coverage" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "Example Park" })).toBeVisible();
+    expect(
+      screen
+        .getByRole("button", { name: "Example Park" })
+        .closest("tr")!
+        .querySelectorAll(".coverage-cell-value"),
+    ).toHaveLength(screen.getAllByRole("columnheader").length);
     expect(screen.queryByRole("region", { name: "Coverage statistics" })).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Workouts/ })).toHaveAttribute(
       "aria-sort",
@@ -4649,7 +5471,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(map.addSource).toHaveBeenCalledWith("private-workout-coverage", {
         type: "vector",
-        tiles: [`${window.location.origin}${selection.coverageTileUrl}`],
+        tiles: [privateTemplate(selection.coverageTileUrl)],
         minzoom: 0,
         maxzoom: 22,
       }),
@@ -4667,7 +5489,7 @@ describe("MapPage", () => {
       map.addLayer.mock.calls.find(
         (call: any[]) => call[0].id === "private-workout-coverage-focus",
       )?.[0].filter,
-    ).toEqual(["==", ["get", "entityKind"], "path"]);
+    ).toEqual(["==", ["get", "sourceEntityKind"], "path"]);
     expect(
       map.addLayer.mock.calls.find(
         (call: any[]) => call[0].id === "private-workout-coverage-focus",
@@ -5058,7 +5880,7 @@ describe("MapPage", () => {
       expect(posts).toBe(3);
       expect(map.addSource).toHaveBeenCalledWith(
         "private-workout-coverage",
-        expect.objectContaining({ tiles: [`${window.location.origin}${updated.coverageTileUrl}`] }),
+        expect.objectContaining({ tiles: [privateTemplate(updated.coverageTileUrl)] }),
       );
       expect(mapInstances).toHaveLength(1);
       fireEvent.click(screen.getByRole("button", { name: "Routes" }));
@@ -5245,7 +6067,19 @@ describe("MapPage", () => {
     expect(document.querySelectorAll(".coverage-route-status--unavailable")).toHaveLength(1);
     expect(document.querySelector(".coverage-route-status--current")).toHaveTextContent("✓");
     expect(document.querySelector(".coverage-route-status--failed")).toHaveTextContent("!");
-    expect(document.querySelector(".coverage-route-status--unavailable")).toHaveTextContent("×");
+    const unavailableBadge = document.querySelector(".coverage-route-status--unavailable")!;
+    const unavailableIcon = unavailableBadge.querySelector("svg")!;
+    expect(unavailableBadge).not.toHaveTextContent("×");
+    expect(unavailableBadge.querySelector('span[aria-hidden="true"]')).not.toBeInTheDocument();
+    expect(unavailableIcon).toHaveAttribute("viewBox", "0 0 16 16");
+    expect(unavailableIcon).toHaveAttribute("aria-hidden", "true");
+    expect(unavailableIcon).toHaveAttribute("focusable", "false");
+    expect(unavailableIcon.querySelector("circle")).toHaveAttribute("cx", "8");
+    expect(unavailableIcon.querySelector("circle")).toHaveAttribute("cy", "8");
+    expect(unavailableIcon.querySelector("circle")).toHaveAttribute("r", "8");
+    expect(unavailableIcon.querySelector("path")).toHaveAttribute("d", "M5 5L11 11M11 5L5 11");
+    expect(unavailableIcon.querySelector("path")).toHaveAttribute("stroke-width", "1.5");
+    expect(unavailableIcon.querySelector("path")).toHaveAttribute("stroke-linecap", "round");
     expect(document.querySelector(".coverage-route-status--unprocessed")).not.toBeInTheDocument();
     const unprocessed = screen.getByRole("button", { name: /Coverage pending.*8\/01\/2026/ });
     expect(unprocessed).toBeDisabled();
@@ -6096,9 +6930,7 @@ describe("MapPage", () => {
     );
     expect(mapInstances[0].addSource).toHaveBeenCalledWith("private-workout-routes", {
       type: "vector",
-      tiles: [
-        `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`,
-      ],
+      tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "D".repeat(32)))],
     });
     await waitFor(() =>
       expect(mapInstances[0].addSource).toHaveBeenCalledWith("private-workout-route-endpoints", {
@@ -6519,9 +7351,7 @@ describe("MapPage", () => {
     await waitFor(() => expect(map.removeSource).toHaveBeenCalledWith("private-workout-routes"));
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
       type: "vector",
-      tiles: [
-        `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "F".repeat(32))}`,
-      ],
+      tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "F".repeat(32)))],
     });
     expect(mapInstances).toHaveLength(1);
     expect(map.remove).not.toHaveBeenCalled();
@@ -7055,7 +7885,7 @@ describe("MapPage", () => {
     expect(map.setStyle).toHaveBeenCalledWith(expect.objectContaining({ version: 8 }));
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
       type: "vector",
-      tiles: [`${window.location.origin}${selection.routeTileUrl}`],
+      tiles: [privateTemplate(selection.routeTileUrl)],
     });
     mapBehavior.emitSetStyleLoad = true;
     act(() => vi.advanceTimersByTime(4999));
@@ -7168,9 +7998,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [
-          `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`,
-        ],
+        tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "D".repeat(32)))],
       }),
     );
     act(() =>
@@ -7235,9 +8063,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [
-          `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "E".repeat(32))}`,
-        ],
+        tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "E".repeat(32)))],
       }),
     );
     expect(map.fitBounds).not.toHaveBeenCalled();
@@ -7314,9 +8140,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [
-          `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "D".repeat(32))}`,
-        ],
+        tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "D".repeat(32)))],
       }),
     );
     expect(routeLayers.map(visibility)).toEqual(["none", "none", "none", "none"]);
@@ -7363,9 +8187,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(mapInstances[0].addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [
-          `${window.location.origin}${selection.routeTileUrl.replace(selection.id, "E".repeat(32))}`,
-        ],
+        tiles: [privateTemplate(selection.routeTileUrl.replace(selection.id, "E".repeat(32)))],
       }),
     );
   });
@@ -7392,7 +8214,7 @@ describe("MapPage", () => {
     map.handlers.get("load")?.();
     expect(map.addSource).toHaveBeenCalledWith("private-workout-routes", {
       type: "vector",
-      tiles: [`${window.location.origin}${selection.routeTileUrl}`],
+      tiles: [privateTemplate(selection.routeTileUrl)],
     });
   });
 
@@ -7412,7 +8234,7 @@ describe("MapPage", () => {
     await waitFor(() =>
       expect(mapInstances.at(-1)?.addSource).toHaveBeenCalledWith("private-workout-routes", {
         type: "vector",
-        tiles: [`${window.location.origin}${selection.routeTileUrl}`],
+        tiles: [privateTemplate(selection.routeTileUrl)],
       }),
     );
   });

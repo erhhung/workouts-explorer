@@ -18,54 +18,42 @@ ADD CONSTRAINT workout_routes_route_check CHECK (
 -- running average for the current segment. Duplicate or backward timestamps
 -- remain ordered points but do not distort the positive-delta baseline.
 -- +goose StatementBegin
-CREATE FUNCTION app.build_segmented_workout_route (target_account_id uuid, target_workout_id uuid) RETURNS geometry LANGUAGE sql STABLE
-SET
-    search_path = pg_catalog,
-    app,
-    public AS $function$
+CREATE FUNCTION app.build_segmented_workout_route(target_account_id uuid, target_workout_id uuid)
+RETURNS geometry LANGUAGE sql STABLE
+SET search_path = pg_catalog, app, public AS $function$
     WITH RECURSIVE ordered AS (
         SELECT point.sequence, point.recorded_at, point.latitude, point.longitude,
                row_number() OVER (ORDER BY point.sequence) AS position
-          FROM app.workout_route_points point
-         WHERE point.account_id = target_account_id AND point.workout_id = target_workout_id
+        FROM app.workout_route_points point
+        WHERE point.account_id = target_account_id AND point.workout_id = target_workout_id
     ), segmented(position, sequence, recorded_at, latitude, longitude, segment_id, positive_delta_total, positive_delta_count) AS (
         SELECT point.position, point.sequence, point.recorded_at, point.latitude, point.longitude,
                0::bigint, interval '0', 0::bigint
-          FROM ordered point WHERE point.position = 1
+        FROM ordered point WHERE point.position = 1
         UNION ALL
         SELECT point.position, point.sequence, point.recorded_at, point.latitude, point.longitude,
                prior.segment_id + CASE WHEN decision.starts_segment THEN 1 ELSE 0 END,
-               CASE
-                   WHEN decision.starts_segment THEN interval '0'
-                   WHEN delta.value > interval '0' THEN prior.positive_delta_total + delta.value
-                   ELSE prior.positive_delta_total
-               END,
-               CASE
-                   WHEN decision.starts_segment THEN 0
-                   WHEN delta.value > interval '0' THEN prior.positive_delta_count + 1
-                   ELSE prior.positive_delta_count
-               END
-          FROM segmented prior
-          JOIN ordered point ON point.position = prior.position + 1
-          CROSS JOIN LATERAL (SELECT point.recorded_at - prior.recorded_at AS value) delta
-          CROSS JOIN LATERAL (
-              SELECT delta.value > interval '0'
-                 AND prior.positive_delta_count > 0
-                 AND delta.value >= 3 * (prior.positive_delta_total / prior.positive_delta_count::double precision)
-                 AS starts_segment
-          ) decision
+               CASE WHEN decision.starts_segment THEN interval '0'
+                    WHEN delta.value > interval '0' THEN prior.positive_delta_total + delta.value
+                    ELSE prior.positive_delta_total END,
+               CASE WHEN decision.starts_segment THEN 0
+                    WHEN delta.value > interval '0' THEN prior.positive_delta_count + 1
+                    ELSE prior.positive_delta_count END
+        FROM segmented prior JOIN ordered point ON point.position = prior.position + 1
+        CROSS JOIN LATERAL (SELECT point.recorded_at - prior.recorded_at AS value) delta
+        CROSS JOIN LATERAL (
+            SELECT delta.value > interval '0' AND prior.positive_delta_count > 0
+                AND delta.value >= 3 * (prior.positive_delta_total / prior.positive_delta_count::double precision)
+                AS starts_segment
+        ) decision
     ), segment_lines AS (
         SELECT segment_id,
-               ST_SetSRID(ST_MakeLine(ST_MakePoint(longitude, latitude) ORDER BY sequence), 4326) AS segment_line
-          FROM segmented
-         GROUP BY segment_id
-        HAVING count( * ) >= 2
+            ST_SetSRID(ST_MakeLine(ST_MakePoint(longitude, latitude) ORDER BY sequence), 4326) segment_line
+        FROM segmented GROUP BY segment_id HAVING count(*) >= 2
     )
-    SELECT CASE WHEN count( * ) = 0 THEN NULL::geometry
-                ELSE ST_Multi(ST_Collect(segment_line ORDER BY segment_id)) END
-      FROM segment_lines
+    SELECT app.split_raw_route_spatial_gaps(ST_Multi(ST_Collect(segment_line ORDER BY segment_id)))
+    FROM segment_lines
 $function$;
-
 -- +goose StatementEnd
 
 REVOKE ALL ON FUNCTION app.build_segmented_workout_route (uuid, uuid)

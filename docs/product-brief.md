@@ -14,8 +14,8 @@ Workouts Explorer imports workout records and GPS tracks, normalizes them indepe
 Current source ends at **030**, with final source/runtime support and
 schema/minimum runtime **30**, baseline **27**, ledger **0-30**. Combined **029**
 contains ingest status/reprocessing/phases; **030** contains compact/canonical
-display. See the [history mapping](database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+display. See the [history mapping](database-migrations.md#current-source-layout)
+and [pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 The approved live reconciliation is pending; source preparation is not deployment.
 Context warming uses retained evidence with no job, generation-policy or
 matcher-policy change; it needs no provider check, new import, OSM

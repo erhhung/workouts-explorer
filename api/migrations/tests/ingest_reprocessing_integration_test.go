@@ -68,7 +68,7 @@ func TestIngestReprocessingPostgreSQL(t *testing.T) {
 	t.Run("MetadataSecurityAndUnchangedFence", func(t *testing.T) {
 		var safe bool
 		if err := db.migration.QueryRow(db.ctx, `SELECT
-			(SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+			(SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT bool_and(p.prosecdef AND pg_get_userbyid(p.proowner)='workouts_security_owner'
 			 AND p.proconfig=ARRAY['search_path=pg_catalog, app']
 			 AND NOT has_function_privilege('workouts_api',p.oid,'EXECUTE')

@@ -574,7 +574,40 @@ SET
 WHERE
     singleton;
 
+-- Spatial continuity is a raw-route foundation, shared with Coverage's 200 m limit.
+-- +goose StatementBegin
+CREATE FUNCTION app.split_raw_route_spatial_gaps(input_route geometry) RETURNS geometry
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+SET search_path = pg_catalog, public AS $function$
+    WITH points AS MATERIALIZED (
+        SELECT point.path[1] component, point.path[2] ordinal, point.geom
+        FROM ST_DumpPoints(input_route) point
+    ), breaks AS MATERIALIZED (
+        SELECT component, ordinal, geom,
+            CASE WHEN ST_DistanceSphere(lag(geom) OVER (
+                PARTITION BY component ORDER BY ordinal), geom) > 200 THEN 1 ELSE 0 END gap
+        FROM points
+    ), grouped AS (
+        SELECT component, ordinal, geom,
+            sum(gap) OVER (PARTITION BY component ORDER BY ordinal ROWS UNBOUNDED PRECEDING) part
+        FROM breaks
+    ), lines AS (
+        SELECT component, part, ST_MakeLine(geom ORDER BY ordinal) geom
+        FROM grouped GROUP BY component, part HAVING count(*) >= 2
+    )
+    SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM breaks WHERE gap = 1) THEN input_route
+        ELSE (SELECT ST_Multi(ST_Collect(geom ORDER BY component, part)) FROM lines) END
+$function$;
+-- +goose StatementEnd
+
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.split_raw_route_spatial_gaps(geometry) OWNER TO workouts_security_owner;
+REVOKE ALL ON FUNCTION app.split_raw_route_spatial_gaps(geometry)
+    FROM PUBLIC, workouts_api, workouts_worker, workouts_tiles;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+
 -- +goose Down
+DROP FUNCTION app.split_raw_route_spatial_gaps(geometry);
 SELECT
     app.assert_no_active_manual_ingest ();
 

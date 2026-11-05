@@ -13,33 +13,7 @@ marked planned, optional or deferred. Capacity targets are design requirements,
 not proof of multi-user load acceptance. Dated operational measurements belong in
 the focused acceptance and telemetry guides rather than this component overview.
 
-The source migration sequence is **001-030**, with final source/runtime
-`SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and
-ledger **0-30**. Unchanged 001-028 precede combined ingest status/reprocessing/phases
-in **029** and display precomputations/canonical identity in **030**. See the
-[source mapping](database-migrations.md#source-history-mapping). Live reconciliation
-is authorized but pending; the [pre-cutover actual state](database-migrations.md#pre-cutover-live-status)
-is separate from this source target. Canonical display and click-highlight behavior
-are already deployed under historical numbering. See
-[current release status](development-progress.md#current-status) and
-[Milestone 8 closeout](development-progress.md#milestone-8-closeout) for acceptance
-and remaining verification boundaries; deployment alone does not certify capacity.
-
-Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
-at the **032/backend-42/UI-43 checkpoint**, a standalone native
-migration under the actual restricted migration login preceded the coordinated
-rollout, using full values and `--no-hooks`. All four application images were
-rebuilt with native artifacts and published with strict TLS verification; the
-separate Martin workload was preserved. Accepted receipts verified runtime-role
-readiness and preservation of original data and configuration. Protected full
-pre-32 backups and old images were retained; image-only rollback is unsupported.
-Scripted deployed-browser verification passed for that checkpoint, not as proof
-of the current release's browser or milestone acceptance.
-[Ingest Reprocessing](ingest-reprocessing.md) defines the current 029 contract's
-bounded default, explicit force, retry receipts and queued historical-job
-compatibility; those ingest semantics are unchanged by display migration 030.
-
-The source canonical display contract requires schema/minimum runtime **30**,
+The 030 canonical display contract introduced schema/minimum runtime **30**,
 baseline **27**. [ADR 0013](decisions/013-canonical-coverage-display-identity.md)
 defines the general display policy, not an OSM derivation/matcher/path-policy
 change. No OSM regeneration or route rematching is needed. The compact-fact reader
@@ -520,7 +494,7 @@ List reads indexed ready entities with search after grouping; point stats is an
 authorized canonical index lookup without geometry or full-account aggregation.
 The replaced stored detail reader gates whole-group in-range geometry on metadata;
 the API calls that same six-argument reader with transaction-local `jit=off`.
-All four MVT layers and focus GeoJSON use this context's canonical IDs, metadata,
+The 030 contract's four MVT layers and focus GeoJSON use this context's canonical IDs, metadata,
 counts and buckets while retaining source IDs/kinds for hit priority and actual
 geometry. A source path feature may have canonical `entityKind=park`; representative
 kind never filters membership. No tile-local text hashing or invented bridges.
@@ -531,7 +505,8 @@ Runtime readiness pins exact 030 bodies and ownership/ACL/RLS/index/trigger
 contracts. This is a generally applicable application read-model policy, not an
 OSM derivation, matcher or path-policy change. Coverage recomputation here means
 context warm/rebuild from retained evidence, **not new route jobs**. This contract
-requires source schema/minimum runtime **30**; actual deployment status and
+introduced schema/minimum runtime **30**; 031 retains the policy but replaces the
+tile path as described [below](#tile-local-rendering-031). Actual deployment status and
 verification boundaries are in [current status](development-progress.md#current-status).
 
 #### Click-Highlight Follow-Up
@@ -564,8 +539,8 @@ statement snapshot, retaining the correlated `LATERAL`/`OFFSET 0` barrier and
 minimum-500-meter fit pipeline. The earlier API-local source-only geometry copy
 is superseded. Denied metadata cannot initiate geometry work. The transaction
 remains read-only with explicit `SET LOCAL jit=off`, not a global setting change.
-This combined source release requires schema/minimum runtime **30**; live cutover
-remains separate from this source requirement.
+This 030 reader contract remains unchanged in source 031; the source-30 live
+cutover completed at revision 61, separately from the approved 031 rollout at revision 65.
 
 A separate canvas-visit detail cache stores only successful, still-current
 responses, keyed by selection ID, generation, resolved dates, display policy and
@@ -911,12 +886,6 @@ scan or changing a saved campaign cursor. Retry/cancellation authority is unchan
 Lease/input/descriptor CAS and monotonic catalog/event floors reject stale results;
 head and ROI use one replica Repeatable Read snapshot with no strict-policy primary
 fallback. See [metadata fences](osm-read-replicas.md#metadata-fences-osm-010).
-
-APP feature 029 ships with complete source/runtime **30**; separate OSM 010 requires
-coordinated readers. The last reported live APP **34/minimum 33**, OSM **9**, Helm
-**60** is not a source-30/OSM-10 receipt. See
-[migration contract](database-migrations.md#metadata-driven-coverage-reconciliation-029-and-osm-010)
-and [pending verification](development-progress.md#metadata-driven-coverage-reconciliation).
 
 #### Shared Matching Contract
 
@@ -1301,7 +1270,7 @@ the [complete contract](ingest-reprocessing.md).
 ### Derived processing
 
 - Build 3D raw route geometry.
-- Persist raw map geometry as a multi-line route, beginning a new segment when a positive timestamp delta reaches three times the running positive-delta average for the current segment; duplicate and backward timestamps remain ordered but do not affect that baseline.
+- Persist raw map geometry as a multi-line route, beginning a new segment when a positive timestamp delta reaches three times the running positive-delta average for the current segment; duplicate and backward timestamps remain ordered but do not affect that baseline. source 009 then splits connections longer than Coverage's 200-metre spatial limit without resetting that cadence baseline or reconnecting earlier components. Original observations are retained; projected chunks/LODs and focused browser geometry honor the same spatial boundary. See [route continuity](decisions/015-route-continuity-and-preserved-observations.md).
 - Encode zero-length multi-line components as route-attributed point features alongside line features; MapLibre renders them as route-colored circles with the same selection and hover semantics.
 - Derive bounds and elevation statistics.
 - Resolve or update workout timezone.
@@ -1333,9 +1302,9 @@ The API owns the public private-tile route. A browser never calls Martin directl
 
 1. Browser requests a route or coverage tile using a session-scoped map selection.
 2. API authenticates the session and verifies account ownership.
-3. API supplies approved selection and account context to internal Martin.
-4. Martin invokes the approved security-definer tile function, which revalidates scope before querying copied segment geometry and private attribution.
-5. API returns the tile with private caching headers.
+3. API authorizes before cache lookup/coalescing and again after fetch and encoder admission, including cache hits; no database transaction spans either wait.
+4. On a miss, internal Martin invokes the approved security-definer tile function, independently revalidating scope before querying private render chunks.
+5. API returns the tile with `Cache-Control: private, no-store` and `Vary: Cookie, Authorization, Accept-Encoding`, including validation errors.
 
 Tile URLs include an account data generation so a redraw after ingest or deletion does not reuse stale private data.
 
@@ -1348,6 +1317,154 @@ the API must not bless old selected data with a newly read generation. Removing
 the generation-first lock eliminates its account/workout FK cycle, including the
 deferred focused-membership FK, without weakening those constraints. This helper's
 ABI does not make old runtime-28 images compatible with the folded cohort contract.
+
+### Tile-Local Rendering (031)
+
+All six optimizations are implemented and **deployed at Helm 65 for both Routes
+and Coverage**, not capacity-certified: projected chunks, local clipping/LOD,
+Coverage deduplication, independent focus, bounded UI reuse, and bounded API
+cache/coalescing/admission. [031 SQL](../api/migrations/sql/031_tile_rendering.sql)
+and [tile delivery](../api/tile_rendering.go) define the contract.
+
+This is the retained **031 foundation/legacy-function contract**. The deployed
+[031 follow-up](#tile-rendering-and-delivery-031) supersedes its active raw
+LOD, Coverage deduplication and browser delivery path without editing 031.
+
+- Private security-owner/forced-RLS `raw_route_tile_chunks` and
+  `coverage_tile_chunks` retain EPSG:3857 pieces of at most **256 vertices**.
+  AFTER-write maintenance and cascading source FKs keep chunks transactional with
+  raw routes and actual partial match evidence. GiST geometry indexes and covering
+  selection/order and workout-metadata indexes bound local probes. No GPS,
+  matching, canonical identity or visit-count policy changes.
+- Both MVT functions retain `(z,x,y,query_params json)` and exactly four opaque
+  account/session/selection/generation parameters. Independent database authorization
+  remains mandatory. API-only `authorize_map_tile(uuid,uuid,uuid,bigint,boolean)`
+  returns the earlier session/selection expiry, validates current generation and
+  Coverage context, and caches no authorization decision.
+- Select only indexed projected chunks intersecting the tile envelope expanded by
+  **64/4096** of its width, then clip locally. Below zoom **15**, simplify stable
+  pieces **before clipping** with topology preservation at **0.25 CSS pixels**
+  for a 512px tile; with MVT quantization the error stays below **0.5 CSS pixels**.
+  At zoom 15 and above use full piece geometry. Endpoints, short components, gaps
+  and stationary raw-route dots remain; raw workouts never deduplicate across IDs.
+- Coverage exact-EWKB deduplication is scoped by canonical ID **and source kind/ID**
+  before local union, with a singleton fast path. It never substitutes full OSM
+  geometry for actual partial evidence. Canonical metadata/counts still cover the
+  whole inclusive date range; checked workouts affect tile geometry only.
+  `coverage_mvt` now emits only `coverage` and `coverage_parks`, not duplicate
+  focused unions. Independent exact Coverage-focus GeoJSON is unchanged.
+- Raw focus uses dedicated GeoJSON line/dot layers from the existing segmented
+  raw-point request, sharing its data with start/finish and direction markers.
+  Focus-only changes do not renew background selections. Focus line/arrow readiness
+  is independent of background tiles; stable filters/paint writes avoid repaint
+  loops, and pending tiles during a user pan do not erase the current line or ready arrows.
+  Focused Coverage hover fallback preserves canonical IDs and source kind.
+- Separate raw and Coverage focus LRUs each hold **16 entries / 8 MiB serialized
+  JSON**, with fixed **five-minute TTLs** from load, not access. Generation/context,
+  deletion, cancellation and latest-request guards prevent stale geometry reuse,
+  old 404 capability refresh, or old geometry impersonating a new owner. These are
+  not JS-heap bounds, the 8-entry entity-detail cache, or the hover/table caches.
+
+The API uses a dedicated non-redirecting, uncompressed transport and accepts only
+complete validated positive or legitimate empty MVT responses up to **5 MiB**.
+Its per-process LRU defaults to **32 MiB / 512 entries / 30s**, expiry-capped by
+the authorized capability. Coalescing keys are typed account/session/selection/
+generation/kind/z/x/y tuples; no UUIDs enter metric labels or new logs.
+Authorization runs before lookup and after waiting, never from cache.
+
+Default admission is **4 occupied render/delivery slots**, **64 FIFO queued
+distinct jobs**, **256 admitted HTTP requests** and **64 waiters per job**.
+Queue/request/upstream budgets are **1s / 6s / 5s**. The last waiter leaving removes
+queued work or cancels active transport; the occupied slot remains until transport
+return **and the last response writer releases it**. Cache-hit bodies are pinned
+and charged by allocated capacity, not length, so eviction cannot hide retained
+payload. Conservative default payload accounting is **52 MiB + 4 bytes retained**,
+or **60 MiB + 4 bytes during growth**, excluding runtime overhead/RSS. An independent
+**six-body-job ceiling** applies even though configured concurrency accepts 1-16.
+Limits are per API process, not a global database quota; Martin caching stays off.
+
+Seven private `api.mapTiles` settings map to API-only environment variables:
+
+| Helm key under `api.mapTiles` | Environment variable | Type / default | Accepted chart bounds |
+| --- | --- | --- | --- |
+| `concurrency` | `MAP_TILE_CONCURRENCY` | integer / `4` | 1-16; effective body-job ceiling 6 |
+| `queueSize` | `MAP_TILE_QUEUE_SIZE` | integer / `64` | 0-256; zero disables waiting |
+| `cacheBytes` | `MAP_TILE_CACHE_BYTES` | integer / `33554432` | 0-134217728; zero disables caching |
+| `cacheEntries` | `MAP_TILE_CACHE_ENTRIES` | integer / `512` | 1-4096 |
+| `cacheTtl` | `MAP_TILE_CACHE_TTL` | string / `30s` | whole seconds 1-300 or minutes 1-5 |
+| `queueTimeout` | `MAP_TILE_QUEUE_TIMEOUT` | string / `1s` | whole milliseconds 100-3000 or seconds 1-3 |
+| `requestTimeout` | `MAP_TILE_REQUEST_TIMEOUT` | string / `6s` | whole seconds 5-15 |
+
+The [schema](../helm/values.schema.json), [runtime validation](../internal/config/tile_rendering.go)
+and [installed-values reference](../helm/README.md#private-tile-budgets) define these
+bounds; runtime requires queue timeout below request timeout. API ConfigMap
+checksums roll API pods on changes. Settings are not public browser config.
+[Role defaults and controlled rollout](database-migrations.md#tile-local-geometry-031)
+provide the SQL execution bound; HTTP abort is not proof of immediate PostgreSQL
+cancellation. Fresh Martin connections inherited the verified role defaults during
+the approved cutover; its 1.15.0 pin, pool of four and disabled cache were preserved.
+[Source and deployment evidence](development-progress.md#tile-local-map-optimization-031)
+and [synthetic cardinality results](coverage-acceptance-results.md#tile-local-source-verification-031)
+retain their checkpoint scope. The [current release](development-progress.md#tile-rendering-and-delivery-031)
+keeps final live viewport/render/focus acceptance separate from implementation.
+
+### Tile Rendering And Delivery (031)
+
+**Deployed at Helm 67, schema 31/minimum 31.** The canonical authorized desktop/4K
+run completed all required views without observed delivery errors; dense high-zoom
+raw client completion remained slow, not a usable-render or capacity acceptance.
+The API calls private `app.raw_route_mvt` and `app.coverage_mvt`; public URLs,
+four opaque scope parameters, independent MVT authorization and API-only
+`authorize_map_tile` stay unchanged. All 031 functions and the literal ingest fence
+31 remain untouched: shipped worker 31 and legacy API readiness pass. This is
+concrete rolling-image fallback support, not database rollback or version dispatch.
+
+- [031 SQL](../api/migrations/sql/031_tile_rendering.sql) precomputes complete
+  projected raw components **before chunking**, eliminating artificial chunk-end
+  constraints on simplification. Bands **10/12/14** use the finer band between
+  checkpoints. `ST_Simplify(..., true)` preserves collapsed short lines; if positive
+  original length would become zero, retain the whole original component, including
+  closed moving loops. Never turn movement into dots. At **z >= 15**, use original
+  exact 031 raw chunks. Workout identity, genuine gaps and stationary dots remain.
+  New forced-RLS owner-only LOD storage is backfilled and maintained transactionally.
+- Coverage eligibility uses bounded probes **once per tile-local workout**, tested
+  with cold/generic estimates. Deduplicate at **MVT display precision before union**,
+  isolated by canonical ID and source kind/ID. Actual partial evidence, whole-range
+  counts, canonical metadata and exact detail/focus geometry remain unchanged.
+  `coverage_mvt` sets function-local **`work_mem=32MB`**: not a global setting or
+  total-query memory bound; multiple operations and four concurrent slots multiply use.
+- [PrivateTiles](../ui/src/privateTiles.ts), its [tests](../ui/src/privateTiles.test.ts)
+  and [MapPage integration](../ui/src/MapPage.tsx) use public MapLibre `addProtocol`
+  main/worker handling, with same-origin allowlisted URLs and cookie credentials,
+  never tokens or opaque private MapLibre internals. Per map: **4 active fetches,
+  128 jobs, 64 waiters/job**, separate transferable `ArrayBuffer` ownership per
+  consumer. Initial queue wait is bounded to **60s**; a separate **15s service/retry
+  budget starts at first dispatch**, not enqueue. At most **three attempts**,
+  jittered **250/750ms** backoffs and `Retry-After` capped at **1s**; sleepers release
+  the active slot and rejoin the tail. Generation/style/unmount cancellation drains
+  stale jobs; one event-loop turn before refill admits worker abort messages.
+- There is no source-wide `setTiles` retry budget in this path. A scope's 401 or
+  404 callback runs once and stops dispatch; browser-internal 404 handling rejects
+  as **410 before MapLibre can treat 404 as empty**, without changing the public
+  API's 404 contract. Validated PBF 200 and legitimate 204/empty responses remain
+  valid cacheable payloads; errors are never converted into successful empty tiles.
+- [API compression](../api/tile_compression.go) streams negotiated **gzip BestSpeed**
+  for successful bodies **>= 1,024 bytes**, respecting encoding q-values/refusals.
+  Errors, small bodies and empty responses stay uncompressed. The raw cache and
+  **5 MiB uncompressed limit** remain unchanged; no full compressed-body copy.
+  **Four process-wide reusable encoders** bound cache-hit compression too, including
+  the 256-admitted-request case. No encoder allocation before admission, no DB
+  transaction while waiting, and final authorization **after encoder admission**.
+  Denial preserves the authorization Problem response; encoder close precedes body
+  lease release. [Delivery code](../api/tile_metrics.go) retains private/no-store and
+  `Vary: Cookie, Authorization, Accept-Encoding` on all responses.
+
+API limits remain **4 occupied slots / 64 queued jobs / 1s queue / 6s HTTP / 5s
+upstream / 4s SQL**; browser budgets do not enlarge them. No CPU/memory, queue,
+timeout, resource or Martin pool increase accompanies this delivery change.
+`areTilesLoaded()` can count failed tiles as loaded: it is not completeness proof.
+See the [scoped final result and remaining client investigation](coverage-acceptance-results.md#tile-delivery-status-031);
+wire-size reduction does not establish latency improvement or a need for more resources.
 
 ### Public map and OSM data
 
@@ -1371,7 +1488,7 @@ ABI does not make old runtime-28 images compatible with the folded cohort contra
 - Automatic region addition remains deferred. A no-evidence diagnostic resolves its route against the local provider catalog and reports each required but inactive region so the UI can present coverage as unavailable rather than as a successful zero-match review.
 - The unavailable-region fallback samples at most 256 evenly distributed route points, including both endpoints. The diagnostic response lists stable provider-qualified region IDs and display names; the Coverage UI shows its alert/retry state and suppresses normal review controls while preserving the raw route.
 - Diagnostic clipping discards non-positive or degenerate LineStrings before persistence, logs their count, and recomputes portion/segment totals and generation provenance from valid evidence. One unusable OSM substring cannot abort an otherwise valid diagnostic run.
-- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; explicit focus cancels an old hover or its pending timer. In Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels; the bearing window starts three samples before/after a marker and expands within the same route component until it spans at least four screen pixels, rather than discarding dense GPS samples. Cached markers include zoom, bearing, pitch, viewport size and projection identity. Ready arrows remain visible and reuse their geographic positions during an actual user drag. Programmatic camera movements, including pan-only route/road fits, hide the arrows immediately; zoom, rotation and pitch also invalidate them. After movement settles, wait for a final-camera render, the current direction-worker/source update, and the private route source's tiles (or diagnostic in-memory route source), not unrelated basemap tiles. Render-time readiness checks do not repeatedly write unchanged paint properties. Superseded route/camera/style updates cannot reveal stale arrows; route lines and start/finish markers do not wait for this handoff.
+- Map routes derive small green direction triangles from cached segmented raw routes. In Routes mode they follow whichever visible route is magenta, preferring the delayed-hover route over the focused route; explicit focus cancels an old hover or its pending timer. In Coverage they follow the focused diagnostic raw route. Marker spacing is measured in projected screen pixels; the bearing window starts three samples before/after a marker and expands within the same route component until it spans at least four screen pixels, rather than discarding dense GPS samples. Cached markers include zoom, bearing, pitch, viewport size and projection identity. Ready arrows remain visible and reuse their geographic positions during an actual user drag. Programmatic camera movements, including pan-only route/road fits, hide the arrows immediately; zoom, rotation and pitch also invalidate them. After movement settles, wait for a final-camera render and the current direction-worker/focus-source update, independently of background private/base tiles in source 031. Render-time readiness checks do not repeatedly write unchanged paint properties. Superseded route/camera/style updates cannot reveal stale arrows; route lines and start/finish markers do not wait for this handoff.
 - Clicking a visible route feature in Routes mode immediately focuses and fits that workout, ensures it is checked, and issues a one-time centered scroll for its route-list row. Clicking a route-list row performs the same focus/fit selection without automatic list scrolling.
 - Summary's Show on map handoff checks the fresh capability's target readiness before fitting. If production Coverage is active but the target has no coverage result, it switches to raw Routes and retains focus; current/stale usable coverage keeps Coverage active. This one-time handoff does not force mode changes on ordinary tab reopening or capability refreshes. Cached readiness cannot clear the requested focus while capability creation is pending.
 - Accepted Summary deletions, including an already-unavailable response, notify the shared shell. It prunes the Map catalog, checked IDs and deleted focus, invalidates cached Coverage views, and advances a collection revision without changing the date range or refetching the complete workout collection. Late capability/overlay results cannot restore deleted entries. An external deletion that makes an explicit capability return 404 triggers one authoritative range-catalog recovery and retains only the still-available checked IDs, preserving explicit none rather than selecting all.

@@ -13,6 +13,8 @@ const preferences: Preferences = {
   clockFormat: "12h",
   workoutColumns: ["date", "type", "distance", "duration"],
   pageSize: 25,
+  customDateRangeLimit: 3,
+  recentCustomDateRanges: [],
   initialized: true,
   coverageDiagnosticsEnabled: false,
   dateRange: "last30Days",
@@ -116,6 +118,51 @@ function renderSummary(
 }
 
 describe("Summary", () => {
+  test("shows recent custom ranges directly after Custom, keeps its checkmark, and skips reapplying the current range", async () => {
+    const a = "2022-01-01/2026-11-01";
+    const b = "2024-02-29/2024-03-03";
+    const patches: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/me/preferences" && init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)));
+        return Promise.resolve(
+          json({ ...preferences, dateRange: b, recentCustomDateRanges: [b, a] }),
+        );
+      }
+      return Promise.resolve(
+        json(String(input).startsWith("/api/summary?") ? summary : workoutPage()),
+      );
+    });
+    renderSummary({
+      dateRange: a,
+      customDateRangeLimit: 2,
+      recentCustomDateRanges: [a, b, "2026-01-01/2026-01-31"],
+    });
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "Select date range" });
+    await user.click(trigger);
+    const custom = screen.getByRole("menuitem", { name: /Custom/ });
+    expect(custom).toContainElement(screen.getByLabelText("selected"));
+    expect(custom.nextElementSibling).toHaveTextContent("Jan 1, 2022 to Nov 1, 2026");
+    expect(custom.nextElementSibling?.nextElementSibling).toHaveTextContent(
+      "Feb 29, 2024 to Mar 3, 2024",
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Jan 1, 2026 to Jan 31, 2026" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Jan 1, 2022 to Nov 1, 2026" }));
+    expect(patches).toEqual([]);
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Feb 29, 2024 to Mar 3, 2024" }));
+    await waitFor(() => expect(patches).toEqual([{ dateRange: b }]));
+    expect(trigger).toHaveTextContent("Feb 29, 2024 to Mar 3, 2024");
+    await user.click(trigger);
+    const updatedCustom = screen.getByRole("menuitem", { name: /Custom/ });
+    expect(updatedCustom).toContainElement(screen.getByLabelText("selected"));
+    expect(updatedCustom.nextElementSibling).toHaveTextContent("Feb 29, 2024 to Mar 3, 2024");
+    expect(screen.getAllByLabelText("selected")).toHaveLength(1);
+  });
+
   test("starts with the date picker, omits the former hero, and uses one summary inset token", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       String(input).startsWith("/api/summary?")

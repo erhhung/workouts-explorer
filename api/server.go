@@ -39,6 +39,8 @@ type Server struct {
 	config      config.API
 	db          *pgxpool.Pool
 	tileClient  *http.Client
+	tiles       *mapTileService
+	tileContext context.Context
 	swagger     http.Handler
 	passwords   *passwordHasher
 	delivery    *deliveryService
@@ -52,6 +54,10 @@ func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Han
 }
 
 func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
+	cfg.MapTiles = cfg.MapTiles.WithDefaults()
+	if err := cfg.MapTiles.Validate(); err != nil {
+		return nil, err
+	}
 	spec, err := generated.GetSwagger()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded OpenAPI document: %w", err)
@@ -78,16 +84,13 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 		delivery.close()
 		return nil, err
 	}
-	tileClient := &http.Client{
-		Timeout:       5 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	server := &Server{config: cfg, db: db, tileClient: tileClient, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys, diagnostics: diagnostics}
+	server := &Server{config: cfg, db: db, tileContext: ctx, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys, diagnostics: diagnostics}
 	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {
 		return nil, err
 	}
+	server.mapTiles()
 
 	router := chi.NewRouter()
 	router.Use(requestID)
@@ -96,6 +99,15 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 	})
 	router.Use(accessLog(logger))
 	router.Use(securityHeaders(csp))
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/map-selections/") &&
+				(strings.Contains(r.URL.Path, "/route-tiles/") || strings.Contains(r.URL.Path, "/coverage-tiles/")) {
+				privateTileHeaders(w)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 	router.Handle("/swagger/*", swagger)
 
 	validated := chi.NewRouter()

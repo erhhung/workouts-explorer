@@ -7,8 +7,8 @@ The 10/13 schema-20/minimum-18 patch, schema-22 rollout instructions and pending
 release gates below are retained as history, not current deployment instructions.
 Current source ends at **030**, schema/minimum runtime **30**, baseline **27**,
 ledger **0-30**, with ingest status/reprocessing/phases in **029** and compact/
-canonical display in **030**. See the [history mapping](database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+canonical display in **030**. See the [history mapping](database-migrations.md#current-source-layout)
+and [pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 The authorized live reconciliation is pending, not a new repair receipt.
 Context warming changes no job, generation or
 matcher policy and needs no provider check, OSM regeneration/download or rematch.

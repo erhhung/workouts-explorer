@@ -50,9 +50,9 @@ func TestIngestPhaseReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(340034,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27
+	if err := admin.QueryRow(ctx, `SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27
 		FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("harness requires fully migrated runtime30/min30/baseline27: %v", err)
+		t.Fatalf("harness requires the current schema/min31/baseline27: %v", err)
 	}
 	var pools []*pgxpool.Pool
 	for _, role := range []struct{ name, env string }{
@@ -115,8 +115,8 @@ func TestIngestPhaseReadinessPostgreSQL(t *testing.T) {
 	const index = "app.job_events_ingest_phase_latest_idx"
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
-		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=28 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=30 WHERE singleton`},
-		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=28,minimum_runtime_version=28 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`},
+		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=28 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=31 WHERE singleton`},
+		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=28,minimum_runtime_version=28 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`},
 		{"function missing", alter + "RENAME TO missing_ingest_phase", "ALTER FUNCTION app.missing_ingest_phase(uuid,text,uuid,text,bigint,bigint) RENAME TO record_ingest_phase"},
 		{"function owner", alter + "OWNER TO workouts_migration", alter + "OWNER TO workouts_security_owner"},
 		{"function invoker", alter + "SECURITY INVOKER", definition},
@@ -165,7 +165,7 @@ func TestIngestPhaseReadinessPostgreSQL(t *testing.T) {
 		t.Cleanup(func() {
 			restoreCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if _, err := admin.Exec(restoreCtx, `UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`); err != nil {
+			if _, err := admin.Exec(restoreCtx, `UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`); err != nil {
 				t.Fatal(err)
 			}
 		})

@@ -137,6 +137,16 @@ Coverage matching and API diagnostics coordinate in the application database acr
 
 `coverageWorker.jobConcurrency` defaults to **2 per pod**. With `N` pods, the potential worker count is `N * jobConcurrency`, but database admission, reader reservations, and job leases still constrain active work. `api.coverageDiagnostics.concurrency` is also per process. File ingestion is separate: `worker.fileConcurrency` is per process, while `worker.accountFileConcurrency` and `worker.globalFileConcurrency` are database-coordinated across worker pods.
 
+## Private Tile Budgets
+
+`api.mapTiles` renders only into the private API ConfigMap, never browser public configuration. Its seven settings map to `MAP_TILE_CONCURRENCY`, `MAP_TILE_QUEUE_SIZE`, `MAP_TILE_CACHE_BYTES`, `MAP_TILE_CACHE_ENTRIES`, `MAP_TILE_CACHE_TTL`, `MAP_TILE_QUEUE_TIMEOUT`, and `MAP_TILE_REQUEST_TIMEOUT`. The API Deployment's existing ConfigMap checksum rolls API pods when these values change.
+
+Defaults are **4 active renders**, **64 queued requests**, a **33554432-byte (32 MiB) cache payload budget**, **512 entries**, **30s cache TTL**, **1s queue wait**, and a **6s total request deadline** per API process. Zero queue size rejects work that cannot start immediately; zero cache bytes disables caching. The chart accepts only whole-unit duration strings: cache TTL `1s..300s` or `1m..5m`, queue timeout `100ms..3000ms` or `1s..3s`, and request timeout `5s..15s`. These are a bounded subset of the API's Go duration syntax; the maximum queue wait is always below the minimum total request deadline.
+
+Admission and cache budgets are **per API process**, not a database-wide quota. Occupied render/delivery slots are limited to `min(concurrency, 6)` and remain held until the upstream transport and last downstream writer finish. With `N` API replicas, potential occupied admission is `N * min(concurrency, 6)`, queued admission is `N * queueSize`, and cache payload budgets total `N * cacheBytes` (not total process-memory limits). With default settings, conservative payload bounds are 52 MiB plus four bytes retained and 60 MiB plus four bytes during read growth, excluding runtime, HTTP, database, allocator and GC overhead. Cache hits pin shared buffers within the cache budget; slow writers cannot accumulate uncharged bodies. Martin remains at **pool_size 4 per Martin pod**, with its cache **disabled** and existing resources unchanged. Increasing API replicas or admission does not increase that pool or certify database capacity; multiple Martin replicas likewise multiply their independent pools.
+
+Database-owner automation, or the optional privileged role-provisioning job, must set `workouts_tiles` login defaults to `row_security=on`, `statement_timeout=4s`, `lock_timeout=250ms`, and `idle_in_transaction_session_timeout=5s`. Provisioning refuses unsafe role attributes or memberships rather than repairing them. These are actual role defaults, not SQL-function-local timeout settings. **Existing database connections do not inherit changed role defaults:** recycle Martin's connections/pods during a future separately controlled rollout after provisioning. Development PostgreSQL bootstrap applies the same defaults only when initializing a new data directory. None of these source changes deploys or restarts a live workload.
+
 ## Automatic Coverage Retries
 
 The following describes the **folded-028 contract deployed in `dev-20261020`** and retained in the current release, not a reinterpretation of historical old-contract policy. Production mixed-failure automatic recovery published authoritative results; subsequent independent verification closed the historical year's available-map recovery. Those receipts do not certify capacity or M8 acceptance, which is tracked only in [Milestone 8 Closeout](../docs/development-progress.md#milestone-8-closeout); dataset metrics stay private. See [independent closure](../docs/development-progress.md#independent-yearly-recovery-closure-10202026). Policy stays `coverage-production-v1`, Coverage 500m CPU / 256 MiB, two lanes, B=25 and one additional automatic attempt. The source worker stays 250m / 256 MiB. Default limits, chart defaults and all other resources/infrastructure are unchanged.
@@ -228,12 +238,19 @@ Values under `api`.
 | `securitySecret.smtpPasswordKey`<br>_(string)_ | Secret key containing the SMTP password; mounted unless smtp.allowInsecureLocal is true. | `"smtpPassword"` |
 | `trustedCASecret.name`<br>_(string)_ | Name of the API CA trust Secret; also the default trust source for collector sidecars. | `"workouts-explorer-database-tls"` |
 | `trustedCASecret.key`<br>_(string)_ | Secret key containing the PEM CA certificate bundle. | `"ca.crt"` |
+| `trustedProxyCidrs`<br>_(string)_ | Comma-separated proxy CIDRs whose forwarded client addresses are trusted; empty trusts none. | `""` |
+| `localDevelopment`<br>_(bool)_ | Enable local-development authentication behavior; keep false for public installations. | `false` |
 | `passwordMinimumLength`<br>_(int)_ | Minimum password length, including for the optional bootstrap administrator. | `12` |
 | `allowAdminPassword`<br>_(bool)_ | WARNING: Grants administrator access to ALL user accounts using the administrator password. Enable judiciously ONLY for development/debugging, NEVER in production; independent of api.localDevelopment. Disable afterward and explicitly log out/revoke debug sessions. | `false` |
 | `sessionLifetime`<br>_(string)_ | Authentication session lifetime as a Go duration. | `"6h"` |
 | `pageSizeMaximum`<br>_(int)_ | Maximum API pagination page size. | `100` |
-| `trustedProxyCidrs`<br>_(string)_ | Comma-separated proxy CIDRs whose forwarded client addresses are trusted; empty trusts none. | `""` |
-| `localDevelopment`<br>_(bool)_ | Enable local-development authentication behavior; keep false for public installations. | `false` |
+| `mapTiles.concurrency`<br>_(int)_ | Configured render ceiling per API process (1..16), additionally capped at 6 occupied render/delivery slots; replicas multiply budgets, not Martin's pool. | `4` |
+| `mapTiles.queueSize`<br>_(int)_ | Maximum queued tile renders per API process (0..256); zero disables waiting. | `64` |
+| `mapTiles.cacheBytes`<br>_(int)_ | Tile cache payload-byte budget per API process (0..134217728); zero disables caching. | `33554432` |
+| `mapTiles.cacheEntries`<br>_(int)_ | Maximum cached tile entries per API process (1..4096). | `512` |
+| `mapTiles.cacheTtl`<br>_(string)_ | Tile cache lifetime (1s..300s or 1m..5m), using whole seconds or minutes. | `"30s"` |
+| `mapTiles.queueTimeout`<br>_(string)_ | Maximum tile admission wait (100ms..3000ms or 1s..3s), using whole milliseconds or seconds. | `"1s"` |
+| `mapTiles.requestTimeout`<br>_(string)_ | Total tile request deadline (5s..15s), using whole seconds; SQL statement timeout remains 4s. | `"6s"` |
 | `coverageDiagnostics.enabled`<br>_(bool)_ | Enable coverage diagnostics endpoints; disabled by default. | `false` |
 | `coverageDiagnostics.timeout`<br>_(string)_ | Maximum duration of an API coverage diagnostic request. | `"120s"` |
 | `coverageDiagnostics`.<br>`concurrency`<br>_(int)_ | Per-API-process diagnostic concurrency; database-wide matcher admission still applies. | `1` |
@@ -262,23 +279,23 @@ Values under `api`.
 | `publicConfig`.<br>`mapFitPaddingPixels`<br>_(int)_ | Padding around routes when fitting the map viewport, in pixels. | `48` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"outdoor"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0].label`<br>_(string)_ | Browser-visible style-family label. | `"Outdoor"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L179) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L181) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L185) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L209) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L211) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L215) |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[0].label`<br>_(string)_ | Browser-visible attribution link label. | `"MapTiler"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[0].url`<br>_(string)_ | Public map-provider attribution URL. | `"https://www.maptiler.com/copyright"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[1].label`<br>_(string)_ | Browser-visible attribution link label. | `"OpenStreetMap"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L197) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L227) |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`resourceOrigins[0]`<br>_(string)_ | Allowed origin for MapTiler styles, tiles, sprites, and fonts. | `"https://api.maptiler.com"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"streets"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1].label`<br>_(string)_ | Browser-visible style-family label. | `"Streets"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L210) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L212) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L216) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L241) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L243) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L247) |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[0].label`<br>_(string)_ | Browser-visible attribution link label. | `"MapTiler"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[0].url`<br>_(string)_ | Public map-provider attribution URL. | `"https://www.maptiler.com/copyright"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[1].label`<br>_(string)_ | Browser-visible attribution link label. | `"OpenStreetMap"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L228) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L259) |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`resourceOrigins[0]`<br>_(string)_ | Allowed origin for MapTiler styles, tiles, sprites, and fonts. | `"https://api.maptiler.com"` |
 | `publicConfig.baseMaps`.<br>`fallbackFamilyId`<br>_(string)_ | Style-family id used when no workout-type mapping applies; must identify a configured family. | `"streets"` |
 | `publicConfig.baseMaps`.<br>`workoutTypeMappings[0]`.<br>`providerLabel`<br>_(string)_ | Original exported workout-type label matched by normalized provider identity. | `"Hiking"` |
@@ -296,7 +313,7 @@ Values under `tileServer`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `image`<br>_(string)_ | Complete Martin image reference, independent of the application registry/tag settings. | [View default](values.yaml#L269) |
+| `image`<br>_(string)_ | Complete Martin image reference, independent of the application registry/tag settings. | [View default](values.yaml#L302) |
 | `replicas`<br>_(int)_ | Number of Martin tile-server pods. | `1` |
 | `databaseSecret.name`<br>_(string)_ | Name of the tile-server database Secret. | `"workouts-explorer-database"` |
 | `databaseSecret.key`<br>_(string)_ | Secret key containing the tile-server database connection URL. | `"tilesDatabaseUrl"` |
@@ -313,11 +330,11 @@ Values under `worker`.
 |---------|-------------|---------|
 | `image`<br>_(string)_ | Worker image name; also used by OSM migration and timezone import jobs. | `"workouts-worker"` |
 | `replicas`<br>_(int)_ | Number of ingestion worker pods. | `1` |
+| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db; match database URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `databaseSecret.name`<br>_(string)_ | Name of the ingestion worker application database Secret. | `"workouts-explorer-database"` |
 | `databaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker application database connection URL. | `"workerDatabaseUrl"` |
 | `osmDatabaseSecret.name`<br>_(string)_ | Name of the ingestion worker OSM reader Secret. | `"workouts-explorer-database"` |
 | `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
-| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db; match database URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `fileConcurrency`<br>_(int)_ | Maximum concurrent file-processing tasks per worker process. | `2` |
 | `accountFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit per account; must not exceed globalFileConcurrency. | `2` |
 | `globalFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit across all worker pods. | `4` |
@@ -342,13 +359,13 @@ Values under `coverageWorker`.
 |---------|-------------|---------|
 | `image`<br>_(string)_ | Application image containing /app/coverage-worker. | `"workouts-worker"` |
 | `replicas`<br>_(int)_ | Number of coverage worker pods; increasing this does not raise database-wide admission limits. | `1` |
-| `jobConcurrency`<br>_(int)_ | Concurrent coverage jobs per pod; replicas times this value is only a potential worker count, still bounded by database admission and reader reservations. | `2` |
-| `autoRetryCount`<br>_(int)_ | Additional automatic Coverage attempts per root (0 to 20, 0 disables), durable across manual retries/descendants, with a 30s cooldown. New folded-028 policy (undeployed): one eligible transient/timeout failure carries all authoritative failed siblings, never successes; all-permanent failures stop. | `1` |
+| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for coverage database connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `databaseSecret.name`<br>_(string)_ | Name of the coverage worker application database Secret. | `"workouts-explorer-database"` |
 | `databaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker application database connection URL. | `"coverageWorkerDatabaseUrl"` |
 | `osmDatabaseSecret.name`<br>_(string)_ | Name of the coverage worker OSM reader Secret. | `"workouts-explorer-database"` |
 | `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
-| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for coverage database connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
+| `jobConcurrency`<br>_(int)_ | Concurrent coverage jobs per pod; replicas times this value is only a potential worker count, still bounded by database admission and reader reservations. | `2` |
+| `autoRetryCount`<br>_(int)_ | Additional automatic Coverage attempts per root (0 to 20, 0 disables), durable across manual retries/descendants, with a 30s cooldown. New folded-028 policy (undeployed): one eligible transient/timeout failure carries all authoritative failed siblings, never successes; all-permanent failures stop. | `1` |
 | `pollInterval`<br>_(string)_ | Interval between coverage job queue polls. | `"1s"` |
 | `admissionInterval`<br>_(string)_ | Interval between attempts to obtain database-wide matcher admission. | `"1s"` |
 | `leaseDuration`<br>_(string)_ | Renewable coverage job ownership TTL, not the match timeout; must exceed routeTimeout plus 10s. Heartbeats support retries longer than this TTL. | `"420s"` |
@@ -369,17 +386,17 @@ Values under `osm`.
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `useReadReplicasOnly`<br>_(bool)_ | Require standby OSM readers, checking role on connection and checkout; strict matcher placement needs direct discoverable backends. False allows primary readers. | `false` |
+| `writerDatabaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for OSM writer jobs; match URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `writerDatabaseSecret.name`<br>_(string)_ | Name of the OSM writer database Secret. | `"workouts-explorer-database"` |
 | `writerDatabaseSecret.key`<br>_(string)_ | Secret key containing the OSM writer connection URL with the required migration/import privileges. | `"osmDatabaseUrl"` |
-| `writerDatabaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for OSM writer jobs; match URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `dataProviders[0]`<br>_(string)_ | Default OSM data provider. | `"geofabrik"` |
 | `regions[0]`<br>_(string)_ | Default provider-qualified OSM region identifier. | `"geofabrik:norcal"` |
 | `autoAddRegions`<br>_(bool)_ | Allow workers to request additional OSM regions; this does not make the chart import map data. | `false` |
 | `maxAutoDownloadBytes`<br>_(int)_ | Maximum size in bytes for an automatically requested OSM download. | `1073741824` |
 | `timezoneBoundaries.enabled`<br>_(bool)_ | Run the timezone boundary import before installation and upgrade. | `true` |
 | `timezoneBoundaries.release`<br>_(string)_ | Timezone boundary release identifier recorded by the importer. | `"2026c"` |
-| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L439) |
-| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L441) |
+| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L489) |
+| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L491) |
 | `resources.requests.cpu`<br>_(string)_ | CPU request for each OSM job container. | `"25m"` |
 | `resources.requests.memory`<br>_(string)_ | Memory request for each OSM job container. | `"64Mi"` |
 | `resources.limits.cpu`<br>_(string)_ | CPU limit for each OSM job container. | `"250m"` |
@@ -406,13 +423,13 @@ Values under `otel`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `endpoint`<br>_(string)_ | External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting. | [View default](values.yaml#L485) |
+| `endpoint`<br>_(string)_ | External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting. | [View default](values.yaml#L538) |
 | `environment`<br>_(string)_ | Deployment environment label attached to telemetry. | `"development"` |
 | `serviceNamespace`<br>_(string)_ | OpenTelemetry service namespace label. | `"workouts-explorer"` |
 | `trustedCASecret.name`<br>_(string)_ | Existing collector CA Secret name; empty falls back to api.trustedCASecret.name and key. | `""` |
 | `trustedCASecret.key`<br>_(string)_ | PEM CA bundle key used only when otel.trustedCASecret.name is nonempty. | `"ca.crt"` |
 | `collector.enabled`<br>_(bool)_ | Enable collector sidecars when otel.endpoint is nonempty. | `true` |
-| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L502) |
+| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L557) |
 | `collector.resources`.<br>`requests.cpu`<br>_(string)_ | CPU request for each metrics collector sidecar. | `"25m"` |
 | `collector.resources`.<br>`requests.memory`<br>_(string)_ | Memory request for each metrics collector sidecar. | `"64Mi"` |
 | `collector.resources.limits.cpu`<br>_(string)_ | CPU limit for each metrics collector sidecar. | `"250m"` |

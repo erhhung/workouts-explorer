@@ -1,37 +1,65 @@
 # Application Database Migrations
 
-The current **source** migration sequence is **001-030**. Final source/runtime
-`SupportedSchemaVersion=30`, schema **30** and minimum runtime **30** retain
-`migration_baseline=27` and a contiguous Goose ledger **0-30**. Migrations
-**001-028 are unchanged**. The approved source contract is now installed at Helm
-revision **61**: APP schema/minimum runtime **30/30**, baseline **27**, ledger
-**0-30**, retaining original ledger rows and Goose row-ID high-water **54**.
-Separate OSM schema/minimum runtime **10/10** is verified on the primary and two
-standbys. Current Helm revision **62** retains those schema/history contracts and
-corrects observer campaign allocation. Deployment, initial proof validation and
-bounded live unchanged-cycle acceptance are verified.
+The canonical source sequence is **001-031**, with **SupportedSchemaVersion=31**,
+minimum runtime **31**, recovery baseline **27**, and ledger **0-31**. The raw-route
+spatial policy belongs to [009](#raw-route-continuity-009), and the complete private
+tile pipeline belongs to [031](#tile-rendering-031). There is one current runtime
+and function contract; no alternate migration profile or tile-function alias is
+shipped. The controlled catalog/history reconciliation is validated against a
+fresh source installation and retains monotonic sequence high-water values.
 
-## Source History Mapping
+Native migration tools must embed this exact complete source sequence. UI-only
+upgrades keep hooks disabled. Historical operator checkpoints remain private and
+are not additional migration compatibility contracts.
 
-Old numbers in public release reports are **pre-squash historical numbering**;
-use this mapping rather than treating them as current migrations or fresh passes.
+## Raw Route Continuity (009)
 
-| Current source migration | Folded pre-squash historical numbering | Contract |
-|---|---|---|
-| `001`-`028` | `001`-`028` | Unchanged foundation and committed-route pipeline |
-| [029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql) | `029_ingest_partial_success.sql` + `030_ingest_workout_outcomes.sql` + `031_ingest_reprocessing.sql` + `034_ingest_phase_progress.sql` | Final workout-based outcomes, file filtering, explicit reprocessing and durable activity phases |
-| [030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql) | `032_coverage_display_precomputations.sql` + `033_canonical_coverage_display.sql` | Compact display facts, targeted stats and canonical display identity |
+009 defines the private spatial splitter. 010 invokes it after the unchanged
+timestamp-cadence builder. The normal fenced ingest writer therefore creates no
+line across consecutive observations more than 200 metres apart. Original GPS
+observations, provider hashes, workout identity and aggregates remain intact.
+Singleton fragments do not invent lines or dots; stationary runs remain valid.
+See [ADR 0015](decisions/015-route-continuity-and-preserved-observations.md).
 
-Both display sections below belong to **030**, with distinct precomputation and
-canonical-identity anchors. Ingest outcomes, reprocessing and phase progress all
-belong to **029**. There is no ongoing source schema/runtime 31-34 compatibility
-contract. Private historical receipts, Git/image history and earlier test results
-remain immutable; the squash changes numbering, not approved functionality.
+Historical repair is a separate explicitly authorized account-scoped operation,
+using retained derived-geometry preimages, source-row guards and an atomic update.
+Existing triggers rebuild exact and LOD chunks. Account generations advance
+normally and are never reset. Already valid Coverage evidence and unstarted
+states remain unchanged because matching already observes this spatial limit.
 
-The deployed [metadata-driven reconciliation](#metadata-driven-coverage-reconciliation-029-and-osm-010)
-is an additional source-029 feature, not functionality claimed by those historical
-receipts or merely by renumbering. Initial proof validation and bounded live
-unchanged-cycle verification are complete.
+The current source consolidation does not repeat that repair. Catalog and ledger
+reconciliation preserves business tables, sequences, generations and completed
+repair results, and is rehearsed together with guarded checkpoint recovery.
+
+## Current Source Layout
+
+| Source | Contract |
+|---|---|
+| 001-008 | Account, job, source, ingest and deletion foundations |
+| [009](../api/migrations/sql/009_raw_route_map.sql) and [010](../api/migrations/sql/010_segment_route_geometry.sql) | Raw route capabilities, spatial continuity and timestamp segmentation |
+| 011-027 | Splits, time zones, Coverage, provider identity and recovery baseline |
+| [028](../api/migrations/sql/028_ingest_coverage_pipeline.sql) | Committed-route pipeline and bounded eligible cohorts |
+| [029](../api/migrations/sql/029_ingest_status_reporting.sql) | Ingest outcomes, file filtering, reprocessing, activity and metadata reconciliation |
+| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters and exact detail |
+| [031](../api/migrations/sql/031_tile_rendering.sql) | Exact/LOD storage, authorization and optimized current MVT functions |
+
+The approved route foundations and tile file are consolidated source. Other
+foundation definitions retain their established behavior. Current readiness is
+catalog-only, validates exact function/privilege contracts and rejects an
+unrecognized schema/history rather than implementing migration compatibility.
+
+## Custom Date Ranges (002)
+
+The account lifecycle foundation defines `custom_date_range_limit` (1-5, default
+3) and the bounded `recent_custom_date_ranges` array on the forced-RLS
+preferences row. Date-range and limit updates hold the preferences row lock, so
+history promotion, deduplication and truncation commit atomically with the patch.
+The history is read-only in the API contract; clients apply a range through
+`dateRange`. New accounts start with an empty list. Existing installations receive
+the same columns and constraints through a guarded operator update that seeds an
+existing explicit default range account by account without bypassing RLS. This
+keeps schema/minimum runtime 31, ledger 0-31, route geometry, tile functions and
+account data generations intact.
 
 ## Live Cutover (Revision 61)
 
@@ -67,22 +95,11 @@ acceptance is separate from readiness and does not certify map-scaling capacity.
 See the [repeat procedure](decisions/014-metadata-driven-coverage-reconciliation.md#repeatable-unchanged-cycle-verification).
 This documentation closeout performs no cluster, deployment or database work.
 
-## Pre-Cutover Live Status
+## Historical Deployment Checkpoints
 
-**Historical checkpoint, superseded by [revision 61](#live-cutover-revision-61).**
-The pre-cutover deployment was Helm revision **60**, schema **34**, minimum runtime
-**33**, baseline **27**, ledger **0-34**, in **pre-squash historical numbering**
-([mapping](#source-history-mapping)). Only API, shared worker and UI pins changed
-at that checkpoint; OSM and Martin were unchanged. This is not deployed schema 30.
-See [current release status](development-progress.md#current-status) and the
-[029 phase follow-up](development-progress.md#ingest-phase-progress-follow-up-029).
-[Milestone 8 closeout](development-progress.md#milestone-8-closeout) retains its
-revision-57 browser **PASS**; it is not reopened or a capacity certification.
-
-That higher-numbered catalog/ledger required a separate approved operator cutover,
-not ordinary Goose Up, replay of applied SQL or improvised ledger edits. Its
-34/60 receipt and the revision-57 M8 receipt remain mapped history, not relabeled
-source-30 passes. Current preservation and verification scope is recorded above.
+Historical deployment and recovery measurements retain their original scope in
+private records. They are not current source histories or runtime profiles.
+Use the current source layout and exact current catalog contract for deployment.
 
 ## Directory Layout
 
@@ -146,7 +163,7 @@ a routine upgrade mechanism.
 
 `029_ingest_status_reporting.sql` combines ingest status reporting, file filtering,
 workout-based outcomes, explicit reprocessing and phase progress. The complete
-source sequence finishes at schema/minimum runtime **30/30**, baseline **27**;
+source-30 sequence finished at schema/minimum runtime **30/30**, baseline **27**;
 intermediate sections are not separate supported runtime contracts.
 
 The final partial-success criterion is imported or updated workouts, not successful
@@ -177,15 +194,13 @@ rewriting its execution record, notification row, timestamps or retry lineage.
 Source-child display follows the same rule while its stored failure stays
 retryable. New terminal parents use the workout-based rule directly.
 
-Final source runtime and minimum runtime are **30**, and baseline marker remains
-**27**. Use the complete source sequence before deploying compatible binaries.
-
 ## Explicit Ingest Reprocessing (029)
 
 `029_ingest_status_reporting.sql` includes explicit ingest reprocessing, retaining
-`migration_baseline=27`. Final source support/schema/minimum runtime are **30**.
-Use native `/app/migrate` for compatible source histories; the separately approved
-live reconciliation is not ordinary Goose Up or permission to replay applied SQL.
+`migration_baseline=27`. Its combined 029/030 release used support/schema/minimum
+runtime **30**; current source schema is **31/minimum runtime 31**. Use native `/app/migrate` for
+compatible histories; the completed revision-61 historical reconciliation was
+not ordinary Goose Up or permission to replay applied SQL.
 
 New bounded API jobs persist explicit boolean `reprocessAllFiles`, default false;
 incremental jobs cannot carry the field. Existing bounded jobs with the field
@@ -215,7 +230,7 @@ all-cancelled runs retain their existing outcomes.
 Take fresh protected backups and retain matching old images. Drain/stop
 incompatible API/general-worker/Coverage-worker runtimes, apply the full source sequence, then
 deploy coordinated compatible API/worker images and matching UI. Minimum runtime
-30 fences older execution; do not mix old API/worker images with this contract.
+31 now fences older execution; do not mix old API/worker images with this contract.
 Verify contiguous history, marker, role readiness, grants and queued historical
 job compatibility before resuming. Rollback requires the matching database backup
 and old images together; 029 is forward-only, not an image-only rollback. This
@@ -229,7 +244,7 @@ See [Ingest Reprocessing](ingest-reprocessing.md) for the full API and retry rul
 unchanged routes must not require full-history GPS/hash/ROI scans or redundant jobs.
 The feature is the `BEGIN PRECISE NEAR-IDLE COVERAGE RECONCILIATION` section of
 [029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql),
-before its metadata assignment/Down section. Complete APP source/runtime stays
+before its metadata assignment/Down section. At that release APP source/runtime stayed
 **30**, schema/minimum runtime **30/30**, baseline **27**, ledger **0-30**;
 001-028 and combined 030 are not changed by this feature. Section placement is
 not a separately supported intermediate runtime.
@@ -374,7 +389,7 @@ Contract and disposable-database checks live in
 [projection maintenance/upgrade tests](../api/migrations/tests/coverage_display_precomputations_integration_test.go),
 [exact readiness contract tests](../internal/database/coverage_display_precomputations_readiness_test.go), and
 [catalog mutation tests](../internal/database/coverage_display_precomputations_readiness_integration_test.go).
-Verification using pre-squash historical numbering ([mapping](#source-history-mapping)) belongs in
+Verification using pre-squash historical numbering ([mapping](#current-source-layout)) belongs in
 [Development Progress](development-progress.md#coverage-display-optimization),
 with separate source, deployment and passed scripted deployed-browser evidence
 boundaries; none permits replaying applied migrations.
@@ -389,19 +404,6 @@ failure, role isolation and unchanged date-range semantics. These are release
 requirements, not test or deployment receipts. Goose Down deliberately raises
 SQLSTATE `55000`: **030 is forward-only**. Rollback requires restoring the matching
 pre-migration database backup and images, not an image-only downgrade.
-
-The **pre-squash historical numbering** ([mapping](#source-history-mapping))
-**032/backend-42/UI-43 checkpoint** applied 032 through a standalone
-restricted native migration Job while incompatible runtimes were paused, then rolled backend revision **42**
-and UI revision **43** with full values and `--no-hooks`. Paused original-column
-hash checks preserved all **82 original business tables**, prior ledger entries
-and unrelated relations/roles/functions. Actual API/general-worker/Coverage-worker
-readiness passed at schema/minimum **32**, marker **27**, ledger **0-32**. Full
-protected pre-32 database/role backups and matching old image exports remain
-retained. Scripted deployed-browser verification passed at that checkpoint, not
-as current release acceptance. See [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
-No capacity certification, image-only rollback, provider check or new
-ingest/matching operation is implied by this release.
 
 ## Canonical Coverage Display (030)
 
@@ -435,7 +437,7 @@ including historical-only sources using fallback context/region. Distinct-workou
 union precedes both range/all-time summaries; list/stats require an in-range visit.
 Mixed named park/path groups share canonical IDs and counts, with park-preferred
 presentation only. List, indexed point stats, stored whole-group detail, focus
-and all four tile layers share that context and preserve actual source geometry
+and the 030 contract's four tile layers share that context and preserve actual source geometry
 and provenance. Selection JSON requires display policy/revision; compatible UI
 caches/guards must use them.
 
@@ -479,17 +481,100 @@ includes the fenced, worker-only
 `app.record_ingest_phase` function and a partial `app.job_events(job_id, id DESC)`
 index for `code LIKE 'ingest-phase-%'`. Required phase writes use the append-only
 journal independently of optional diagnostic-event limits. There is no backfill,
-data rewrite or invented historical activity. Final source runtime **30** requires
-the combined structural readiness contract. The former additive phase-only
+data rewrite or invented historical activity. Source runtime **31** requires
+the combined structural readiness contract, including 031's guarded phase-writer
+runtime-fence advance. The former additive phase-only
 rollback is not the rollback contract for combined, forward-only 029/030; retain
 matching database backups and images together.
 
-The revision-60 native migration completed in **73.09ms** using **pre-squash
-historical numbering** ([mapping](#source-history-mapping)): 034 installed schema
-**34/minimum 33**, baseline **27**, ledger **0-34**. That is an earlier release
-receipt, not a squashed-source pass or cutover claim. See the
-[follow-up closeout](development-progress.md#ingest-phase-progress-follow-up-029)
-for unchanged behavior and recorded validation. No operations run in this docs task.
+## Tile-Local Geometry (031)
+
+[031_tile_rendering.sql](../api/migrations/sql/031_tile_rendering.sql)
+is new and forward-only; **001-030 remain byte-unchanged**. Source/runtime/minimum
+are **31**, baseline stays **27**, and native fresh/30-to-31 history is **0-31**.
+The user-approved 031 cutover **deployed at Helm 65**, APP **31/minimum 31** and
+OSM **10/minimum 10**. Native Up preserved old ledger tuples and appended 031 at
+row **55**, advancing high-water to **55** without reset. This is not historical
+pre-squash 031 ingest reprocessing or authorization for another maintenance run.
+
+The migration locks **both `workout_routes` and `workout_segment_matches` in
+`SHARE ROW EXCLUSIVE` mode for the entire transactional backfill**. It installs
+forced-RLS owner-only EPSG:3857 raw/evidence chunk tables, cascading source FKs,
+AFTER-write maintenance, spatial and covering lookup indexes, and replaces both
+MVT bodies. Chunks have at most 256 vertices; original GPS, match evidence,
+canonical contexts/counts and exact focus/detail readers remain authoritative.
+API-only five-argument `authorize_map_tile` returns an expiry; Martin functions
+retain their four opaque JSON scope parameters and independent authorization.
+The guarded phase-writer patch advances its literal runtime fence to 31 without
+rewriting historical SQL. See the [render contract](architecture.md#tile-local-rendering-031).
+
+Runtime readiness validates exact bodies, security/ACL/RLS, tables, FK cascades,
+indexes and maintenance triggers, including ingest fences, not just metadata 31.
+API and **both shared-worker consumers** were coordinated with SQL maintenance/
+backfill, with incompatible writers stopped and **no old-30 write window**.
+Actual native full readiness passed under all three runtime roles before writers
+started and again after rollout. Native migration under the actual migration role
+took **50.77s**; the Job took **67.65s**, with a **90s statement / 500ms lock**
+budget. These maintenance budgets are distinct from runtime tile limits.
+
+The tile login defaults in role provisioning and **fresh** development bootstrap
+are `row_security=on`, `statement_timeout=4s`, `lock_timeout=250ms` and
+`idle_in_transaction_session_timeout=5s`. Existing connections do not inherit role
+changes. Fresh actual tile-login settings were verified effective after Martin's
+controlled zero-to-one restart, preserving **1.15.0 / pool 4 / cache off**.
+These are login defaults, not function-local timeouts or migration backfill
+budgets. HTTP abort cannot prove immediate PostgreSQL cancellation;
+actual-role `pg_sleep` and lock-wait integration checks verify the SQL bounds.
+
+Actual-data rehearsals under the native migration path completed Up in **40.866s**
+and **45.053s**. The bounded consistent read-only snapshot **excluded raw GPS
+points and was not a full database backup**. Before writers started, guarded
+catalog-checkpoint restoration passed twice at approximately **152s**, restoring
+the exact old catalog without `CASCADE` and preserving sequence high-water.
+No recovery was executed live. **Writers have resumed, so that pre-start checkpoint
+is no longer eligible for rollback**; it is not an ongoing recovery guarantee.
+
+Authoritative business-data fingerprints across **95 tables / 305 buckets** were
+unchanged. Raw GPS was **not dumped, scanned or hashed** for that proof; it does
+not establish full raw-data backup/hash coverage. Actual dataset/chunk/storage
+measurements remain private. Down still raises `55000`; **binary-only rollback is
+unsupported**, and recovery needs a separately validated matching database/image
+plan. Do not infer that a new full backup exists. Large recovery artifacts belong
+on approved NFS with capacity/inode checks, not casually in the workspace or
+`/tmp`; further operations require separate approval.
+
+Local guarded PostgreSQL **18.6 / PostGIS 3.6.4** verification passed native fresh
+creation and 30-to-31 upgrade, backfill, transaction rollback/forward-only history,
+geometry/security and catalog-readiness cases. Those source receipts remain
+distinct from the actual-data rehearsal and deployment evidence above; none is
+capacity acceptance. Authenticated tile smoke and viewport capacity are not
+claimed in this deployment record. See
+[verification scope](development-progress.md#tile-local-map-optimization-031).
+
+## Tile Rendering (031)
+
+[031_tile_rendering.sql](../api/migrations/sql/031_tile_rendering.sql) contains the
+complete private rendering pipeline: exact projected raw/match chunks,
+whole-component raw LODs, transactional maintenance, scoped authorization and the
+optimized canonical MVT functions. It publishes schema/minimum runtime **31/31**
+with baseline **27** and ledger **0-31**. Down is forward-only.
+
+Only `app.raw_route_mvt` and `app.coverage_mvt` are published for current tiles.
+The private scope helper and exact body/ACL checks belong to the same current
+contract. Startup requires the exact current schema/history and object profile;
+there is no alternate tile implementation or migration compatibility dispatch.
+
+The source is validated by native fresh installation and guarded PostgreSQL
+fixtures. Existing installations use an explicitly authorized, checkpointed
+catalog/history consolidation rather than replaying table backfills. Rehearsal
+checks full function equality with fresh source, preserved table identities and
+generations, retained ledger rows, sequence high-water and checkpoint recovery.
+The already repaired route data is not rebuilt or reprocessed during consolidation.
+
+Deploy matching API/shared-worker/UI images and restart Martin to discover only
+the current functions, retaining its pool/cache/resource settings. Resume workers
+only after current-role readiness and data-preservation checks pass. Historical
+performance checkpoints remain private evidence, not fresh capacity acceptance.
 
 ## Native Upgrade Entry Point
 

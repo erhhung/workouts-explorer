@@ -22,10 +22,45 @@ if ! grep -q 'name: workouts-explorer-tiles' "$rendered" ||
    ! grep -q 'TILE_SERVER_URL:' "$rendered" ||
    ! grep -q 'source_id_format: "{schema}.{function}"' "$rendered" ||
    ! grep -q 'cache: disable' "$rendered" ||
+   ! grep -q 'pool_size: 4' "$rendered" ||
    ! grep -q 'key: tilesDatabaseUrl' "$rendered"; then
   printf '%s\n' 'Internal Martin deployment, service, or credential wiring is incomplete' >&2
   exit 1
 fi
+for setting in 'MAP_TILE_CONCURRENCY: "4"' 'MAP_TILE_QUEUE_SIZE: "64"' \
+  'MAP_TILE_CACHE_BYTES: "33554432"' 'MAP_TILE_CACHE_ENTRIES: "512"' \
+  'MAP_TILE_CACHE_TTL: "30s"' 'MAP_TILE_QUEUE_TIMEOUT: "1s"' 'MAP_TILE_REQUEST_TIMEOUT: "6s"'; do
+  if ! grep -Fq "$setting" "$rendered"; then
+    printf '%s\n' "Private API tile configuration is missing $setting" >&2
+    exit 1
+  fi
+done
+helm template workouts-explorer helm \
+  --set api.mapTiles.concurrency=1,api.mapTiles.queueSize=0,api.mapTiles.cacheBytes=0,api.mapTiles.cacheEntries=1 \
+  --set-string api.mapTiles.cacheTtl=5m,api.mapTiles.queueTimeout=100ms,api.mapTiles.requestTimeout=5s >"$changed"
+for setting in 'MAP_TILE_CONCURRENCY: "1"' 'MAP_TILE_QUEUE_SIZE: "0"' \
+  'MAP_TILE_CACHE_BYTES: "0"' 'MAP_TILE_CACHE_ENTRIES: "1"' \
+  'MAP_TILE_CACHE_TTL: "5m"' 'MAP_TILE_QUEUE_TIMEOUT: "100ms"' 'MAP_TILE_REQUEST_TIMEOUT: "5s"'; do
+  if ! grep -Fq "$setting" "$changed"; then
+    printf '%s\n' "Private API tile override did not round-trip: $setting" >&2
+    exit 1
+  fi
+done
+checksum="$(awk '$1 == "checksum/config:" {print $2}' "$rendered")"
+changed_checksum="$(awk '$1 == "checksum/config:" {print $2}' "$changed")"
+if [ -z "$checksum" ] || [ "$checksum" = "$changed_checksum" ]; then
+  printf '%s\n' 'Private tile settings do not alter the API rollout checksum' >&2
+  exit 1
+fi
+for setting in concurrency=0 concurrency=17 queueSize=-1 queueSize=257 \
+  cacheBytes=-1 cacheBytes=134217729 cacheEntries=0 cacheEntries=4097 \
+  cacheTtl=999ms cacheTtl=301s cacheTtl=6m queueTimeout=99ms queueTimeout=3001ms \
+  queueTimeout=4s requestTimeout=4s requestTimeout=16s unknown=1; do
+  if helm template workouts-explorer helm --set "api.mapTiles.$setting" >/dev/null 2>&1; then
+    printf '%s\n' "Private API tile schema accepted invalid setting $setting" >&2
+    exit 1
+  fi
+done
 if ! grep -q 'kind: NetworkPolicy' "$rendered" ||
    ! grep -q 'app.kubernetes.io/component: tiles' "$rendered" ||
    ! grep -q 'app.kubernetes.io/component: api' "$rendered"; then

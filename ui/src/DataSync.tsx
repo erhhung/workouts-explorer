@@ -1,4 +1,4 @@
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as Popover from "@radix-ui/react-popover";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CSSProperties,
@@ -138,6 +138,13 @@ function calendarDate(value: string | undefined) {
   return Number.isNaN(date.getTime())
     ? "Unavailable"
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
+}
+
+function staleSourceMessage(source: DataSyncSource, includeSourceName: boolean) {
+  const subject = includeSourceName ? ` for ${source.displayName}` : "";
+  return source.freshness.lastNewExportDate
+    ? `No new export has been discovered${subject} since ${calendarDate(source.freshness.lastNewExportDate)}.`
+    : `No recent export has been discovered${subject}.`;
 }
 
 function interval(seconds: number) {
@@ -464,37 +471,88 @@ function HistoryFilter({
   onChange: (value: string) => void;
 }) {
   const selectedLabel = options.find(([option]) => option === value)?.[1] ?? allLabel;
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const anchor = useRef({
+    contextElement: undefined as Element | undefined,
+    getBoundingClientRect() {
+      return trigger.current?.closest(".history-filters")?.getBoundingClientRect() ?? new DOMRect();
+    },
+  });
+  const choices = [["", allLabel], ...options] as const;
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Anchor virtualRef={anchor} />
+      <Popover.Trigger
+        ref={(node) => {
+          trigger.current = node;
+          anchor.current.contextElement = node?.closest(".history-filters") ?? undefined;
+        }}
         className="range-trigger history-filter-trigger"
         aria-label={`Filter by ${label.toLowerCase()}`}
+        aria-haspopup="menu"
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
         <span>{label}</span>
         <strong>{selectedLabel}</strong>
         <span aria-hidden="true">v</span>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          ref={menu}
+          role="menu"
+          aria-label={`${label} filter`}
           className="menu-content history-filter-menu"
-          align="end"
-          sideOffset={8}
+          align="start"
+          sideOffset={12}
+          avoidCollisions={false}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+          }}
+          onKeyDown={(event) => {
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const items = [
+              ...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+            ];
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? items.length - 1
+                  : (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+            items[next]?.focus();
+          }}
         >
-          <DropdownMenu.RadioGroup value={value} onValueChange={onChange}>
-            <DropdownMenu.RadioItem value="">
-              {allLabel}
-              <DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator>
-            </DropdownMenu.RadioItem>
-            {options.map(([option, optionLabel]) => (
-              <DropdownMenu.RadioItem key={option} value={option}>
-                {optionLabel}
-                <DropdownMenu.ItemIndicator aria-hidden="true">&#10003;</DropdownMenu.ItemIndicator>
-              </DropdownMenu.RadioItem>
-            ))}
-          </DropdownMenu.RadioGroup>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+          {choices.map(([option, optionLabel]) => (
+            <button
+              key={option}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === option}
+              tabIndex={value === option ? 0 : -1}
+              className="history-filter-option"
+              onClick={() => {
+                if (value !== option) onChange(option);
+                setOpen(false);
+              }}
+            >
+              {optionLabel}
+              {value === option && <span aria-hidden="true">&#10003;</span>}
+            </button>
+          ))}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -1182,7 +1240,11 @@ function NotificationBanner({
     <article className={`sync-notification sync-notification--${notification.severity}`}>
       <div>
         <strong>{notification.title}</strong>
-        <p>{notification.message}</p>
+        <p>
+          {notification.type === "source-stale" && notification.subjectType === "source" && source
+            ? staleSourceMessage(source, true)
+            : notification.message}
+        </p>
         {notification.state === "remind" && notification.remindAt && (
           <small>Reminded until a later review.</small>
         )}
@@ -1948,12 +2010,7 @@ export function DataSync({
                         </div>
                       )}
                     </dl>
-                    {source.freshness.staleSince && (
-                      <p>
-                        No new export has been discovered since{" "}
-                        {calendarDate(source.freshness.staleSince)}.
-                      </p>
-                    )}
+                    {source.freshness.staleSince && <p>{staleSourceMessage(source, false)}</p>}
                   </article>
                 ))}
               </div>

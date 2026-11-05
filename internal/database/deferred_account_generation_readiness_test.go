@@ -9,8 +9,8 @@ import (
 )
 
 func TestDeferredGenerationRuntimeReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 30 {
-		t.Fatalf("runtime version = %d, want 30", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 31 {
+		t.Fatalf("runtime version = %d, want 31", SupportedSchemaVersion)
 	}
 	if !strings.HasPrefix(runtimeFullReadinessSQL, "SELECT ("+runtimeReadinessSQL+") AND ("+runtimeDeferredReadinessSQL+") AND ("+runtimeCohortReadinessSQL+")") {
 		t.Fatal("full readiness must require base, deferred generation and eligible-cohort contracts")

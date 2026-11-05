@@ -1,5 +1,101 @@
 # Coverage Acceptance Results
 
+## Tile-Local Source Verification (031)
+
+Guarded loopback tests used **PostgreSQL 18.6 / PostGIS 3.6.4**. The
+[checked-in comparison](../api/migrations/tests/tile_local_scale_integration_test.go)
+uses **1,000 identical-geometry but distinct workouts, 640 vertices each**, with
+local and off-tile components. Both producer versions receive the same scalar
+statistics, normal planner settings and bounded SQL safety budgets. Assertions
+are structural, not wall-clock thresholds.
+
+| Actual input producer | Produced vertices | Inputs to Coverage union |
+| --- | ---: | ---: |
+| 014 raw | 640,000 | Not applicable |
+| 031 raw | 2,000 | Not applicable; 1,000 workouts remain distinct |
+| 030 Coverage | 640,000 | 1,000 |
+| 031 Coverage | 2,000 | 1 after canonical/source-scoped exact deduplication |
+
+Decoded actual **new** tiles retained **1,000 raw workout IDs in 66,846 bytes**
+and **one canonical/source Coverage feature in 342 bytes**, with whole-range count
+**1,005**, not the checked-only count. New Coverage tiles contain no duplicate
+focused layers. The fixture retains 3,000 raw stored chunks; 129,000 local source
+vertices become 2,000 display vertices through bounded local LOD. This is strong
+cardinality evidence, not a universal compression ratio or loss of workout identity.
+
+Local `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)` producer observations were raw
+**349.474ms (014) / 103.326ms (031)** and Coverage
+**1485.790ms (030) / 109.056ms (031)**. These measure extracted **input producers**,
+not complete old tile functions, HTTP endpoints, parallel viewport p95 or browser
+render/focus latency. No arbitrary speed multiplier or full-endpoint latency
+improvement is claimed. The full old repeated-evidence global union was not run.
+
+See the [reproduction flags](coverage-acceptance.md#tile-local-source-verification-031)
+and [complete recorded verification scope](development-progress.md#tile-local-map-optimization-031).
+Authenticated tile smoke and viewport capacity are not claimed in this deployment
+record. Live burst/p95/signed-in-browser initial-render/focus-latency measurements
+remain separate gates, not unimplemented optimizations. Public HTML/asset hash and
+runtime readiness checks do not substitute for those measurements. No live
+operations occur in this documentation closeout.
+
+## Tile Delivery Status (031)
+
+**Helm 67 is deployed; the canonical authorized desktop/4K run completed with
+all required views complete and no observed delivery errors. Dense high-zoom raw
+client completion remained slow.**
+Schema **31/minimum 31**, baseline **27**, ledger **0-31** retain shipped worker-31
+compatibility and all 001-031 SQL. [Deployment/source verification](development-progress.md#tile-rendering-and-delivery-031)
+is distinct from the scoped live result below, M9 capacity or a new M8 pass.
+
+The earlier authorized pre-fix Helm-65 normal/4K viewport reproduction found
+**1s admission queue 503s**, **4s SQL timeouts (`57014`)** and exhaustion of the old
+two-reload source-wide retry budget. `areTilesLoaded()` counted error tiles as
+loaded, so completion of that flag was not a successful-completeness result.
+Exact account/date/location/route/ID facts, error counts, timings and screenshots
+remain private; no private benchmark fixture is reproduced here.
+
+The 66 run removed its observed HTTP errors but exposed a premature **15s browser
+queue** cutoff. The shipped 67 scheduler separates **60s bounded initial queue wait**
+from **15s service/retry time starting at first dispatch**. It also adds bounded
+streaming gzip. The final run supports **delivery completeness for the tested views,
+not fast raw rendering or a measured compression-latency improvement**. Server and
+browser elapsed time are not fully decomposed; later browser seconds alone do not prove slow SQL.
+Available CPU/memory observations did not justify resource increases.
+
+A **synthetic compression fixture**, not a private route measurement, produced
+**373,507 uncompressed / 49,879 gzip bytes (86.6% smaller)**. This is a byte-size
+result, not endpoint latency/p95. Native software/browser and guarded SQL tests
+retain their [recorded scope](development-progress.md#tile-rendering-and-delivery-031);
+incomplete actual-clone authorization or stale extracted-query observations are
+not a full endpoint performance pass. [Acceptance requirements](coverage-acceptance.md#tile-verification-031)
+preserve guards and require separate authorization for future actual-account runs.
+
+The final canonical run was **not repeated until green**: no cache flushing or
+manual capability/source reload was used. Every step reached its target camera
+and loaded every required tile at settlement, with no required errored tile,
+observed HTTP error, non-abort transport error or client deadline. Normal mode/zoom
+cancellations still produced browser aborts; unavailable response bodies remain
+unknown, not inferred empty. Coverage's 4K early and settled observations were
+complete; dense high-zoom raw views completed but remained **slow end to end**.
+
+Successful large paired responses used gzip, and transfer estimates supported a
+wire-size reduction. Encoded-size observations did not separate header overhead,
+so they are not exact gzip-body bytes. Comparable high-zoom responses retained
+decoded bytes and feature/layer counts, supporting no observed geometry pruning,
+not a claim about every possible tile. Compression did **not** establish improved
+HTTPS/browser latency or raw viewport p95. Browser scheduling stalls extended
+nominal observation windows; these are not exact-window or time-to-usable-render
+acceptance. Software/remote-browser limits and client CPU causality were not isolated.
+
+Ordinary background Coverage scope renewal retained the same context; it was not
+a manual reload. Owned temporary selections were deleted and the temporary cookie
+session revoked, with no owned active scope left. Preferences, account generation
+and source generation were unchanged. Detailed comparisons, times, counts and
+screenshots remain private. The remaining investigation is dense raw client
+completion, not a demonstrated need for another migration, increased server CPU,
+resources, request rate, timeout or body-limit settings. **M8 remains closed; this
+bounded result is not M9 capacity certification or a universal production SLO.**
+
 ## 10/5/2026
 
 Stable single-user serial/Go viewport evidence comes from

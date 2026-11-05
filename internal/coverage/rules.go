@@ -6,6 +6,9 @@ type RulesVersion string
 
 const ExperimentalRulesV1 RulesVersion = "coverage-experimental-v1"
 
+// Raw route segmentation uses this same upper bound on unobserved connections.
+const MaximumContinuousRouteGapMeters = 200
+
 // Rules centralizes every tuning constant. ExperimentalRules returns the only
 // currently evaluated version; it is not a production policy.
 type Rules struct {
@@ -42,7 +45,7 @@ func ExperimentalRules() Rules {
 		MinHeadingMotionMeters:      2,
 		HeadingSigmaDegrees:         30,
 		MaxTemporalGap:              30,
-		MaxSpatialGapMeters:         200,
+		MaxSpatialGapMeters:         MaximumContinuousRouteGapMeters,
 		MaxNetworkDistanceMeters:    300,
 		MaxNetworkToObservedRatio:   2.5,
 		NetworkDistanceSlackMeters:  20,

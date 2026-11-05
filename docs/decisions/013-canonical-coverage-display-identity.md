@@ -13,18 +13,6 @@ highlighting just one component gives inconsistent table, hover and map results.
 This is a generally applicable read-model policy for every account, not a patch
 for particular names, routes or data. No owner data is needed to specify it.
 
-The policy and coordinated API/UI behavior are **implemented and deployed**;
-current source combines them with compact display facts and targeted stats in
-[030_coverage_display.sql](../../api/migrations/sql/030_coverage_display.sql).
-Final source/runtime `SupportedSchemaVersion=30`, schema/minimum runtime **30**,
-baseline **27** and ledger **0-30** define the source contract, not a completed live
-rewrite. See the [history mapping](../database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](../database-migrations.md#pre-cutover-live-status).
-The original ADR date records the policy decision, not a deployment receipt.
-See [current release status](../development-progress.md#current-status)
-and [Milestone 8 closeout](../development-progress.md#milestone-8-closeout) for
-current verification and acceptance boundaries.
-
 ## Decision
 
 ### Named Identity And Normalization
@@ -90,7 +78,9 @@ Checked/focused workouts affect rendered geometry only, not membership, metadata
 counts or buckets. Detail highlights the union of actual eligible in-range
 matched pieces across the whole group; tiles render checked pieces and focus
 renders focused pieces. Preserve real disconnections and gaps. Never invent a
-connecting line, simplify away evidence, or claim unvisited geometry.
+connecting line, discard a component/gap, or claim unvisited geometry. Exact
+focus/detail remains unchanged; background display-only LOD follows the bounded
+[031 rendering contract](../architecture.md#tile-local-rendering-031), not source-data simplification.
 
 ### Context Read Model And Invalidation
 
@@ -138,8 +128,8 @@ detail endpoint keeps its six arguments/response but calls the replaced stored
 That reader gates whole-group geometry on canonical metadata in one statement;
 there is no second source-only API geometry implementation.
 
-All four `coverage_mvt` layers (`coverage`, `coverage_parks`, `coverage_focus`,
-`coverage_parks_focus`) and `map_selection_coverage_focus` use the same ready
+The original 030 `coverage_mvt` contract's four layers (`coverage`, `coverage_parks`,
+`coverage_focus`, `coverage_parks_focus`) and `map_selection_coverage_focus` use the same ready
 context for canonical `entityId`, representative `entityKind`, metadata, exact
 range count and `countBucket`. Preserve `sourceEntityId`/`sourceEntityKind` for hit
 priority and source geometry; a path feature can represent a canonical park
@@ -147,6 +137,42 @@ group. Never hash tile-local labels. Account/session/expiry/current-generation
 authorization remains mandatory; Martin identity, flags and private proxy remain
 unchanged. Earlier click-highlight responsiveness/cancellation/cache improvements
 are deployed as part of this coordinated release, not a separate release contract.
+
+### Tile-Local Follow-Up (031)
+
+031 emits only background `coverage` and `coverage_parks`; it removes duplicate
+focused tile unions while retaining independent exact focus GeoJSON and whole-group
+detail unchanged. Indexed projected chunks contain **actual partial match evidence**,
+never substituted full OSM geometry. Exact-EWKB deduplication is scoped to canonical
+ID plus source kind/ID before local union, with a singleton fast path. Checked
+workouts change geometry only: inclusive-range canonical counts, membership,
+buckets, invalidation and source provenance remain the 030 policy.
+
+Both modes implement independent focus readiness and bounded geometry reuse;
+focused Coverage hover fallback retains canonical IDs/source kind. The two focus
+caches each have **16 entries / 8 MiB serialized JSON / fixed five-minute TTL**,
+with generation/context/deletion/cancellation guards. The separate entity-detail,
+hover and table caches retain their existing bounds. See
+[architecture](../architecture.md#tile-local-rendering-031) and
+[source and deployment record](../development-progress.md#tile-local-map-optimization-031).
+These optimizations shipped at Helm 65 and remain deployed, not capacity-certified;
+M8 remains closed.
+
+### Tile Follow-Up (031)
+
+Private `coverage_mvt` retains canonical IDs, source provenance, whole-inclusive-
+range counts, buckets, exact detail/focus geometry and the two background layers.
+Eligibility is checked once per tile-local workout with bounded probes; deduplicate
+at MVT display precision **before canonical/source-isolated union**, never across
+source identities or from full unvisited OSM geometry. The function-local
+`work_mem=32MB` is not a total-query/global memory bound. Legacy 031 readers and
+ingest fence remain unchanged; schema 31/minimum 31 supports the shipped runtime.
+See [rendering/delivery](../architecture.md#tile-rendering-and-delivery-031).
+Helm 67 delivery is live; its canonical authorized desktop/4K run completed required
+views without observed delivery errors. Matched high-zoom responses retained decoded
+bytes and feature/layer counts, not evidence of pruning for wire savings. Dense
+high-zoom raw client completion remained slow: not a new M8 pass, M9 capacity/latency
+claim or change to display-identity policy.
 
 ## Consequences And Release Gates
 
@@ -165,7 +191,11 @@ existing evidence during selection preparation, not creating route jobs.
 Source verification, protected actual-backup restore/migration/rollback rehearsal,
 fresh backups and matching old images, and coordinated runtime migration/cutover
 are release safety requirements. The policy is deployed under historical numbering;
-the separately authorized source-squash reconciliation is still pending here.
+the source-squash reconciliation completed separately at revision 61. The approved
+031 rollout completed at revision 65 after actual-data rehearsal. Its bounded
+snapshot excluded raw GPS points and was **not a full backup**. The tested
+pre-writer catalog checkpoint is no longer eligible after writers resumed;
+no recovery was executed live. See the [031 recovery boundary](../database-migrations.md#tile-local-geometry-031).
 030 is forward-only; rollback restores the
 matching database and images together. Do not change resource/concurrency/retry
 budgets, source auto-sync, admin-password debug, TLS/OSM replica policy or Martin

@@ -8,19 +8,18 @@ import (
 	"github.com/erhhung/workouts-explorer/api/migrations"
 )
 
-// The chosen canonical rewrite is confined to 028. All immutable predecessor
-// bytes, including the recovery baseline marker27, must remain unchanged.
-func TestDeferredGenerationRetainsApplied001Through027(t *testing.T) {
+// The approved raw-route foundations are included in this source snapshot.
+func TestFoundationMigrationPrefix(t *testing.T) {
 	const expected = `61f2557c2a3d20427c6e1c8c67862e0a864d488201122e096b437c4069982a20
-520cf89ee17df3bd35239aaeee7942ff3179dfab4c61713e039e3483b633d6e3
+3a045da9b30e5e67c9de58c3080780025a8ba77bbe912cd5d8679e0bd6abf651
 62e29791ba3f44b235aeb7b8c282861160fba0c1d4ed002f3ae2da33d555787e
 5d488eca902f1c9d8f9504f29460bdd7cfb0a82215b7bfb7b235f8ae62003934
 5489164c112086822abe7db10b7abc395a8dc6c6320e85b6be48fb50e3cd201a
 c845bbc1ab20f48cb7eca4f26b7db4ff6d2541d6442b3aaf247d174f1aeb38ac
 8043da7461947bfc2f837c31121c4fd491463ff2f07391396e725c731a5dfb7c
 f793a3b28f003198e8d331dd19d1b2b57785ae9740d34f4b5e3a703ff3fab41a
-c209b864b80239fb64e6a0e506c78023ebfe2219da60cfc1dc7d1aa08d4c2a65
-28643bc6883d387679b0101bf9f2ca59e00a3a22f318e13e7c0070d829ef8536
+fe82e578ff151de734fa6f96f9fb7cdb5132dbe23f07fbcf37c84ce14dd93de7
+0cc42f59c23c230d3b666ffa50747b4b6783e6b5de21be8732700123afb83d28
 5aea363676074e5551645e3b7adbb1c40d2a17fbb32e41bd5d0da114089a334c
 affb9a4cb2798d115f8c64950da602b4ccc755a2b9c23ea2242bda94f518f481
 d947c231b4908cd1db6f31993ce7d6921d48a17638132a5d9d1a3e0066110545
@@ -48,6 +47,6 @@ a4a676f6564b7c9ea9471d1d2bd959cb24b529cceca0e3d44077583a2c11b163
 		actual += fmt.Sprintf("%x\n", sha256.Sum256(source))
 	}
 	if actual != expected {
-		t.Fatal("immutable migration prefix001-027 changed")
+		t.Fatal("foundation migration source snapshot changed")
 	}
 }

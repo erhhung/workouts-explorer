@@ -100,6 +100,10 @@ As a user, I want display preferences to persist so that the product matches how
 3. Imperial units, Monday week start, and 12-hour time are defaults.
 4. The last-used date-range preference is restored on a later session.
 5. Username and email are visible but immutable.
+6. **Custom date ranges** sets the per-account recent-range limit to 1, 2, 3, 4, or 5 (default 3). Applying a custom range moves it to the front of a persistent unique MRU list; shortening the list discards its oldest entries. Shortcuts do not enter the list.
+7. Summary and Map show those ranges immediately below **Custom...**, without another divider, formatted like **Jan 1, 2022 to Nov 1, 2026**. Selecting the already applied range does nothing. For any explicit range, only **Custom...** carries the checkmark and remains available for editing.
+8. Focus outlines follow keyboard navigation (Tab/Shift+Tab and navigation keys), not pointer clicks or text editing after a pointer click. Preferences uses accessible styled selects with the list aligned to the control's left and top edges and the same width; long lists scroll within the available viewport. Form submission, time zone ordering and keyboard selection retain their existing behavior.
+9. Summary and Map date menus and the Map base-map menu match their trigger's width, align to its left edge, and open 12px below it. Lists scroll within available space rather than shifting the requested anchor.
 
 ### Validation
 
@@ -219,24 +223,6 @@ canonical config changes also require a new asynchronous check. Native 1.75.2
 requires a trust token; the application additionally requires cookies from
 completed external authentication. Exact limits and private owner setup are in
 [iCloud Source Setup](icloud-source-setup.md).
-
-The source implementation is deployed, and ingest and available-map Coverage
-recovery are verified. [Milestone 8 closeout](development-progress.md#milestone-8-closeout)
-owns current acceptance and browser-verification status; deployment alone does not
-establish milestone acceptance or multi-user capacity.
-The [initial recorded results](implementation-plan.md#verification-results-10122026)
-retain their original synthetic/disposable-database scope; later release evidence
-belongs in [current status](development-progress.md#current-status). Current source
-ends at **030**, with final source/runtime `SupportedSchemaVersion=30`,
-schema/minimum runtime **30**, baseline **27**, ledger **0-30**. Combined **029**
-contains ingest status/reprocessing/phases; **030** contains compact/canonical
-display. See the [history mapping](database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status);
-approved live reconciliation remains pending here, not a source-30 deployment.
-At the historical 10/20/2026 checkpoint, the schema-28
-pipeline was live at Helm revision 29, with schema/Goose/minimum runtime 28 and
-`migration_baseline=27`; repaired-contract postdeployment verification passed. Deployment
-evidence from that checkpoint retains its original scope.
 
 At that checkpoint, the approved active sequence was **001-028**, with **no active
 029**. Folded 028 combines the generation-lock fix, strict eligible cohorts and mixed-failure automatic
@@ -774,6 +760,7 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 18. Map preserves Routes or production Coverage mode across tab changes. When the diagnostics preference is enabled, each visit to Map starts in Routes mode so diagnostic review is never reopened implicitly.
 18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
 19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map, and camera when the mode changes.
+19a. A normal bulk-checkbox click still toggles all routes. Holding the primary pointer for 500ms opens **Show workout types** without toggling routes; Arrow Down provides keyboard access. The panel's top edge aligns with the scrolling routes list's top edge and its left edge and width match the full Workout routes frame. Other dropdowns retain their 12px gap. The checkbox uses the shared styled tooltip, with larger text and three lines: `Toggle checkboxes to show or hide all routes;`, `click and hold to filter routes by workout types`, and `(use space and down keys in keyboard mode)`. The tooltip is linked to the checkbox, adds no extra tab stop, and hides while the picker is open. The popup includes only types in the complete current route list. A type starts checked only when every route of that type is checked. Compact **Cancel** and **Apply** actions use equal 12px top/bottom/right insets and a 12px gap, and discard or atomically apply the draft: all routes of checked types become checked, and all others become unchecked. Outside click and Escape dismiss without applying. Hiding the focused route clears its focus; changing the route catalog closes an obsolete popup.
 20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
 21. When Summary accepts a workout deletion, Map removes that entry from its cached list and checked IDs, clears matching focus/hover/overlays, and renews the tile capability. Other checked routes, the date range and sort remain unchanged; a full workout-collection refresh is not required for a known deleted ID. Failed deletions retain Map state. Stale asynchronous results cannot restore removed entries, and new workouts imported on a deleted date remain eligible.
 
@@ -804,11 +791,64 @@ mode, delayed hover can temporarily take precedence over persistent focus for
 the magenta route and its markers; Space does not hide that highlighted overlay.
 
 Camera transitions have a separate readiness handoff: direction arrows hide
-immediately, without a fade, during pan/zoom animations. They are spaced for the
-final viewport and revealed only after the current marker data and source tiles
-are ready. This prevents dense old-zoom arrows flashing during route focus changes.
+immediately, without a fade, during programmatic pan/zoom animations. They are spaced for the
+final viewport and revealed only after the current marker data and dedicated
+focus source are ready, independently of background tiles in source 031. This
+prevents dense old-zoom arrows flashing during route focus changes.
 Route lines and start/finish markers retain their normal rendering sequence;
 they are not held back by direction-marker readiness.
+
+### Tile And Focus Responsiveness (031)
+
+- Background tiles process local projected chunks, with sub-half-CSS-pixel display
+  error below zoom 15 and full piece geometry at higher zooms. Separate workouts,
+  stationary dots, timestamp components, partial Coverage evidence and real gaps
+  remain distinct; source GPS/export data is unchanged.
+- Coverage tiles contain only `coverage` and `coverage_parks`. They deduplicate
+  repeated local evidence by canonical and source identity before union, without
+  changing whole-inclusive-date-range counts or rendering full unvisited OSM paths.
+  Exact focused Coverage remains a separate, unchanged GeoJSON request.
+- Raw focus lines/dots use the existing segmented raw-point request shared by
+  markers. Focus-only changes do not renew the background capability. Focus and
+  arrows do not wait for background tiles; a user pan with pending tiles retains the
+  current line and ready arrows without repaint loops.
+- Raw-route and Coverage-focus caches are separate **16-entry / 8 MiB serialized
+  JSON** LRUs, each expiring five minutes from load, never extended by hits.
+  Generation/context/deletion/cancellation guards prevent stale geometry from
+  becoming another workout's focus or obsolete 404s from refreshing a selection.
+  Focused Coverage hover fallback keeps canonical IDs and source kind.
+- Every tile response, including validation errors, is `private, no-store` with
+  `Vary: Cookie, Authorization, Accept-Encoding`. Bounded server payload reuse/coalescing never
+  caches authorization; revoked, expired or stale scope is checked before lookup
+  and again after waiting. Overload returns bounded retryable unavailability,
+  not an unbounded render queue. Martin caching remains disabled.
+
+### Tile Delivery (031)
+
+**Implemented and deployed at Helm 67; scoped desktop/4K completeness verified,
+not fast dense high-zoom raw completion.**
+The [current rendering contract](architecture.md#tile-rendering-and-delivery-031)
+retains public tile routes and all focus/count semantics. Complete raw components
+are simplified before chunking at low zoom, with original geometry retained for
+closed moving loops that would collapse; movement never becomes a stationary dot.
+At zoom 15 and above the original exact 031 raw chunks are used. Coverage performs
+display-precision deduplication without claiming unvisited OSM evidence.
+
+The browser uses bounded per-tile scheduling, not a two-reload source-wide budget:
+**4 active / 128 jobs / 64 waiters**, **60s initial queue** then **15s service/retry
+time from first dispatch**, at most three attempts. Cancellation and generation/
+style/unmount guards prevent obsolete tiles or retries taking over a new view.
+401/404 stop scope dispatch with one callback; internal 410 protects against
+MapLibre treating a 404 as successful empty content. The public API still returns
+404 for unavailable selection scope. Legitimate empty tiles remain valid.
+
+Negotiated streaming gzip applies only to successful sufficiently large tiles,
+with bounded encoder admission and final authorization afterward. Server limits
+and private/no-store policy remain unchanged. A loaded-tile indicator alone is
+not proof of complete rendering: MapLibre can count failed tiles as loaded.
+[Verification](coverage-acceptance-results.md#tile-delivery-status-031) keeps
+the scoped error-free completeness result separate from slow dense raw completion,
+compression-latency improvement and time-to-usable-render/capacity acceptance.
 
 ### Validation
 
@@ -823,6 +863,23 @@ they are not held back by direction-marker readiness.
 - Base-map configuration rejects duplicate family IDs, missing theme variants, an unknown fallback or mapped family, unsafe URLs, and invalid attribution.
 - Optional focus must belong to the created selection. Deleted, foreign, nonrouted or out-of-range focus returns not found, not temporary unavailability. Reauthentication into an unavailable focused route clears that focus and loads the current range with bounded recovery, preserving explicit checked-route scope and user preferences.
 - Public provider credentials and resources are separate from private tile authorization.
+
+### Route Continuity (009)
+
+Raw routes retain their original GPS observations, but do not infer a continuous
+line between consecutive samples more than **200 metres** apart. This matches
+Coverage's existing spatial hard-gap limit. Apply the split after the existing
+timestamp-cadence segmentation, preserving every prior temporal component and
+every non-gap edge. Do not join the samples on either side of an isolated outlier.
+Singleton fragments cannot form a line; repeated-coordinate stationary runs stay
+visible. Build derived geometry during ingest before exact/LOD chunk maintenance,
+and use the same limit for focused raw lines and direction markers.
+
+Existing workouts require an explicitly authorized, account-scoped scan and
+guarded derived-data repair, not deletion of provider input or an automatic
+global migration rewrite. Preserve workout totals, original points and valid
+Coverage evidence. Coverage already rejects spatial gaps and retains its
+additional time rules. See [ADR 0015](decisions/015-route-continuity-and-preserved-observations.md).
 
 ### Failure cases
 
@@ -874,6 +931,8 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 17. Coverage mode shows a compact Road coverage legend with **Fit** and **Coverage by road...** actions. Fit is disabled without a focused workout; otherwise it retains the legend, fits that workout's coverage, and returns focus to the map canvas. The legend is hidden while its modal dialog is open.
 18. The dialog loads the complete date-range result with one bounded `bulk=true` request, not a server-page loop, then provides unchanged client-side literal case-insensitive search, sortable columns, and preference-sized pagination for roads, paths, and parks. Search matches only the displayed Road/Path/Park and City/County/Region text, uses the browser-native search cancel control, and suppresses autofill background changes. Equal primary sort values use displayed Road/Path/Park name ascending, then displayed City/County/Region ascending, before an invisible stable identity tie-break. The shell caches that complete result for five minutes by resolved date range and account data generation, so tab changes, capability replacement, entity navigation, and ordinary reopen do not reload unchanged data; same-range refresh preserves search, unnamed visibility, sort, and a clamped current page. A resolved date-range change clears search, unchecks unnamed visibility, and returns to page 1. **Show unnamed roads and paths** defaults off; when enabled, type-specific fallback names participate in search. Pagination displays at least `Page 1 of 1`. A load longer than half a second shows `Loading coverage...` in the framed table body; a failed load replaces the table dialog with a compact Retry/Close error dialog.
 18a. Bulk delivery evaluates coverage once and is limited to **50,000 entities and 64 MiB of uncompressed JSON including metadata**. Exceeding either bound returns **422 Problem Details**, field `bulk`, code `limit`, with no partial results. The dialog asks the user to choose a smaller date range and never caches an oversized, failed, aborted or incomplete response. A complete bulk response reports page 1, page size 50,000, total items equal to the returned item count, and one total page (zero for an empty result). Valid page/pageSize inputs do not slice bulk results; server search/sort remain supported. Non-bulk API clients retain ordinary pagination capped at 100 rows.
+18b. Every column value stays within its padded content width. Overflow uses an ellipsis; only actually truncated values expose the complete text through the shared styled, single-line tooltip. The tooltip is portaled above the modal dialog, not clipped by the scrolling table or hidden below its overlay/content. Resizing, font loading and changed text update truncation without replacing focused buttons. No native HTML title duplicates this help.
+18c. Only one portaled tooltip owns an active hover/focus at a time. Wheel scrolling rechecks the element under the pointer: a disabled route row that moves away loses its tooltip before another row activates one. Merely repositioning or resizing a superseded tooltip cannot reopen it. Keyboard focus remains intact, while clipped or departed anchors do not leave floating help behind.
 19. Closing Road Coverage reveals the existing mounted map. The X button or Escape dismisses it.
 20. Clicking an entity name closes the dialog, fits its date-range geometry with a minimum 500-meter extent, and starts blinking it white immediately. The three-second highlight duration begins only after camera movement ends and MapLibre reports all requested base/Coverage tiles loaded; render and source events drive this check so the blink itself cannot prevent readiness, and a bounded fallback handles failed tile sources. Clicking an eligible visit date closes the dialog, selects and centers that workout in Coverage mode, and scrolls its route row into view.
 21. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
@@ -888,9 +947,9 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 
 ### Background Coverage Reconciliation
 
-**Implementation BUILT; genuine PostgreSQL and live deployment verification
-PENDING.** [ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md)
-defines the new source-029 behavior, shipped with complete APP runtime 30 and
+**Deployed at Helm 62; initialization and bounded live unchanged-cycle acceptance PASS.**
+[ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md)
+defines the source-029 behavior, shipped with complete APP runtime 30 and
 separate OSM 010. This refines the folded-028 fingerprint rule in
 [pipeline behavior 6](#feature-pipeline-committed-routes-to-coverage), not its
 historical deployment receipt.
@@ -925,19 +984,12 @@ historical deployment receipt.
    with application-attributed CPU/query evidence after necessary work drains;
    no arbitrary five-minute settlement guarantee applies while updates are queued.
 
-These are behavior/acceptance requirements, not a new live receipt. Last reported
-live state remains APP schema/minimum **34/33**, OSM **9**, Helm **60**; Main must
-report verified cutover before changing
-[implementation status](development-progress.md#metadata-driven-coverage-reconciliation).
+The [release record](development-progress.md#metadata-driven-coverage-reconciliation)
+retains the revision-61 cutover and revision-62 bounded unchanged-cycle receipt.
+Current live is **APP 31/minimum 31, OSM 10/minimum 10, Helm 67**, retaining 031.
+Idle reconciliation acceptance is not map-scaling capacity proof.
 
 ### Canonical Display Identity (030)
-
-**Implemented behavior already deployed; squashed source cutover pending:** final
-source schema/minimum runtime **30**, baseline **27**, ledger **0-30**. See the
-[mapping and live boundary](database-migrations.md#source-history-mapping).
-This section supersedes source-entity display grouping and cache scope above
-in the deployed release. It applies to all accounts, not to
-particular names or routes. See [ADR 0013](decisions/013-canonical-coverage-display-identity.md).
 
 1. A named displayed entity is unique by region plus normalized actual DISPLAY
    name and DISPLAY place. Hidden jurisdiction IDs, source kind/class, disconnected
@@ -958,7 +1010,7 @@ particular names or routes. See [ADR 0013](decisions/013-canonical-coverage-disp
    key keeps its ID across ranges, but changed labels may change membership.
 3. A named park and path with the same key form one group. Park-preferred
    representative kind/class is presentation only; retain source provenance.
-   Table, hover, detail, focus and all four tile layers agree on canonical ID,
+   Table, hover, detail, focus and background tile layers agree on canonical ID,
    metadata, range count and bucket. Checked/focused workouts change rendered
    pieces only, never membership/statistics. Detail unions all actual in-range
    member geometry; do not invent connections across unvisited gaps.
@@ -1024,15 +1076,6 @@ their cache validity additionally includes display policy/revision.
    **Retry / Close** feedback. Retry refreshes the map capability; the user then
    reopens Road Coverage and chooses again. It must not silently refresh and
    replay the stale click. Other failures/timeouts allow a manual detail retry.
-
-The existing detail endpoint and response remain unchanged. The deployed API calls
-the six-argument stored `app.map_selection_coverage_entity_detail`, replaced by
-030 with canonical whole-group geometry gated on indexed metadata in one
-correlated `LATERAL` statement snapshot. It supersedes the earlier API-local
-source-only geometry query. The transaction stays read-only with critical
-transaction-local `SET LOCAL jit=off`. The combined release requires schema/minimum
-runtime **30**, baseline **27**, with source ledger **0-30**. See the
-[deployed architecture](architecture.md#click-highlight-follow-up).
 
 ### Matching Bounds And Diagnostic Parity
 
@@ -1220,6 +1263,7 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 15. Run-detail Files, Events and Logs pagination retains current rows and controls while a requested page loads. Full pages reserve the measured list height; only a loaded final partial page releases it. Cached page changes anchor the controls immediately even during background refetch. Deliberate scrolling overrides automatic anchoring. A failed request retains the displayed page and disables navigation until Try again succeeds, rather than skipping a page. Closing the disclosure or selecting another run cancels pending scroll restoration and isolates its page data.
 15a. Each successful run-detail refresh also refreshes the open Files page, including when the detail response is unchanged. When the job or a source child has recorded ingest activity, also refresh the open Events page, including the final successful detail refresh after the job becomes terminal. Preserve disclosure pages, the Files failure filter and scroll position; mark closed Files and applicable Events pages stale without fetching them. Logs remain manually refreshed. Opening or paging Files on an active run also refreshes the run counters. Failed detail refreshes do not initiate Files or Events refreshes. These remain separately sampled HTTP responses, not an atomic multi-endpoint snapshot.
 16. Manual and Automated sync show the actual current ingest activity after file counters and results, whether zero, one or many files were processed. File-counter completion does not imply job completion. Source details show their own activity; the root repeats the single active source's activity or labels each active source separately when several are active. Cancellation and terminal status take precedence over the last recorded phase.
+17. Task history Operation and Status controls use the same spacing between controls as their top, bottom and right insets. Both selection panels share one anchor spanning the full filter row: Operation's left edge through Status's right edge, 12px below the row. Long lists scroll in place. Radio selection, arrow-key navigation, Escape dismissal and page-reset/filter semantics remain available.
 
 ### Ingest Activity Messages
 

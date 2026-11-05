@@ -40,13 +40,14 @@ func TestPreferencesUseEmbeddedIANAData(t *testing.T) {
 	t.Setenv("ZONEINFO", "/does/not/exist")
 	server := &Server{config: config.API{PageSizeMaximum: 100}}
 	field, message := server.validatePreferences(generated.Preferences{
-		Theme:          "dark",
-		Units:          "imperial",
-		Timezone:       "America/Los_Angeles",
-		FirstWeekday:   "monday",
-		ClockFormat:    "12h",
-		WorkoutColumns: []generated.PreferencesWorkoutColumns{"date", "type", "duration"},
-		PageSize:       25,
+		Theme:                "dark",
+		Units:                "imperial",
+		Timezone:             "America/Los_Angeles",
+		FirstWeekday:         "monday",
+		ClockFormat:          "12h",
+		WorkoutColumns:       []generated.PreferencesWorkoutColumns{"date", "type", "duration"},
+		PageSize:             25,
+		CustomDateRangeLimit: 3,
 	})
 	if field != "" || message != "" {
 		t.Fatalf("valid embedded IANA timezone rejected: %s: %s", field, message)

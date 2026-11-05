@@ -28,6 +28,8 @@ export interface Preferences {
   clockFormat: "12h" | "24h";
   workoutColumns: WorkoutColumn[];
   pageSize: number;
+  customDateRangeLimit: number;
+  recentCustomDateRanges: string[];
   coverageDiagnosticsEnabled: boolean;
   initialized: boolean;
   dateRange?: DateRangePreference | null;
@@ -244,7 +246,18 @@ export type CoverageFocusFeatureCollection = {
   type: "FeatureCollection";
   features: Array<{
     type: "Feature";
-    properties: { entityKind: "path" | "park"; countBucket: number };
+    properties: {
+      entityId: string;
+      entityKind: "path" | "park";
+      sourceEntityId: string;
+      sourceEntityKind: "path" | "park";
+      broadClass: RoadCoverageEntity["broadClass"];
+      name: string | null;
+      localityName: string | null;
+      regionId: string;
+      rangeWorkoutCount: number;
+      countBucket: number;
+    };
     geometry:
       | { type: "LineString"; coordinates: number[][] }
       | { type: "MultiLineString"; coordinates: number[][][] };

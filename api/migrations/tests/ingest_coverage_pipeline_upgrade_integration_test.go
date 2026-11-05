@@ -113,7 +113,7 @@ func TestIngestCoveragePipelineMigrationPathsPostgreSQL(t *testing.T) {
 				reprocessingFile(t, actors, phase, reprocessingManifest(1), 0, "succeeded", uuid.Nil, false)
 				if err := db.QueryRowContext(ctx, `SELECT string_agg(oid::text||pg_get_functiondef(oid)||proacl::text,'|' ORDER BY oid)
 					FROM pg_proc WHERE pronamespace='app'::regnamespace AND proname IN
-					('record_ingest_phase','ingest_outcome_status','derive_parent_status','read_ingest_candidate_actions','stamp_ingest_source_file_receipt')`).Scan(&before); err != nil {
+					('ingest_outcome_status','derive_parent_status','read_ingest_candidate_actions','stamp_ingest_source_file_receipt')`).Scan(&before); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := active.Down(ctx); err == nil || !strings.Contains(err.Error(), "forward-only") {
@@ -130,7 +130,7 @@ func TestIngestCoveragePipelineMigrationPathsPostgreSQL(t *testing.T) {
 				t.Fatal("marked current-schema history must remain valid:", err)
 			}
 			var valid bool
-			if err := db.QueryRowContext(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=30 AND migration_baseline=27
+			if err := db.QueryRowContext(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=31 AND migration_baseline=27
 				AND (SELECT count(*)=$1+1 AND max(version_id)=$1 FROM public.goose_db_version) FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion).Scan(&valid); err != nil || !valid {
 				t.Fatalf("supported path valid=%t err=%v", valid, err)
 			}
@@ -142,7 +142,7 @@ func TestIngestCoveragePipelineMigrationPathsPostgreSQL(t *testing.T) {
 				var after string
 				if err := db.QueryRowContext(ctx, `SELECT string_agg(oid::text||pg_get_functiondef(oid)||proacl::text,'|' ORDER BY oid)
 					FROM pg_proc WHERE pronamespace='app'::regnamespace AND proname IN
-					('record_ingest_phase','ingest_outcome_status','derive_parent_status','read_ingest_candidate_actions','stamp_ingest_source_file_receipt')`).Scan(&after); err != nil || after != before {
+					('ingest_outcome_status','derive_parent_status','read_ingest_candidate_actions','stamp_ingest_source_file_receipt')`).Scan(&after); err != nil || after != before {
 					t.Fatalf("display30 changed status29 function identities, definitions or ACLs: %v", err)
 				}
 				coverageDisplayCheck(t, actors, `SELECT EXISTS(SELECT 1 FROM app.job_events WHERE account_id=$1 AND job_id=$2

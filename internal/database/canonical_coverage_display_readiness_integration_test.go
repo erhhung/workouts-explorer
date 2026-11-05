@@ -50,9 +50,9 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(330033,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27
+	if err := admin.QueryRow(ctx, `SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27
 		FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("mutation harness requires fully migrated runtime30/min30 metadata: %v", err)
+		t.Fatalf("mutation harness requires fully migrated schema31/min31 metadata: %v", err)
 	}
 	if err := admin.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM app.accounts account
 		LEFT JOIN app.coverage_display_revisions revision ON revision.account_id=account.id
@@ -94,8 +94,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		}
 		for _, query := range []string{runtimeCanonicalCoverageDisplayReadinessSQL, runtimeCoverageDisplayReadinessSQL, runtimeFullReadinessSQL} {
 			var ready bool
-			if err := pool.QueryRow(ctx, query, 30).Scan(&ready); err != nil || !ready {
-				t.Fatalf("runtime30 must pass each readiness component for %s: ready=%t err=%v", role.name, ready, err)
+			if err := pool.QueryRow(ctx, query, SupportedSchemaVersion).Scan(&ready); err != nil || !ready {
+				t.Fatalf("current runtime must pass each readiness component for %s: ready=%t err=%v", role.name, ready, err)
 			}
 		}
 		if !Ready(ctx, pool) {
@@ -113,8 +113,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
-		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=30 WHERE singleton`},
-		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=30,minimum_runtime_version=30 WHERE singleton`},
+		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=31 WHERE singleton`},
+		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`},
 		{"selection context nullable", `UPDATE pg_attribute SET attnotnull=true WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`, `UPDATE pg_attribute SET attnotnull=false WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`},
 		{"selection context default", `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id SET DEFAULT gen_random_uuid()`, `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id DROP DEFAULT`},
 		{"selection extra context FK", `ALTER TABLE app.map_selections ADD CONSTRAINT unexpected_canonical_fk FOREIGN KEY (account_id,coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id,id) ON DELETE CASCADE`, `ALTER TABLE app.map_selections DROP CONSTRAINT unexpected_canonical_fk`},
@@ -315,7 +315,10 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		// prosrc changes preserve every signature/config/ACL attribute. They
 		// deliberately bypass compilation so even removed security clauses can
 		// be tested without executing an unsafe replacement function.
-		body := function[4]
+		var body string
+		if err := admin.QueryRow(ctx, `SELECT prosrc FROM pg_proc WHERE oid=$1::regprocedure`, signature).Scan(&body); err != nil {
+			t.Fatal(err)
+		}
 		variants := map[string]string{"exact whitespace": body + "\n"}
 		for _, anchor := range []string{
 			"AND context.ready", "AND context.revision = scope.revision", "AND target_account_id = app.current_account_id()",

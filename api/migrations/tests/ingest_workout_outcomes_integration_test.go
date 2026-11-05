@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/erhhung/workouts-explorer/api/migrations"
+	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -152,7 +153,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 	t.Run("MetadataAndSecurity", func(t *testing.T) {
 		var safe bool
 		if err := db.migration.QueryRow(db.ctx, `SELECT
-			(SELECT schema_version=30 AND minimum_runtime_version=30 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+			(SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
 			AND (SELECT p.provolatile='i' AND NOT p.prosecdef AND NOT p.proisstrict
 			 AND p.proconfig=ARRAY['search_path=pg_catalog'] AND l.lanname='sql'
 			 AND pg_get_userbyid(p.proowner)='workouts_security_owner'
@@ -267,7 +268,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		}
 		if durableFile {
 			var source uuid.UUID
-			if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,30)`, child, worker, lease).Scan(&source); err != nil {
+			if err := tx.QueryRow(db.ctx, `SELECT source_id FROM app.fence_ingest_job($1,$2,$3,$4)`, child, worker, lease, database.SupportedSchemaVersion).Scan(&source); err != nil {
 				t.Fatal(err)
 			}
 			var frozen string

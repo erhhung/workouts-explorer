@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -63,6 +64,13 @@ func TestTileProxyDurationMetrics(t *testing.T) {
 					_ = provider.Shutdown(context.Background())
 				})
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					wantPath := "/app.raw_route_mvt/12/655/1582"
+					if kind == "coverage" {
+						wantPath = "/app.coverage_mvt/12/655/1582"
+					}
+					if r.URL.Path != wantPath {
+						t.Errorf("upstream path=%q, want %q", r.URL.Path, wantPath)
+					}
 					if test.name == "success" {
 						time.Sleep(delay)
 					}
@@ -84,21 +92,12 @@ func TestTileProxyDurationMetrics(t *testing.T) {
 					_, _ = w.Write([]byte(test.body))
 				}))
 				defer upstream.Close()
-				server := &Server{}
-				source := "app.raw_route_mvt"
-				if kind == "coverage" {
-					source = "app.coverage_mvt"
-				}
-				url, err := mapTileFunctionUpstreamURL(upstream.URL, source, uuid.New(), uuid.New(), uuid.New(), 42, 12, 655, 1582)
-				if err != nil {
-					t.Fatal(err)
-				}
+				service := newMapTileService(context.Background(), config.MapTiles{}, upstream.URL, nil)
+				defer service.close()
+				key := mapTileKey{account: uuid.New(), session: uuid.New(), selection: uuid.New(), generation: 42,
+					coverage: kind == "coverage", z: 12, x: 655, y: 1582}
 				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
-					if err != nil {
-						t.Fatal(err)
-					}
-					server.proxyMapSelectionTile(w, r, request, source)
+					writeMapTileResult(w, r, key.kind(), service.fetch(r.Context(), key), allowTileTestDelivery)
 				})
 				request := httptest.NewRequest(http.MethodGet, "/api/private/12/655/1582?generation=42", nil)
 				if test.cancel {

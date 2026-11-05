@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 30
+const SupportedSchemaVersion = 31
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)
@@ -57,14 +57,19 @@ func newTracer(options ...otelpgx.Option) *otelpgx.Tracer {
 	return otelpgx.NewTracer(append(privacyOptions, options...)...)
 }
 
-// Metadata permits compatible older runtimes during a rolling upgrade; the explicit object and privilege
-// checks are the authoritative readiness contract for this runtime version.
+// Only the current schema and exact object/privilege contract are accepted.
 const runtimeReadinessSQL = `
-		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) >= $1
+		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) = $1
 		   AND to_regclass('app.schema_metadata') IS NOT NULL
+		   AND (SELECT schema_version = $1 FROM app.schema_metadata WHERE singleton)
+		   AND NOT EXISTS(SELECT 1 FROM public.goose_db_version WHERE version_id > $1)
 		   AND to_regclass('app.jobs') IS NOT NULL
 		   AND has_schema_privilege(current_user, 'app', 'USAGE')
 		   AND has_table_privilege(current_user, 'app.schema_metadata', 'SELECT')
+		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.preferences'::regclass
+		       AND attname='custom_date_range_limit' AND atttypid='integer'::regtype AND attnotnull AND NOT attisdropped)
+		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.preferences'::regclass
+		       AND attname='recent_custom_date_ranges' AND atttypid='text[]'::regtype AND attnotnull AND NOT attisdropped)
 		   AND (current_user='workouts_coverage_worker' OR has_table_privilege(current_user, 'app.jobs', 'SELECT'))
 		   AND (current_user='workouts_coverage_worker' OR has_table_privilege(current_user, 'app.jobs', 'INSERT'))
 		   AND to_regclass('app.sources') IS NOT NULL
@@ -1626,7 +1631,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, geometry jsonb, fit_minimum_longitude double precision, fit_minimum_latitude double precision, fit_maximum_longitude double precision, fit_maximum_latitude double precision)',
 				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'8b532de5af2b4ff065715cd6eb562872'),
 			('app.coverage_mvt(integer,integer,integer,json)','plpgsql','s',true,false,'u',false,1,'bytea',
-				ARRAY['search_path=pg_catalog, app, public','jit=off'],false,true,'cbd622ec20197b0b87611083b121fe46'),
+				ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'9a04626be3ff4e8e95d3414f87d20cf5'),
 			('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)','plpgsql','s',true,false,'u',false,0,'jsonb',
 				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'639f6f1f0554094dfc4bc6c52e4dd93a')
 		)
@@ -1768,7 +1773,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			WHERE (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid=to_regprocedure(expected.signature))<>expected.callbacks)
 	)`
 
-const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `)`
+const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeTileReadinessSQL + `) AND (` + runtimeTileLODReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `) AND (` + runtimeRouteGapReadinessSQL + `)`
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool

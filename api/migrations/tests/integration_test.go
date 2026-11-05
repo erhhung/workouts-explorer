@@ -440,8 +440,8 @@ func TestRoleDefaultsAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pool := range []*pgxpool.Pool{db.api, db.worker, db.coverage} {
-		if !database.Ready(db.ctx, pool) {
-			t.Fatalf("runtime %d rejected compatible schema %d with minimum runtime %d", database.SupportedSchemaVersion, database.SupportedSchemaVersion+1, database.SupportedSchemaVersion)
+		if database.Ready(db.ctx, pool) {
+			t.Fatal("readiness accepted schema metadata beyond its exact source/history contract")
 		}
 	}
 	if _, err := db.migration.Exec(db.ctx, `UPDATE app.schema_metadata SET schema_version = $1, minimum_runtime_version = $1 WHERE singleton`, database.SupportedSchemaVersion+1); err != nil {
@@ -4943,7 +4943,10 @@ func TestEducationCoverageIdentityReads(t *testing.T) {
 			layers := decodeCoverageMVT(t, tile)
 			expectedCampus := decodeCoverageMVT(t, expectedCampusTile)["expected"][0].geometry
 			expectedOutside := decodeCoverageMVT(t, expectedOutsideTile)["expected"][0].geometry
-			for _, layerName := range []string{"coverage", "coverage_focus"} {
+			if len(layers["coverage_focus"]) != 0 || len(layers["coverage_parks_focus"]) != 0 {
+				t.Fatal("aggregate tiles must not embed independently fetched focus")
+			}
+			for _, layerName := range []string{"coverage"} {
 				features := layers[layerName]
 				if len(features) != wantFeatures {
 					t.Fatalf("%s feature count=%d, want %d", layerName, len(features), wantFeatures)
@@ -5202,7 +5205,10 @@ func TestCoverageFacilityKindsReads(t *testing.T) {
 				t.Fatal(err)
 			}
 			layers := decodeCoverageMVT(t, tile)
-			for _, layerName := range []string{"coverage", "coverage_focus", "coverage_parks", "coverage_parks_focus"} {
+			if len(layers["coverage_focus"]) != 0 || len(layers["coverage_parks_focus"]) != 0 {
+				t.Fatal("aggregate tiles must not embed independently fetched focus")
+			}
+			for _, layerName := range []string{"coverage", "coverage_parks"} {
 				want := 0
 				for _, expectedEntity := range expected {
 					if strings.HasPrefix(layerName, "coverage_parks") == (expectedEntity.kind == "park") {

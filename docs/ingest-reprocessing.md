@@ -5,8 +5,8 @@
 This is the approved public contract for bounded ingest and retry behavior, now
 included in **029_ingest_status_reporting.sql**, for local/NFS and iCloud sources.
 Final source/runtime support, schema and minimum runtime are **30**, baseline **27**,
-ledger **0-30**. See the [history mapping](database-migrations.md#source-history-mapping)
-and [pre-cutover actual status](database-migrations.md#pre-cutover-live-status).
+ledger **0-30**. See the [history mapping](database-migrations.md#current-source-layout)
+and [pre-cutover actual status](database-migrations.md#historical-deployment-checkpoints).
 The behavior is deployed under historical numbering; live source-squash
 reconciliation is authorized but pending here.
 Milestone acceptance is governed only by
@@ -244,16 +244,6 @@ live reconciliation is pending here. Use the complete active **001-030** invento
 in `api/migrations/sql/`, not an ingest-only migration subset. See
 [current migration requirements](database-migrations.md). The 030 read model
 does not require new ingest/route jobs or provider checks for context warming.
-
-Using **pre-squash historical numbering** ([mapping](database-migrations.md#source-history-mapping)),
-the 032 release used a standalone restricted native migration followed
-by full-values backend-42/UI-43 rollouts with `--no-hooks`. Original data and all
-configuration objects were preserved, including source auto-sync off and existing
-resources, concurrency, timeouts and matcher/retry budgets. No new ingest,
-matching or provider check was started. Full pre-32 backups and old images remain
-retained; image-only rollback is unsupported. Scripted deployed-browser
-verification passed at that checkpoint; it is not the current 033 browser or
-milestone acceptance receipt. See [Milestone 8 Closeout](development-progress.md#milestone-8-closeout).
 
 For compatible source histories, the native command advances through **001-030**.
 Source support, schema and minimum runtime become **30**; `migration_baseline`

@@ -25,6 +25,7 @@ import {
   api,
 } from "./api";
 import { DataSync } from "./DataSync";
+import { PreferenceSelect } from "./PreferenceSelect";
 import { initialRange, Summary, type AcceptedWorkoutDeletion } from "./Summary";
 import { applyTheme } from "./theme";
 import type { MapMode, RoadCoverageCache } from "./MapPage";
@@ -787,6 +788,12 @@ function PreferencesDialog({
       return;
     }
     const selectedColumns = new Set(formData.getAll("workoutColumns").map(String));
+    const customDateRangeLimit = Number(values.customDateRangeLimit);
+    if (![1, 2, 3, 4, 5].includes(customDateRangeLimit)) {
+      setError("Choose how many custom date ranges to remember, from 1 to 5.");
+      focusSummary(summaryRef);
+      return;
+    }
     const workoutColumns = WORKOUT_COLUMN_CHOICES.map(([value]) => value).filter((value) =>
       selectedColumns.has(value),
     );
@@ -799,6 +806,7 @@ function PreferencesDialog({
       clockFormat: values.clockFormat as Preferences["clockFormat"],
       workoutColumns,
       pageSize,
+      customDateRangeLimit,
       coverageDiagnosticsEnabled: formData.has("coverageDiagnosticsEnabled"),
     };
     setSaving(true);
@@ -891,18 +899,13 @@ function PreferencesDialog({
                     value={preferences.units}
                     options={["imperial", "metric"]}
                   />
-                  <div className="field">
-                    <label htmlFor={`${id}-timezone`}>Time zone</label>
-                    <span className="select-control">
-                      <select id={`${id}-timezone`} name="timezone" defaultValue={initialTimeZone}>
-                        {timeZoneOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </span>
-                  </div>
+                  <PreferenceSelect
+                    label="Time zone"
+                    id={`${id}-timezone`}
+                    name="timezone"
+                    defaultValue={initialTimeZone}
+                    options={timeZoneOptions}
+                  />
                   <SelectField
                     label="First weekday"
                     name="firstWeekday"
@@ -917,22 +920,26 @@ function PreferencesDialog({
                     value={preferences.clockFormat}
                     options={["12h", "24h"]}
                   />
-                  <div className="field">
-                    <label htmlFor={`${id}-page-size`}>Table rows per page</label>
-                    <span className="select-control">
-                      <select
-                        id={`${id}-page-size`}
-                        name="pageSize"
-                        defaultValue={preferences.pageSize}
-                      >
-                        {pageSizeChoices.map((choice) => (
-                          <option key={choice} value={choice}>
-                            {choice}
-                          </option>
-                        ))}
-                      </select>
-                    </span>
-                  </div>
+                  <PreferenceSelect
+                    label="Table rows per page"
+                    id={`${id}-page-size`}
+                    name="pageSize"
+                    defaultValue={String(preferences.pageSize)}
+                    options={pageSizeChoices.map((choice) => ({
+                      value: String(choice),
+                      label: String(choice),
+                    }))}
+                  />
+                  <PreferenceSelect
+                    label="Custom date ranges"
+                    id={`${id}-custom-date-ranges`}
+                    name="customDateRangeLimit"
+                    defaultValue={String(preferences.customDateRangeLimit)}
+                    options={[1, 2, 3, 4, 5].map((choice) => ({
+                      value: String(choice),
+                      label: String(choice),
+                    }))}
+                  />
                   <div className="field field--wide">
                     <span className="field-label" id={`${id}-columns`}>
                       Workout columns
@@ -1006,22 +1013,21 @@ function SelectField({
   options: string[];
 }) {
   return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <span className="select-control">
-        <select id={id} name={name} defaultValue={value}>
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {option === "12h"
-                ? "12-hour"
-                : option === "24h"
-                  ? "24-hour"
-                  : option[0].toUpperCase() + option.slice(1)}
-            </option>
-          ))}
-        </select>
-      </span>
-    </div>
+    <PreferenceSelect
+      label={label}
+      id={id}
+      name={name}
+      defaultValue={value}
+      options={options.map((option) => ({
+        value: option,
+        label:
+          option === "12h"
+            ? "12-hour"
+            : option === "24h"
+              ? "24-hour"
+              : option[0].toUpperCase() + option.slice(1),
+      }))}
+    />
   );
 }
 
@@ -1171,6 +1177,19 @@ function Shell({
       setRoadCoverageCache(undefined);
     }
     setVisitRange(next);
+  };
+  const saveRecentDateRanges = (ranges: string[]) => {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            preferences: {
+              ...current.preferences,
+              recentCustomDateRanges: ranges.slice(0, current.preferences.customDateRangeLimit),
+            },
+          }
+        : current,
+    );
   };
   const initials =
     data.profile.fullName
@@ -1345,6 +1364,7 @@ function Shell({
             csrfToken={session.csrfToken}
             dateRange={selectedRange}
             onDateRangeSelected={selectDateRange}
+            onRecentDateRangesSaved={saveRecentDateRanges}
             sort={workoutSort}
             persistedWorkoutIds={mapWorkoutIds}
             deletions={mapDeletions}
@@ -1379,6 +1399,7 @@ function Shell({
           csrfToken={session.csrfToken}
           selectedDateRange={visitRange}
           onDateRangeSelected={selectDateRange}
+          onRecentDateRangesSaved={saveRecentDateRanges}
           selectedSort={workoutSort}
           onSortChange={setWorkoutSort}
           selectedPage={summaryPage}

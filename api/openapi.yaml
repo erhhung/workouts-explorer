@@ -1197,7 +1197,7 @@ components:
     Preferences:
       type: object
       additionalProperties: false
-      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, coverageDiagnosticsEnabled, initialized]
+      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, customDateRangeLimit, recentCustomDateRanges, coverageDiagnosticsEnabled, initialized]
       properties:
         theme: {type: string, enum: [dark, light]}
         units: {type: string, enum: [imperial, metric]}
@@ -1206,6 +1206,16 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
+        customDateRangeLimit: {type: integer, minimum: 1, maximum: 5, default: 3}
+        recentCustomDateRanges:
+          type: array
+          readOnly: true
+          x-go-type-skip-optional-pointer: true
+          x-omitempty: false
+          description: Unique applied custom ranges, most recently used first, bounded by customDateRangeLimit.
+          uniqueItems: true
+          maxItems: 5
+          items: {type: string, pattern: '^\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2}$'}
         coverageDiagnosticsEnabled: {type: boolean}
         initialized: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
@@ -1221,6 +1231,7 @@ components:
         clockFormat: {type: string, enum: [12h, 24h]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
+        customDateRangeLimit: {type: integer, minimum: 1, maximum: 5}
         coverageDiagnosticsEnabled: {type: boolean}
         dateRange: {$ref: '#/components/schemas/DateRangePreference'}
     HealthAutoExportLocalConfig:
@@ -2076,9 +2087,17 @@ components:
               properties:
                 type: object
                 additionalProperties: false
-                required: [entityKind, countBucket]
+                required: [entityId, entityKind, sourceEntityId, sourceEntityKind, broadClass, name, localityName, regionId, rangeWorkoutCount, countBucket]
                 properties:
+                  entityId: {$ref: '#/components/schemas/CompactUUID'}
                   entityKind: {type: string, enum: [path, park]}
+                  sourceEntityId: {$ref: '#/components/schemas/CompactUUID'}
+                  sourceEntityKind: {type: string, enum: [path, park]}
+                  broadClass: {type: string, enum: [road, cycleway, footway, trail, park, other]}
+                  name: {type: string, nullable: true}
+                  localityName: {type: string, nullable: true}
+                  regionId: {type: string}
+                  rangeWorkoutCount: {type: integer, format: int64, minimum: 1}
                   countBucket: {type: integer, minimum: 1, maximum: 6}
               geometry: {$ref: '#/components/schemas/CoverageGeoJSONGeometry'}
     WorkoutGeoJSONFeature:

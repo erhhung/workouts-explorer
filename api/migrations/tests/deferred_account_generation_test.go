@@ -177,7 +177,7 @@ func TestDeferredGenerationActiveInventoryAndImmutableBaseline(t *testing.T) {
 			active = append(active, entry.Name())
 		}
 	}
-	if len(active) != 30 || active[27] != "028_ingest_coverage_pipeline.sql" || active[28] != "029_ingest_status_reporting.sql" || active[29] != "030_coverage_display.sql" {
+	if len(active) != 31 || active[27] != "028_ingest_coverage_pipeline.sql" || active[28] != "029_ingest_status_reporting.sql" || active[29] != "030_coverage_display.sql" || active[30] != "031_tile_rendering.sql" {
 		t.Fatalf("unexpected active migration inventory: %v", active)
 	}
 	for file, expected := range map[string]string{
