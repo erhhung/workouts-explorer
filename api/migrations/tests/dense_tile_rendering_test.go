@@ -58,7 +58,7 @@ func TestDenseTileCurrentContract(t *testing.T) {
 		fmt.Fprintln(hash, file)
 		hash.Write(raw)
 	}
-	const expected = "e97945d781a20d1af3d0f61ef5af27a01c0fd196bbc243df0695d08aa1b8edcb"
+	const expected = "fa9a930ea85f560b3204e67576896e05aff14621215723ff897e38a46d1cecd1"
 	if got := fmt.Sprintf("%x", hash.Sum(nil)); got != expected {
 		t.Fatalf("001-031 must remain byte-identical: %s", got)
 	}

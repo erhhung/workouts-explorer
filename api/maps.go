@@ -219,12 +219,14 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		SELECT workout.id,workout_type.id,workout_type.type_key,workout_type.provider_label,
 		       workout.started_at,workout.ended_at,workout.provider_duration::text,workout.local_start_date,
 		       route.minimum_longitude,route.minimum_latitude,route.maximum_longitude,route.maximum_latitude,
+		       coverage.coverage_minimum_longitude,coverage.coverage_minimum_latitude,
+		       coverage.coverage_maximum_longitude,coverage.coverage_maximum_latitude,
 		       metrics.distance_value::text,metrics.distance_unit,
 		       CASE WHEN metrics.speed_value>0 THEN trim_scale(60/metrics.speed_value)::text END,
 		       CASE WHEN metrics.speed_value>0 THEN 'min/km' END,
 		       metrics.energy_value::text,metrics.energy_unit,metrics.heart_rate_value::text,metrics.heart_rate_unit,
 		       metrics.elevation_value::text,metrics.elevation_unit,
-		       coverage.readiness_state,coverage.processing_state,
+		       coverage.readiness_state,coverage.processing_state,coverage.applied_result_status,
 		       coverage.applied_route_input_revision IS NOT NULL,
 		       COALESCE(coverage.applied_route_input_revision=coverage.route_input_revision
 		         AND coverage.applied_route_input_sha256=coverage.route_input_sha256
@@ -259,6 +261,7 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 	}
 	defer rows.Close()
 	var bounds *generated.RouteBounds
+	var coverageBounds *generated.RouteBounds
 	for rows.Next() {
 		var workoutID, typeID uuid.UUID
 		var typeKey, typeName string
@@ -267,21 +270,37 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		var localStartDate *time.Time
 		var distanceValue, distanceUnit, paceValue, paceUnit, caloriesValue, caloriesUnit *string
 		var heartRateValue, heartRateUnit, elevationValue, elevationUnit *string
-		var coverageState, processingState *string
+		var coverageState, processingState, appliedResultStatus *string
 		var appliedCoverage, appliedCoverageCurrent bool
 		var minimumLongitude, minimumLatitude, maximumLongitude, maximumLatitude float64
+		var coverageMinLongitude, coverageMinLatitude, coverageMaxLongitude, coverageMaxLatitude *float64
 		if err := rows.Scan(&workoutID, &typeID, &typeKey, &typeName, &startedAt, &endedAt, &duration, &localStartDate,
 			&minimumLongitude, &minimumLatitude, &maximumLongitude, &maximumLatitude,
+			&coverageMinLongitude, &coverageMinLatitude, &coverageMaxLongitude, &coverageMaxLatitude,
 			&distanceValue, &distanceUnit, &paceValue, &paceUnit, &caloriesValue, &caloriesUnit,
 			&heartRateValue, &heartRateUnit, &elevationValue, &elevationUnit,
-			&coverageState, &processingState, &appliedCoverage, &appliedCoverageCurrent); err != nil {
+			&coverageState, &processingState, &appliedResultStatus, &appliedCoverage, &appliedCoverageCurrent); err != nil {
 			return generated.MapSelection{}, err
 		}
 		item := generated.MapSelectionWorkout{
 			Id: compactUUID(workoutID), StartedAt: startedAt, EndedAt: endedAt, Duration: duration, PartialRoute: false,
 			Type:              generated.MapSelectionWorkoutType{Id: compactUUID(typeID), Key: typeKey, Name: healthautoexport.CanonicalActivityLabel(typeName)},
 			Bounds:            generated.RouteBounds{MinimumLongitude: minimumLongitude, MinimumLatitude: minimumLatitude, MaximumLongitude: maximumLongitude, MaximumLatitude: maximumLatitude},
-			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, appliedCoverage, appliedCoverageCurrent),
+			CoverageReadiness: mapCoverageReadiness(coverageState, processingState, appliedCoverage, appliedCoverageCurrent, appliedResultStatus),
+		}
+		item.CoverageBounds.SetNull()
+		if appliedCoverage && coverageMinLongitude != nil && coverageMinLatitude != nil && coverageMaxLongitude != nil && coverageMaxLatitude != nil {
+			value := generated.RouteBounds{MinimumLongitude: *coverageMinLongitude, MinimumLatitude: *coverageMinLatitude,
+				MaximumLongitude: *coverageMaxLongitude, MaximumLatitude: *coverageMaxLatitude}
+			item.CoverageBounds.Set(value)
+			if coverageBounds == nil {
+				coverageBounds = &value
+			} else {
+				coverageBounds.MinimumLongitude = min(coverageBounds.MinimumLongitude, value.MinimumLongitude)
+				coverageBounds.MinimumLatitude = min(coverageBounds.MinimumLatitude, value.MinimumLatitude)
+				coverageBounds.MaximumLongitude = max(coverageBounds.MaximumLongitude, value.MaximumLongitude)
+				coverageBounds.MaximumLatitude = max(coverageBounds.MaximumLatitude, value.MaximumLatitude)
+			}
 		}
 		setMetric(&item.Distance, distanceValue, distanceUnit)
 		setMetric(&item.Pace, paceValue, paceUnit)
@@ -311,10 +330,14 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 	} else {
 		result.Bounds.Set(*bounds)
 	}
+	result.CoverageBounds.SetNull()
+	if coverageBounds != nil {
+		result.CoverageBounds.Set(*coverageBounds)
+	}
 	return result, nil
 }
 
-func mapCoverageReadiness(state, processing *string, appliedCoverage, appliedCoverageCurrent bool) generated.CoverageReadiness {
+func mapCoverageReadiness(state, processing *string, appliedCoverage, appliedCoverageCurrent bool, appliedResultStatus *string) generated.CoverageReadiness {
 	result := generated.CoverageReadiness{
 		MapDataStatus:    generated.CoverageReadinessMapDataStatusPending,
 		ProcessingStatus: generated.CoverageReadinessProcessingStatusUnprocessed,
@@ -338,6 +361,9 @@ func mapCoverageReadiness(state, processing *string, appliedCoverage, appliedCov
 		result.ResultStatus = generated.CoverageReadinessResultStatusStale
 		if appliedCoverageCurrent {
 			result.ResultStatus = generated.CoverageReadinessResultStatusCurrent
+		}
+		if appliedResultStatus != nil && *appliedResultStatus == "no_matches" {
+			result.ResultStatus = generated.CoverageReadinessResultStatusNoMatches
 		}
 	}
 	return result

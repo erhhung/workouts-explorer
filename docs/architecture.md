@@ -607,6 +607,34 @@ advisory locks, source/job and account/workout KEY SHARE locks, lease, ownership
 epoch and runtime-capability checks are unchanged. No worker transaction retry,
 deadline increase or matching-policy change compensates for contention.
 
+### Independent Raw And Coverage Bounds
+
+Raw route extents are computed during ingest and stored on `workout_routes`.
+The four nullable `coverage_*` extent columns on `workout_coverage_states` are a
+separate derived projection of displayable applied path/park evidence. Migration
+030 maintains them in the existing account-serialized deferred display rebuild,
+using compact evidence boxes rather than scanning GPS or clipping tiles. Relevant
+path-name changes enter the same dirty-workout protocol. Empty evidence clears
+the Coverage box; retained stale evidence retains its box.
+
+Map selection responses expose raw `bounds` and nullable `coverageBounds` both
+per workout and for the checked selection. The browser uses the current mode's
+box for explicit/restored focus and Fit routes, and refits a persistent focus on
+Routes/production-Coverage transitions. It never substitutes the raw box for a
+missing Coverage box or waits for geometry fetching to determine camera bounds.
+Canonical range-context filtering can omit some precomputed evidence pieces;
+the stored Coverage box conservatively contains the displayed focused geometry.
+
+The same deferred projection persists `applied_result_status` as `matched` or
+`no_matches` (null before any applied result). Applied-proof changes enqueue a
+workout even if the evaluation writes no matches, covering the first empty result
+in every producer path. The guarded projection update changes classification and
+bounds together and does not recursively requeue itself. Empty results remain
+successfully completed/current for job and reconciliation purposes, while the
+map API exposes the explicit `no_matches` result status. Production Coverage
+disables their row focus/hover action, uses the neutral X icon and the **No map
+segments matched** tooltip. Raw-mode access and diagnostic review remain separate.
+
 ### Notifications and announcements
 
 | Entity | Purpose |

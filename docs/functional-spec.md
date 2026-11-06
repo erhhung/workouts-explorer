@@ -759,10 +759,48 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 17. Workout-log sort column and direction survive Summary, Map, and Data Sync tab changes for the current date range. Changing the range resets sorting to Date descending, and Map orders its workout-route list with the same active sort.
 18. Map preserves Routes or production Coverage mode across tab changes. When the diagnostics preference is enabled, each visit to Map starts in Routes mode so diagnostic review is never reopened implicitly.
 18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
-19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map, and camera when the mode changes.
+19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, and base map when the mode changes. With a visible workout focused, switching between Routes and production Coverage refits that workout using the destination mode's bounds; without a focused workout the camera is preserved.
 19a. A normal bulk-checkbox click still toggles all routes. Holding the primary pointer for 500ms opens **Show workout types** without toggling routes; Arrow Down provides keyboard access. The panel's top edge aligns with the scrolling routes list's top edge and its left edge and width match the full Workout routes frame. Other dropdowns retain their 12px gap. The checkbox uses the shared styled tooltip, with larger text and three lines: `Toggle checkboxes to show or hide all routes;`, `click and hold to filter routes by workout types`, and `(use space and down keys in keyboard mode)`. The tooltip is linked to the checkbox, adds no extra tab stop, and hides while the picker is open. The popup includes only types in the complete current route list. A type starts checked only when every route of that type is checked. Compact **Cancel** and **Apply** actions use equal 12px top/bottom/right insets and a 12px gap, and discard or atomically apply the draft: all routes of checked types become checked, and all others become unchecked. Outside click and Escape dismiss without applying. Hiding the focused route clears its focus; changing the route catalog closes an obsolete popup.
 20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
 21. When Summary accepts a workout deletion, Map removes that entry from its cached list and checked IDs, clears matching focus/hover/overlays, and renews the tile capability. Other checked routes, the date range and sort remain unchanged; a full workout-collection refresh is not required for a known deleted ID. Failed deletions retain Map state. Stale asynchronous results cannot restore removed entries, and new workouts imported on a deleted date remain eligible.
+
+### Mode-Specific Route Fitting
+
+- Each routed workout has independent raw GPS bounds (`bounds`) and nullable
+  applied Coverage bounds (`coverageBounds`). Coverage bounds are precomputed
+  from matched path and park evidence, respecting path-display exclusions and
+  name qualification, rather than inferred from raw GPS or simplified tiles.
+- A row/map focus action, restored focus, or single-workout deep link fits the
+  active mode's bounds. Switching modes refits the persistent focused workout,
+  not a transient hover preview. Fitting does not wait for exact geometry downloads
+  or tile completion, and does not replace the tile capability.
+- **Fit routes** uses the union of the checked workouts' bounds for the active
+  mode. The diagnostic overlay retains its separate diagnostic-geometry fit.
+- Empty/no-evidence Coverage has null bounds: Coverage fitting is disabled or
+  skipped rather than substituting raw bounds. A retained stale applied result
+  continues to use the bounds of that retained geometry until replacement commits.
+- A completed result with no displayable matched geometry is durably classified
+  as `no_matches` and exposed as `coverageReadiness.resultStatus: no_matches`.
+  In production Coverage its row action is disabled, uses the neutral gray circle/X
+  rather than a green checkmark, and shows **No map segments matched** in the
+  shared styled tooltip. It cannot start hover/focus geometry requests or retain
+  a misleading focused-row highlight. The raw route remains selectable in Routes;
+  a single-workout Show on map request falls back to Routes for an empty result.
+- First-time empty evaluations must record this status even when they write no
+  match rows. Later successful matching changes it to `matched`; removing all
+  displayable evidence changes it back to `no_matches`. Failed or cancelled
+  replacements retain the previous applied result and classification. These are
+  display-result statuses: an empty evaluation is still a successfully completed
+  job and does not cause an automatic retry solely for being empty. Unprocessed,
+  unavailable-map and failed-job tooltips retain their distinct existing meanings.
+- Match replacement/removal and relevant source metadata changes maintain
+  Coverage bounds atomically with the existing deferred display projections.
+  Bounds span the workout's displayable path/park evidence; date-range canonical
+  context can omit some of those pieces, but must never expose geometry outside
+  the stored extent. Raw geometry, matching policy, and original observations are
+  unchanged by bounds maintenance.
+- Existing computed Coverage receives a one-time all-account bounds backfill;
+  no source reimport or Coverage rematch is required.
 
 ### Space-Key Layer Visibility
 

@@ -335,7 +335,8 @@ func TestCanonicalCoverageDisplayDeferredInvalidation(t *testing.T) {
 	canonicalRequire(t, bridge, "app.enqueue_coverage_display_invalidations(ARRAY[NEW.account_id])")
 	canonicalRequire(t, metadata,
 		"OLD.name, OLD.locality_name", "NEW.name, NEW.locality_name",
-		"OLD.applied_route_input_revision IS NOT NULL", "NEW.applied_route_input_revision IS NOT NULL",
+		"OLD.applied_route_input_revision", "NEW.applied_route_input_revision",
+		"old_row->>'applied_route_input_revision' IS NOT NULL", "new_row->>'applied_route_input_revision' IS NOT NULL",
 		"OLD.region_id, OLD.display_name", "NEW.region_id, NEW.display_name",
 		"old_row - 'updated_at'", "new_row - 'updated_at'",
 		"ORDER BY evidence.account_id ON CONFLICT DO NOTHING",

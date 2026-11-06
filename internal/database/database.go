@@ -1503,7 +1503,7 @@ const runtimeCoverageDisplayReadinessSQL = `
 		AND NOT EXISTS (
 			SELECT 1 FROM (VALUES
 				('app.rebuild_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
-					ARRAY['search_path=pg_catalog, app, public'],'1cfd2b870d0cc3094724628e1d22882e'),
+					ARRAY['search_path=pg_catalog, app, public'],'44fa74d835f498f6819205aa2a450020'),
 				('app.flush_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
 					ARRAY['search_path=pg_catalog, app'],'1a724480f69901dc05a310b9603e489f'),
 				('app.mark_coverage_display_dirty()','plpgsql','v',false,0,'trigger',
@@ -1609,7 +1609,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			('app.advance_account_data_generation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'e23dd0a699cdeef1541efa1fa9920bfa'),
 			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'4e1c86a9fcd6b98e1212ea7c3ee62321'),
 			('app.queue_coverage_display_source_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'fa05dcd935285a1265b9633fc1edc9ae'),
-			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c992a3bfae462a8be1f45e4e5a03d5fe'),
+			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2254b7798bfb3ddce49202a0c60783ef'),
 			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c06ee64c7a96972646b33c0133ef6e31'),
 			('app.seed_coverage_display_revision()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'eebad7997cf527699c48dade43c3e348'),
 			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2538af856c9bea2a1219c8ddbe12f0ca'),
@@ -1637,6 +1637,21 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 		)
 		SELECT (SELECT schema_version>=30 AND minimum_runtime_version>=30 AND migration_baseline=27
 			FROM app.schema_metadata WHERE singleton)
+		AND (SELECT count(*)=4 FROM pg_attribute a
+			WHERE a.attrelid=to_regclass('app.workout_coverage_states') AND NOT a.attisdropped
+				AND a.attname IN ('coverage_minimum_longitude','coverage_minimum_latitude',
+					'coverage_maximum_longitude','coverage_maximum_latitude')
+				AND a.atttypid='double precision'::regtype AND NOT a.attnotnull
+				AND NOT a.atthasdef AND a.attgenerated='' AND a.attidentity='')
+		AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('app.workout_coverage_states')
+			AND conname='workout_coverage_states_bounds_check' AND contype='c' AND convalidated AND conenforced
+			AND md5(pg_get_constraintdef(oid))='8609cb5e6103b57cb238c53063968217')
+		AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('app.workout_coverage_states')
+			AND attname='applied_result_status' AND NOT attisdropped AND atttypid='text'::regtype
+			AND NOT attnotnull AND NOT atthasdef AND attgenerated='' AND attidentity='')
+		AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('app.workout_coverage_states')
+			AND conname='workout_coverage_states_result_status_check' AND contype='c' AND convalidated AND conenforced
+			AND md5(pg_get_constraintdef(oid))='5418fe0286f9047bdb6fdf4328921f98')
 		AND current_setting('server_version_num')::integer BETWEEN 180000 AND 189999
 		AND current_setting('server_encoding')='UTF8'
 		AND EXISTS (SELECT 1 FROM pg_collation WHERE oid=to_regcollation('pg_catalog.pg_c_utf8')

@@ -168,7 +168,8 @@ func TestMapSelectionCanonicalActivityDisplayKeepsRawKey(t *testing.T) {
 			tx := activityDisplayTx{rows: []activityDisplayRow{{
 				workoutID, typeID, key, label, time.Time{}, time.Time{}, "60", nil,
 				float64(-122), float64(37), float64(-121), float64(38),
-				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, false, false,
+				nil, nil, nil, nil,
+				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, false, false,
 			}}}
 			selection, err := readMapSelection(context.Background(), tx, uuid.New(), uuid.New(), 1, time.Time{}, resolvedRange{}, nil)
 			if err != nil || len(selection.Workouts) != 1 {

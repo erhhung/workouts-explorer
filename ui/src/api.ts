@@ -205,6 +205,7 @@ export interface MapSelectionWorkout {
   duration: string;
   localStartDate: string | null;
   partialRoute: boolean;
+  coverageBounds: MapSelectionWorkout["bounds"] | null;
   bounds: {
     minimumLongitude: number;
     minimumLatitude: number;
@@ -219,7 +220,7 @@ export interface MapSelectionWorkout {
   coverageReadiness: {
     mapDataStatus: "pending" | "unavailable" | "ready";
     processingStatus: "unprocessed" | "queued" | "running" | "current" | "failed" | "stale";
-    resultStatus: "none" | "current" | "stale";
+    resultStatus: "none" | "current" | "stale" | "no_matches";
   };
 }
 
@@ -229,6 +230,7 @@ export interface MapSelection {
   dataGeneration: number;
   coverageDisplayPolicy: string;
   coverageDisplayRevision: number;
+  coverageBounds: MapSelectionWorkout["bounds"] | null;
   range: { startDate: string; endDate: string };
   bounds: null | {
     minimumLongitude: number;

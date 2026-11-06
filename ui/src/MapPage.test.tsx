@@ -281,6 +281,12 @@ const selection: MapSelection = {
   coverageDisplayPolicy: "coverage-display-identity-v1",
   coverageDisplayRevision: 1,
   range: { startDate: "2026-07-10", endDate: "2026-08-08" },
+  coverageBounds: {
+    minimumLongitude: -105.3,
+    minimumLatitude: 39.8,
+    maximumLongitude: -105.1,
+    maximumLatitude: 40.1,
+  },
   bounds: {
     minimumLongitude: -105.3,
     minimumLatitude: 39.8,
@@ -297,6 +303,12 @@ const selection: MapSelection = {
       duration: "6300",
       localStartDate: "2026-08-08",
       partialRoute: false,
+      coverageBounds: {
+        minimumLongitude: -105.3,
+        minimumLatitude: 39.9,
+        maximumLongitude: -105.2,
+        maximumLatitude: 40.1,
+      },
       bounds: {
         minimumLongitude: -105.3,
         minimumLatitude: 39.9,
@@ -322,6 +334,12 @@ const selection: MapSelection = {
       duration: "3600",
       localStartDate: "2026-08-01",
       partialRoute: true,
+      coverageBounds: {
+        minimumLongitude: -105.2,
+        minimumLatitude: 39.8,
+        maximumLongitude: -105.1,
+        maximumLatitude: 40,
+      },
       bounds: {
         minimumLongitude: -105.2,
         minimumLatitude: 39.8,
@@ -2408,6 +2426,7 @@ describe("Show on map coverage fallback", () => {
     deferPost = 1,
     diagnostics = false,
     absent = false,
+    empty = false,
   }: {
     readiness?: MapSelectionWorkout["coverageReadiness"];
     cachedReadiness?: MapSelectionWorkout["coverageReadiness"];
@@ -2416,6 +2435,7 @@ describe("Show on map coverage fallback", () => {
     deferPost?: number;
     diagnostics?: boolean;
     absent?: boolean;
+    empty?: boolean;
   } = {}) {
     history.replaceState({}, "", requested ? `/map?workoutId=${target.id.toLowerCase()}` : "/map");
     let resolve!: (response: Response) => void;
@@ -2429,7 +2449,12 @@ describe("Show on map coverage fallback", () => {
       workouts: absent
         ? [selection.workouts[1]]
         : [
-            { ...target, id: target.id.toLowerCase(), coverageReadiness: readiness },
+            {
+              ...target,
+              id: target.id.toLowerCase(),
+              coverageReadiness: readiness,
+              coverageBounds: empty ? null : target.coverageBounds,
+            },
             selection.workouts[1],
           ],
     };
@@ -2485,6 +2510,31 @@ describe("Show on map coverage fallback", () => {
       map: mapInstances.at(-1)!,
     };
   }
+
+  test.each(["current", "stale", "no_matches"] as const)(
+    "falls back to raw for a requested empty %s Coverage result",
+    async (resultStatus) => {
+      const { map, modeChange, fetch } = await mountRequested({
+        empty: true,
+        readiness: {
+          mapDataStatus: "ready",
+          processingStatus: resultStatus === "no_matches" ? "current" : resultStatus,
+          resultStatus,
+        },
+      });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Routes" })).toHaveAttribute(
+          "aria-pressed",
+          "true",
+        ),
+      );
+      expect(modeChange.mock.calls).toEqual([["routes"]]);
+      expect(map.fitBounds).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls.some(([url]) => String(url).includes("/coverage-focus/"))).toBe(
+        false,
+      );
+    },
+  );
 
   test.each([
     [
@@ -2974,6 +3024,12 @@ describe("independent workout focus", () => {
     dataGeneration: 41,
     range: { startDate: "2001-01-01", endDate: "2001-01-02" },
     bounds,
+    coverageBounds: {
+      minimumLongitude: 0.3,
+      minimumLatitude: 0.03,
+      maximumLongitude: 0.4,
+      maximumLatitude: 0.04,
+    },
     focusedWorkoutId: null,
     routeTileUrl: `/api/map-selections/${"1".repeat(32)}/route-tiles/41/{z}/{x}/{y}.pbf`,
     coverageTileUrl: `/api/map-selections/${"1".repeat(32)}/coverage-tiles/41/{z}/{x}/{y}.pbf`,
@@ -2989,6 +3045,12 @@ describe("independent workout focus", () => {
       startedAt: "2001-01-01T00:00:00Z",
       endedAt: "2001-01-01T00:02:00Z",
       bounds,
+      coverageBounds: {
+        minimumLongitude: 0.3,
+        minimumLatitude: 0.03,
+        maximumLongitude: 0.4,
+        maximumLatitude: 0.04,
+      },
     })),
   };
   const points = {
@@ -3033,8 +3095,26 @@ describe("independent workout focus", () => {
     ],
   });
 
-  async function mount(mode: "routes" | "coverage", deferredRaw = false) {
-    let current = fixture;
+  async function mount(
+    mode: "routes" | "coverage",
+    deferredRaw = false,
+    emptyCoverage?: "current" | "stale" | "no_matches",
+  ) {
+    let current: MapSelection = emptyCoverage
+      ? {
+          ...fixture,
+          coverageBounds: null,
+          workouts: fixture.workouts.map((workout) => ({
+            ...workout,
+            coverageBounds: null,
+            coverageReadiness: {
+              ...workout.coverageReadiness,
+              resultStatus: emptyCoverage,
+              processingStatus: emptyCoverage === "no_matches" ? "current" : emptyCoverage,
+            },
+          })),
+        }
+      : fixture;
     const pending: Array<{
       kind: "raw" | "coverage";
       url: string;
@@ -3135,6 +3215,120 @@ describe("independent workout focus", () => {
       },
     };
   }
+
+  test("fits independent Coverage bounds on mode changes and clicks before geometry arrives", async () => {
+    const { map, choose, posts, pending } = await mount("routes");
+    const requests = posts();
+    map.fitBounds.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenLastCalledWith(
+        [
+          [0.3, 0.03],
+          [0.4, 0.04],
+        ],
+        expect.anything(),
+      ),
+    );
+    expect(pending.some((request) => request.kind === "coverage")).toBe(true);
+    await choose("B");
+    expect(map.fitBounds).toHaveBeenLastCalledWith(
+      [
+        [0.3, 0.03],
+        [0.4, 0.04],
+      ],
+      expect.anything(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fit routes" }));
+    expect(map.fitBounds).toHaveBeenLastCalledWith(
+      [
+        [0.3, 0.03],
+        [0.4, 0.04],
+      ],
+      expect.anything(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Routes" }));
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenLastCalledWith(
+        [
+          [0.1, 0.01],
+          [0.2, 0.02],
+        ],
+        expect.anything(),
+      ),
+    );
+    expect(posts()).toBe(requests);
+  });
+
+  test("restores a Coverage-focused route with its Coverage bounds, not raw bounds", async () => {
+    const { map, pending } = await mount("coverage");
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenLastCalledWith(
+        [
+          [0.3, 0.03],
+          [0.4, 0.04],
+        ],
+        expect.anything(),
+      ),
+    );
+    expect(pending.some((request) => request.kind === "coverage")).toBe(true);
+    expect(map.fitBounds).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not substitute raw bounds when applied Coverage has no displayable geometry", async () => {
+    const { map, choose, refresh } = await mount("coverage");
+    await refresh({
+      ...fixture,
+      coverageBounds: null,
+      workouts: fixture.workouts.map((workout) => ({ ...workout, coverageBounds: null })),
+    });
+    map.fitBounds.mockClear();
+    await choose("B");
+    expect(screen.getByRole("button", { name: "Fit routes" })).toBeDisabled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+  });
+
+  test.each(["current", "stale", "no_matches"] as const)(
+    "disables empty %s Coverage with a gray X and exact help, while retaining raw focus",
+    async (status) => {
+      const { map, pending, rawReads } = await mount("routes", false, status);
+      const row = document.querySelector(`[data-workout-id="${fixture.workouts[0].id}"]`)!;
+      expect(row).toHaveClass("is-focused");
+      expect(row.querySelector(".map-route-focus")).toBeEnabled();
+      map.fitBounds.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+      await waitFor(() => expect(row).not.toHaveClass("is-focused"));
+      expect(row).toHaveClass("is-coverage-unavailable");
+      const button = row.querySelector(".map-route-focus")!;
+      expect(button).toBeDisabled();
+      expect(row.querySelector(".coverage-route-status--current")).not.toBeInTheDocument();
+      expect(row.querySelector(".coverage-route-status--unavailable svg circle")).toHaveAttribute(
+        "fill",
+        "var(--status-neutral)",
+      );
+      expect(row.querySelector(".coverage-route-status--unavailable svg path")).toHaveAttribute(
+        "d",
+        "M5 5L11 11M11 5L5 11",
+      );
+      const trigger = row.querySelector(".tooltip-trigger")!;
+      const help = document.getElementById(trigger.getAttribute("aria-describedby")!)!;
+      expect(help).toHaveTextContent(/^No map segments matched$/);
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 200, 30));
+      fireEvent.pointerEnter(trigger);
+      expect(help).toHaveClass("is-open");
+      fireEvent.click(button);
+      fireEvent.pointerEnter(button);
+      expect(row).not.toHaveClass("is-focused", "is-hovered");
+      expect(map.fitBounds).not.toHaveBeenCalled();
+      expect(pending.filter((request) => request.kind === "coverage")).toHaveLength(0);
+      expect(row.querySelector('input[type="checkbox"]')).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Routes" }));
+      expect(row.querySelector(".map-route-focus")).toBeEnabled();
+      fireEvent.click(row.querySelector(".map-route-focus")!);
+      await waitFor(() => expect(row).toHaveClass("is-focused"));
+      expect(rawReads.length).toBeGreaterThan(0);
+    },
+  );
 
   test("bounds focus caches by LRU count, fixed TTL and retained JSON bytes", () => {
     vi.useFakeTimers();
@@ -6099,67 +6293,77 @@ describe("MapPage", () => {
     expect(new URL(window.location.href).searchParams.get("workoutId")).toBe("D".repeat(32));
   });
 
-  test("maps all 54 Coverage readiness combinations to circular status kinds", async () => {
-    const readinessStates = (["ready", "pending", "unavailable"] as const).flatMap(
-      (mapDataStatus) =>
-        (["unprocessed", "queued", "running", "current", "failed", "stale"] as const).flatMap(
-          (processingStatus) =>
-            (["none", "current", "stale"] as const).map((resultStatus) => ({
-              mapDataStatus,
-              processingStatus,
-              resultStatus,
-            })),
-        ),
-    );
-    const workouts = readinessStates.map((coverageReadiness, index) => ({
-      ...selection.workouts[0],
-      id: (256 + index).toString(16).padStart(32, "0").toUpperCase(),
-      coverageReadiness,
-    }));
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      if (String(input) === "/api/map-selections" && init?.method === "POST")
-        return Promise.resolve(json({ ...selection, workouts }));
-      if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
-      throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
-    });
-    render(
-      <MapPage
-        config={config}
-        preferences={{ ...preferences, coverageDiagnosticsEnabled: false }}
-        csrfToken="csrf-map"
-        dateRange="last30Days"
-        onDateRangeSelected={vi.fn()}
-      />,
-    );
-    expect(await screen.findAllByRole("checkbox", { name: /Show Running/ })).toHaveLength(54);
-    const coverageMode = screen.getByRole("button", { name: "Coverage" });
-    await waitFor(() => expect(coverageMode).toBeEnabled());
-    fireEvent.click(coverageMode);
-
-    for (const workout of workouts) {
-      const { resultStatus, mapDataStatus, processingStatus } = workout.coverageReadiness;
-      const expectedKind =
-        resultStatus !== "none"
-          ? resultStatus
-          : mapDataStatus === "unavailable"
-            ? "unavailable"
-            : mapDataStatus === "ready" && processingStatus === "failed"
-              ? "failed"
-              : "pending";
-      const row = document.querySelector(`[data-workout-id="${workout.id}"]`)!;
-      expect(row.querySelectorAll(".coverage-route-status")).toHaveLength(1);
-      expect(row.querySelector(".coverage-route-status")).toHaveClass(
-        `coverage-route-status--${expectedKind}`,
+  test.each([true, false])(
+    "maps all 72 Coverage readiness combinations with renderable geometry=%s",
+    async (hasGeometry) => {
+      const readinessStates = (["ready", "pending", "unavailable"] as const).flatMap(
+        (mapDataStatus) =>
+          (["unprocessed", "queued", "running", "current", "failed", "stale"] as const).flatMap(
+            (processingStatus) =>
+              (["none", "current", "stale", "no_matches"] as const).map((resultStatus) => ({
+                mapDataStatus,
+                processingStatus,
+                resultStatus,
+              })),
+          ),
       );
-      const trigger = row.querySelector(".tooltip-trigger");
-      expect(trigger !== null).toBe(resultStatus === "none");
-      if (!trigger) continue;
-      const tooltip = document.getElementById(trigger.getAttribute("aria-describedby")!)!;
-      expect(tooltip.parentElement).toBe(document.body);
-      if (tooltip.textContent === "Waiting for coverage update")
-        expect(expectedKind).toBe("pending");
-    }
-  });
+      const workouts = readinessStates.map((coverageReadiness, index) => ({
+        ...selection.workouts[0],
+        id: (256 + index).toString(16).padStart(32, "0").toUpperCase(),
+        coverageReadiness,
+        coverageBounds: hasGeometry ? selection.workouts[0].coverageBounds : null,
+      }));
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        if (String(input) === "/api/map-selections" && init?.method === "POST")
+          return Promise.resolve(json({ ...selection, workouts }));
+        if (init?.method === "DELETE") return Promise.resolve(json(undefined, 204));
+        throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+      });
+      render(
+        <MapPage
+          config={config}
+          preferences={{ ...preferences, coverageDiagnosticsEnabled: false }}
+          csrfToken="csrf-map"
+          dateRange="last30Days"
+          onDateRangeSelected={vi.fn()}
+        />,
+      );
+      expect(await screen.findAllByRole("checkbox", { name: /Show Running/ })).toHaveLength(72);
+      const coverageMode = screen.getByRole("button", { name: "Coverage" });
+      await waitFor(() => expect(coverageMode).toBeEnabled());
+      fireEvent.click(coverageMode);
+
+      for (const workout of workouts) {
+        const { resultStatus, mapDataStatus, processingStatus } = workout.coverageReadiness;
+        const expectedKind =
+          resultStatus !== "none"
+            ? hasGeometry && resultStatus !== "no_matches"
+              ? resultStatus
+              : "unavailable"
+            : mapDataStatus === "unavailable"
+              ? "unavailable"
+              : mapDataStatus === "ready" && processingStatus === "failed"
+                ? "failed"
+                : "pending";
+        const row = document.querySelector(`[data-workout-id="${workout.id}"]`)!;
+        expect(row.querySelectorAll(".coverage-route-status")).toHaveLength(1);
+        expect(row.querySelector(".coverage-route-status")).toHaveClass(
+          `coverage-route-status--${expectedKind}`,
+        );
+        const trigger = row.querySelector(".tooltip-trigger");
+        expect(trigger !== null).toBe(
+          resultStatus === "none" || resultStatus === "no_matches" || !hasGeometry,
+        );
+        if (!trigger) continue;
+        const tooltip = document.getElementById(trigger.getAttribute("aria-describedby")!)!;
+        expect(tooltip.parentElement).toBe(document.body);
+        if (resultStatus === "no_matches" || (resultStatus !== "none" && !hasGeometry))
+          expect(tooltip).toHaveTextContent(/^No map segments matched$/);
+        if (tooltip.textContent === "Waiting for coverage update")
+          expect(expectedKind).toBe("pending");
+      }
+    },
+  );
 
   test("shows delayed exact road coverage stats after one transient failure without exposing a raw focused route", async () => {
     const productionPreferences = { ...preferences, coverageDiagnosticsEnabled: false };

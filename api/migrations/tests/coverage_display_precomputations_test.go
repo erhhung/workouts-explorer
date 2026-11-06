@@ -134,17 +134,21 @@ func TestCoverageDisplayPrecomputationsDeferredBatching(t *testing.T) {
 func TestCoverageDisplayPrecomputationsIndependentEvidence(t *testing.T) {
 	source := coverageDisplaySQL(t)
 	rebuild := coverageDisplayFunction(t, source, "rebuild_coverage_display_precomputations")
+	projections, routeBounds, ok := strings.Cut(rebuild, "    -- Combine compact evidence bounds,")
+	if !ok {
+		t.Fatal("missing independent Coverage route bounds maintenance")
+	}
 	if strings.Count(rebuild, "WITH evidence AS MATERIALIZED (") != 1 ||
 		strings.Count(rebuild, "JOIN app.workout_segment_matches match") != 1 {
 		t.Fatal("one evidence scan must feed all three projections")
 	}
 	for _, forbidden := range []string{"app.coverage_paths", "app.workout_park_attributions", "app.workout_routes",
 		"app.workout_coverage_states", "local_start_date", "LOOP"} {
-		if strings.Contains(rebuild, forbidden) {
+		if strings.Contains(projections, forbidden) {
 			t.Errorf("rebuild must not snapshot live metadata/eligibility or loop over workouts: %s", forbidden)
 		}
 	}
-	partials, context, ok := strings.Cut(rebuild, "), path_context AS (")
+	partials, context, ok := strings.Cut(projections, "), path_context AS (")
 	if !ok {
 		t.Fatal("missing independent context projection")
 	}
@@ -171,6 +175,10 @@ func TestCoverageDisplayPrecomputationsIndependentEvidence(t *testing.T) {
 	if !strings.Contains(parks, "FILTER (WHERE tags->>'workouts:park_id' = ((tags->>'workouts:park_id')::uuid)::text)") {
 		t.Fatal("park regions must preserve 019 canonical-text equality, separately from cast UUID bounds")
 	}
+	canonicalRequire(t, routeBounds, "partial.qualifies_without_name OR path.name IS NOT NULL",
+		"JOIN app.workout_park_display_bounds", "LEFT JOIN pieces", "UPDATE app.workout_coverage_states",
+		"IS DISTINCT FROM", "coverage_minimum_longitude = bounds.minimum_longitude")
+	canonicalForbid(t, routeBounds, "ST_", "workout_route_points", "workout_segment_matches", "LOOP")
 	if !strings.Contains(source, "LOCK TABLE app.workouts, app.workout_segment_matches, app.path_segments") ||
 		!strings.Contains(source, "SELECT DISTINCT txid_current(), account_id, 'workout', workout_id FROM app.workout_segment_matches;") ||
 		!strings.Contains(source, "SELECT app.rebuild_coverage_display_precomputations(NULL);") {

@@ -3,6 +3,28 @@
 -- workout dates, source-path metadata and park attributions remain live joins.
 LOCK TABLE app.workouts, app.workout_segment_matches, app.path_segments IN SHARE ROW EXCLUSIVE MODE;
 
+-- Independent bounds for the applied, displayable Coverage route. Empty/no-evidence
+-- results have no bounds; stale applied evidence retains its last usable bounds.
+ALTER TABLE app.workout_coverage_states
+    ADD COLUMN coverage_minimum_longitude double precision,
+    ADD COLUMN coverage_minimum_latitude double precision,
+    ADD COLUMN coverage_maximum_longitude double precision,
+    ADD COLUMN coverage_maximum_latitude double precision,
+    ADD COLUMN applied_result_status text,
+    ADD CONSTRAINT workout_coverage_states_bounds_check CHECK (
+        num_nonnulls(coverage_minimum_longitude, coverage_minimum_latitude,
+            coverage_maximum_longitude, coverage_maximum_latitude) = 0
+        OR (num_nonnulls(coverage_minimum_longitude, coverage_minimum_latitude,
+            coverage_maximum_longitude, coverage_maximum_latitude) = 4
+            AND coverage_minimum_longitude BETWEEN -180 AND 180
+            AND coverage_maximum_longitude BETWEEN coverage_minimum_longitude AND 180
+            AND coverage_minimum_latitude BETWEEN -90 AND 90
+            AND coverage_maximum_latitude BETWEEN coverage_minimum_latitude AND 90)),
+    ADD CONSTRAINT workout_coverage_states_result_status_check CHECK (
+        applied_result_status IS NULL
+        OR (applied_result_status = 'matched' AND coverage_minimum_longitude IS NOT NULL)
+        OR (applied_result_status = 'no_matches' AND coverage_minimum_longitude IS NULL));
+
 CREATE TABLE app.workout_path_display_partials (
     account_id uuid NOT NULL,
     workout_id uuid NOT NULL,
@@ -154,6 +176,45 @@ BEGIN
     FROM evidence
     WHERE tags ? 'workouts:park_id' AND tags->>'workouts:park_id' IS NOT NULL
     GROUP BY account_id, workout_id, (tags->>'workouts:park_id')::uuid;
+
+    -- Combine compact evidence bounds, using the same path qualification and
+    -- independent park geometry as the exact Coverage-focus reader below.
+    WITH changed AS MATERIALIZED (
+        SELECT account_id, workout_id FROM app.coverage_display_dirty
+        WHERE transaction_id = txid_current() AND scope = 'workout'
+            AND (target_account_id IS NULL OR account_id = target_account_id)
+    ), pieces AS (
+        SELECT partial.account_id, partial.workout_id, partial.minimum_longitude,
+            partial.minimum_latitude, partial.maximum_longitude, partial.maximum_latitude
+        FROM changed JOIN app.workout_path_display_partials partial USING (account_id, workout_id)
+        JOIN app.coverage_paths path ON path.account_id = partial.account_id
+            AND path.logical_path_id = partial.logical_path_id
+        WHERE partial.qualifies_without_name OR path.name IS NOT NULL
+        UNION ALL
+        SELECT park.account_id, park.workout_id, park.minimum_longitude,
+            park.minimum_latitude, park.maximum_longitude, park.maximum_latitude
+        FROM changed JOIN app.workout_park_display_bounds park USING (account_id, workout_id)
+    ), bounds AS (
+        SELECT changed.account_id, changed.workout_id,
+            min(pieces.minimum_longitude) minimum_longitude, min(pieces.minimum_latitude) minimum_latitude,
+            max(pieces.maximum_longitude) maximum_longitude, max(pieces.maximum_latitude) maximum_latitude
+        FROM changed LEFT JOIN pieces USING (account_id, workout_id)
+        GROUP BY changed.account_id, changed.workout_id
+    )
+    UPDATE app.workout_coverage_states state SET
+        coverage_minimum_longitude = bounds.minimum_longitude,
+        coverage_minimum_latitude = bounds.minimum_latitude,
+        coverage_maximum_longitude = bounds.maximum_longitude,
+        coverage_maximum_latitude = bounds.maximum_latitude,
+        applied_result_status = CASE WHEN state.applied_route_input_revision IS NULL THEN NULL
+            WHEN bounds.minimum_longitude IS NULL THEN 'no_matches' ELSE 'matched' END
+    FROM bounds WHERE state.account_id = bounds.account_id AND state.workout_id = bounds.workout_id
+        AND (state.coverage_minimum_longitude, state.coverage_minimum_latitude,
+            state.coverage_maximum_longitude, state.coverage_maximum_latitude, state.applied_result_status)
+        IS DISTINCT FROM (bounds.minimum_longitude, bounds.minimum_latitude,
+            bounds.maximum_longitude, bounds.maximum_latitude,
+            CASE WHEN state.applied_route_input_revision IS NULL THEN NULL
+                WHEN bounds.minimum_longitude IS NULL THEN 'no_matches' ELSE 'matched' END);
 END;
 $function$;
 -- +goose StatementEnd
@@ -285,6 +346,9 @@ FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_t
 -- Backfill all evidence in one batch, including currently ineligible workouts.
 INSERT INTO app.coverage_display_dirty (transaction_id, account_id, scope, workout_id)
 SELECT DISTINCT txid_current(), account_id, 'workout', workout_id FROM app.workout_segment_matches;
+INSERT INTO app.coverage_display_dirty (transaction_id, account_id, scope, workout_id)
+SELECT txid_current(), account_id, 'workout', workout_id FROM app.workout_coverage_states
+WHERE applied_route_input_revision IS NOT NULL ON CONFLICT DO NOTHING;
 SELECT app.rebuild_coverage_display_precomputations(NULL);
 DELETE FROM app.coverage_display_dirty WHERE transaction_id = txid_current();
 
@@ -665,8 +729,12 @@ BEGIN
             IF (OLD.account_id, OLD.workout_id, OLD.park_id) IS NOT DISTINCT FROM
                 (NEW.account_id, NEW.workout_id, NEW.park_id) THEN RETURN NULL; END IF;
         ELSIF TG_TABLE_NAME = 'workout_coverage_states' THEN
-            IF (OLD.account_id, OLD.workout_id, OLD.applied_route_input_revision IS NOT NULL) IS NOT DISTINCT FROM
-                (NEW.account_id, NEW.workout_id, NEW.applied_route_input_revision IS NOT NULL) THEN RETURN NULL; END IF;
+            IF (OLD.account_id, OLD.workout_id, OLD.applied_route_input_revision,
+                    OLD.applied_route_input_sha256, OLD.applied_generations, OLD.applied_rules_version,
+                    OLD.applied_sampling_version, OLD.applied_path_policy_version)
+                IS NOT DISTINCT FROM (NEW.account_id, NEW.workout_id, NEW.applied_route_input_revision,
+                    NEW.applied_route_input_sha256, NEW.applied_generations, NEW.applied_rules_version,
+                    NEW.applied_sampling_version, NEW.applied_path_policy_version) THEN RETURN NULL; END IF;
         ELSIF TG_TABLE_NAME = 'coverage_region_catalog' THEN
             IF (OLD.region_id, OLD.display_name) IS NOT DISTINCT FROM (NEW.region_id, NEW.display_name) THEN RETURN NULL; END IF;
         ELSIF (old_row - 'updated_at') IS NOT DISTINCT FROM (new_row - 'updated_at') THEN
@@ -684,6 +752,37 @@ BEGIN
         ) evidence ORDER BY evidence.account_id ON CONFLICT DO NOTHING;
     ELSE
         old_account := (old_row->>'account_id')::uuid; new_account := (new_row->>'account_id')::uuid;
+        IF TG_TABLE_NAME = 'workout_coverage_states' AND (
+            old_row->>'applied_route_input_revision' IS NOT NULL OR new_row->>'applied_route_input_revision' IS NOT NULL) THEN
+            -- A successful first empty result writes no matches. Its applied-state
+            -- event must still persist the no_matches outcome at the deferred flush.
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
+            SELECT DISTINCT txid_current(), account_id, 'workout', workout_id FROM (VALUES
+                (old_account, (old_row->>'workout_id')::uuid),
+                (new_account, (new_row->>'workout_id')::uuid)) affected(account_id, workout_id)
+            WHERE account_id IS NOT NULL AND workout_id IS NOT NULL ON CONFLICT DO NOTHING;
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope)
+            SELECT DISTINCT txid_current(), account_id, 'account' FROM app.coverage_display_dirty
+            WHERE transaction_id = txid_current() AND scope = 'workout'
+                AND account_id IN (old_account, new_account) ORDER BY account_id ON CONFLICT DO NOTHING;
+        END IF;
+        IF TG_TABLE_NAME = 'coverage_paths' AND (TG_OP <> 'UPDATE'
+            OR (old_row->>'name') IS DISTINCT FROM (new_row->>'name')
+            OR old_account IS DISTINCT FROM new_account
+            OR (old_row->>'logical_path_id') IS DISTINCT FROM (new_row->>'logical_path_id')) THEN
+            -- A name can make an unnamed regional-park path visible or hidden.
+            -- Refresh route bounds through the existing serialized deferred flush.
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope, workout_id)
+            SELECT DISTINCT txid_current(), partial.account_id, 'workout', partial.workout_id
+            FROM app.workout_path_display_partials partial
+            WHERE (partial.account_id, partial.logical_path_id) IN (
+                (old_account, (old_row->>'logical_path_id')::uuid),
+                (new_account, (new_row->>'logical_path_id')::uuid)) ON CONFLICT DO NOTHING;
+            INSERT INTO app.coverage_display_dirty(transaction_id, account_id, scope)
+            SELECT DISTINCT txid_current(), account_id, 'account' FROM app.coverage_display_dirty
+            WHERE transaction_id = txid_current() AND scope = 'workout'
+                AND account_id IN (old_account, new_account) ORDER BY account_id ON CONFLICT DO NOTHING;
+        END IF;
         PERFORM app.enqueue_coverage_display_invalidations(ARRAY[old_account, new_account]);
     END IF;
     RETURN NULL;

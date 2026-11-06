@@ -353,6 +353,27 @@ func TestMapSelectionFocusedMembershipIntegration(t *testing.T) {
 	fixture := insertWorkoutReadFixtures(t, adminDB, workerDB, accountID)
 	_, foreignAccountID := insertSourceTestUser(t, adminDB)
 	foreignFixture := insertWorkoutReadFixtures(t, adminDB, workerDB, foreignAccountID)
+	// The broad export-read fixture has >200m jumps and therefore no drawable
+	// components. Membership tests require actual routed workouts, not GPS exports.
+	for _, account := range []uuid.UUID{accountID, foreignAccountID} {
+		tx, err := adminDB.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, `SELECT set_config('app.account_id',$1,true)`, account.String()); err == nil {
+			_, err = tx.Exec(ctx, `UPDATE app.workout_routes SET route=ST_Multi(ST_MakeLine(
+				ST_SetSRID(ST_MakePoint(minimum_longitude,minimum_latitude),4326),
+				ST_SetSRID(ST_MakePoint(minimum_longitude+0.0001,minimum_latitude+0.0001),4326)))
+				WHERE account_id=$1`, account)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	bearer := insertTestSession(t, apiDB, principalID, "bearer", "")
 	server := integrationServer(t, apiDB, &recordingSender{})
 	routerContext, cancel := context.WithCancel(ctx)

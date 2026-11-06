@@ -20,12 +20,12 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | OSM database | Native OSM 010 Up completed on actual PG17; schema/minimum runtime 10/10 verified on primary and two standbys; isolated matrix used PG18.6 |
 | Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity in 030 and the complete tile pipeline in 031 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
-| UI follow-up | Helm 77 fixes mouse-driven tooltip reopening after Apply/Cancel while preserving keyboard help; the route picker retains its 500ms hold, list-top alignment and -2px help offset |
+| UI follow-up | Helm 80 disables empty applied Coverage rows with the neutral X and No map segments matched tooltip; Helm-79 mode-specific fitting and earlier picker polish remain active |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Helm 77 preserves all 18 configuration UID/resourceVersion/content tuples and all four non-UI pods; only the UI image rolls |
+| Chart semantics | Helm 80 preserves all 18 configuration UID/resourceVersion/content tuples and the Martin pod; only API, shared-worker consumers and UI images roll |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 77, UI-only tooltip focus-restoration fix; Harbor retains only canonical dev-20261102 tags matching deployed references, current image digests and their provenance; all five deployments healthy |
+| Release | Helm 80, persisted no-matches results and disabled empty Coverage actions; canonical dev-20261102 tags match deployed immutable references; all five deployments healthy |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
 | Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
@@ -42,7 +42,7 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [tooltip-focus fix](#route-checkbox-tooltip-focus-restoration) owns
+The [empty-result follow-up](#empty-coverage-results) owns
 current deployment status. The [031 delivery record](#tile-rendering-and-delivery-031)
 retains its Helm-67 benchmark scope. The [031 release record](#tile-local-map-optimization-031) retains its
 Helm-65 checkpoint and limits. The [metadata release record](#metadata-driven-coverage-reconciliation)
@@ -54,6 +54,84 @@ superseded earlier undeployed, pending-repair and old-live-contract wording at
 that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Empty Coverage Results
+
+**Deployed 11/5/2026 at Helm 80.** Source 030 persists the applied display result
+as `matched` or `no_matches`, with null reserved for unapplied state. The map API
+exposes `no_matches` explicitly. Production Coverage disables empty-result row
+actions, clears misleading persistent focus, uses the neutral gray circle/X and
+shows **No map segments matched** through the shared portal tooltip. Raw Routes
+remain selectable, and a requested empty Coverage workout falls back to raw mode.
+No empty focus fetch or camera fit is started. A completed empty evaluation remains
+successful/current for durable job and reconciliation semantics, avoiding endless
+retry solely because it found no matches.
+
+Applied-proof changes enqueue the shared deferred display coordinator even when
+a first empty job writes no match rows. Classification and bounds update together;
+replacement with nonempty evidence restores `matched`, while failed replacement
+retains prior evidence and classification. Genuine worker/PostGIS integration
+tests verify first empty completion, no redundant work, empty-to-matched-to-empty
+transitions, shared-copy retention, and persistence-failure rollback. The compact
+projection parity and restricted-role catalog-mutation tests also pass. All 741
+UI tests pass, including both empty legacy and explicit-result behavior and all
+72 readiness combinations with and without renderable geometry. The Go suite,
+generated-code checks, type checking, formatting, CSS guards and build pass.
+
+A guarded classification-only update was rehearsed on the protected actual-backup
+restore and then applied to existing results. Fourteen original table inventories,
+including original state fields, raw/Coverage geometry, source data, job state,
+generations, revisions and ledger, pass preservation checks; function owners/ACLs
+are retained. Source inventory stays **001-031**, schema/minimum runtime **31/31**,
+baseline 27 and ledger 0-31. No ingest, provider, OSM or production matching job
+is started by the repair.
+
+Live Chromium and WebKit verify every affected route against the actual API/UI
+and real map resources: persisted status, gray X, disabled action, exact visible
+tooltip, no empty focus fetch/fit, and continued raw-route selection. Saved
+preferences remain unchanged; temporary sessions/selections and the verification
+Job are cleaned up. Both strict-TLS origins serve the published assets, all five
+deployments are healthy, all 18 configurations are preserved, and Martin is
+unchanged. The existing canonical image tag is reused without review aliases.
+
+## Mode-Specific Route Bounds
+
+**Deployed 11/5/2026 at Helm 79.** Raw GPS bounds remain separate from four
+nullable Coverage extent fields on the applied-result state. The existing
+deferred display coordinator maintains these from compact path/park evidence,
+including name qualification and evidence removal, without rescanning GPS or
+changing matching. The API returns per-workout and checked-selection Coverage
+bounds. Explicit/restored focus, focused production-mode changes and Fit routes
+use the appropriate mode's box; missing Coverage bounds never fall back to raw.
+The [functional specification](functional-spec.md#mode-specific-route-fitting)
+records the camera and empty/stale-result behavior.
+
+The schema addition is folded into source 030. The current source inventory and
+supported/schema/minimum runtime remain **001-031 / 31/31/31**, baseline 27 and
+ledger 0-31. A protected full application backup was restored privately before
+the guarded operator update was applied to every account. Original state fields,
+raw routes, matching evidence, display facts, jobs, sources, preferences,
+generations, revisions and ledger values passed preservation checks; function
+owners/ACLs are retained. All-account stored bounds agree with an independent
+full matching-geometry oracle, including null extents for empty evidence. No
+import, provider access, OSM update or rematching is triggered.
+
+All 734 UI tests, `go test ./...`, generated-code checks, type checking,
+formatting, CSS guards and the production build pass. Targeted actual
+PostgreSQL/PostGIS tests cover deferred projection parity, metadata changes,
+restricted-role readiness/mutations and API selection isolation/membership.
+The membership fixture explicitly supplies drawable components instead of
+depending on old synthetic GPS jumps exceeding the spatial continuity limit.
+Live Chromium and WebKit verify the owner-reported route with real basemap and
+private resources: distinct boxes, padded viewport containment, row/card/union
+fits, both mode transitions, and no capability renewal or saved preference writes.
+Owned browser sessions/selections and the verification Job are cleaned up.
+
+Only API, both shared-worker consumers and UI roll; Martin remains unchanged.
+Both strict-TLS origins serve the exact published assets, all five deployments
+are healthy, and all 18 configuration fingerprints are preserved. Harbor's
+existing canonical tag is reused without dated/review aliases. These are scoped
+functional and preservation checks, not a new capacity or latency certification.
 
 ## Route Checkbox Tooltip Focus Restoration
 

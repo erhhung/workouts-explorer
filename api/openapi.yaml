@@ -1831,7 +1831,7 @@ components:
     MapSelectionWorkout:
       type: object
       additionalProperties: false
-      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, distance, pace, calories, heartRate, elevationGain, coverageReadiness]
+      required: [id, type, startedAt, endedAt, duration, localStartDate, partialRoute, bounds, coverageBounds, distance, pace, calories, heartRate, elevationGain, coverageReadiness]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         type: {$ref: '#/components/schemas/MapSelectionWorkoutType'}
@@ -1841,6 +1841,10 @@ components:
         localStartDate: {type: string, format: date, nullable: true}
         partialRoute: {type: boolean}
         bounds: {$ref: '#/components/schemas/RouteBounds'}
+        coverageBounds:
+          allOf: [{$ref: '#/components/schemas/RouteBounds'}]
+          nullable: true
+          description: Precomputed bounds of the applied displayable Coverage geometry, including usable stale evidence. Null when there is no displayable applied geometry. The bounds property remains the raw GPS route bounds.
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
@@ -1854,17 +1858,24 @@ components:
       properties:
         mapDataStatus: {type: string, enum: [pending, unavailable, ready]}
         processingStatus: {type: string, enum: [unprocessed, queued, running, current, failed, stale]}
-        resultStatus: {type: string, enum: [none, current, stale]}
+        resultStatus:
+          type: string
+          enum: [none, current, stale, no_matches]
+          description: Applied display result. no_matches is a completed result with no displayable matched segments, not a pending or failed job; it remains non-renderable until replaced.
     MapSelection:
       type: object
       additionalProperties: false
-      required: [id, expiresAt, dataGeneration, coverageDisplayPolicy, coverageDisplayRevision, range, bounds, workouts, focusedWorkoutId, routeTileUrl, coverageTileUrl]
+      required: [id, expiresAt, dataGeneration, coverageDisplayPolicy, coverageDisplayRevision, range, bounds, coverageBounds, workouts, focusedWorkoutId, routeTileUrl, coverageTileUrl]
       properties:
         id: {$ref: '#/components/schemas/CompactUUID'}
         expiresAt: {type: string, format: date-time}
         dataGeneration: {type: integer, format: int64, minimum: 1}
         range: {$ref: '#/components/schemas/ResolvedDateRange'}
         bounds: {allOf: [{$ref: '#/components/schemas/RouteBounds'}], nullable: true}
+        coverageBounds:
+          allOf: [{$ref: '#/components/schemas/RouteBounds'}]
+          nullable: true
+          description: Union of the selected workouts' non-null Coverage bounds. Null when the selection has no displayable applied Coverage geometry.
         workouts: {type: array, maxItems: 5000, items: {$ref: '#/components/schemas/MapSelectionWorkout'}}
         focusedWorkoutId: {allOf: [{$ref: '#/components/schemas/CompactUUID'}], nullable: true}
         routeTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/route-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}

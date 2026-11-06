@@ -113,7 +113,7 @@ func TestOpenAPIContract(t *testing.T) {
 	for name, expected := range map[string][]any{
 		"mapDataStatus":    {"pending", "unavailable", "ready"},
 		"processingStatus": {"unprocessed", "queued", "running", "current", "failed", "stale"},
-		"resultStatus":     {"none", "current", "stale"},
+		"resultStatus":     {"none", "current", "stale", "no_matches"},
 	} {
 		property := coverageReadiness.Properties[name].Value
 		if property == nil {

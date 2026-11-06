@@ -179,6 +179,22 @@ func TestCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		mutation{"bounds nullable region", `UPDATE pg_attribute SET attnotnull=true WHERE attrelid='app.workout_park_display_bounds'::regclass AND attname='region_id'`,
 			`UPDATE pg_attribute SET attnotnull=false WHERE attrelid='app.workout_park_display_bounds'::regclass AND attname='region_id'`},
 	)
+	for _, column := range []string{"coverage_minimum_longitude", "coverage_minimum_latitude", "coverage_maximum_longitude", "coverage_maximum_latitude", "applied_result_status"} {
+		alter := "ALTER TABLE app.workout_coverage_states RENAME COLUMN "
+		mutations = append(mutations, mutation{"Coverage bounds missing " + column,
+			alter + quote(column) + " TO missing_coverage_bound", alter + "missing_coverage_bound TO " + quote(column)})
+	}
+	for _, name := range []string{"workout_coverage_states_bounds_check", "workout_coverage_states_result_status_check"} {
+		var definition string
+		if err := admin.QueryRow(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint
+			WHERE conrelid='app.workout_coverage_states'::regclass AND conname=$1`, name).Scan(&definition); err != nil {
+			t.Fatal(err)
+		}
+		drop := `ALTER TABLE app.workout_coverage_states DROP CONSTRAINT ` + quote(name) + `; `
+		add := `ALTER TABLE app.workout_coverage_states ADD CONSTRAINT ` + quote(name) + ` `
+		mutations = append(mutations, mutation{"Coverage display constraint changed " + name,
+			drop + add + `CHECK(true)`, drop + add + definition})
+	}
 	for _, index := range []string{"workout_path_display_partials_pkey", "workout_path_display_context_pkey", "workout_park_display_bounds_pkey"} {
 		for _, flag := range []string{"indisvalid", "indisready"} {
 			update := "UPDATE pg_index SET " + flag + "="

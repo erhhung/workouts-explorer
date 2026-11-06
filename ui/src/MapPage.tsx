@@ -448,6 +448,13 @@ export function privateRouteTileUnavailable(event: unknown, routeTemplate?: stri
 }
 
 type RouteBounds = NonNullable<MapSelection["bounds"]>;
+
+function mapFitBounds(
+  value: { bounds: RouteBounds | null; coverageBounds: RouteBounds | null },
+  mode: MapMode,
+) {
+  return mode === "coverage" ? value.coverageBounds : value.bounds;
+}
 type RawRoutePoint = { recordedAt: string; longitude: number; latitude: number };
 type RawRoutePoints = { points: RawRoutePoint[] };
 type LoadedRawRoute = {
@@ -2527,8 +2534,17 @@ function mergeWorkoutReadiness(current: MapSelectionWorkout[], updates: MapSelec
   return current.map((workout) => replacements.get(workout.id) ?? workout);
 }
 
+function hasRenderableCoverage(workout: MapSelectionWorkout) {
+  return (
+    ["current", "stale"].includes(workout.coverageReadiness.resultStatus) &&
+    workout.coverageBounds != null
+  );
+}
+
 function coverageRouteStatus(workout: MapSelectionWorkout) {
   const readiness = workout.coverageReadiness;
+  if (readiness.resultStatus !== "none" && !hasRenderableCoverage(workout))
+    return { kind: "unavailable", label: "No map segments matched", symbol: "" };
   if (readiness.resultStatus === "current")
     return { kind: "current", label: "Coverage current", symbol: "✓" };
   if (readiness.resultStatus === "stale")
@@ -2550,6 +2566,8 @@ function shouldPollCoverage(workout: MapSelectionWorkout) {
 
 function unavailableCoverageReason(workout: MapSelectionWorkout) {
   const readiness = workout.coverageReadiness;
+  if (readiness.resultStatus !== "none" && !hasRenderableCoverage(workout))
+    return "No map segments matched";
   if (readiness.mapDataStatus === "unavailable") return "Map data not available";
   if (readiness.mapDataStatus === "pending") return "Waiting for map data";
   if (readiness.processingStatus === "failed") return "Coverage update failed";
@@ -2608,9 +2626,7 @@ function WorkoutRouteList({
       {sortMapWorkouts(workouts, sort).map((workout) => {
         const coverageStatus = coverageRouteStatus(workout);
         const focusDisabled =
-          mode === "coverage" &&
-          !diagnosticCoverage &&
-          workout.coverageReadiness.resultStatus === "none";
+          mode === "coverage" && !diagnosticCoverage && !hasRenderableCoverage(workout);
         const focusControl = (
           <button
             type="button"
@@ -3610,6 +3626,7 @@ export default function MapPage({
       : localMapMode;
   const mapModeRef = useRef(mapMode);
   mapModeRef.current = mapMode;
+  const fittedModeRef = useRef(mapMode);
   const setMapMode = (mode: MapMode) =>
     preferences.coverageDiagnosticsEnabled
       ? setLocalMapMode(mode)
@@ -3990,23 +4007,29 @@ export default function MapPage({
           fitIntent === "requested" && fitWorkoutId
             ? normalizedWorkouts.find((workout) => workout.id === fitWorkoutId)
             : undefined;
+        let fitMode = mapModeRef.current;
         if (
           requestedIds.length === 1 &&
           requestedWorkout &&
           mapModeRef.current === "coverage" &&
           !preferences.coverageDiagnosticsEnabled &&
-          requestedWorkout.coverageReadiness.resultStatus === "none"
-        )
+          !hasRenderableCoverage(requestedWorkout)
+        ) {
+          fitMode = "routes";
           setMapMode("routes");
-        if (requestedWorkout)
+        }
+        fittedModeRef.current = fitMode;
+        const requestedBounds = requestedWorkout && mapFitBounds(requestedWorkout, fitMode);
+        const selectionBounds = mapFitBounds(normalized, fitMode);
+        if (requestedWorkout && requestedBounds)
           setFitRequest((current) => ({
             key: (current?.key ?? 0) + 1,
-            bounds: requestedWorkout.bounds,
+            bounds: requestedBounds,
           }));
-        else if (fitIntent !== undefined && normalized.bounds)
+        else if (!requestedWorkout && fitIntent !== undefined && selectionBounds)
           setFitRequest((current) => ({
             key: (current?.key ?? 0) + 1,
-            bounds: normalized.bounds!,
+            bounds: selectionBounds,
           }));
         if (pendingSelectionFitRef.current === fitIntent)
           pendingSelectionFitRef.current = undefined;
@@ -4272,7 +4295,29 @@ export default function MapPage({
       : undefined;
   const visibleFocusedWorkoutId =
     focusedWorkoutId && visibleWorkoutIds.has(focusedWorkoutId) ? focusedWorkoutId : undefined;
-  const focusedCoverageBounds = visibleFocusedWorkoutId ? focusedWorkout?.bounds : undefined;
+  const focusedCoverageBounds = visibleFocusedWorkoutId
+    ? focusedWorkout?.coverageBounds
+    : undefined;
+  const selectedFitBounds = selection && mapFitBounds(selection, mapMode);
+  useEffect(() => {
+    if (fittedModeRef.current === mapMode) return;
+    fittedModeRef.current = mapMode;
+    const bounds =
+      visibleFocusedWorkoutId && focusedWorkout && mapFitBounds(focusedWorkout, mapMode);
+    if (
+      bounds &&
+      !selectionPending &&
+      !preferences.coverageDiagnosticsEnabled &&
+      (mapMode !== "coverage" || (focusedWorkout && hasRenderableCoverage(focusedWorkout)))
+    )
+      setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds }));
+  }, [
+    mapMode,
+    visibleFocusedWorkoutId,
+    focusedWorkout,
+    preferences.coverageDiagnosticsEnabled,
+    selectionPending,
+  ]);
   const displayedFocusedWorkoutId =
     hoveredWorkoutId && hoveredWorkoutId !== visibleFocusedWorkoutId
       ? undefined
@@ -4316,7 +4361,7 @@ export default function MapPage({
       preferences.coverageDiagnosticsEnabled ||
       !selection ||
       !targetWorkout ||
-      targetWorkout.coverageReadiness.resultStatus === "none"
+      !hasRenderableCoverage(targetWorkout)
     ) {
       setCoverageFocus(undefined);
       return;
@@ -4447,7 +4492,8 @@ export default function MapPage({
       !preferences.coverageDiagnosticsEnabled &&
       !selectionPending &&
       !selectionError &&
-      focusedWorkout?.coverageReadiness.resultStatus === "none"
+      focusedWorkout &&
+      !hasRenderableCoverage(focusedWorkout)
     )
       clearFocusedWorkout();
   }, [
@@ -4457,6 +4503,7 @@ export default function MapPage({
     selectionError,
     focusedWorkout?.id,
     focusedWorkout?.coverageReadiness.resultStatus,
+    focusedWorkout?.coverageBounds,
   ]);
 
   useEffect(() => {
@@ -4683,7 +4730,7 @@ export default function MapPage({
     if (
       mapMode === "coverage" &&
       !preferences.coverageDiagnosticsEnabled &&
-      workout.coverageReadiness.resultStatus === "none"
+      !hasRenderableCoverage(workout)
     )
       return;
     cancelRouteHover();
@@ -4699,10 +4746,12 @@ export default function MapPage({
     updateFocusedWorkout(workout.id);
     const current = selectedWorkoutIds ?? availableWorkouts.map((item) => item.id);
     if (!current.includes(workout.id)) updateWorkoutSelection([...current, workout.id].sort());
-    setFitRequest((currentRequest) => ({
-      key: (currentRequest?.key ?? 0) + 1,
-      bounds: workout.bounds,
-    }));
+    const bounds = mapFitBounds(workout, mapMode);
+    if (bounds)
+      setFitRequest((currentRequest) => ({
+        key: (currentRequest?.key ?? 0) + 1,
+        bounds,
+      }));
     setCanvasFocusRequest((value) => value + 1);
   }
 
@@ -4962,10 +5011,10 @@ export default function MapPage({
       <button
         type="button"
         className="secondary map-fit-button"
-        disabled={!selection?.bounds}
+        disabled={!selectedFitBounds}
         onClick={() =>
-          selection?.bounds &&
-          setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds: selection.bounds! }))
+          selectedFitBounds &&
+          setFitRequest((current) => ({ key: (current?.key ?? 0) + 1, bounds: selectedFitBounds }))
         }
       >
         Fit routes

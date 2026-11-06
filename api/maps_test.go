@@ -28,6 +28,54 @@ type bulkCoverageTx struct {
 	arguments []any
 }
 
+func TestMapSelectionKeepsRawAndAppliedCoverageBoundsIndependent(t *testing.T) {
+	box := func(west, south, east, north float64) generated.RouteBounds {
+		return generated.RouteBounds{MinimumLongitude: west, MinimumLatitude: south, MaximumLongitude: east, MaximumLatitude: north}
+	}
+	row := func(bounds *generated.RouteBounds, applied bool) activityDisplayRow {
+		var west, south, east, north *float64
+		if bounds != nil {
+			west, south, east, north = &bounds.MinimumLongitude, &bounds.MinimumLatitude, &bounds.MaximumLongitude, &bounds.MaximumLatitude
+		}
+		return activityDisplayRow{
+			uuid.New(), uuid.New(), "outdoor-walk", "Outdoor Walk", time.Time{}, time.Time{}, "60", nil,
+			float64(-122), float64(37), float64(-121), float64(38), west, south, east, north,
+			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, applied, false,
+		}
+	}
+	a, b := box(10, 20, 11, 21), box(12, 19, 13, 22)
+	union := box(10, 19, 13, 22)
+	for _, test := range []struct {
+		name string
+		rows []activityDisplayRow
+		want *generated.RouteBounds
+	}{
+		{"union of usable stale applied results", []activityDisplayRow{row(&a, true), row(&b, true)}, &union},
+		{"empty applied geometry", []activityDisplayRow{row(nil, true)}, nil},
+		{"unapplied evidence is not exposed", []activityDisplayRow{row(&a, false)}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := readMapSelection(context.Background(), activityDisplayTx{rows: test.rows}, uuid.New(), uuid.New(), 1, time.Time{}, resolvedRange{}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := result.Bounds.Get()
+			if err != nil || raw != box(-122, 37, -121, 38) {
+				t.Fatal("Coverage must not change raw bounds")
+			}
+			if test.want == nil {
+				if !result.CoverageBounds.IsNull() || !result.Workouts[0].CoverageBounds.IsNull() {
+					t.Fatal("missing applied Coverage must have explicit null bounds")
+				}
+			} else if got, err := result.CoverageBounds.Get(); err != nil || got != *test.want {
+				t.Fatalf("Coverage union=%+v err=%v", got, err)
+			} else if got, err := result.Workouts[0].CoverageBounds.Get(); err != nil || got != a {
+				t.Fatalf("workout Coverage=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
 func (tx *bulkCoverageTx) Query(_ context.Context, query string, arguments ...any) (pgx.Rows, error) {
 	tx.queries = append(tx.queries, query)
 	tx.arguments = arguments
@@ -517,9 +565,15 @@ func TestMapCoverageReadinessExposesIndependentStatuses(t *testing.T) {
 		{pointer("map_data_ready"), pointer("stale"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusStale, generated.CoverageReadinessResultStatusStale},
 	}
 	for _, test := range tests {
-		got := mapCoverageReadiness(test.state, test.processing, test.applied, test.appliedCurrent)
+		got := mapCoverageReadiness(test.state, test.processing, test.applied, test.appliedCurrent, nil)
 		if got.MapDataStatus != test.mapData || got.ProcessingStatus != test.processingStatus || got.ResultStatus != test.resultStatus {
 			t.Fatalf("readiness=%+v want map=%s processing=%s result=%s", got, test.mapData, test.processingStatus, test.resultStatus)
+		}
+	}
+	for _, current := range []bool{false, true} {
+		got := mapCoverageReadiness(pointer("map_data_ready"), pointer("current"), true, current, pointer("no_matches"))
+		if got.ResultStatus != generated.CoverageReadinessResultStatusNoMatches || got.ProcessingStatus != generated.CoverageReadinessProcessingStatusCurrent {
+			t.Fatal("a completed empty result must expose no_matches without changing job completion")
 		}
 	}
 }

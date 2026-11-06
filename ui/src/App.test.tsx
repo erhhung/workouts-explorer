@@ -112,6 +112,12 @@ const deletionMapWorkouts = [
   ...workout,
   type: { ...workout.type, name: workout.type.displayName },
   partialRoute: false,
+  coverageBounds: {
+    minimumLongitude: -105.3,
+    maximumLongitude: -105.1,
+    minimumLatitude: 39.8,
+    maximumLatitude: 40.1,
+  },
   bounds: {
     minimumLongitude: -105.3,
     maximumLongitude: -105.1,
@@ -1902,6 +1908,12 @@ describe("authenticated shell", () => {
         startedAt: "2026-07-20T12:00:00Z",
         endedAt: "2026-07-20T12:10:00Z",
         duration: "600",
+        coverageBounds: {
+          minimumLongitude: -102,
+          minimumLatitude: 36,
+          maximumLongitude: -101,
+          maximumLatitude: 37,
+        },
         bounds: {
           minimumLongitude: -104,
           minimumLatitude: 38,
@@ -1973,6 +1985,7 @@ describe("authenticated shell", () => {
             dataGeneration: 1,
             range: emptySummary.range,
             bounds: deletionMapWorkouts[0].bounds,
+            coverageBounds: deletionMapWorkouts[0].coverageBounds,
             focusedWorkoutId: body.focusedWorkoutId ?? null,
             workouts: routeWorkouts.filter(
               ({ id }) => body.workoutIds === undefined || body.workoutIds.includes(id),
@@ -2014,10 +2027,15 @@ describe("authenticated shell", () => {
       const map = maps.at(-1)!;
       await waitFor(() => expect(map.fitBounds).toHaveBeenCalledTimes(1));
       expect(map.fitBounds).toHaveBeenLastCalledWith(
-        [
-          [-104, 38],
-          [-103, 39],
-        ],
+        resultStatus === "none"
+          ? [
+              [-104, 38],
+              [-103, 39],
+            ]
+          : [
+              [-102, 36],
+              [-101, 37],
+            ],
         { padding: 48, duration: 350 },
       );
       expect(map.getLayer("private-workout-routes").layout.visibility).toBe(

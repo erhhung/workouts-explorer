@@ -110,7 +110,7 @@ func TestTileMigrationPreservesHistoricalSQL(t *testing.T) {
 		fmt.Fprintln(hash, file)
 		hash.Write(raw)
 	}
-	const expected = "3b854e01e0844887c5b3b81072b46408d0446b405ff7533f7d7766046d7dd723"
+	const expected = "c38333cbc5ab91e95653747973b710fe9b6b5f93449bd51a26887d418a8071b3"
 	if got := fmt.Sprintf("%x", hash.Sum(nil)); got != expected {
 		t.Fatalf("001-030 must remain byte-identical: sha256=%s", got)
 	}

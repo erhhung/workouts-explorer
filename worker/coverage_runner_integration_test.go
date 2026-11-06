@@ -626,6 +626,11 @@ func (f *coverageIntegrationFixture) assertTerminal(job coverageIntegrationJob, 
 		JOIN app.coverage_job_progress progress ON progress.job_id=parent.id WHERE child.id=$1`, []any{job.childID},
 		&childStatus, &parentStatus, &result, &cleared, &duration, &total, &processed, &succeeded, &failed, &cancelled, &superseded)
 	if childStatus != status || parentStatus != status || result != outcome || !cleared || total != 1 {
+		var failureCode, failureSummary string
+		f.scan(tx, `SELECT COALESCE(state.processing_failure_code,''),COALESCE(state.processing_failure_summary,'')
+			FROM app.coverage_route_job_contexts context JOIN app.workout_coverage_states state
+			ON state.account_id=context.account_id AND state.workout_id=context.workout_id WHERE context.job_id=$1`, []any{job.childID}, &failureCode, &failureSummary)
+		f.t.Logf("synthetic terminal failure: %s %s", failureCode, failureSummary)
 		f.t.Fatalf("terminal child/parent/outcome/cleared/total=%s/%s/%s/%v/%d, want %s/%s/%s/true/1", childStatus, parentStatus, result, cleared, total, status, status, outcome)
 	}
 	wantSucceeded, wantFailed, wantCancelled, wantSuperseded := 0, 0, 0, 0
@@ -902,7 +907,9 @@ func TestCoverageRunnerRunOnceNoEvidenceDeletesPriorRetainsSharedCopiesIntegrati
 	f.run()
 	f.assertTerminal(job, "succeeded", "no_evidence")
 	f.assertCurrent(firstWorkout, job, -1, 2)
+	f.assertAppliedDisplayResult(firstWorkout, "no_matches")
 	f.assertCurrent(sharedWorkout, sharedJob, 0, 1)
+	f.assertAppliedDisplayResult(sharedWorkout, "matched")
 	tx := f.accountTx(f.ctx, f.apiDB)
 	defer coverageIntegrationRollback(tx)
 	var copies, paths int
@@ -910,6 +917,46 @@ func TestCoverageRunnerRunOnceNoEvidenceDeletesPriorRetainsSharedCopiesIntegrati
 	if copies != 1 || paths != 1 {
 		t.Fatalf("shared copies/paths=%d/%d, want 1/1", copies, paths)
 	}
+}
+
+func (f *coverageIntegrationFixture) assertAppliedDisplayResult(workout uuid.UUID, want string) {
+	f.t.Helper()
+	tx := f.accountTx(f.ctx, f.apiDB)
+	defer coverageIntegrationRollback(tx)
+	var status string
+	var hasBounds bool
+	f.scan(tx, `SELECT applied_result_status,coverage_minimum_longitude IS NOT NULL
+		FROM app.workout_coverage_states WHERE account_id=$1 AND workout_id=$2`, []any{f.accountID, workout}, &status, &hasBounds)
+	if status != want || hasBounds != (want == "matched") {
+		f.t.Fatalf("applied display result=%s bounds=%t, want %s", status, hasBounds, want)
+	}
+}
+
+func TestCoverageRunnerFirstEmptyResultAndMatchedRecoveryIntegration(t *testing.T) {
+	f := newCoverageIntegrationFixture(t)
+	f.seedOSM()
+	points := coverageIntegrationRoute(0)
+	for i := range points {
+		points[i].Latitude += 0.05
+	}
+	workout := f.addWorkout(points)
+	job := f.queue(workout)
+	f.run()
+	f.assertTerminal(job, "succeeded", "no_evidence")
+	f.assertAppliedDisplayResult(workout, "no_matches")
+	if worked, err := f.runner().RunOnce(f.ctx); worked || err != nil {
+		t.Fatalf("completed empty result must not create repeated work: worked=%t err=%v", worked, err)
+	}
+	f.updateRoute(workout, coverageIntegrationRoute(0))
+	job = f.queue(workout)
+	f.run()
+	f.assertTerminal(job, "succeeded", "applied")
+	f.assertAppliedDisplayResult(workout, "matched")
+	f.updateRoute(workout, points)
+	job = f.queue(workout)
+	f.run()
+	f.assertTerminal(job, "succeeded", "no_evidence")
+	f.assertAppliedDisplayResult(workout, "no_matches")
 }
 
 func TestCoverageRunnerRunOnceGenerationFenceBeforeSnapshotIntegration(t *testing.T) {
@@ -1163,6 +1210,7 @@ func TestCoverageRunnerRunOncePersistenceFailureRollsBackIntegration(t *testing.
 	if !failed {
 		t.Fatal("persist failure did not retain prior applied revision and record failure")
 	}
+	f.assertAppliedDisplayResult(workout, "matched")
 	assertCoverageIntegrationCounter(t, collectCoverageMetrics(t, reader), "coverage.route.outcomes", map[string]string{"outcome": "failed", "failure": "persist"}, 1)
 }
 

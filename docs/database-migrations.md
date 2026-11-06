@@ -40,7 +40,7 @@ repair results, and is rehearsed together with guarded checkpoint recovery.
 | 011-027 | Splits, time zones, Coverage, provider identity and recovery baseline |
 | [028](../api/migrations/sql/028_ingest_coverage_pipeline.sql) | Committed-route pipeline and bounded eligible cohorts |
 | [029](../api/migrations/sql/029_ingest_status_reporting.sql) | Ingest outcomes, file filtering, reprocessing, activity and metadata reconciliation |
-| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters and exact detail |
+| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters, exact detail and independent Coverage route bounds |
 | [031](../api/migrations/sql/031_tile_rendering.sql) | Exact/LOD storage, authorization and optimized current MVT functions |
 
 The approved route foundations and tile file are consolidated source. Other
@@ -60,6 +60,37 @@ the same columns and constraints through a guarded operator update that seeds an
 existing explicit default range account by account without bypassing RLS. This
 keeps schema/minimum runtime 31, ledger 0-31, route geometry, tile functions and
 account data generations intact.
+
+## Coverage Route Bounds (030)
+
+The same foundation persists `applied_result_status` (`matched`/`no_matches`, null
+before application), constrained to agree with the nullable Coverage box. Applied
+proof changes enqueue the existing deferred projection even for a first empty
+result with no match writes. Existing applied results receive a guarded
+classification-only backfill: empty boxes become `no_matches`, nonempty boxes
+become `matched`; original state fields and geometry remain intact. No extra
+source migration is introduced and schema/minimum runtime stay **31/31**.
+
+The display foundation defines four nullable `coverage_*` longitude/latitude
+columns on `app.workout_coverage_states`, with an all-null-or-valid-box constraint.
+Raw GPS bounds remain on `app.workout_routes`. The existing serialized deferred
+display rebuild combines compact path/park evidence bounds and updates only the
+four derived fields; path-name qualification changes enqueue affected workouts
+through that same coordinator. Removing the final displayable match clears the
+Coverage bounds. Ordinary failed rematching preserves prior applied evidence
+and its bounds.
+
+Fresh installations backfill these fields with the other display projections in
+030. Existing schema-31 installations require the separately rehearsed guarded
+operator update: add the exact columns/constraint, replace the two changed
+functions while preserving owners/ACLs, and backfill every account from retained
+compact evidence. Already-applied Goose migrations are not replayed. Preserve
+schema/minimum runtime **31/31**, ledger **0-31**, generations, revisions, original
+GPS, raw bounds, matching evidence, jobs, and credentials. The source inventory
+remains **001-031**; no additional migration or alternate function ABI is shipped.
+Verify restricted-role readiness and coordinate API/shared-worker/UI images with
+the revised source and API contract. Retain private preimages and preservation
+proofs; the operation does not enqueue imports, OSM work, or rematching.
 
 ## Live Cutover (Revision 61)
 

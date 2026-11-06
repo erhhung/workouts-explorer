@@ -747,6 +747,27 @@ func coverageDisplayInsertMatch(t *testing.T, db testDatabases, tx pgx.Tx, f cov
 // the dirty queue, refresh helpers, eligibility and canonical context cache.
 func coverageDisplayProjectionParity(t *testing.T, db testDatabases, f coverageDisplayFixture) {
 	t.Helper()
+	coverageDisplayCheck(t, db, `WITH visible AS (
+		SELECT match.workout_id,match.geom FROM app.workout_segment_matches match
+		JOIN app.path_segments segment USING(account_id,region_id,generation_id,physical_segment_id)
+		LEFT JOIN app.coverage_paths path ON path.account_id=match.account_id AND path.logical_path_id=match.logical_path_id
+		WHERE match.account_id=$1 AND (
+			(NOT(segment.highway='service' AND COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle'))
+			 AND segment.tags->>'amenity' IS DISTINCT FROM 'parking' AND path.logical_path_id IS NOT NULL
+			 AND (path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park')
+				OR NOT(segment.tags ? 'workouts:park_id')))
+			OR segment.tags->>'workouts:park_id' IS NOT NULL)
+	), expected AS (
+		SELECT workout_id,ST_XMin(ST_Extent(geom)::box2d) min_lon,ST_YMin(ST_Extent(geom)::box2d) min_lat,
+			ST_XMax(ST_Extent(geom)::box2d) max_lon,ST_YMax(ST_Extent(geom)::box2d) max_lat
+		FROM visible GROUP BY workout_id
+	) SELECT NOT EXISTS(SELECT 1 FROM app.workout_coverage_states state LEFT JOIN expected USING(workout_id)
+		WHERE state.account_id=$1 AND (state.coverage_minimum_longitude,state.coverage_minimum_latitude,
+			state.coverage_maximum_longitude,state.coverage_maximum_latitude)
+		IS DISTINCT FROM (expected.min_lon,expected.min_lat,expected.max_lon,expected.max_lat)
+		OR (state.account_id=$1 AND state.applied_result_status IS DISTINCT FROM
+			CASE WHEN state.applied_route_input_revision IS NULL THEN NULL
+				WHEN expected.min_lon IS NULL THEN 'no_matches' ELSE 'matched' END))`, f.account)
 	evidence := `WITH evidence AS MATERIALIZED (
 		SELECT match.*,segment.highway,segment.tags FROM app.workout_segment_matches match
 		JOIN app.path_segments segment USING(account_id,region_id,generation_id,physical_segment_id)
