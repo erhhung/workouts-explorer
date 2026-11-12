@@ -40,7 +40,7 @@ repair results, and is rehearsed together with guarded checkpoint recovery.
 | 011-027 | Splits, time zones, Coverage, provider identity and recovery baseline |
 | [028](../api/migrations/sql/028_ingest_coverage_pipeline.sql) | Committed-route pipeline and bounded eligible cohorts |
 | [029](../api/migrations/sql/029_ingest_status_reporting.sql) | Ingest outcomes, file filtering, reprocessing, activity and metadata reconciliation |
-| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters, exact detail and independent Coverage route bounds |
+| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters, exact detail, independent Coverage bounds and Stats report scopes/history reads |
 | [031](../api/migrations/sql/031_tile_rendering.sql) | Exact/LOD storage, authorization and optimized current MVT functions |
 
 The approved route foundations and tile file are consolidated source. Other
@@ -49,6 +49,27 @@ catalog-only, validates exact function/privilege contracts and rejects an
 unrecognized schema/history rather than implementing migration compatibility.
 
 ## Custom Date Ranges (002)
+
+### All Time Scope Contract (017, 030, 031)
+
+All time is an explicit query mode rather than a finite custom interval. The
+consolidated selection foundation includes `map_selections.all_time`, and canonical
+contexts/report scopes include the same non-null, default-false flag. Context
+uniqueness and authorization distinguish bounded and unfiltered modes, even when
+display bounds coincide. The report preparation helper accepts a trailing boolean
+defaulting to false, retaining eight-argument bounded callers; the private tile
+scope returns the captured flag. Runtime checks protect those signatures, defaults,
+physical columns, constraints, ACLs and exact helper bodies.
+
+Existing schema-31 installations use the rehearsed, hash-guarded operator update
+before the matching API/worker rollout. It adds the three flag columns, extends the
+context key and replaces the affected readers/preparation helpers atomically;
+the two changed helper signatures are recreated with their restricted ownership
+and grants. It does not rerun applied Goose files, alter the schema high-water or
+ledger, mutate preferences, rebuild matching evidence or start jobs. Retain the
+schema backup and old-schema rehearsal/readiness receipts with the deployment.
+
+### Recent Custom Ranges
 
 The account lifecycle foundation defines `custom_date_range_limit` (1-5, default
 3) and the bounded `recent_custom_date_ranges` array on the forced-RLS
@@ -91,6 +112,43 @@ remains **001-031**; no additional migration or alternate function ABI is shippe
 Verify restricted-role readiness and coordinate API/shared-worker/UI images with
 the revised source and API contract. Retain private preimages and preservation
 proofs; the operation does not enqueue imports, OSM work, or rematching.
+
+## Stats Reports (030)
+
+The display foundation also defines `app.stats_report_scopes`: an account/session-
+owned, expiring, forced-RLS table referencing the canonical context by composite
+account/context key. Its private owner policy and complete table/constraint/index
+contract are checked without giving runtime logins direct fact-table privileges.
+Five API-only entry functions prepare, read or release a scope, return qualifying
+Coverage events and resolve the qualifying/predecessor workout IDs for returned
+page rows; two authorization helpers remain private. The shared
+canonical preparer accepts report scopes without creating Map capabilities and
+protects live report pins during context garbage collection.
+
+New Coverage reuses the canonical deduplicated all-history visits. The event
+reader computes the immediate predecessor before inclusive range filtering,
+materializes qualifying events and fetches display metadata by a complete
+account/context/canonical index probe. This preserves performance when fresh
+context statistics underestimate its size; no new monthly/yearly rollup table,
+matching job, OSM operation or provider access is needed.
+
+The initial M9 adoption is folded into 030; source **001-031**, schema/minimum
+runtime **31/31**, baseline **27** and ledger **0-31** remain unchanged. Existing
+installations receive separately rehearsed, guarded operator SQL: add the private
+scope table/helpers, replace the shared preparation body preserving owners/ACLs,
+then apply the cold-plan event-body correction. Do not replay applied Goose files.
+The review follow-up adds only `app.stats_visit_workouts`, an API-only, scoped
+full-index-key reader. It selects the earliest workout on the qualifying date
+and latest on the predecessor date with deterministic start-instant/ID ties;
+the API invokes it after pagination. Previous dates outside the report range
+remain noninteractive in the UI. No table, ledger or data backfill is needed.
+Retain the protected full backup, exact function preimages, preservation receipts
+and matched image references; verify restricted API/general/Coverage-worker
+readiness against the revised exact catalog. The operation changes no existing
+business rows, evidence, route geometry, generations, revisions or job outcomes.
+
+See [Stats architecture](architecture.md#stats-reports-and-new-coverage-m9) and
+[the deployment record](development-progress.md#stats-and-new-coverage-initial-implementation).
 
 ## Live Cutover (Revision 61)
 

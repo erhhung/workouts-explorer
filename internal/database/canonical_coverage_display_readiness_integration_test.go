@@ -117,6 +117,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`},
 		{"selection context nullable", `UPDATE pg_attribute SET attnotnull=true WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`, `UPDATE pg_attribute SET attnotnull=false WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`},
 		{"selection context default", `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id SET DEFAULT gen_random_uuid()`, `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id DROP DEFAULT`},
+		{"selection all-time nullable", `ALTER TABLE app.map_selections ALTER COLUMN all_time DROP NOT NULL`, `ALTER TABLE app.map_selections ALTER COLUMN all_time SET NOT NULL`},
+		{"selection all-time default", `ALTER TABLE app.map_selections ALTER COLUMN all_time SET DEFAULT true`, `ALTER TABLE app.map_selections ALTER COLUMN all_time SET DEFAULT false`},
 		{"selection extra context FK", `ALTER TABLE app.map_selections ADD CONSTRAINT unexpected_canonical_fk FOREIGN KEY (account_id,coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id,id) ON DELETE CASCADE`, `ALTER TABLE app.map_selections DROP CONSTRAINT unexpected_canonical_fk`},
 		{"extra source bridge", `CREATE TRIGGER extra_canonical_bridge AFTER INSERT ON app.coverage_display_dirty FOR EACH ROW EXECUTE FUNCTION app.queue_coverage_display_source_invalidation()`, `DROP TRIGGER extra_canonical_bridge ON app.coverage_display_dirty`},
 		{"extra immediate flush", `CREATE TRIGGER extra_canonical_flush AFTER INSERT ON app.coverage_display_invalidations FOR EACH ROW EXECUTE FUNCTION app.flush_coverage_display_invalidations()`, `DROP TRIGGER extra_canonical_flush ON app.coverage_display_invalidations`},
@@ -129,6 +131,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	for _, column := range []struct{ table, name, wrong, original string }{
 		{"coverage_display_revisions", "revision", "2", "1"},
 		{"coverage_display_contexts", "ready", "true", "false"},
+		{"coverage_display_contexts", "all_time", "true", "false"},
+		{"stats_report_scopes", "all_time", "true", "false"},
 		{"coverage_display_contexts", "policy_version", "'wrong-policy'", "'coverage-display-identity-v1'"},
 		{"coverage_display_contexts", "label_locale", "'fr'", "'en'"},
 	} {
@@ -137,7 +141,7 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	}
 	quote := func(name string) string { return pgx.Identifier{name}.Sanitize() }
 	literal := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	for _, table := range []string{"coverage_display_revisions", "coverage_display_contexts", "coverage_display_members", "coverage_display_visits", "coverage_display_entities", "coverage_display_invalidations"} {
+	for _, table := range []string{"coverage_display_revisions", "coverage_display_contexts", "coverage_display_members", "coverage_display_visits", "coverage_display_entities", "coverage_display_invalidations", "stats_report_scopes"} {
 		relation := "app." + quote(table)
 		alter := "ALTER TABLE " + relation + " "
 		policy := quote(table + "_owner_policy")
@@ -179,7 +183,7 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	}
 	rows, err := admin.Query(ctx, `SELECT conrelid::regclass::text,conname,contype::text,pg_get_constraintdef(oid)
 		FROM pg_constraint WHERE conrelid IN (SELECT oid FROM pg_class WHERE relnamespace='app'::regnamespace
-		AND relname IN ('coverage_display_revisions','coverage_display_contexts','coverage_display_members','coverage_display_visits','coverage_display_entities','coverage_display_invalidations'))
+		AND relname IN ('coverage_display_revisions','coverage_display_contexts','coverage_display_members','coverage_display_visits','coverage_display_entities','coverage_display_invalidations','stats_report_scopes'))
 		AND contype IN ('p','u','f','c') OR conrelid='app.map_selections'::regclass AND conname='map_selections_coverage_display_context_fk' ORDER BY conname`)
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +205,7 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		}
 		if kind == "f" {
 			variant := strings.ReplaceAll(definition, "ON DELETE CASCADE", "ON DELETE RESTRICT")
-			if name == "map_selections_coverage_display_context_fk" {
+			if strings.Contains(definition, "SET NULL (coverage_display_context_id)") {
 				variant = strings.Replace(definition, "SET NULL (coverage_display_context_id)", "SET NULL", 1)
 			}
 			if variant == definition {
@@ -216,7 +220,7 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 	rows.Close()
 	rows, err = admin.Query(ctx, `SELECT i.indexrelid::regclass::text,pg_get_indexdef(i.indexrelid),i.indisunique
 		FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid WHERE c.relnamespace='app'::regnamespace
-		AND (c.relname IN ('coverage_display_revisions','coverage_display_contexts','coverage_display_members','coverage_display_visits','coverage_display_entities','coverage_display_invalidations')
+		AND (c.relname IN ('coverage_display_revisions','coverage_display_contexts','coverage_display_members','coverage_display_visits','coverage_display_entities','coverage_display_invalidations','stats_report_scopes')
 		OR i.indexrelid=to_regclass('app.map_selections_coverage_display_context_idx')) ORDER BY i.indexrelid`)
 	if err != nil {
 		t.Fatal(err)

@@ -362,8 +362,8 @@ retries/stale rejection, interactive API/tile p95, CPU throttling, peak working 
 and OOM/restart counts. Verify worker restart/reclaim, cancellation, and stale
 targets with controlled fixtures rather than mutating live workouts implicitly.
 The 10/11/2026 closeout decisions move these capped-load and typical/stress
-profile checks to Milestone 11. Tablet UI/UX and device-specific visual work
-belong to Milestone 10. The remaining measurements are required before capacity
+profile checks to Milestone 12. Tablet UI/UX and device-specific visual work
+belong to Milestone 11. The remaining measurements are required before capacity
 claims or concurrency increases, not passing evidence inferred from scope acceptance.
 
 The two synthetic profiles and worker integration matrix are specified in
@@ -372,10 +372,10 @@ The two synthetic profiles and worker integration matrix are specified in
 archive-scale capacity or claim unexecuted profile-specific browser/backlog checks.
 
 Broader dashboard/alert coverage and comprehensive diagnostic/fleet telemetry move
-to Milestone 9; the four implemented API/tile chart SLOs do not provide those
-Coverage signals. Typical/stress profiling belongs to Milestone 11; final
+to Milestone 10; the four implemented API/tile chart SLOs do not provide those
+Coverage signals. Typical/stress profiling belongs to Milestone 12; final
 production resource sizing, broader scaling and security hardening belong to
-the final Milestone 12. Neither idle samples nor exported instruments alone
+the final Milestone 14. Neither idle samples nor exported instruments alone
 satisfy performance acceptance.
 
 ## Historical Xdev Verification (10/4/2026)

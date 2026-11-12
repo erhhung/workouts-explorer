@@ -97,7 +97,7 @@ after actual-data rehearsal with coordinated API/shared-worker cutover and no
 old-30 write window. Binary-only rollback remains unsupported; the tested
 pre-writer checkpoint is no longer eligible after writers resumed. M8 stays
 closed; authenticated tile smoke and viewport capacity are not claimed in this
-deployment record, nor a new browser or M9 capacity receipt.
+deployment record, nor a new browser or M12 capacity receipt.
 
 ### Rendering And Delivery (031)
 
@@ -120,7 +120,7 @@ but failures are not fabricated empties. `areTilesLoaded()` is not completeness 
 The [canonical authorized desktop/4K run](../coverage-acceptance-results.md#tile-delivery-status-031)
 completed all required views without observed delivery errors. Dense high-zoom raw
 completion remained slow; wire savings are not compression-latency, usable-render
-or M9 capacity acceptance. No resource, request-rate, timeout or body-limit increase
+or M12 capacity acceptance. No resource, request-rate, timeout or body-limit increase
 is justified by that bounded result.
 
 ## Consequences

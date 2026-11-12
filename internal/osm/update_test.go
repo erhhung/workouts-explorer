@@ -108,6 +108,66 @@ func (p *sequenceStoragePreflight) Check(context.Context) (StorageObservation, e
 	return observation, nil
 }
 
+func TestHealthyPostBatchStorageObservationHasNoSettlingDelay(t *testing.T) {
+	var log bytes.Buffer
+	preflight := &sequenceStoragePreflight{observations: []StorageObservation{{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 200}}}
+	updater := Updater{StoragePreflight: preflight, StorageSettleTimeout: time.Hour, Log: &log}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	observation, err := updater.postGCStorageObservation(ctx, StorageObservation{FreeBytes: 50}, time.Now())
+	if err != nil || observation.FreeBytes != 200 || preflight.calls != 1 {
+		t.Fatalf("post-settle observation=%+v calls=%d error=%v", observation, preflight.calls, err)
+	}
+	if strings.Contains(log.String(), "Polling low") {
+		t.Fatal("healthy storage entered the settling loop")
+	}
+}
+
+func TestPostBatchStorageSettlingCancellationDoesNotReadMetrics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	preflight := &sequenceStoragePreflight{}
+	updater := Updater{StoragePreflight: preflight, StorageSettleTimeout: time.Hour}
+	if _, err := updater.postGCStorageObservation(ctx, StorageObservation{}, time.Now()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("settling cancellation=%v", err)
+	}
+	if preflight.calls != 0 {
+		t.Fatal("cancelled settling interval queried metrics")
+	}
+}
+
+func TestLowPostBatchStorageObservationStopsPollingWhenRecovered(t *testing.T) {
+	preflight := &sequenceStoragePreflight{observations: []StorageObservation{
+		{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 90},
+		{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 95},
+		{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 120},
+	}}
+	updater := Updater{StoragePreflight: preflight, StorageSettleTimeout: time.Second, StorageSettlePollInterval: time.Millisecond}
+	observation, err := updater.postGCStorageObservation(context.Background(), StorageObservation{FreeBytes: 90}, time.Now())
+	if err != nil || observation.FreeBytes != 120 || preflight.calls != 3 {
+		t.Fatalf("recovered observation=%+v calls=%d error=%v", observation, preflight.calls, err)
+	}
+}
+
+func TestPersistentlyLowPostBatchStorageRemainsLowAfterBoundedPolling(t *testing.T) {
+	low := StorageObservation{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 90}
+	updater := Updater{StoragePreflight: fixedStoragePreflight{low}, StorageSettleTimeout: 10 * time.Millisecond, StorageSettlePollInterval: time.Millisecond}
+	observation, err := updater.postGCStorageObservation(context.Background(), low, time.Now())
+	if err != nil || !storageBelowPercent(observation, 10) {
+		t.Fatalf("real low space was hidden after timeout: observation=%+v error=%v", observation, err)
+	}
+}
+
+func TestCancellationInterruptsLowStoragePolling(t *testing.T) {
+	low := StorageObservation{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 90}
+	updater := Updater{StoragePreflight: fixedStoragePreflight{low}, StorageSettleTimeout: time.Hour, StorageSettlePollInterval: time.Hour}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := updater.postGCStorageObservation(ctx, low, time.Now()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("low-space polling ignored cancellation: %v", err)
+	}
+}
+
 type resumableUpdateStoreStub struct {
 	*updateStoreStub
 	stageChecks   map[string]int
@@ -201,7 +261,7 @@ func (p updatePipelineStub) Run(_ context.Context, stage string, _ Generation, _
 }
 
 func validUpdateReport() []byte {
-	return []byte(`{"partitionPrepared":true,"preparedRegionId":"geofabrik:norcal","preparedGenerationId":42,"importerVersion":3,"derivationVersion":20,"provenanceMismatches":0,"sourceVersionMismatches":0,"logicalPathMismatches":0,"missingEndpointIndexes":0,"invalidWays":0,"invalidPathSegments":0,"orphanPathSegments":0,"materialLocalityResiduals":0,"invalidParkAttributions":0,"invalidNationalParkAreas":0,"invalidStateParkAreas":0,"invalidEducationAttributions":0,"materialEducationResiduals":0,"remainingConnectedAttributionSplits":0,"attributionIdentityLogicalIdEdges":3,"attributionIdentityAffectedLogicalIds":5,"attributionIdentityMergedComponents":2,"attributionScopeRebasedSegments":0,"attributionScopeRebasedLogicalIds":0,"localityScopeSliversAbsorbed":0,"localityScopeSliverLengthMeters":0,"materialParkResiduals":0,"ways":10,"pathSegments":20,"logicalPaths":5}`)
+	return []byte(`{"materialParkBoundaryCrossings":0,"materialEducationBoundaryCrossings":0,"partitionPrepared":true,"preparedRegionId":"geofabrik:norcal","preparedGenerationId":42,"importerVersion":3,"derivationVersion":21,"provenanceMismatches":0,"sourceVersionMismatches":0,"logicalPathMismatches":0,"missingEndpointIndexes":0,"invalidWays":0,"invalidPathSegments":0,"orphanPathSegments":0,"materialLocalityResiduals":0,"invalidParkAttributions":0,"invalidNationalParkAreas":0,"invalidStateParkAreas":0,"invalidEducationAttributions":0,"materialEducationResiduals":0,"remainingConnectedAttributionSplits":0,"attributionIdentityLogicalIdEdges":3,"attributionIdentityAffectedLogicalIds":5,"attributionIdentityMergedComponents":2,"attributionScopeRebasedSegments":0,"attributionScopeRebasedLogicalIds":0,"localityScopeSliversAbsorbed":0,"localityScopeSliverLengthMeters":0,"materialParkResiduals":0,"ways":10,"pathSegments":20,"logicalPaths":5}`)
 }
 
 func TestUpdaterResumesAtFirstIncompleteDatabaseStageAndPreservesBuild(t *testing.T) {
@@ -252,8 +312,8 @@ func newTestUpdater(t *testing.T, store *updateStoreStub, pipeline UpdatePipelin
 }
 
 func TestUpdaterRunsStagesInOrder(t *testing.T) {
-	if ImporterVersion != 3 || DerivationVersion != 20 {
-		t.Fatalf("importer/derivation versions=%d/%d, want 3/20 for direction-preserving named-road identities", ImporterVersion, DerivationVersion)
+	if ImporterVersion != 3 || DerivationVersion != 21 {
+		t.Fatalf("importer/derivation versions=%d/%d, want 3/21 for park and education boundary clipping", ImporterVersion, DerivationVersion)
 	}
 	store := &updateStoreStub{}
 	pipeline := updatePipelineStub{events: &store.events, validation: validUpdateReport()}
@@ -287,10 +347,10 @@ func TestUpdaterLogsLocalGenerationAndStageBanners(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		`2026-09-25 23:10:22 ====== Starting OSM update generation 42 (derivation v20) batch "download" ======`,
-		`====== OSM update generation 42 (derivation v20) batch "download" completed in 2s ======`,
-		`====== Starting OSM update generation 42 (derivation v20) batch "tags-filter" ======`,
-		`====== OSM update generation 42 (derivation v20) batch "tags-filter" completed in 2s ======`,
+		`2026-09-25 23:10:22 ====== Starting OSM update generation 42 (derivation v21) batch "download" ======`,
+		`====== OSM update generation 42 (derivation v21) batch "download" completed in 2s ======`,
+		`====== Starting OSM update generation 42 (derivation v21) batch "tags-filter" ======`,
+		`====== OSM update generation 42 (derivation v21) batch "tags-filter" completed in 2s ======`,
 		`====== OSM update generation 42 completed in`,
 	} {
 		if !strings.Contains(log.String(), expected) {
@@ -481,6 +541,36 @@ func TestUpdaterValidationGatePreventsPromotion(t *testing.T) {
 	}
 	if store.promoted {
 		t.Fatal("invalid candidate was promoted")
+	}
+}
+
+func TestUpdaterRejectsMissingOrUnsplitFacilityBoundaries(t *testing.T) {
+	for _, metric := range []string{"materialParkBoundaryCrossings", "materialEducationBoundaryCrossings"} {
+		for _, missing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/missing=%t", metric, missing), func(t *testing.T) {
+				var report map[string]any
+				if err := json.Unmarshal(validUpdateReport(), &report); err != nil {
+					t.Fatal(err)
+				}
+				if missing {
+					delete(report, metric)
+				} else {
+					report[metric] = 1
+				}
+				data, err := json.Marshal(report)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store := &updateStoreStub{}
+				updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: data})
+				if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil || !strings.Contains(err.Error(), metric) {
+					t.Fatalf("expected facility-boundary validation failure, got %v", err)
+				}
+				if store.promoted {
+					t.Fatal("candidate with unchecked or unsplit facility boundaries was promoted")
+				}
+			})
+		}
 	}
 }
 

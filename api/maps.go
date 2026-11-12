@@ -52,8 +52,12 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 		writeMapUnavailable(w, r)
 		return
 	}
-	resolved, field, err := resolveRange(rangeInput{input.StartDate, input.EndDate, input.DateRangeEnum, input.Tz}, prefs, time.Now())
+	resolved, field, err := resolveAccountRange(r.Context(), tx, rangeInput{input.StartDate, input.EndDate, input.DateRangeEnum, input.Tz}, prefs, time.Now())
 	if err != nil {
+		if field == "" {
+			writeMapUnavailable(w, r)
+			return
+		}
 		writeWorkoutRangeError(w, r, field, err.Error())
 		return
 	}
@@ -93,9 +97,9 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 	if input.WorkoutIds != nil {
 		selectionKind = "explicit_subset"
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, selectionID, accountID, session.sessionID, generation, expiresAt,
-		resolved.start, resolved.end, selectionKind, focusedWorkoutID); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id,all_time)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, selectionID, accountID, session.sessionID, generation, expiresAt,
+		resolved.start, resolved.end, selectionKind, focusedWorkoutID, resolved.allTime); err != nil {
 		writeMapUnavailable(w, r)
 		return
 	}
@@ -108,7 +112,7 @@ func (s *Server) CreateMapSelection(w http.ResponseWriter, r *http.Request, para
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "one or more routed workouts are unavailable")
 		return
 	}
-	if input.WorkoutIds == nil && inserted > 5000 {
+	if input.WorkoutIds == nil && !resolved.allTime && inserted > 5000 {
 		writeFieldError(w, r, "dateRangeEnum", "limit", "the resolved period contains more than 5000 routed workouts")
 		return
 	}
@@ -184,9 +188,15 @@ func normalizedMapWorkoutIDs(values *[]generated.UUIDInput) ([]uuid.UUID, bool) 
 func insertMapSelectionWorkouts(ctx context.Context, tx pgx.Tx, accountID, selectionID uuid.UUID, resolved resolvedRange, workoutIDs []uuid.UUID, explicit bool) (int64, error) {
 	filter := ""
 	limit := " LIMIT 5001"
-	arguments := []any{accountID, selectionID, resolved.start, resolved.end}
+	arguments := []any{accountID, selectionID}
+	if resolved.allTime {
+		limit = ""
+	} else {
+		filter = " AND workout.local_start_date BETWEEN $3 AND $4"
+		arguments = append(arguments, resolved.start, resolved.end)
+	}
 	if explicit {
-		filter = " AND workout.id=ANY($5::uuid[])"
+		filter += fmt.Sprintf(" AND workout.id=ANY($%d::uuid[])", len(arguments)+1)
 		limit = ""
 		arguments = append(arguments, workoutIDs)
 	}
@@ -195,7 +205,7 @@ func insertMapSelectionWorkouts(ctx context.Context, tx pgx.Tx, accountID, selec
 		SELECT $1,$2,workout.id,(row_number() OVER (ORDER BY workout.started_at,workout.id)-1)::integer
 		  FROM app.workouts workout
 		  JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
-		 WHERE workout.account_id=$1 AND workout.local_start_date BETWEEN $3 AND $4
+		 WHERE workout.account_id=$1
 		   AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL`+filter+limit, arguments...)
 	if err != nil {
 		return 0, err

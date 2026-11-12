@@ -1,7 +1,10 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTabActive } from "./RetainedTab";
 import {
+  createContext,
+  useContext,
   type CSSProperties,
   type PointerEvent,
   type ReactNode,
@@ -40,18 +43,12 @@ import {
 } from "./Tooltip";
 import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
 import { formatDateOnly } from "./date";
-import { RecentDateRangeItems, useRecentDateRanges } from "./RecentDateRanges";
-
-const DATE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
-  ["thisWeek", "This week"],
-  ["lastWeek", "Last week"],
-  ["last7Days", "Last 7 days"],
-  ["last30Days", "Last 30 days"],
-  ["thisMonth", "This month"],
-  ["lastMonth", "Last month"],
-  ["thisYear", "This year"],
-  ["lastYear", "Last year"],
-];
+import { useRecentDateRanges } from "./RecentDateRanges";
+import { DateRangePicker, DATE_RANGE_SHORTCUTS } from "./DateRangePicker";
+import { FittedAggregateValue } from "./FittedAggregateValue";
+import { PageNavigation } from "./PageNavigation";
+import { ContentBackground } from "./ContentBackground";
+import { dateTimeFormatter, numberFormatter } from "./formatters";
 
 const COLUMN_LABELS: Record<WorkoutColumn, string> = {
   date: "Date",
@@ -69,7 +66,7 @@ const SORTABLE_COLUMNS = new Set<WorkoutColumn>(CANONICAL_COLUMNS);
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 
 function isDateRangeEnum(value: string): value is DateRangeEnum {
-  return DATE_SHORTCUTS.some(([shortcut]) => shortcut === value);
+  return DATE_RANGE_SHORTCUTS.some(([shortcut]) => shortcut === value);
 }
 
 function validDate(value: string) {
@@ -98,17 +95,8 @@ function rangeParams(range: DateRangePreference, timezone: string) {
   return params;
 }
 
-function rangeLabel(range: DateRangePreference) {
-  const shortcut = DATE_SHORTCUTS.find(([value]) => value === range);
-  if (shortcut) return shortcut[1];
-  const explicit = EXPLICIT_RANGE.exec(range);
-  return explicit
-    ? `${formatDateOnly(explicit[1])} to ${formatDateOnly(explicit[2])}`
-    : "Last 30 days";
-}
-
 function decimal(value: string, maximumFractionDigits = 2) {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(Number(value));
+  return numberFormatter(undefined, { maximumFractionDigits }).format(Number(value));
 }
 
 export function formatDuration(value: string) {
@@ -217,7 +205,7 @@ function metric(
   const label = kind === "heartRate" && unit === "count/min" ? "bpm" : unit;
   const maximumFractionDigits =
     kind === "calories" || (aggregate && kind === "distance" && value >= 100) ? 0 : 2;
-  const display = new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value);
+  const display = numberFormatter(undefined, { maximumFractionDigits }).format(value);
   return includeUnit ? `${display} ${label}` : display;
 }
 
@@ -276,8 +264,8 @@ function localInstant(
     if (timeZone) {
       const resolvedOffset = zoneOffsetAt(timeZone, instant)!;
       return {
-        dateTime: new Intl.DateTimeFormat("en-US", { ...options, timeZone }).format(instant),
-        weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone }).format(instant),
+        dateTime: dateTimeFormatter("en-US", { ...options, timeZone }).format(instant),
+        weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone }).format(instant),
         zoneLabel: zoneAbbreviation(timeZone, instant),
         zoneTitle: `${offsetLabel(resolvedOffset)} recorded`,
         unavailable: false,
@@ -286,10 +274,8 @@ function localInstant(
     if (offset != null) {
       const shifted = new Date(instant.getTime() + offset * 60_000);
       return {
-        dateTime: new Intl.DateTimeFormat("en-US", { ...options, timeZone: "UTC" }).format(shifted),
-        weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(
-          shifted,
-        ),
+        dateTime: dateTimeFormatter("en-US", { ...options, timeZone: "UTC" }).format(shifted),
+        weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone: "UTC" }).format(shifted),
         zoneLabel: offsetLabel(offset, true),
         zoneTitle: `${offsetLabel(offset)} recorded | time zone unavailable`,
         unavailable: false,
@@ -299,8 +285,8 @@ function localInstant(
   if (knownDate && validDate(knownDate)) {
     const date = new Date(`${knownDate}T00:00:00Z`);
     return {
-      dateTime: `${new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(date)} at time unavailable`,
-      weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date),
+      dateTime: `${dateTimeFormatter("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(date)} at time unavailable`,
+      weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone: "UTC" }).format(date),
       zoneLabel: "TZ unavailable",
       zoneTitle: "Recorded offset/time zone unavailable",
       unavailable: true,
@@ -344,7 +330,7 @@ function compactWorkoutTime(
   const resolvedZone = resolveZone(workoutZone, offset, instant);
   const display =
     resolvedZone || offset == null ? instant : new Date(instant.getTime() + offset * 60_000);
-  const parts = new Intl.DateTimeFormat("en-US", {
+  const parts = dateTimeFormatter("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: preferences.clockFormat === "12h",
@@ -444,11 +430,11 @@ function workoutMetricValue(
   }
   if (!workout.elevationGain) return <Unavailable />;
   const gain = convertedElevation(workout.elevationGain, preferences.units);
-  const display = `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(gain.value)} ${gain.unit}`;
+  const display = `${numberFormatter(undefined, { maximumFractionDigits: 0 }).format(gain.value)} ${gain.unit}`;
   if (!workout.minimumElevation || !workout.maximumElevation) return alignedMetric(display);
   const minimum = convertedElevation(workout.minimumElevation, preferences.units);
   const maximum = convertedElevation(workout.maximumElevation, preferences.units);
-  const detail = `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(minimum.value)} ${minimum.unit} lowest | ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(maximum.value)} ${maximum.unit} highest`;
+  const detail = `${numberFormatter(undefined, { maximumFractionDigits: 0 }).format(minimum.value)} ${minimum.unit} lowest | ${numberFormatter(undefined, { maximumFractionDigits: 0 }).format(maximum.value)} ${maximum.unit} highest`;
   return metricTooltip(display, detail, "Elevation gain");
 }
 
@@ -462,7 +448,7 @@ function DateTimeValue({
   return (
     <span className={`workout-date${value.unavailable ? " unavailable" : ""}`}>
       <span className="weekday-badge" aria-hidden="true">
-        {value.weekday}
+        <span className="date-badge-text">{value.weekday}</span>
       </span>
       <span className="local-date-time">{value.dateTime}</span>
       <ZoneBadge label={value.zoneLabel} title={value.zoneTitle} focusable={focusableHelp} />
@@ -472,8 +458,17 @@ function DateTimeValue({
 
 function columnValue(column: WorkoutColumn, workout: Workout, preferences: Preferences) {
   if (column === "date") {
-    const times = workoutTimes(workout, preferences);
-    return <DateTimeValue value={times.start} />;
+    return (
+      <DateTimeValue
+        value={localInstant(
+          workout.startedAt,
+          workout.timezone,
+          workout.originalStartOffsetMinutes,
+          preferences,
+          workout.localStartDate,
+        )}
+      />
+    );
   }
   if (column === "type") return workout.type.displayName;
   if (column === "duration")
@@ -510,7 +505,7 @@ function workoutColumnExtent(column: WorkoutColumn, data: WorkoutList, preferenc
     return extent.heartRate ? `${decimal(extent.heartRate.value, 0)} bpm` : undefined;
   if (column === "elevationGain" && extent.elevationGain) {
     const converted = convertedElevation(extent.elevationGain, preferences.units);
-    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(converted.value)} ${converted.unit}`;
+    return `${numberFormatter(undefined, { maximumFractionDigits: 0 }).format(converted.value)} ${converted.unit}`;
   }
   return undefined;
 }
@@ -615,9 +610,9 @@ function provenanceKindLabel(kind: WorkoutProvenance["items"][number]["kind"]) {
 function provenanceTime(value: string, preferences: Preferences) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Time unavailable";
-  return new Intl.DateTimeFormat("en-US", {
+  return dateTimeFormatter("en-US", {
     dateStyle: "medium",
-    timeStyle: "medium",
+    timeStyle: "short",
     timeZone: preferences.timezone,
     hour12: preferences.clockFormat === "12h",
   }).format(date);
@@ -743,6 +738,34 @@ function workoutBreakdown(summary: WorkoutSummary): AggregateBreakdown[] {
   }));
 }
 
+const AggregatePreview = createContext<{
+  owner?: string;
+  change: (label: string, expanded: boolean) => void;
+}>({ change: () => undefined });
+
+function AggregateGrid({
+  children,
+  busy,
+  scope,
+}: {
+  children: ReactNode;
+  busy: boolean;
+  scope: string;
+}) {
+  const tabActive = useTabActive();
+  const [owner, setOwner] = useState<string>();
+  useEffect(() => {
+    setOwner(undefined);
+  }, [tabActive, scope]);
+  const change = (label: string, expanded: boolean) =>
+    setOwner((current) => (expanded ? label : current === label ? undefined : current));
+  return (
+    <div className={`aggregate-grid${busy ? " is-refetching" : ""}`} aria-busy={busy}>
+      <AggregatePreview.Provider value={{ owner, change }}>{children}</AggregatePreview.Provider>
+    </div>
+  );
+}
+
 function AggregateCard({
   label,
   value,
@@ -758,13 +781,29 @@ function AggregateCard({
   averages: boolean;
   onToggleMode: () => void;
 }) {
-  const [preview, setPreview] = useState(false);
+  const preview = useContext(AggregatePreview);
+  const expanded = preview.owner === label;
+  const onPreviewChange = (open: boolean) => preview.change(label, open);
+  const cardRef = useRef<HTMLElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previewChange = useRef(onPreviewChange);
+  const focusSuppressed = useRef(false);
+  previewChange.current = onPreviewChange;
+  const interaction = useRef({
+    pointerPreview: false,
+    original: false,
+    extended: false,
+    shift: false,
+    point: undefined as { x: number; y: number } | undefined,
+  });
+  const [shiftHeld, setShiftHeld] = useState(false);
   const [hint, setHint] = useState<{ x: number; y: number }>();
   const panelId = useId();
   const hintPosition = useRef({ x: 0, y: 0 });
   const showHintTimer = useRef<number | undefined>(undefined);
   const hideHintTimer = useRef<number | undefined>(undefined);
-  const visible = preview;
+  const visible = expanded;
   function clearHint() {
     window.clearTimeout(showHintTimer.current);
     window.clearTimeout(hideHintTimer.current);
@@ -772,7 +811,13 @@ function AggregateCard({
   }
   function startPreview(event: PointerEvent<HTMLButtonElement>) {
     if (event.pointerType !== "mouse") return;
-    setPreview(true);
+    focusSuppressed.current = false;
+    interaction.current.pointerPreview = true;
+    interaction.current.original = true;
+    interaction.current.shift = event.shiftKey;
+    interaction.current.point = { x: event.clientX, y: event.clientY };
+    setShiftHeld(event.shiftKey);
+    previewChange.current(true);
     clearHint();
     hintPosition.current = { x: event.clientX ?? 0, y: event.clientY ?? 0 };
     showHintTimer.current = window.setTimeout(() => {
@@ -780,54 +825,225 @@ function AggregateCard({
       hideHintTimer.current = window.setTimeout(() => setHint(undefined), 2000);
     }, 750);
   }
-  useEffect(
-    () => () => {
+  function closePreview() {
+    interaction.current.pointerPreview = false;
+    interaction.current.shift = false;
+    interaction.current.extended = false;
+    setShiftHeld(false);
+    clearHint();
+    previewChange.current(false);
+  }
+  function insideOriginal() {
+    const point = interaction.current.point;
+    const bounds = buttonRef.current?.getBoundingClientRect();
+    return point && bounds && bounds.width > 0 && bounds.height > 0
+      ? point.x >= bounds.left &&
+          point.x < bounds.right &&
+          point.y >= bounds.top &&
+          point.y < bounds.bottom
+      : interaction.current.original;
+  }
+  function insideExpanded(x: number, y: number) {
+    return [buttonRef.current, panelRef.current].some((element) => {
+      const bounds = element?.getBoundingClientRect();
+      return (
+        bounds &&
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        x >= bounds.left &&
+        x < bounds.right &&
+        y >= bounds.top &&
+        y < bounds.bottom
+      );
+    });
+  }
+  function loseWindowFocus() {
+    // Window restoration can refocus the old button without a new user intent.
+    focusSuppressed.current = true;
+    closePreview();
+  }
+  useEffect(() => {
+    if (!visible) {
+      clearHint();
+      setShiftHeld(false);
+      interaction.current.shift = false;
+      interaction.current.extended = false;
+      interaction.current.pointerPreview = false;
+      return;
+    }
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closePreview();
+      if (event.key !== "Shift") return;
+      interaction.current.shift = true;
+      setShiftHeld(true);
+      clearHint();
+    };
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Shift") return;
+      interaction.current.shift = event.shiftKey;
+      setShiftHeld(event.shiftKey);
+      if (!event.shiftKey) {
+        const extended = interaction.current.extended;
+        interaction.current.extended = false;
+        if (extended && !insideOriginal()) closePreview();
+      }
+    };
+    const visibility = () => {
+      if (document.visibilityState === "hidden") loseWindowFocus();
+    };
+    const focus = (event: FocusEvent) => {
+      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) closePreview();
+    };
+    const pointerMoved = (event: globalThis.PointerEvent | MouseEvent) => {
+      if ("pointerType" in event && event.pointerType && event.pointerType !== "mouse") return;
+      if (!interaction.current.pointerPreview && !interaction.current.extended) return;
+      const bounds = buttonRef.current?.getBoundingClientRect();
+      const original =
+        bounds && bounds.width > 0 && bounds.height > 0
+          ? event.clientX >= bounds.left &&
+            event.clientX < bounds.right &&
+            event.clientY >= bounds.top &&
+            event.clientY < bounds.bottom
+          : event.target instanceof Node && buttonRef.current?.contains(event.target);
+      const extended =
+        event.shiftKey &&
+        (insideExpanded(event.clientX, event.clientY) ||
+          (!(bounds?.width && bounds.height) &&
+            event.target instanceof Node &&
+            panelRef.current?.contains(event.target)));
+      interaction.current.point = { x: event.clientX, y: event.clientY };
+      interaction.current.original = Boolean(original);
+      interaction.current.shift = event.shiftKey;
+      interaction.current.extended = Boolean(extended && !original);
+      setShiftHeld(event.shiftKey);
+      // Restoring an OS window can lose leave/keyup events; reconcile the actual pointer position.
+      if (!original && !extended) closePreview();
+    };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", loseWindowFocus);
+    window.addEventListener("focus", loseWindowFocus);
+    window.addEventListener("resize", closePreview);
+    document.addEventListener("visibilitychange", visibility);
+    document.addEventListener("focusin", focus);
+    document.addEventListener("pointermove", pointerMoved, true);
+    document.addEventListener("mousemove", pointerMoved, true);
+    return () => {
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", loseWindowFocus);
+      window.removeEventListener("focus", loseWindowFocus);
+      window.removeEventListener("resize", closePreview);
+      document.removeEventListener("visibilitychange", visibility);
+      document.removeEventListener("focusin", focus);
+      document.removeEventListener("pointermove", pointerMoved, true);
+      document.removeEventListener("mousemove", pointerMoved, true);
+      clearHint();
+    };
+  }, [visible]);
+  useEffect(() => {
+    const keyboardIntent = (event: KeyboardEvent) => {
+      if (event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey)
+        focusSuppressed.current = false;
+    };
+    document.addEventListener("keydown", keyboardIntent, true);
+    return () => {
+      document.removeEventListener("keydown", keyboardIntent, true);
       window.clearTimeout(showHintTimer.current);
       window.clearTimeout(hideHintTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
   return (
     <article
-      className={`aggregate-card${routeCount !== undefined ? " aggregate-card-with-routes" : ""}${visible ? " is-visible" : ""}`}
+      ref={cardRef}
+      className={`aggregate-card${routeCount !== undefined ? " aggregate-card-with-routes" : ""}${visible ? " is-visible" : ""}${visible && shiftHeld ? " is-shift-held" : ""}`}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse") return;
+        if (
+          event.relatedTarget instanceof Node &&
+          event.currentTarget.contains(event.relatedTarget)
+        )
+          return;
+        if (
+          (event.shiftKey || interaction.current.shift) &&
+          insideExpanded(event.clientX, event.clientY)
+        )
+          return;
+        interaction.current.original = false;
+        interaction.current.point = { x: event.clientX, y: event.clientY };
+        closePreview();
+      }}
+      onClick={(event) => {
+        const original = event.target instanceof Node && buttonRef.current?.contains(event.target);
+        if (!original && !(visible && (event.shiftKey || interaction.current.shift))) return;
+        clearHint();
+        onToggleMode();
+      }}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-expanded={visible}
         aria-controls={panelId}
         onPointerEnter={startPreview}
         onPointerMove={(event) => {
+          if (event.pointerType === "mouse") {
+            interaction.current.original = true;
+            interaction.current.point = { x: event.clientX, y: event.clientY };
+          }
           hintPosition.current = { x: event.clientX ?? 0, y: event.clientY ?? 0 };
           if (hint) setHint(hintPosition.current);
         }}
         onPointerLeave={(event) => {
           if (event.pointerType === "mouse") {
-            setPreview(false);
+            interaction.current.original = false;
+            interaction.current.point = { x: event.clientX, y: event.clientY };
+            if (event.shiftKey || interaction.current.shift) interaction.current.extended = true;
+            else closePreview();
             clearHint();
           }
         }}
         onFocus={(event) => {
-          if (event.currentTarget.matches(":focus-visible")) setPreview(true);
+          if (!focusSuppressed.current && event.currentTarget.matches(":focus-visible"))
+            previewChange.current(true);
         }}
-        onBlur={() => {
-          setPreview(false);
-          clearHint();
-        }}
+        onBlur={closePreview}
         aria-pressed={averages}
         onKeyDown={(event) => {
-          if (event.key === "Escape") setPreview(false);
-        }}
-        onClick={() => {
-          clearHint();
-          onToggleMode();
+          if (event.key === "Escape") {
+            closePreview();
+            return;
+          }
+          if (event.altKey || event.ctrlKey || event.metaKey) return;
+          const panel =
+            event.currentTarget.parentElement?.querySelector<HTMLElement>(".aggregate-breakdown");
+          if (!visible || !panel || panel.scrollHeight <= panel.clientHeight) return;
+          if (!/^(auto|scroll)$/.test(getComputedStyle(panel).overflowY)) return;
+          const rowHeight =
+            panel.firstElementChild?.getBoundingClientRect().height || panel.clientHeight;
+          const next = new Map([
+            ["ArrowDown", panel.scrollTop + rowHeight],
+            ["ArrowUp", panel.scrollTop - rowHeight],
+            ["PageDown", panel.scrollTop + panel.clientHeight],
+            ["PageUp", panel.scrollTop - panel.clientHeight],
+            ["Home", 0],
+            ["End", panel.scrollHeight],
+          ]).get(event.key);
+          if (next !== undefined) {
+            event.preventDefault();
+            panel.scrollTop = next;
+          }
         }}
       >
         <span>{label}</span>
-        <strong>{value}</strong>
+        <FittedAggregateValue>{value}</FittedAggregateValue>
         {routeCount !== undefined && (
-          <strong className="aggregate-routed-count" aria-describedby={`${panelId}-routes`}>
+          <FittedAggregateValue
+            className="aggregate-routed-count"
+            aria-describedby={`${panelId}-routes`}
+          >
             {decimal(String(routeCount), 0)}
-          </strong>
+          </FittedAggregateValue>
         )}
         <small>By workout type</small>
         {routeCount !== undefined && (
@@ -836,12 +1052,35 @@ function AggregateCard({
           </small>
         )}
       </button>
-      {hint && (
+      {visible && hint && (
         <span className="aggregate-mode-hint" role="tooltip" style={{ left: hint.x, top: hint.y }}>
           {averages ? "Click to see totals" : "Click to see averages"}
         </span>
       )}
-      <div id={panelId} className="aggregate-breakdown" aria-hidden={!visible}>
+      <div
+        ref={panelRef}
+        id={panelId}
+        className="aggregate-breakdown"
+        aria-hidden={!visible}
+        inert={!visible}
+        tabIndex={-1}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "mouse") return;
+          interaction.current.original = false;
+          interaction.current.point = { x: event.clientX, y: event.clientY };
+          if (event.shiftKey || interaction.current.shift) interaction.current.extended = true;
+          clearHint();
+          if (visible && !(event.shiftKey || interaction.current.shift)) closePreview();
+        }}
+        onMouseDown={(event) => {
+          if (!visible || !(event.shiftKey || interaction.current.shift)) return;
+          interaction.current.extended = true;
+          interaction.current.original = false;
+          interaction.current.point = { x: event.clientX, y: event.clientY };
+          event.preventDefault();
+          buttonRef.current?.focus({ preventScroll: true });
+        }}
+      >
         {breakdown.length ? (
           breakdown.map((entry) => (
             <span key={entry.id}>
@@ -902,6 +1141,12 @@ function WorkoutTable({
     assignedWidth += width;
     return width.toFixed(4);
   });
+  const columnExtents = new Map(
+    columns.map((column) => [
+      column,
+      data ? workoutColumnExtent(column, data, preferences) : undefined,
+    ]),
+  );
   return (
     <>
       <div className={`workout-table-wrap${loading ? " is-loading" : ""}`}>
@@ -947,6 +1192,7 @@ function WorkoutTable({
             </tr>
           </thead>
           <tbody>
+            {/* Reuse page cells, but reset action menus when the workout identity changes. */}
             {loading ? (
               <tr className="workout-loading-row">
                 <td colSpan={columns.length + 1} role="status">
@@ -954,8 +1200,8 @@ function WorkoutTable({
                 </td>
               </tr>
             ) : (
-              workouts.map((workout) => (
-                <tr key={workout.id}>
+              workouts.map((workout, index) => (
+                <tr key={index}>
                   {columns.map((column) => {
                     const hasValue = workoutHasColumnValue(column, workout);
                     const value =
@@ -964,9 +1210,7 @@ function WorkoutTable({
                       ) : (
                         columnValue(column, workout, preferences)
                       );
-                    const extent = data
-                      ? workoutColumnExtent(column, data, preferences)
-                      : undefined;
+                    const extent = columnExtents.get(column);
                     return (
                       <td key={column}>
                         <div className={`workout-cell workout-cell--${column}`}>
@@ -986,6 +1230,7 @@ function WorkoutTable({
                   })}
                   <td className="workout-actions-cell">
                     <WorkoutActions
+                      key={workout.id}
                       workout={workout}
                       onShowOnMap={onShowOnMap}
                       onViewProvenance={onViewProvenance}
@@ -1006,6 +1251,7 @@ function WorkoutTable({
             const isExpanded = expanded.has(workout.id);
             const detailsId = `workout-details-${workout.id}`;
             const times = workoutTimes(workout, preferences);
+            const durationDetail = workoutDurationDetail(workout, preferences);
             return (
               <article
                 className={`mobile-workout${isExpanded ? " is-expanded" : ""}`}
@@ -1015,7 +1261,7 @@ function WorkoutTable({
                   <button
                     aria-expanded={isExpanded}
                     aria-controls={detailsId}
-                    title={workoutDurationDetail(workout, preferences)}
+                    title={durationDetail}
                     onClick={() =>
                       setExpanded((current) => {
                         const next = new Set(current);
@@ -1030,7 +1276,7 @@ function WorkoutTable({
                     <DurationValue
                       value={workout.duration}
                       focusable={false}
-                      detail={workoutDurationDetail(workout, preferences)}
+                      detail={durationDetail}
                     />
                   </button>
                   <WorkoutActions
@@ -1043,41 +1289,42 @@ function WorkoutTable({
                   />
                 </div>
                 <div id={detailsId} hidden={!isExpanded} className="mobile-workout-details">
-                  <dl>
-                    <div>
-                      <dt>Local start</dt>
-                      <dd>
-                        <DateTimeValue value={times.start} />
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Local end</dt>
-                      <dd>
-                        <DateTimeValue value={times.end} />
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Duration</dt>
-                      <dd>
-                        <DurationValue
-                          value={workout.duration}
-                          detail={workoutDurationDetail(workout, preferences)}
-                        />
-                      </dd>
-                    </div>
-                    {(["distance", "pace", "calories", "heartRate", "elevationGain"] as const).map(
-                      (column) => (
-                        <div key={column}>
-                          <dt>{COLUMN_LABELS[column]}</dt>
-                          <dd>{columnValue(column, workout, preferences)}</dd>
+                  {isExpanded && (
+                    <>
+                      <dl>
+                        <div>
+                          <dt>Local start</dt>
+                          <dd>
+                            <DateTimeValue value={times.start} />
+                          </dd>
                         </div>
-                      ),
-                    )}
-                  </dl>
-                  <p>
-                    {workout.location ?? "Location unavailable"} /{" "}
-                    {workout.routeAvailable ? "Route available" : "Route unavailable"}
-                  </p>
+                        <div>
+                          <dt>Local end</dt>
+                          <dd>
+                            <DateTimeValue value={times.end} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Duration</dt>
+                          <dd>
+                            <DurationValue value={workout.duration} detail={durationDetail} />
+                          </dd>
+                        </div>
+                        {(
+                          ["distance", "pace", "calories", "heartRate", "elevationGain"] as const
+                        ).map((column) => (
+                          <div key={column}>
+                            <dt>{COLUMN_LABELS[column]}</dt>
+                            <dd>{columnValue(column, workout, preferences)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                      <p>
+                        {workout.location ?? "Location unavailable"} /{" "}
+                        {workout.routeAvailable ? "Route available" : "Route unavailable"}
+                      </p>
+                    </>
+                  )}
                 </div>
               </article>
             );
@@ -1131,6 +1378,7 @@ export function Summary({
   onRecentDateRangesSaved?: (ranges: string[]) => void;
 }) {
   const queryClient = useQueryClient();
+  const tabActive = useTabActive();
   const recentRanges = useRecentDateRanges(preferences, onRecentDateRangesSaved);
   const [range, setRange] = useState<DateRangePreference>(
     () => selectedDateRange ?? initialRange(preferences.dateRange),
@@ -1164,6 +1412,13 @@ export function Summary({
   const [rangeDeletionOpen, setRangeDeletionOpen] = useState(false);
   const [rangeConfirmation, setRangeConfirmation] = useState("");
   const [rangeDeletionError, setRangeDeletionError] = useState("");
+  useEffect(() => {
+    if (tabActive) return;
+    setCustomOpen(false);
+    setRangeDeletionOpen(false);
+    setDeletionTarget(undefined);
+    setProvenanceWorkout(undefined);
+  }, [tabActive]);
   const [showWorkoutLoading, setShowWorkoutLoading] = useState(false);
   const workoutResultsRef = useRef<HTMLDivElement>(null);
   const pendingPageScroll = useRef<{ x: number; y: number } | undefined>(undefined);
@@ -1243,6 +1498,7 @@ export function Summary({
     preferences.firstWeekday,
   ] as const;
   const summaryQuery = useQuery({
+    enabled: tabActive,
     queryKey: summaryQueryKey,
     queryFn: ({ signal }) =>
       api<WorkoutSummary>(`/api/summary?${rangeParams(range, preferences.timezone)}`, { signal }),
@@ -1257,6 +1513,7 @@ export function Summary({
   ] as const;
   const workoutQueryKey = [...workoutBaseKey, sort.field, sort.direction] as const;
   const workoutsQuery = useQuery({
+    enabled: tabActive,
     queryKey: workoutQueryKey,
     queryFn: ({ signal }) => {
       const params = rangeParams(range, preferences.timezone);
@@ -1287,7 +1544,7 @@ export function Summary({
         `/api/workouts/${encodeURIComponent(provenanceWorkout!.id)}/provenance`,
         { signal },
       ),
-    enabled: Boolean(provenanceWorkout),
+    enabled: tabActive && Boolean(provenanceWorkout),
   });
   const deletion = useMutation({
     scope: { id: "workout-deletion" },
@@ -1515,6 +1772,7 @@ export function Summary({
   ]);
   useEffect(() => {
     if (
+      !tabActive ||
       !pendingPageScroll.current ||
       workoutsQuery.isFetching ||
       workoutsQuery.isPlaceholderData ||
@@ -1526,6 +1784,7 @@ export function Summary({
     const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
     return () => window.cancelAnimationFrame(frame);
   }, [
+    tabActive,
     workoutsQuery.dataUpdatedAt,
     workoutsQuery.isFetching,
     workoutsQuery.isPlaceholderData,
@@ -1566,18 +1825,27 @@ export function Summary({
     workoutTypes,
     (entry) => Number(entry.totals.duration) / (averages ? entry.totals.count : 1),
     (entry) => entry.type.displayName,
-  ).map((entry) => ({
-    id: entry.type.id,
-    label: entry.type.displayName,
-    value: (
-      <DurationValue
-        value={
-          averages ? average(entry.totals.duration, entry.totals.count) : entry.totals.duration
-        }
-        aggregate={!averages}
-      />
-    ),
-  }));
+  ).map((entry) => {
+    const duration = averages
+      ? average(entry.totals.duration, entry.totals.count)
+      : entry.totals.duration;
+    const display = averages ? formatDuration(duration) : formatAggregateDuration(duration);
+    const detail = durationTooltip(duration, !averages);
+    return {
+      id: entry.type.id,
+      label: entry.type.displayName,
+      value: (
+        <Tooltip
+          content={detail}
+          className="duration-value"
+          focusable={false}
+          label={`Duration ${display}; rounded to nearest second ${detail}`}
+        >
+          {display}
+        </Tooltip>
+      ),
+    };
+  });
   const distanceTypes = workoutTypes.filter(
     (entry) => entry.totals.distanceCount > 0 && entry.totals.distance,
   );
@@ -1627,43 +1895,20 @@ export function Summary({
     (averages ? averageMetric(summary.totals.energy, summary.totals.count) : summary.totals.energy);
   const toggleAggregateMode = () => setAverages((current) => !current);
   return (
-    <main className="summary-page" style={{ "--summary-inset": "var(--space-5)" } as CSSProperties}>
-      <div className="summary-atmosphere" aria-hidden="true">
-        <div className="summary-contours" />
-      </div>
+    <main
+      data-app-content
+      tabIndex={-1}
+      className="summary-page content-background"
+      style={{ "--summary-inset": "var(--space-5)" } as CSSProperties}
+    >
+      <ContentBackground />
       <header className="summary-heading">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger className="range-trigger" aria-label="Select date range">
-            <span>Date range</span>
-            <strong>{rangeLabel(range)}</strong>
-            <span aria-hidden="true">v</span>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="menu-content range-menu"
-              align="start"
-              sideOffset={12}
-              avoidCollisions={false}
-              collisionPadding={12}
-            >
-              {DATE_SHORTCUTS.map(([value, label]) => (
-                <DropdownMenu.Item key={value} onSelect={() => selectRange(value)}>
-                  {label}
-                  {range === value && <span aria-label="selected">&#10003;</span>}
-                </DropdownMenu.Item>
-              ))}
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onSelect={() => setCustomOpen(true)}>
-                Custom...{explicit && <span aria-label="selected">&#10003;</span>}
-              </DropdownMenu.Item>
-              <RecentDateRangeItems
-                ranges={recentRanges.history}
-                current={range}
-                onSelect={selectRange}
-              />
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        <DateRangePicker
+          range={range}
+          recent={recentRanges.history}
+          onSelect={selectRange}
+          onCustom={() => setCustomOpen(true)}
+        />
       </header>
       {saveNotice && (
         <div className="summary-notice" role="status">
@@ -1726,7 +1971,7 @@ export function Summary({
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content
-            className="dialog-content deletion-dialog single-deletion-dialog range-deletion-dialog"
+            className="dialog-content compact-dialog deletion-dialog single-deletion-dialog range-deletion-dialog"
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               setTimeout(() => rangeDeletionCancelRef.current?.focus());
@@ -1747,9 +1992,11 @@ export function Summary({
               </div>
             </div>
             <p className="deletion-confirmation-message">
-              These workouts will be hidden from view immediately. All associated data, including
-              routes, import history, and derived data, will be purged by a background task. This
-              cannot be undone.
+              These workouts will be hidden from view immediately.
+              <br />
+              Workout data, including routes, workout-specific import and processing records, and
+              coverage attributions, will be purged by a background task, and stats will be
+              recalculated. This cannot be undone!
             </p>
             {rangeDeletionError && (
               <p ref={rangeDeletionErrorRef} className="error-summary" role="alert" tabIndex={-1}>
@@ -1808,7 +2055,7 @@ export function Summary({
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content
-            className="dialog-content deletion-dialog single-deletion-dialog"
+            className="dialog-content compact-dialog deletion-dialog single-deletion-dialog"
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               setTimeout(() => deletionCancelRef.current?.focus());
@@ -1831,9 +2078,11 @@ export function Summary({
               </div>
             </div>
             <p className="deletion-confirmation-message">
-              This workout will be hidden from view immediately. All associated data, including
-              route, import history, and derived data, will be purged by a background task. This
-              cannot be undone. Are you sure?
+              This workout will be hidden from view immediately.
+              <br />
+              Workout data, including routes, workout-specific import and processing records, and
+              coverage attributions, will be purged by a background task, and stats will be
+              recalculated. This cannot be undone!
             </p>
             {deletionError && (
               <p ref={deletionErrorRef} className="error-summary" role="alert" tabIndex={-1}>
@@ -1872,7 +2121,7 @@ export function Summary({
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content
-            className="dialog-content provenance-dialog"
+            className="dialog-content compact-dialog provenance-dialog"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               provenanceReturnFocus.current?.focus();
@@ -1915,7 +2164,7 @@ export function Summary({
                     <li key={event.id}>
                       <div className="provenance-event-heading">
                         <strong>{provenanceKindLabel(event.kind)}</strong>
-                        <time dateTime={event.importedAt}>
+                        <time className="local-date-time" dateTime={event.importedAt}>
                           {provenanceTime(event.importedAt, preferences)}
                         </time>
                       </div>
@@ -1989,9 +2238,9 @@ export function Summary({
           />
         )}
         {summary && (
-          <div
-            className={`aggregate-grid${summaryQuery.isFetching ? " is-refetching" : ""}`}
-            aria-busy={summaryQuery.isFetching}
+          <AggregateGrid
+            busy={summaryQuery.isFetching}
+            scope={`${range}:${preferences.timezone}:${preferences.pageSize}`}
           >
             <AggregateCard
               label="Workouts"
@@ -2036,43 +2285,45 @@ export function Summary({
               averages={averages}
               onToggleMode={toggleAggregateMode}
             />
-          </div>
+          </AggregateGrid>
         )}
       </section>
 
-      <section className="workouts-section" aria-labelledby="workouts-heading">
+      <section className="workouts-section" aria-labelledby="workouts-heading" data-paging-region>
         <div className="section-line">
           <h2 id="workouts-heading" tabIndex={-1}>
             Workout log
           </h2>
           <div className="workout-log-actions">
             {explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && (
-              <button
-                type="button"
-                className="range-delete-trigger"
-                aria-label="Delete workouts in this range"
-                title="Delete workouts in this range"
-                onClick={() => {
-                  setRangeConfirmation("");
-                  setRangeDeletionError("");
-                  setRangeDeletionOpen(true);
-                }}
+              <Tooltip
+                content="Delete workouts in this range"
+                portal
+                focusable={false}
+                enabled={!rangeDeletionOpen}
+                dismissOnPointerDown
               >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <button
+                  type="button"
+                  className="range-delete-trigger"
+                  aria-label="Delete workouts in this range"
+                  onClick={() => {
+                    setRangeConfirmation("");
+                    setRangeDeletionError("");
+                    setRangeDeletionOpen(true);
+                  }}
                 >
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4h8v2" />
-                  <path d="M19 6l-1 14H6L5 6" />
-                  <path d="M10 11v5M14 11v5" />
-                </svg>
-              </button>
+                  <svg
+                    aria-hidden="true"
+                    focusable="false"
+                    viewBox="0 0 448 512"
+                    fill="currentColor"
+                  >
+                    {/* Font Awesome Free, CC BY 4.0; see ATTRIBUTIONS in the project root. */}
+                    <path d="M136.7 5.9C141.1-7.2 153.3-16 167.1-16l113.9 0c13.8 0 26 8.8 30.4 21.9L320 32 416 32c17.7 0 32 14.3 32 32s-14.3 32-32 32L32 96C14.3 96 0 81.7 0 64S14.3 32 32 32l96 0 8.7-26.1zM32 144l384 0 0 304c0 35.3-28.7 64-64 64L96 512c-35.3 0-64-28.7-64-64l0-304zm88 64c-13.3 0-24 10.7-24 24l0 192c0 13.3 10.7 24 24 24s24-10.7 24-24l0-192c0-13.3-10.7-24-24-24zm104 0c-13.3 0-24 10.7-24 24l0 192c0 13.3 10.7 24 24 24s24-10.7 24-24l0-192c0-13.3-10.7-24-24-24zm104 0c-13.3 0-24 10.7-24 24l0 192c0 13.3 10.7 24 24 24s24-10.7 24-24l0-192c0-13.3-10.7-24-24-24z" />
+                  </svg>
+                </button>
+              </Tooltip>
             )}
             {displayedWorkouts && (
               <span>
@@ -2128,25 +2379,13 @@ export function Summary({
           </div>
         )}
         {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && (
-          <nav className="pagination" aria-label="Workout pages">
-            <button
-              className="secondary"
-              disabled={page <= 1 || workoutsQuery.isFetching}
-              onClick={() => changeWorkoutPage(page - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Page {displayedWorkouts.pagination.page} of {displayedWorkouts.pagination.totalPages}
-            </span>
-            <button
-              className="secondary"
-              disabled={page >= displayedWorkouts.pagination.totalPages || workoutsQuery.isFetching}
-              onClick={() => changeWorkoutPage(page + 1)}
-            >
-              Next
-            </button>
-          </nav>
+          <PageNavigation
+            value={displayedWorkouts.pagination}
+            label="Workout pages"
+            keyboardDefault
+            busy={workoutsQuery.isFetching}
+            onPage={changeWorkoutPage}
+          />
         )}
       </section>
     </main>

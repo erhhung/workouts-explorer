@@ -60,12 +60,31 @@ BEGIN
     SELECT segment_id INTO next_cursor FROM clip_candidate_keys ORDER BY segment_id DESC LIMIT 1;
 
     INSERT INTO locality_clip_candidates (segment_id)
-    SELECT DISTINCT segment.segment_id
+    SELECT segment.segment_id
     FROM clip_candidate_keys AS key
     JOIN path_segments AS segment USING (segment_id)
     JOIN localities AS locality
       ON locality.geom && segment.geom
      AND ST_Intersects(segment.geom, ST_Boundary(locality.geom))
+
+    UNION
+
+    SELECT segment.segment_id
+    FROM clip_candidate_keys AS key
+    JOIN path_segments AS segment USING (segment_id)
+    JOIN park_areas AS park
+      ON park.geom && segment.geom
+     AND ST_Intersects(segment.geom, ST_Boundary(park.geom))
+
+    UNION
+
+    SELECT segment.segment_id
+    FROM clip_candidate_keys AS key
+    JOIN path_segments AS segment USING (segment_id)
+    JOIN education_areas AS education
+      ON education.geom && segment.geom
+     AND ST_Intersects(segment.geom, ST_Boundary(education.geom))
+    WHERE segment.normalized_name IS NULL
     ON CONFLICT DO NOTHING;
 
     PERFORM osm_catalog.checkpoint_generation_stage(

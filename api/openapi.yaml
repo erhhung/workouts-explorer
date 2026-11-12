@@ -552,6 +552,99 @@ paths:
         '413': {$ref: '#/components/responses/Problem'}
         '415': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/stats/report-scopes:
+    post:
+      operationId: createStatsReportScope
+      description: >-
+        Prepares an expiring, account/session-owned canonical Coverage report scope for the inclusive resolved date range.
+        Reuses retained all-history canonical visits without creating a map selection, downloading geometry or running matching.
+        Cookie authentication requires X-CSRF-Token.
+      tags: [stats]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/StatsReportScopeCreate'}}}
+      responses:
+        '201':
+          description: Report scope prepared
+          headers: {Location: {required: true, schema: {type: string}}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/StatsReportScope'}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/stats/report-scopes/{reportScopeId}:
+    parameters: [{$ref: '#/components/parameters/StatsReportScopeID'}]
+    delete:
+      operationId: deleteStatsReportScope
+      description: Deletes the current session's owned report scope; already absent scopes are treated as deleted. Cookie authentication requires X-CSRF-Token.
+      tags: [stats]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Report scope deleted or already absent}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/stats/report-scopes/{reportScopeId}/new-coverage:
+    parameters: [{$ref: '#/components/parameters/StatsReportScopeID'}]
+    get:
+      operationId: listNewCoverageBuckets
+      description: >-
+        Returns zero-filled calendar month/year buckets intersecting the scope's inclusive range.
+        All-time counts first-ever visits; past-year includes first-ever visits and returns strictly after the
+        immediately previous visit plus one calendar year, clamping February 29 anniversaries to February 28.
+        History is evaluated before date filtering. Sort fields are bucket, allTime or pastYear; default bucket:desc.
+        Unknown, expired, foreign, revoked or generation/policy-stale scopes return 404.
+      tags: [stats]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/StatsGeneration'}
+        - {$ref: '#/components/parameters/StatsGrouping'}
+        - {$ref: '#/components/parameters/StatsSort'}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: Complete bucket counts with bounded pagination, content: {application/json: {schema: {$ref: '#/components/schemas/NewCoverageBucketList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/stats/report-scopes/{reportScopeId}/new-coverage/visits:
+    parameters: [{$ref: '#/components/parameters/StatsReportScopeID'}]
+    get:
+      operationId: listNewCoverageVisits
+      description: >-
+        Lists exactly the named canonical qualifying visits behind a bucket count, intersected with the original
+        inclusive range. New visit is the qualifying workout-local date, never a later repeat date.
+        First-ever previousVisit is null. Search is literal case-insensitive displayed name/place matching.
+        Sort fields are name, place, newVisit or previousVisit; default newVisit:desc, with null dates always last.
+        Returns both the unsearched bucket total and filtered pagination totals; stale scopes return 404.
+      tags: [stats]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/StatsGeneration'}
+        - {$ref: '#/components/parameters/StatsGrouping'}
+        - {name: bucketStart, in: query, required: true, schema: {type: string, format: date}}
+        - {name: metric, in: query, required: true, schema: {$ref: '#/components/schemas/NewCoverageMetric'}}
+        - {name: search, in: query, schema: {type: string, maxLength: 256}}
+        - {$ref: '#/components/parameters/StatsSort'}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/PageSize'}
+      responses:
+        '200': {description: Qualifying visits with exact unsearched and filtered totals, content: {application/json: {schema: {$ref: '#/components/schemas/NewCoverageVisitList'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/map-selections:
     post:
       operationId: createMapSelection
@@ -811,12 +904,12 @@ paths:
     get:
       operationId: exportWorkoutPoints
       description: >-
-        Downloads schema-versioned normalized route points in provider sequence for one owned, visible workout. The `workoutId` path parameter is required; workouts without an exportable route return conflict.
+        Downloads the same filtered samples used for raw-route display, in original provider sequence, for one owned visible workout. Schema version 2 includes explicit component IDs; never connect points from different components. Original evidence samples excluded by the display policy are not exported. Workouts without a surviving renderable component return conflict.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
         '200':
-          description: Complete normalized route points in provider order
+          description: Normalized displayed route points with original sequence numbers and component IDs
           headers:
             Content-Disposition:
               required: true
@@ -881,12 +974,12 @@ paths:
     get:
       operationId: exportWorkoutGeoJSON
       description: >-
-        Downloads one contextual GeoJSON LineString for a required owned `workoutId`, using consistently 3D coordinates only when every point has altitude and otherwise 2D. Workouts without a usable route return conflict.
+        Downloads the filtered raw-route display as a GeoJSON Feature, using a LineString for one component or MultiLineString for several. Gaps are never bridged. Coordinates are consistently 3D only when every retained sample has altitude, otherwise 2D. Bounds, count and elevation describe retained samples. Workouts without a surviving renderable component return conflict.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
         '200':
-          description: Standard GeoJSON Feature containing one contextual workout LineString
+          description: Standard GeoJSON Feature preserving filtered workout route components
           headers:
             Content-Disposition:
               required: true
@@ -969,6 +1062,24 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/UUIDInput'}
+    StatsReportScopeID:
+      name: reportScopeId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUIDInput'}
+    StatsGeneration:
+      name: generation
+      in: query
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    StatsGrouping:
+      name: groupBy
+      in: query
+      schema: {$ref: '#/components/schemas/StatsGrouping'}
+    StatsSort:
+      name: sort
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 64}
     Page:
       name: page
       in: query
@@ -1778,12 +1889,14 @@ components:
         notificationsTruncated: {type: boolean}
     DateRangeEnum:
       type: string
-      enum: [thisWeek, lastWeek, last7Days, last30Days, thisMonth, lastMonth, thisYear, lastYear]
+      enum: [thisWeek, lastWeek, last7Days, last30Days, thisMonth, lastMonth, thisYear, lastYear, allTime]
+      x-enum-varnames: [ThisWeek, LastWeek, Last7Days, Last30Days, ThisMonth, LastMonth, ThisYear, LastYear, AllTimeRange]
+      description: allTime is unfiltered; resolved dates are display metadata, not SQL bounds.
     DateRangePreference:
       type: string
       nullable: true
       maxLength: 64
-      pattern: '^(thisWeek|lastWeek|last7Days|last30Days|thisMonth|lastMonth|thisYear|lastYear|[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9]{4}-[0-9]{2}-[0-9]{2})$'
+      pattern: '^(thisWeek|lastWeek|last7Days|last30Days|thisMonth|lastMonth|thisYear|lastYear|allTime|[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9]{4}-[0-9]{2}-[0-9]{2})$'
     ResolvedDateRange:
       type: object
       additionalProperties: false
@@ -1806,6 +1919,78 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/WorkoutType'}}
+    StatsGrouping:
+      type: string
+      enum: [month, year]
+      default: month
+    NewCoverageMetric:
+      type: string
+      enum: [all_time, past_year]
+    StatsReportScopeCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        startDate: {type: string, format: date}
+        endDate: {type: string, format: date}
+        dateRangeEnum: {$ref: '#/components/schemas/DateRangeEnum'}
+        tz: {type: string, minLength: 1, maxLength: 255}
+    StatsReportScope:
+      type: object
+      additionalProperties: false
+      required: [id, dataGeneration, expiresAt, range, coverageDisplayRevision, coverageDisplayPolicy]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        dataGeneration: {type: integer, format: int64, minimum: 1}
+        expiresAt: {type: string, format: date-time}
+        range: {$ref: '#/components/schemas/ResolvedDateRange'}
+        coverageDisplayRevision: {type: integer, format: int64, minimum: 1}
+        coverageDisplayPolicy: {type: string, enum: [coverage-display-identity-v1]}
+    NewCoverageBucket:
+      type: object
+      additionalProperties: false
+      required: [bucketStart, allTime, pastYear]
+      properties:
+        bucketStart: {type: string, format: date}
+        allTime: {type: integer, format: int64, minimum: 0}
+        pastYear: {type: integer, format: int64, minimum: 0}
+    NewCoverageBucketList:
+      type: object
+      additionalProperties: false
+      required: [scope, groupBy, items, pagination]
+      properties:
+        scope: {$ref: '#/components/schemas/StatsReportScope'}
+        groupBy: {$ref: '#/components/schemas/StatsGrouping'}
+        items: {type: array, items: {$ref: '#/components/schemas/NewCoverageBucket'}}
+        pagination: {$ref: '#/components/schemas/Pagination'}
+    NewCoverageVisit:
+      type: object
+      additionalProperties: false
+      required: [entityId, entityKind, name, place, newVisit, previousVisit, newVisitWorkoutId, previousVisitWorkoutId]
+      properties:
+        entityId: {$ref: '#/components/schemas/CompactUUID'}
+        entityKind: {type: string, enum: [path, park]}
+        name: {type: string, minLength: 1}
+        place: {type: string}
+        newVisit: {type: string, format: date}
+        previousVisit: {type: string, format: date, nullable: true}
+        newVisitWorkoutId: {$ref: '#/components/schemas/CompactUUID'}
+        previousVisitWorkoutId:
+          type: string
+          nullable: true
+          pattern: '^[0-9A-F]{32}$'
+          description: The immediate predecessor workout, null for first-ever visits. Out-of-range previous dates remain noninteractive in the UI.
+    NewCoverageVisitList:
+      type: object
+      additionalProperties: false
+      required: [scope, groupBy, bucketStart, metric, totalVisits, items, pagination]
+      properties:
+        scope: {$ref: '#/components/schemas/StatsReportScope'}
+        groupBy: {$ref: '#/components/schemas/StatsGrouping'}
+        bucketStart: {type: string, format: date}
+        metric: {$ref: '#/components/schemas/NewCoverageMetric'}
+        totalVisits: {type: integer, format: int64, minimum: 0}
+        items: {type: array, items: {$ref: '#/components/schemas/NewCoverageVisit'}}
+        pagination: {$ref: '#/components/schemas/Pagination'}
     MapSelectionCreate:
       type: object
       additionalProperties: false
@@ -1876,7 +2061,7 @@ components:
           allOf: [{$ref: '#/components/schemas/RouteBounds'}]
           nullable: true
           description: Union of the selected workouts' non-null Coverage bounds. Null when the selection has no displayable applied Coverage geometry.
-        workouts: {type: array, maxItems: 5000, items: {$ref: '#/components/schemas/MapSelectionWorkout'}}
+        workouts: {type: array, items: {$ref: '#/components/schemas/MapSelectionWorkout'}}
         focusedWorkoutId: {allOf: [{$ref: '#/components/schemas/CompactUUID'}], nullable: true}
         routeTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/route-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
         coverageTileUrl: {type: string, pattern: '^/api/map-selections/[0-9A-F]{32}/coverage-tiles/[1-9][0-9]*/\{z\}/\{x\}/\{y\}\.pbf$'}
@@ -1999,9 +2184,10 @@ components:
     NormalizedRoutePoint:
       type: object
       additionalProperties: false
-      required: [sequence, recordedAt, originalOffsetMinutes, longitude, latitude, altitudeMeters, speedMetersPerSecond, courseDegrees, horizontalAccuracyMeters, verticalAccuracyMeters, speedAccuracyMetersPerSecond, courseAccuracyDegrees]
+      required: [sequence, component, recordedAt, originalOffsetMinutes, longitude, latitude, altitudeMeters, speedMetersPerSecond, courseDegrees, horizontalAccuracyMeters, verticalAccuracyMeters, speedAccuracyMetersPerSecond, courseAccuracyDegrees]
       properties:
         sequence: {type: integer, minimum: 0}
+        component: {type: integer, minimum: 1, description: 'Display component. Never connect points belonging to different components; source sequences are retained and may have gaps.'}
         recordedAt: {type: string, format: date-time}
         originalOffsetMinutes: {type: integer, minimum: -1080, maximum: 1080, nullable: true}
         longitude: {type: number, format: double, minimum: -180, maximum: 180}
@@ -2016,9 +2202,10 @@ components:
     WorkoutPointsExport:
       type: object
       additionalProperties: false
-      required: [schemaVersion, workoutId, workoutType, startedAt, endedAt, points]
+      required: [schemaVersion, displayPolicy, workoutId, workoutType, startedAt, endedAt, points]
       properties:
-        schemaVersion: {type: integer, enum: [1]}
+        schemaVersion: {type: integer, enum: [2]}
+        displayPolicy: {type: string, enum: [raw-route-display-v3]}
         workoutId: {$ref: '#/components/schemas/CompactUUID'}
         workoutType: {type: string, minLength: 1, maxLength: 4096}
         startedAt: {type: string, format: date-time}
@@ -2044,8 +2231,9 @@ components:
     WorkoutGeoJSONProperties:
       type: object
       additionalProperties: false
-      required: [workoutId, workoutType, startedAt, endedAt, pointCount, bounds, elevationSummary]
+      required: [workoutId, workoutType, startedAt, endedAt, pointCount, bounds, elevationSummary, displayPolicy]
       properties:
+        displayPolicy: {type: string, enum: [raw-route-display-v3]}
         workoutId: {$ref: '#/components/schemas/CompactUUID'}
         workoutType: {type: string}
         startedAt: {type: string, format: date-time}
@@ -2117,7 +2305,7 @@ components:
       required: [type, geometry, properties]
       properties:
         type: {type: string, enum: [Feature]}
-        geometry: {$ref: '#/components/schemas/GeoJSONLineString'}
+        geometry: {$ref: '#/components/schemas/CoverageGeoJSONGeometry'}
         properties: {$ref: '#/components/schemas/WorkoutGeoJSONProperties'}
     WorkoutDeletionAccepted:
       type: object

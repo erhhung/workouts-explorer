@@ -316,6 +316,8 @@ func nullableMeasurement(value int64, known bool) any {
 }
 
 func (s PostgreSQLUpdateStore) StartStage(ctx context.Context, id int64, stage string, order int, fence string) error {
+	// Only completed validation may restart under corrected observational checks;
+	// geometry stages and in-flight validation keep immutable checkpoint fences.
 	command, err := s.Pool.Exec(ctx, `INSERT INTO osm_catalog.generation_stages(generation_id,stage,stage_order,fence,state,started_at,finished_at,failure_summary)
 		VALUES($1,$2,$3,$4,'running',transaction_timestamp(),NULL,NULL) ON CONFLICT(generation_id,stage) DO UPDATE
 		SET state='running',fence=EXCLUDED.fence,finished_at=NULL,failure_summary=NULL,
@@ -324,7 +326,8 @@ func (s PostgreSQLUpdateStore) StartStage(ctx context.Context, id int64, stage s
 			batch_count=CASE WHEN EXCLUDED.stage='validate' AND generation_stages.state='completed' THEN 0 ELSE generation_stages.batch_count END,
 			checkpointed_at=CASE WHEN EXCLUDED.stage='validate' AND generation_stages.state='completed' THEN NULL ELSE generation_stages.checkpointed_at END
 		WHERE generation_stages.stage_order=EXCLUDED.stage_order AND (
-			generation_stages.fence=EXCLUDED.fence OR (
+			generation_stages.fence=EXCLUDED.fence
+			OR (EXCLUDED.stage='validate' AND generation_stages.state='completed') OR (
 				generation_stages.state='failed' AND generation_stages.batch_count=0
 				AND generation_stages.rows_processed=0 AND generation_stages.cursor='{}'::jsonb
 			)

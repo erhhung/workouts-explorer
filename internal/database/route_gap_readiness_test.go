@@ -27,11 +27,11 @@ func TestRouteGapReadinessAndSharedSpatialLimit(t *testing.T) {
 	}
 	var definitions [][]string
 	for _, definition := range regexp.MustCompile(`(?s)CREATE(?: OR REPLACE)? FUNCTION app\.([a-z_]+).*?AS \$function\$(.*?)\$function\$;`).FindAllStringSubmatch(string(sql)+"\n"+string(temporal), -1) {
-		if definition[1] == "split_raw_route_spatial_gaps" || definition[1] == "build_segmented_workout_route" {
+		if definition[1] == "split_raw_route_spatial_gaps" || definition[1] == "build_segmented_workout_route" || definition[1] == "raw_route_display_points" {
 			definitions = append(definitions, definition)
 		}
 	}
-	if len(definitions) != 2 {
+	if len(definitions) != 3 {
 		t.Fatal("unexpected geometry policy contract")
 	}
 	for _, definition := range definitions {

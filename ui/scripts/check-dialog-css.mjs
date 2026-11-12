@@ -18,6 +18,15 @@ const deletionActions =
 if (!deletionActions.includes("margin-inline") || deletionActions.includes("padding")) {
   throw new Error("Deletion dialogs must inherit the shared action-bar padding and gap");
 }
+
+if (
+  !/\.compact-dialog\s*\{[^}]*--dialog-inset:\s*var\(--space-5\)/.test(css) ||
+  !/\.compact-dialog\s+\.dialog-actions\s*\{[^}]*gap:\s*var\(--dialog-inset\)[^}]*padding:\s*var\(--dialog-inset\)/.test(
+    css,
+  )
+) {
+  throw new Error("Summary and custom-range dialog actions must share the Road Coverage inset");
+}
 if (
   !/\.single-deletion-dialog\s*>\s*\.dialog-actions\s*>\s*button\s*\{\s*flex:\s*0 0 6\.5rem;\s*\}/.test(
     css,

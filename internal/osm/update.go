@@ -17,7 +17,7 @@ import (
 
 const (
 	ImporterVersion   = 3
-	DerivationVersion = 20
+	DerivationVersion = 21
 	ExpectedOsmium    = "1.19.0"
 	ExpectedOsm2pgsql = "2.3.1"
 )
@@ -99,19 +99,21 @@ type StorageObservation struct {
 type RegionDownloader func(context.Context, *http.Client, Region, string, int64) (DownloadResult, error)
 
 type Updater struct {
-	Store               UpdateStore
-	Pipeline            UpdatePipeline
-	HTTPClient          *http.Client
-	Download            RegionDownloader
-	MaximumBytes        int64
-	ScratchRoot         string
-	ResumeGenerationID  int64
-	StoragePreflight    StoragePreflight
-	Log                 io.Writer
-	LogLocation         *time.Location
-	Now                 func() time.Time
-	StoragePollInterval time.Duration
-	StorageFreshTimeout time.Duration
+	Store                     UpdateStore
+	Pipeline                  UpdatePipeline
+	HTTPClient                *http.Client
+	Download                  RegionDownloader
+	MaximumBytes              int64
+	ScratchRoot               string
+	ResumeGenerationID        int64
+	StoragePreflight          StoragePreflight
+	Log                       io.Writer
+	LogLocation               *time.Location
+	Now                       func() time.Time
+	StoragePollInterval       time.Duration
+	StorageFreshTimeout       time.Duration
+	StorageSettleTimeout      time.Duration
+	StorageSettlePollInterval time.Duration
 }
 
 var identityPipelineStages = []string{
@@ -348,18 +350,56 @@ func (u Updater) freshStorageObservation(ctx context.Context, after time.Time) (
 }
 
 func (u Updater) postGCStorageObservation(ctx context.Context, lowWater StorageObservation, batchFinished time.Time) (StorageObservation, error) {
+	if err := ctx.Err(); err != nil {
+		return StorageObservation{}, err
+	}
 	observation, err := u.freshStorageObservation(ctx, batchFinished)
 	if err != nil {
 		return observation, err
 	}
-	if observation.FreeBytes >= lowWater.FreeBytes {
+	if observation.FreeBytes < lowWater.FreeBytes {
+		after := observation.SampledAt
+		if after.IsZero() {
+			after = batchFinished
+		}
+		observation, err = u.freshStorageObservation(ctx, after)
+		if err != nil {
+			return observation, err
+		}
+	}
+	if !storageBelowPercent(observation, 10) || u.StorageSettleTimeout <= 0 {
 		return observation, nil
 	}
-	after := observation.SampledAt
-	if after.IsZero() {
-		after = batchFinished
+	// Fresh scrapes can contain cached kubelet values. Poll only low post-batch
+	// readings; healthy batches proceed immediately and no recorded block is cleared.
+	u.logBanner("Polling low post-batch PVC statistics for at most %s", u.StorageSettleTimeout)
+	settleContext, cancel := context.WithTimeout(ctx, u.StorageSettleTimeout)
+	defer cancel()
+	interval := u.StorageSettlePollInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
 	}
-	return u.freshStorageObservation(ctx, after)
+	for storageBelowPercent(observation, 10) {
+		timer := time.NewTimer(interval)
+		select {
+		case <-settleContext.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return StorageObservation{}, ctx.Err()
+			}
+			return observation, nil
+		case <-timer.C:
+		}
+		next, err := u.freshStorageObservation(settleContext, observation.SampledAt)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				return observation, nil
+			}
+			return next, err
+		}
+		observation = next
+	}
+	return observation, nil
 }
 
 var databaseURLPattern = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s]+`)
@@ -640,6 +680,7 @@ func validateReport(output []byte, generation Generation) (json.RawMessage, erro
 		"invalidPathSegments": 0, "orphanPathSegments": 0, "materialLocalityResiduals": 0,
 		"invalidParkAttributions": 0, "materialParkResiduals": 0,
 		"invalidEducationAttributions": 0, "materialEducationResiduals": 0,
+		"materialParkBoundaryCrossings": 0, "materialEducationBoundaryCrossings": 0,
 		"invalidNationalParkAreas":            0,
 		"invalidStateParkAreas":               0,
 		"remainingConnectedAttributionSplits": 0,

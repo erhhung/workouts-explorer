@@ -237,9 +237,12 @@ separately in the revision-41 receipt above, not established by this tool descri
 
 Each non-empty workout has one bounded two-minute context and one read-only,
 repeatable-read OSM matcher snapshot shared by all of its windows. The snapshot
-is always closed. Candidate, graph-node, graph-edge, and expansion-layer bounds
-remain those of the experimental OSM bridge; a bound or database failure fails
-that workout rather than silently truncating it.
+is always closed. Candidate, graph-node, graph-edge, distance and query-response
+bounds remain those of the experimental OSM bridge; a bound or database failure
+fails that workout rather than silently truncating it. Adjacency is fetched once
+per node and reused for distance-priority settlement. The node budget also bounds
+topology lookup count; the former independent 64-hop ceiling is not used. Reported
+expansion layers count loads of unseen adjacency, excluding cached corrections.
 
 Standard output contains exactly one final JSON report. It contains only fixed
 rules/config values, workout counts by safe outcome/mode, original and sampled
@@ -653,4 +656,4 @@ not by treating a core probe as persistence proof. Exact frozen-source SQL
 signatures distinguish known background ROI reads from blocking matcher queries;
 unknown queries still block the sampled physical-reader idle gate. Dataset
 counts, dates, timings, storage and receipt identities remain private. This is
-neither a clean-throughput benchmark nor M8 acceptance or M11 capacity certification.
+neither a clean-throughput benchmark nor M8 acceptance or M12 capacity certification.

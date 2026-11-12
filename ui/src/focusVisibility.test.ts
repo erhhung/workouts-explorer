@@ -26,15 +26,44 @@ test("shows keyboard focus after Tab, suppresses it after pointer use, and ignor
   expect(root.dataset.inputModality).toBeUndefined();
 });
 
-test("arrow-key navigation of buttons enables keyboard focus without treating shortcuts as navigation", () => {
+test("only Tab initiates keyboard navigation; arrows and shortcuts preserve the current mode", () => {
   const dispose = installFocusVisibility();
   const button = document.createElement("button");
   document.body.append(button);
   try {
-    fireEvent.keyDown(button, { key: "ArrowDown", metaKey: true });
+    for (const key of [
+      "1",
+      "2",
+      "3",
+      "4",
+      "c",
+      "r",
+      "f",
+      "m",
+      "y",
+      "ArrowDown",
+      "ArrowUp",
+      "ArrowLeft",
+      "ArrowRight",
+      "Home",
+      "End",
+      "Enter",
+      " ",
+    ]) {
+      fireEvent.keyDown(button, { key });
+      expect(document.documentElement.dataset.inputModality).toBe("pointer");
+    }
+    fireEvent.keyDown(button, { key: "ArrowRight", shiftKey: true });
     expect(document.documentElement.dataset.inputModality).toBe("pointer");
-    fireEvent.keyDown(button, { key: "ArrowDown" });
+    fireEvent.keyDown(button, { key: "Tab", ctrlKey: true });
+    expect(document.documentElement.dataset.inputModality).toBe("pointer");
+    fireEvent.keyDown(button, { key: "Tab", shiftKey: true });
     expect(document.documentElement.dataset.inputModality).toBe("keyboard");
+    fireEvent.keyDown(button, { key: "ArrowRight" });
+    expect(document.documentElement.dataset.inputModality).toBe("keyboard");
+    fireEvent.pointerDown(button);
+    fireEvent.keyDown(button, { key: "4" });
+    expect(document.documentElement.dataset.inputModality).toBe("pointer");
   } finally {
     dispose();
     button.remove();

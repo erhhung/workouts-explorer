@@ -27,12 +27,13 @@ duplicates.
 
 Contributor setup, database verification, and packaging guidance are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
+UI contributors should also follow the [UI style guide](docs/ui-style-guide.md).
 
-For development status, see [Development Progress](docs/development-progress.md).
+For development status, see [Development Progress](docs/development-progress.md) _(separate document)_.
 
 ## Development Progress
 
-| Completed | Milestone | Features |
+| Status | Milestone | Features |
 |:--:|:--:|---|
 | ✅ | 1  | Working browser experience; clear unavailable screen during service interruptions; no workout features yet |
 | ✅ | 2  | Invitation-only registration; secure sign-in and password recovery; profiles, preferences, and themes |
@@ -42,7 +43,11 @@ For development status, see [Development Progress](docs/development-progress.md)
 | ✅ | 6  | Interactive workout routes; date and workout filters; desktop and mobile map controls |
 | ✅ | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
 | ✅ | [8](docs/development-progress.md#milestone-8-closeout) | Private iCloud setup; remote workout imports; clear prompts when access expires |
-| 🔳 | 9  | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
-| 🔳 | 10 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
-| 🔳 | 11 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |
-| 🔳 | 12 | Production deployment; measured scaling and resource limits; least-privilege credentials; network/TLS/security hardening; production recovery validation |
+| ✅ | [9](docs/development-progress.md#milestone-9-closeout) | Stats tab: monthly/yearly New Coverage; searchable visit details and Map actions; fast, state-preserving tab navigation and shortcuts |
+| 🔳 | 10 | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
+| 🔳 | 11 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
+| 🔳 | 12 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |
+| 🔳 | [13](docs/implementation-plan.md#milestone-13-github-project-publication) | Public 1.0.0 release; GitHub Actions CI; GHCR images; user/admin docs on GitHub Pages; Helm repository and OCI charts with optional PostgreSQL |
+| 🔳 | 14 | Production deployment; measured scaling and resource limits; least-privilege credentials; network/TLS/security hardening; production recovery validation |
+
+✅ Completed &nbsp;·&nbsp; 🚧 In progress &nbsp;·&nbsp; 🔳 Planned

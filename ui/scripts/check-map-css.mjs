@@ -86,7 +86,7 @@ if (
   !/\.coverage-route-status--unavailable\s*\{[^}]*border:\s*0[^}]*background:\s*transparent/.test(
     css,
   ) ||
-  !/\.coverage-route-status--unavailable > svg\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*100%/.test(
+  !/\.coverage-route-status > svg\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*100%/.test(
     css,
   ) ||
   /\.coverage-route-status--unavailable[^{}]*\{[^}]*(?:transform|font-size|font-weight):/.test(
@@ -95,6 +95,8 @@ if (
   /\.coverage-route-status--unavailable\s*>\s*span/.test(css)
 )
   throw new Error("The unavailable Coverage badge must use a full-size SVG without text offsets");
+if (/\.coverage-route-status--(?:current|stale|failed)(?:\s*>\s*span|::before|::after)/.test(css))
+  throw new Error("Coverage status marks must be SVG geometry rather than text or CSS hands");
 if (
   !/\.coverage-route-status--pending\s*\{[^}]*background:\s*conic-gradient\([^}]*animation:\s*coverage-status-spin 1s linear infinite/.test(
     css,
@@ -214,7 +216,7 @@ if (
     "Route and coverage popup roots must sit above map overlays without intercepting hover",
   );
 if (
-  !/\.map-banner--coverage-detail\s*\{[^}]*z-index:\s*7\s*;[^}]*top:\s*auto\s*;[^}]*bottom:\s*calc\(6rem\s*\+\s*env\(safe-area-inset-bottom\)\)/.test(
+  !/\.map-banner--coverage-detail\s*\{[^}]*z-index:\s*7\s*;[^}]*top:\s*auto\s*;[^}]*bottom:\s*max\(var\(--feedback-anchor,\s*6rem\),\s*env\(safe-area-inset-bottom\)\)/.test(
     css,
   )
 )

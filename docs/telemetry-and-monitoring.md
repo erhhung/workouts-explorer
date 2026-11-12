@@ -368,7 +368,7 @@ Martin connections were recycled during the approved cutover with its 1.15.0 pin
 pool 4 and cache off unchanged. HTTP abort is not proof of immediate PostgreSQL
 cancellation; actual-role timeout tests passed.
 Source tests and synthetic cardinality results do not establish live burst/p95,
-browser initial render or focus latency, nor a new SLO or M9 capacity pass.
+browser initial render or focus latency, nor a new SLO or M12 capacity pass.
 The original 031 deployment record did not claim authenticated viewport capacity.
 For the later authorized real-account reproduction and scoped final 67 result,
 see the [current verification boundary](development-progress.md#tile-rendering-and-delivery-031).
@@ -416,7 +416,7 @@ render acceptance follows. Software/remote-browser limits and CPU causality rema
 unisolated. No source-wide manual reload, repeat-until-green or cache flushing was
 used; ordinary same-context renewal and cleanup were recorded separately.
 The [final scoped result](coverage-acceptance-results.md#tile-delivery-status-031)
-does not certify M9 capacity, a universal SLO or faster raw rendering. It supports
+does not certify M12 capacity, a universal SLO or faster raw rendering. It supports
 continued dense raw client investigation, not resource/timeout/body-limit increases.
 
 ### Coverage Worker

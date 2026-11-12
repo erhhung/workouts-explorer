@@ -75,6 +75,27 @@ BEGIN
         JOIN localities AS locality
           ON locality.geom && segment.geom
          AND ST_Intersects(segment.geom, ST_Boundary(locality.geom))
+
+        UNION ALL
+
+        SELECT segment.segment_id,
+            ST_Intersection(segment.geom, ST_Boundary(park.geom)) AS hit
+        FROM path_segments AS segment
+        JOIN clip_replacement_keys AS key USING (segment_id)
+        JOIN park_areas AS park
+          ON park.geom && segment.geom
+         AND ST_Intersects(segment.geom, ST_Boundary(park.geom))
+
+        UNION ALL
+
+        SELECT segment.segment_id,
+            ST_Intersection(segment.geom, ST_Boundary(education.geom)) AS hit
+        FROM path_segments AS segment
+        JOIN clip_replacement_keys AS key USING (segment_id)
+        JOIN education_areas AS education
+          ON education.geom && segment.geom
+         AND ST_Intersects(segment.geom, ST_Boundary(education.geom))
+        WHERE segment.normalized_name IS NULL
     ), hit_points AS (
         SELECT segment_id, point.geom::geometry(Point, 4326) AS geom
         FROM boundary_hits
@@ -91,15 +112,29 @@ BEGIN
         SELECT segment_id, ST_EndPoint(line.geom)::geometry(Point, 4326)
         FROM boundary_hits
         CROSS JOIN LATERAL ST_Dump(ST_CollectionExtract(hit, 2)) AS line
+    ), edge_lengths AS (
+        SELECT segment.segment_id, edge.path, edge.geom,
+            ST_Length(edge.geom) edge_length, ST_Length(segment.geom) total_length
+        FROM clip_replacement_keys AS key
+        JOIN path_segments AS segment USING (segment_id)
+        CROSS JOIN LATERAL ST_DumpSegments(segment.geom) AS edge
+    ), edge_positions AS (
+        SELECT *, coalesce(sum(edge_length) OVER (PARTITION BY segment_id ORDER BY path
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) edge_start
+        FROM edge_lengths
     ), fractions AS (
         SELECT segment_id, 0::double precision AS fraction FROM clip_replacement_keys
         UNION
         SELECT segment_id, 1::double precision FROM clip_replacement_keys
         UNION
         SELECT point.segment_id,
-            round(ST_LineLocatePoint(segment.geom, point.geom)::numeric, 12)::double precision
+            round(((edge.edge_start + edge.edge_length * ST_LineLocatePoint(edge.geom,point.geom))
+                / edge.total_length)::numeric, 12)::double precision
         FROM hit_points AS point
-        JOIN path_segments AS segment USING (segment_id)
+        -- Locate every occurrence along the source line, including retraced
+        -- boundary crossings; locating on the whole line finds only the first.
+        JOIN edge_positions AS edge USING (segment_id)
+        WHERE edge.edge_length > 0 AND ST_DWithin(edge.geom,point.geom,1e-12)
     ), ranges AS (
         SELECT segment_id, fraction AS start_fraction,
             lead(fraction) OVER (PARTITION BY segment_id ORDER BY fraction) AS end_fraction

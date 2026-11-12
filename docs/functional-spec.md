@@ -4,8 +4,9 @@ This specification describes observable MVP behavior. Implementation structure b
 
 ## Global Conventions
 
+- Cross-cutting visual and interaction conventions follow the [UI style guide](ui-style-guide.md). Feature sections retain their explicit labels, domain behavior and exceptions.
 - User-facing product name: Workouts Explorer.
-- Primary views: Summary and Map.
+- Primary tab order: Summary, Map, Stats, Data Sync; Stats/New Coverage is the completed Milestone 9 implementation.
 - Map modes: Routes and Coverage.
 - Detailed coverage table: Road Coverage.
 - User-facing synchronization term: Data Sync.
@@ -95,15 +96,15 @@ As a user, I want display preferences to persist so that the product matches how
 
 ### Behavior
 
-1. The Preferences dialog allows changing full display name, theme, units, default time zone, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary and Road Coverage.
+1. The Preferences dialog allows changing full display name, theme, units, default time zone, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary, Road Coverage, Stats report tables and their detail dialogs.
 2. Dark theme is the default; light theme is available.
 3. Imperial units, Monday week start, and 12-hour time are defaults.
 4. The last-used date-range preference is restored on a later session.
 5. Username and email are visible but immutable.
 6. **Custom date ranges** sets the per-account recent-range limit to 1, 2, 3, 4, or 5 (default 3). Applying a custom range moves it to the front of a persistent unique MRU list; shortening the list discards its oldest entries. Shortcuts do not enter the list.
-7. Summary and Map show those ranges immediately below **Custom...**, without another divider, formatted like **Jan 1, 2022 to Nov 1, 2026**. Selecting the already applied range does nothing. For any explicit range, only **Custom...** carries the checkmark and remains available for editing.
+7. Summary, Map and Stats show those ranges immediately below **Custom...**, without another divider, formatted like **Jan 1, 2022 to Nov 1, 2026**. Selecting the already applied range does nothing. For any explicit range, only **Custom...** carries the checkmark and remains available for editing.
 8. Focus outlines follow keyboard navigation (Tab/Shift+Tab and navigation keys), not pointer clicks or text editing after a pointer click. Preferences uses accessible styled selects with the list aligned to the control's left and top edges and the same width; long lists scroll within the available viewport. Form submission, time zone ordering and keyboard selection retain their existing behavior.
-9. Summary and Map date menus and the Map base-map menu match their trigger's width, align to its left edge, and open 12px below it. Lists scroll within available space rather than shifting the requested anchor.
+9. Summary, Map and Stats date menus and the Map base-map menu match their trigger's width, align to its left edge, and open 12px below it. Lists scroll within available space rather than shifting the requested anchor.
 
 ### Validation
 
@@ -560,7 +561,8 @@ criteria are not a deployment, live-cloud smoke or acceptance receipt.
 
 ### User story
 
-As a data owner, I want complete normalized route data for display, analysis, and export.
+As a data owner, I want preserved original route evidence and consistent filtered
+route data for display, analysis, and export.
 
 ### Behavior
 
@@ -568,10 +570,10 @@ As a data owner, I want complete normalized route data for display, analysis, an
 2. Retained fields include timestamp, longitude, latitude, altitude, speed, course, and all four accuracy values.
 3. Duplicate timestamps do not collapse points.
 4. GeoJSON is the default route representation.
-5. GeoJSON contains one LineString plus workout metadata; it is 3D when altitude is available for the route and otherwise 2D.
-6. Points format returns complete normalized per-point data in canonical units.
+5. GeoJSON contains a LineString for one display component or a MultiLineString for several, plus workout metadata. It never connects across display gaps. Use consistently 3D coordinates only when every retained point has altitude, otherwise 2D.
+6. Points format uses schema version 2 and `raw-route-display-v3`, returning normalized fields for exactly the retained displayed samples in canonical units. Preserve original sequence numbers, including holes, and include a positive `component` identifier; consumers must not connect different components. Original observations remain retained internally as evidence, rather than being included in these exports.
 7. Downloads use `YYYY-MM-DD-workout-type.geojson` or `.json`.
-8. Elevation minimum, maximum, and gain are derived whenever possible.
+8. Export bounds, point count and elevation describe the retained samples. Elevation gain does not cross component breaks.
 
 ### Validation
 
@@ -581,35 +583,51 @@ As a data owner, I want complete normalized route data for display, analysis, an
 
 ### Failure cases
 
-- Missing route altitude produces a 2D LineString without failing the workout.
+- Missing route altitude produces a 2D route without failing the workout.
 - Invalid optional point properties do not reject otherwise usable coordinates.
+- A route with no surviving renderable component returns a conflict from both exports; do not fall back to excluded evidence points.
 
 ### Acceptance criteria
 
-- Given duplicate point timestamps, when points are exported, then both appear in source order.
+- Given retained duplicate point timestamps, when points are exported, then both appear in source order.
 - Given route altitude, when GeoJSON is exported, then coordinates contain longitude, latitude, and altitude.
 - Given any supported provider, when points are exported, then the same normalized JSON schema is used.
+- Given rejected GPS samples, map lines/dots, focused endpoints/direction markers and both exports exclude them consistently. Exported components and full-detail map geometry use identical retained samples; lower-zoom map simplification remains a display-only precision optimization.
 
 ## Feature: Select Date Ranges
 
 ### User story
 
-As a user, I want explicit dates and common shortcuts so that Summary and Map show the same period.
+As a user, I want explicit dates and common shortcuts so that Summary, Map and Stats show the same period.
 
 ### Behavior
 
 1. Desktop uses a Grafana-inspired date control near the view selectors.
-2. Supported shortcuts are This week, Last week, Last 7 days, Last 30 days, This month, Last month, This year, and Last year.
+2. Supported shortcuts are This week, Last week, Last 7 days, Last 30 days, This month, Last month, This year, Last year, and **All time**, in that order. All time appears immediately below Last year and above the divider/Custom section, independently of recent custom ranges.
 3. API reads require either explicit start/end dates or one `dateRangeEnum`.
 4. `tz` overrides the user's default time zone for enum resolution.
 5. `tz` is silently ignored with explicit dates.
 6. Resolved dates and time zone are returned in response metadata.
-7. Summary and Map share the same selection.
+7. Summary, Map and Stats share the same selection, including shortcuts, recent custom ranges and last-used preference behavior. Stats places the existing picker at the top of its left panel.
 8. Explicit and shortcut boundaries are inclusive calendar dates.
-9. Workout membership uses the workout's local start date.
+9. Bounded workout membership uses the workout's local start date. All time omits date filtering, including for workouts/routes with no local date; it does not substitute an arbitrarily wide bounded/custom interval.
 10. Last 7 days means today plus the preceding six dates; Last 30 days means today plus the preceding 29 dates.
 11. This/Last week honor the user's first-weekday preference; month and year shortcuts use calendar boundaries.
 12. Daylight-saving changes do not alter calendar-date membership.
+13. Summary, Map and Stats use the same compact custom-range dialog, including
+    Road Coverage-style content insets, balanced action-divider spacing,
+    consistent Cancel/Apply gaps and an orange hover border on the close button.
+14. All time display metadata starts at the account's earliest workout date and
+    ends at the later of today in the selected time zone or the account's latest
+    workout date. An unknown local date falls back to the recorded start in that
+    zone for metadata only; an empty account displays today to today. Metadata
+    and totals use the same snapshot, and those dates do not constrain All time
+    queries. Future-dated and undated workouts remain included.
+15. An All time Map capability captures every available routed workout without
+    the bounded complete-range selection limit. Raw routes, Coverage detail/focus,
+    and tiles retain normal ownership, checked membership, readiness and deletion
+    rules while bypassing date predicates. Bounded and unfiltered contexts remain
+    distinct even when their displayed date bounds are identical.
 
 ### Validation
 
@@ -626,6 +644,31 @@ As a user, I want explicit dates and common shortcuts so that Summary and Map sh
 
 - Given Monday week start, when thisWeek is resolved on Wednesday, then the range begins Monday.
 - Given an explicit range and `tz`, when queried, then the explicit dates are used unchanged.
+- Given older, undated and future-dated workouts, All time includes all owner
+  workouts/routes and its metadata end is never earlier than local today.
+
+## Feature: Open A Coverage Job Route On Map
+
+### Behavior
+
+1. Every available workout reference in a Coverage update's Route runs list is a
+   real clickable link, including failed/pending route jobs. The entire type/date
+   reference uses theme text until hover/focus turns it orange with a hand cursor.
+   A missing reference remains the existing unavailable placeholder.
+2. A reusable workout-to-Map action keeps the active date selection when it
+   already contains the workout. Otherwise it selects the first covering shortcut
+   in picker order, ending with All time; unknown dates use All time. Calendar
+   evaluation honors the selected time zone and first weekday.
+3. A changed range applies and persists like a deliberate picker selection,
+   resetting the shared workout sort/page, Map catalog/checked scope/old focus and
+   range-dependent report state. It does not enter recent custom-range history.
+4. After the new capability/catalog loads, focus and check the actual target ID,
+   fit its appropriate geometry and scroll it to the center of the route list.
+   Prefer renderable Coverage; fall back to raw Routes when no Coverage exists.
+   The failed state of a job is not itself proof that prior Coverage is absent.
+5. Stats drill-downs use the existing preserve-range policy. In particular, a
+   Previous visit outside the report range stays non-clickable: this new action
+   must not silently expand that report or alter its statistics.
 
 ## Feature: Review Summary
 
@@ -636,7 +679,13 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 ### Behavior
 
 1. Summary displays compact aggregate values above the table.
-2. Hovering an aggregate shows values grouped by workout type.
+   Each value independently fits its shaped text to available width when needed,
+   shrinking continuously and no further than needed below the normal CSS size.
+   All cards and both Workouts/With routes counts share the same implementation.
+   Keep the card grid unchanged, remeasure after value/width/font changes, and
+   restore normal sizing for any line that fits without reduction. A long value
+   cannot reduce the font size of another value, including its paired count.
+2. Hovering or keyboard-focusing an aggregate shows values grouped by workout type.
 3. The table defaults to newest workout first.
 4. Clicking a header changes sorting and toggles direction.
 5. The API supports multiple sort columns even though the UI normally uses one.
@@ -647,6 +696,33 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 10. Pagination keeps the current table mounted at full opacity while the next page loads, reserves its measured height so a short final page does not collapse the document, swaps rows in place, and restores the captured document scroll position.
 11. The Workouts card pairs the total workout count with an equally prominent, right-aligned count labeled With routes. The labels By workout type and With routes share the footer row. These counts remain counts in averages mode; measured distance without GPS does not imply a route.
 12. The Distance card and its type breakdown include every workout type with a valid measured distance, independently of GPS or activity name. Distance averages divide measured distance by the number of workouts with that measurement, globally and per type. Explicit measured zero counts; missing or unsupported-unit measurements do not become zero or enter the denominator. Other aggregate denominators are unchanged.
+13. Each aggregate has exactly one sequential keyboard stop. Tab visits Workouts, Duration, Distance and Energy, and Shift+Tab reverses that order. Preview-only duration hints retain styled precision help without their own Tab stops; hidden previews are inert and their containers are not sequential focus targets. Escape closes the preview while retaining card focus. When a preview scrolls internally, Arrow Up/Down, Page Up/Down and Home/End scroll it from the card; modified browser shortcuts retain their normal behavior. Enter/Space retain the existing totals/averages toggle.
+14. Ordinary mouse hover retains the original collapsed card's boundary: leaving
+    it closes the breakdown. Holding Shift while a card is open extends the hover
+    boundary to include its visible breakdown. Leaving both areas closes it even
+    while Shift remains held. Releasing Shift after entering the breakdown closes
+    it if the cursor is outside the original card; releasing over the original
+    card keeps normal hover behavior. Keyboard-only Shift+Tab remains unaffected.
+15. While Shift is held, clicking the original card, breakdown rows or expanded
+    padding toggles all cards between totals and averages exactly once. Expanded
+    clicking delegates to the existing card action and retains that button's
+    focus; no extra sequential focus targets are added. A hovered breakdown row
+    has a subtle theme-aware gray highlight with readable type and value text.
+16. One Summary-owned preview identity arbitrates keyboard and mouse opening.
+    New hover/focus supersedes the old card, and an old blur cannot dismiss the
+    new owner. Window blur, document hiding, outside focus, Escape, resize or
+    retained-tab exit dismisses the preview and clears Shift/hint state. Window
+    focus restoration cannot reopen the old keyboard preview without fresh
+    pointer or Tab intent.
+17. OS app switching may omit pointer-leave or modifier-keyup events, or restore
+    a cached hover target. An open mouse preview therefore reconciles document
+    pointer/mouse movement against its actual current bounds and observed Shift
+    state. Moving over the Workout log dismisses an obsolete hover without
+    requiring another card crossing. Window-focus return dismisses old previews;
+    pressing Alt, Command/Meta or Ctrl alone does not. OS/browser shortcuts remain
+    unconsumed; modified Tab
+    does not count as fresh card-navigation intent. Keyboard-only previews keep
+    their focus-based behavior.
 
 ### Validation
 
@@ -662,10 +738,372 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 ### Acceptance criteria
 
 - Given workouts of several types, when an aggregate is hovered, then its type breakdown is shown.
+- Given an open breakdown and Shift held, moving into a row keeps it open and
+  highlights that row; expanded clicks toggle mode once. Releasing Shift outside
+  the original card or leaving the expanded boundary closes it.
+- Given mixed keyboard and mouse interaction, at most one aggregate preview is
+  visible. Losing window focus dismisses it even if Shift keyup is not received.
 - Given a mobile viewport, when a row is tapped, then additional workout details expand inline.
 - Given equal primary sort values, then stable UUID tie-breaking prevents records moving between pages.
 - Given route-less workouts with measured distance, when totals or averages are displayed, then their types appear in the Distance breakdown. Workouts without measured distance remain excluded even if they have GPS routes.
 - Given a workout deletion, when the optimistic update hides it, then total, routed and measured-distance counts update independently and roll back together if enqueueing fails.
+
+## Feature: Navigate Table Pages
+
+Use the shared pager in Workout log, Road Coverage, Stats reports and visit
+dialogs, Task history, and run-detail Files, Events and Logs.
+
+1. Arrange six one-click buttons around `Page X of Y`: first page, back five,
+   previous, then next, forward five and last page. Five-page jumps clamp at the
+   first/last page. Disable all three left controls on page one and all three
+   right controls on the last page; empty/single-page pagers disable all six.
+2. Every button matches the compact Cancel/Apply height in Show workout types,
+   with a width of **1.5 times that height**. Draw proportionately smaller
+   bar/chevron symbols with **3px rounded SVG strokes**. First/last pipes and
+   brackets touch at their stroke edges without overlapping. Keep equal button
+   dimensions when controls wrap on narrow screens. Provide accessible action
+   names, without visible text or native/styled tooltips.
+3. Restore the shared theme-aware button surface for both enabled and disabled
+   controls. Enabled symbols use the normal theme foreground and hand cursor;
+   disabled symbols match the table's darker `n/a` gray and not-allowed cursor.
+4. Server-paged jumps request only the destination page. Keep boundary states,
+   colors and cursors steady during loading and same-page background refresh;
+   ignore extra presses until the replacement renders, including immediate repeat
+   clicks before the owner renders its pending state. Update boundary availability
+   with the displayed result. Unavailable/stale failed results can still disable
+   navigation until recovery. Retain existing rows and each owner's scroll,
+   caching, error/retry and partial-page height behavior. Road Coverage continues
+   paging its complete bounded client-side result.
+
+## Feature: Keyboard Shortcuts
+
+Authenticated application shortcuts are documented here and remain visually
+undisclosed: do not add shortcut legends, key badges, label underlines or tooltip
+suffixes. Letter commands are case-insensitive.
+
+| Key | Action |
+|---|---|
+| `1` | Open Summary |
+| `2` | Open Map |
+| `3` | Open Stats |
+| `4` | Open Data Sync |
+| Left / Right arrow | Previous / next page in the active paged table/list |
+| Shift + Left / Right arrow | Back / forward five pages, clamped at the boundary |
+| `C` on Map | Select Coverage mode if available |
+| `R` on Map | Select Routes mode |
+| `F` on Map | Fit only the visible, persistently focused workout in the current mode |
+| `M` on Stats | Select Month grouping |
+| `Y` on Stats | Select Year grouping |
+
+1. A document-level handler receives the commands while Tab navigation focuses
+   ordinary buttons, links or content. The web document must have keyboard focus;
+   browser chrome, the address bar, DevTools and OS-reserved combinations remain
+   outside application ownership. Tab/Shift+Tab, Enter/Space and Escape retain
+   their established roles.
+2. Switching application tabs by navigation or number key hands focus to the
+   tab's content landmark, or the Map canvas once ready. Landmarks use a
+   programmatic focus target, not an extra sequential stop. Preserve selected
+   range, table state, route visibility/focus and camera contracts. Re-selecting
+   the same shortcut destination focuses content without adding history entries.
+   Do not outline the whole content landmark or canvas. Only Tab/Shift+Tab
+   initiates keyboard-navigation highlighting: shortcut activation and arrow-key
+   paging do not enable that mode. They preserve a mode already entered by Tab;
+   pointer interaction exits it. Files/Events/Logs headings and other small
+   controls show focus outlines only while that Tab-initiated mode is active.
+3. Suppress all listed shortcuts while a text-entry surface is displayed in the
+   active UI, even when another control has focus. This includes search/text,
+   URL/email/password/tel, number/date/time fields, textareas and editable content.
+   Hidden/inert surfaces do not block commands. Focused selects/comboboxes and
+   widgets with their own editing keys keep native behavior; open menu/listbox
+   typeahead is not intercepted.
+   Modal table paging is the exception described next: only focused editing
+   controls reserve its arrow keys; an unfocused visible search field does not.
+4. A modal keeps ownership of its keyboard scope: application-tab and Map/Stats
+   mode commands do not navigate behind it. Left/Right and Shift+Left/Right may
+   target the modal's pager while its search field is visible but unfocused.
+   When that field (or another editing widget) has focus, arrows retain native
+   caret/selection behavior and never page either modal or background tables.
+   Headers, pagination buttons, non-editing controls and dialog content can own
+   modal paging. The exception applies only to paging; visible text entry still
+   suppresses number/letter application shortcuts.
+5. Page commands affect exactly one owner. Prefer the deepest table/list region
+   containing focus, then the last interacted eligible region still on screen,
+   then the tab's primary pager. Task history is Data Sync's primary pager;
+   Files/Events/Logs use independent regions. Reuse normal destination clamping,
+   pending-request fences and unavailable-state handling. Arrow repeats cannot
+   bypass an in-flight request. Other held shortcut keys do not repeatedly
+   navigate or refit.
+6. Map `F` uses focused raw bounds in Routes, focused displayable Coverage bounds
+   in production Coverage, or that workout's diagnostic bounds in diagnostic
+   Coverage. With no visible focused workout, pending selection, missing bounds
+   or an unavailable result, it does nothing. It never falls back to all checked
+   routes and does not change checked membership or persistent focus.
+7. Map mode and Stats grouping commands use the same actions as their controls.
+   Map mode changes preserve the current viewport; fitting is an explicit action.
+   A changed Stats grouping resets its page/sort as usual; requesting the already
+   selected grouping is a no-op. Native Map canvas arrow navigation remains
+   available when there is no eligible table pager.
+8. Ignore Ctrl/Command/Alt combinations, IME composition and already-prevented
+   events. Shortcut owners unregister on unmount so obsolete tabs/private scopes
+   cannot receive commands.
+
+## Feature: Explore Stats And New Coverage
+
+**Milestone 9 is complete and accepted as of 11/12/2026.** Acceptance, verification
+and the deployed checkpoint are recorded in
+[M9 closeout](development-progress.md#milestone-9-closeout).
+Later milestones are renumbered in the
+[implementation plan](implementation-plan.md#milestone-sequence-update-1152026).
+
+### User story
+
+As a user, I want reports about workout, route and Coverage statistics and trends
+so that I can see when I explored new places or returned after a long absence.
+
+### Stats navigation and state
+
+1. Add **Stats** between **Map** and **Data Sync** in the primary tab bar.
+2. Use a left-side panel following Map's layout. Its top-most control is the same
+   shared **Date range** picker, followed by the heading **Reports** and a list of
+   selectable report titles. The initial entry and default report is **New Coverage**.
+   Reports uses the same all-caps typography as Summary's Range totals and Workout
+   log headings. Every selectable report's whole row has a hand cursor.
+3. Mark the selected report with the existing magenta focus/selection border,
+   accessible selected-state semantics and normal keyboard focus treatment.
+4. Store the active report in the parent UI frame, not only in the Stats child,
+   so switching to Summary, Map or Data Sync and back restores it. Preserve each
+   report's controls, sorting and pagination across tab switches as well.
+5. The report area supports future tables and charts. **Reports** is the shared
+   navigation term; report-specific controls belong above the report content.
+
+### New Coverage table
+
+1. Center the report title in the main content area, with no subtitle. Below it,
+   show **Show new visits by** at 1rem with exclusive Month/Year button-style
+   controls matching Map's Routes/Coverage controls. Month is selected by default.
+   Align the label/controls to the table's left edge. Use the same spacing token
+   above the title, between title and controls, and between controls and the table.
+2. Columns are **Month** (or **Year**), **New visits (all time)** and
+   **New visits (past year)**. Month labels use full month and year,
+   such as **November 2026**; year labels use four digits, such as **2026**.
+3. Follow Summary's Workout log styling, sortable headers, sort indicators,
+   pagination and the shared rows-per-page preference. All columns are sortable;
+   the default is bucket date descending, using chronological dates rather than
+   alphabetic month labels. Tied count sorts use bucket date descending.
+   Center the table at one-half of Summary's shared Workout log content width,
+   capped by available Stats content width; narrow layouts scroll inside the table.
+   Month/Year receives 38% of the table width. Use the shared `.pagination` margin
+   above page controls, without adding the report's section gap to that spacing.
+4. Generate every calendar bucket intersecting the inclusive selected dates,
+   even when no workouts or qualifying visits exist in it. Partial first/last
+   buckets count only visits within the selected dates, not the entire month/year.
+   3/25/2024 through 10/1/2026 therefore shows March 2024 through October 2026
+   in Month mode, or 2024, 2025 and 2026 in Year mode.
+5. Changing the range or Month/Year grouping returns to page 1 and the default
+   bucket-descending sort, closes an obsolete detail dialog and retains the active
+   report. A page-size change clamps the current page to the available pages.
+6. Zero is plain, noninteractive text. For a nonzero count, the **entire table
+   cell**, including its padding, activates the corresponding visit-detail dialog.
+   Provide one keyboard-focusable link-style action per cell with an accessible
+   name identifying the metric and bucket; Enter activates it.
+   Clickable cells have hand cursors and normal text, changing only the value to
+   orange when the pointer enters the cell. Use no underline or additional cell
+   background; retain the standard row-level hover highlight.
+7. Replace explanatory notices with the shared delayed, styled tooltip on the
+   **New visits (past year)** column header, with exactly these two lines:
+
+   ```text
+   Includes first visits and return
+   visits after more than one year
+   ```
+
+   "Past year" is relative to each candidate visit, not today, the beginning of
+   the selected range, or the Last year shortcut. Do not use native HTML title help.
+8. Paging retains the current rows at full opacity while fetching, swaps in the
+   new rows only when ready, and preserves scroll position. Reserve
+   `min(totalItems, pageSize)` row slots so the Previous/Next controls do not move
+   on a short last page, including when restoring that page after a Map visit.
+   Shorten the report table only when its total result fits less than one full page.
+9. Month/Year changes retain the currently displayed rows and their matching
+   bucket header/labels until replacement data arrives. Update those positional
+   rows in place, then shrink/grow to the new grouping's result size. Disable old
+   count actions during the request and ignore superseded grouping responses.
+10. Searchable table dialogs freeze capacity from the unfiltered count, using
+    `min(unfilteredCount, preferredPageSize, 25)` rows, with one message row for an
+    empty unfiltered set. New visits uses the unfiltered bucket count/`totalVisits`,
+    never filtered pagination totals. Loading, search, empty results and partial
+    pages fill unused row space without moving the dialog/search line. Reserve
+    the unfiltered pagination caption width so footer wrapping stays fixed.
+    Retry feedback floats without adding layout height. Filtering resets internal
+    vertical scroll to show the first matching rows, not the padding below them.
+    Preserve the viewport containment limit; neither scope security nor result
+    paging/count semantics change.
+11. Incremental New visits searches retain the existing row/cell nodes and full
+    opacity while debouncing/fetching. Admit only the latest compatible response,
+    update values in place, and hide surplus rows for a partial result. Block
+    old row actions without changing their text appearance; keep owner/date/
+    bucket/metric boundaries and late-response fences intact. An accepted empty
+    result has only the table header: no result/message rows. Center a slightly
+    larger status message in the reserved body viewport, independent of horizontal
+    scrolling. Initial loading is distinct from a zero result.
+
+### Identity, history and qualification
+
+1. Count named **canonical display identities** exactly as in Road Coverage with
+   unnamed entities hidden, not OSM segments, source logical paths or raw GPS
+   samples. Named road/path/park and named education identities follow the same
+   display exclusions and canonical merging. One named park/path group or school
+   spanning several source members must not become several visits per workout.
+2. Use one canonical context resolved for the **full selected range** for the
+   table and all drill-downs. Resolve its source membership using Road Coverage's
+   historical rules; do not rebuild identities independently for each month/year.
+   Report counts ignore Map's checked subset, focus and rendering/diagnostic mode.
+3. Eligible visits have retained, applied Coverage evidence and satisfy the same
+   workout visibility, route and local-date rules as Road Coverage. Pending-only
+   and empty results contribute no visits. Retained stale evidence remains usable;
+   a failed rematch does not discard the last successful applied visits.
+4. Deduplicate each identity/workout before ordering its full eligible history by
+   workout-local start date, workout start instant, then workout ID. The visit date
+   is the workout's local start date, not import time, source-file date, GPS point
+   time, or a user-time-zone conversion. Multiple same-date workouts remain visits,
+   but only the earliest can qualify as a new visit on that date.
+5. **New visits (all time)** counts the first-ever eligible visit to each identity
+   if that visit falls within both the selected dates and the bucket. This is the
+   identity's first attribution over all history, not its first visit in a bucket
+   or merely its first visible visit after the range starts.
+6. **New visits (past year)** includes those first-ever visits and any later visit
+   whose immediately previous eligible visit to that identity is **more than one
+   calendar year earlier**. Compare calendar dates using the previous visit plus
+   one year. Clamp February 29 to February 28 in a non-leap anniversary year;
+   exactly the anniversary does not qualify, but the next date does. Do not use
+   a fixed 365-day threshold or measure from only the last qualifying visit.
+7. Compute first/predecessor history **before filtering to selected dates or
+   buckets**. Earlier out-of-range and intervening nonqualifying visits still
+   disqualify repeats. Each column counts qualifying identity visits, not all
+   visits to an identity that happened to qualify once in the bucket. Under the
+   Month/Year grouping, an identity contributes at most once per bucket/column;
+   the first qualifying event supplies the displayed date, never a later repeat.
+8. Counts are derived from currently imported eligible history, not a promise of
+   the user's first real-world visit. Historical backfills, logical deletion,
+   corrected dates, canonical metadata changes or successful rematching can
+   legitimately change first/predecessor classification and invalidate the report.
+
+### Visit-detail dialogs
+
+1. Use Road Coverage's modal/table/search treatment. Titles identify the metric
+   and bucket, for example **New visits (all time) in November 2026** or
+   **New visits (past year) in 2026**.
+2. The all-time dialog columns are **Road/Path/Park**, **City/County/Region**,
+   **New visit**. The past-year dialog adds **Previous visit** after **New visit**.
+   Keep **New visit** consistently as the qualifying-event label; it must not use
+   Road Coverage's Most recent visit field or a later repeat's date.
+3. The default sort is **New visit descending**. All columns are sortable, with
+   displayed name ascending, displayed place ascending and stable canonical ID
+   as deterministic tie-breaks. Dates use Road Coverage's **Dec 20, 2025** format; missing previous
+   dates sort last in either direction.
+4. A first-ever visit's **Previous visit** displays grayed-out **n/a**, with the
+   same styling as an unavailable Distance in Summary's Workout log. The API
+   represents this as null; do not fabricate a date, zero, or a dash.
+5. Preserve the Search bar and literal case-insensitive matching against displayed
+   identity names and City/County/Region. Hide **Show unnamed roads and paths**:
+   both metrics contain named entities only. Use preference-sized pagination.
+   Do not show an additional "26 of 26 visits" caption below the table; the API's
+   unsearched total still supplies the count/detail consistency check.
+6. Make the dialog narrower than Road Coverage to fit three or four columns at
+   approximately their existing individual widths; allow the variants to have
+   different widths. Cap dimensions to the viewport and use heading size
+   `clamp(1.4rem, 5vw, 2rem)`. Keep the table's top border visible above its sticky
+   header. Retain shared ellipsis/overflow help. Keep rows mounted during paging,
+   reserve full-page slots on the last page and preserve table/document scroll;
+   shorten the body only when the filtered total is smaller than a full page.
+7. Provide the close control and Escape dismissal, trap modal focus, and restore
+   focus to the invoking cell action on close. Count cells remain usable on touch
+   and by keyboard even when the visible count is a single digit.
+8. Both dialogs list exactly the qualifying events behind the clicked metric and
+   partial bucket. Search and pagination only change the displayed subset. They
+   must not retrieve the whole bucket outside the selected dates or substitute a
+   different canonical context or newer data generation silently.
+9. Identity names are whole-cell actions using Road Coverage's hand cursor and
+   normal-text-to-orange hover treatment, without underlines or cell highlighting.
+   Clicking a name closes the dialog, switches to Map production Coverage, fetches
+   the exact canonical identity through the existing authorized Map capability,
+   and fits/blinks its road/path/park geometry using the Road Coverage flow.
+   Restore the previous Map camera during the handoff and suppress unrelated
+   default/all-route fits. Once exact detail is available, use the same single
+   direct fit/blink path as an identity clicked in Road Coverage. With no prior
+   camera, wait for the exact bounds and initialize there without a world view or
+   a second fit. Style-load replay cannot repeat an already-applied identity fit.
+   Preserve the currently focused workout, checked route subset and effective
+   base-map choice, including manual override and the last automatic family when
+   no workout is focused. Identity highlighting adds temporary emphasis; it does
+   not clear the catalog/focus or choose the default base map on tab reentry.
+10. In-range New visit/Previous visit dates are similarly clickable and select the
+    actual qualifying/predecessor workout on Map, focused, checked and centered in
+    the list when possible. Use the returned workout IDs, not an identity's latest
+    workout or a guessed workout for that date. Same-date ties choose the earliest
+    new visit and immediate latest predecessor in deterministic history order.
+11. **Out-of-range previous dates remain plain, noninteractive text**, even though
+    their workout IDs are available. Do not expand or override the main range.
+    All Stats-to-Map actions preserve that selection, report/table page and sort;
+    returning to Stats restores them without reopening the dialog. An explicit
+    Stats Coverage jump does not run diagnostics or persist a preference change.
+
+### Validation and failure cases
+
+- Apply shared date validation, allowlisted Month/Year grouping, sortable field
+  validation and configured pagination limits. A requested detail bucket must
+  intersect the resolved range, and the metric must be all-time or past-year.
+- Authorize all report scopes and results to the signed-in data owner; administrator
+  privileges do not expose private reports. Serve bounded results with explicit
+  pagination/completeness metadata, never silent truncation or partial counts.
+- Loading and retryable errors are visible in the report/dialog; failed or pending
+  requests are not displayed as zero counts. No qualifying visits is a successful
+  zero-filled bucket table, with no active drill-down cells.
+- Range, grouping, account, generation or canonical-policy changes cancel obsolete
+  requests and invalidate affected data. Late success/error responses cannot
+  replace current results, reopen a dialog or change the selected report. Refresh
+  an obsolete report scope before retrying a stale drill-down, so totals and rows
+   are not mixed across snapshots.
+- Visible Stats checks normally run every 30 seconds (configured interval clamped
+  to 10-60 seconds); hidden tabs pause them. Report scopes last at most 30 minutes,
+  clipped to the session deadline, independently of authentication validity.
+  Renew expiring/stale scopes and retry transient preparation failures with bounded
+  backoff, then retry on the normal visible cadence or focus/network restoration.
+  Keep same-account/range rows mounted but disable stale actions during renewal;
+  clear them on account/range/deletion-context changes. Grouping uses atomic
+  in-place replacement with labels from the displayed response. Successful recovery
+  clears the error without requiring a tab switch. Expired data scope is not logout.
+
+### Acceptance criteria
+
+- Switching Stats -> Map -> Stats restores New Coverage, its grouping, sorting
+  and current page; the shared date range remains consistent across all views.
+- For 3/25/2024 through 10/1/2026, a 3/24/2024 visit is excluded while visits on
+  3/25/2024 and 10/1/2026 are included. All intersecting buckets still appear.
+- An identity first visited on 11/3/2026 and again on 11/20/2026 contributes one
+  to both November columns; both dialogs show New visit Nov 3, 2026, and the
+  past-year dialog shows grayed-out n/a for Previous visit.
+- Given visits on 4/10/2024, 4/10/2025 and 4/11/2026, only the first is all-time
+  new. The second is not past-year new (exact anniversary); the third is, with
+  Previous visit 4/10/2025, even if that date lies outside the selected range.
+- After a 2/29/2024 visit, a 2/28/2025 visit alone does not qualify; a next visit
+  on 3/1/2025 would qualify if no intervening visit occurred. An intervening
+  2/28/2025 visit resets the predecessor, so a 3/1/2025 repeat then does not qualify.
+- Canonical duplicates and repeated segments do not inflate counts; names merged
+  by Road Coverage stay merged across the report and both drill-down variants.
+- Every nonzero cell's complete unsearched detail total equals its count; the
+  dialog supports name/place search, all-column sorting, preference-sized paging,
+  compact width/height, Escape and return focus. Zero cells cannot open it.
+- A range change, deletion, backfill or metadata/generation update cannot install
+  stale counts/details; another account cannot read either report or detail scope.
+- Both report/dialog pagination retain populated frames and fixed page-button
+  positions through delayed requests and the last page. Heading typography,
+  one-half width, equal title/control/table gaps, standard pagination spacing, pointer/hover treatment and
+  the delayed two-line header tooltip match their shared UI contracts.
+- Name/new/previous jumps use actual Map geometry or workout IDs, keep the main
+  range unchanged and restore the report page. Out-of-range previous dates cannot
+  navigate. Data-scope expiry followed by transient renewal failure recovers while
+  the user remains on Stats, with no blank rows or authentication reset.
 
 ## Feature: Review Workout Details
 
@@ -676,7 +1114,7 @@ As a user, I want to inspect one workout's available statistics without crowding
 ### Behavior
 
 1. Selecting a workout row reveals a detail presentation appropriate to the viewport.
-2. Mobile expands details beneath the three-column row.
+2. Mobile expands details beneath the three-column row. Build detail contents only when expanded, using the already-loaded complete record without an additional request; preserve the collapsed region's accessibility relationship.
 3. Details include type, local start/end, duration, source-supported aggregates, route availability, and elevation values when applicable.
 4. Missing optional statistics display as unavailable and are not represented as zero.
 5. Row actions remain available from the detail presentation.
@@ -707,6 +1145,14 @@ As a user, I want common workout actions available from each Summary row.
 2. Show on map switches to Map, checks and focuses that workout, and fits its extent while retaining other checked routes. It preserves the active mode when the target is usable there; if production Coverage is active and the target has no coverage result, it switches to raw Routes before fitting so the target is visible. A current or stale usable coverage result preserves Coverage mode.
 3. View provenance shows the full chronological import-event history.
 4. Delete workout asks for confirmation naming the workout date and type.
+5. Summary provenance and deletion dialogs follow the shared compact-dialog
+   treatment in the [UI style guide](ui-style-guide.md#dialogs-and-confirmation-flows).
+   Use consistent content, divider and action insets; preserve initial focus,
+   dismissal, pending-state guards and return focus.
+6. Provenance event timestamps use the Workout log date's emphasis and minute
+   precision, for example **Oct 30, 2026, 2:57 PM**, respecting the preferred
+   time zone and clock format. Align their right edge with the close button,
+   including when long history scrolls under the sticky dialog header.
 
 | Order | Action | Availability |
 |---|---|---|
@@ -756,10 +1202,11 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 14. Private route tiles require authenticated account access.
 15. Changing route visibility replaces the immutable tile capability in the background without removing the map or public base style.
 16. Hovering a route highlights the full route and matching visible list row. After the standard tooltip delay, an auto-sized two-line popup shows workout type and distance, then the start date and compact start/end times.
-17. Workout-log sort column and direction survive Summary, Map, and Data Sync tab changes for the current date range. Changing the range resets sorting to Date descending, and Map orders its workout-route list with the same active sort.
-18. Map preserves Routes or production Coverage mode across tab changes. When the diagnostics preference is enabled, each visit to Map starts in Routes mode so diagnostic review is never reopened implicitly.
+17. Workout-log sort column and direction survive Summary, Map, Stats and Data Sync tab changes for the current date range. Changing the range resets sorting to Date descending, and Map orders its workout-route list with the same active sort. Stats report sorting is separate and does not alter workout-log sorting.
+18. Map preserves its mounted workspace, camera, base-map choice, checked routes and Routes or production Coverage mode across tab changes. When the diagnostics preference is already enabled, each new visit to Map starts in Routes mode so diagnostic review is never reopened implicitly. Changing that preference during an existing visit preserves the current mode: focused Coverage transitions directly between production Coverage and diagnostic review, retaining focus and camera. An explicit diagnostics preference change ends a Stats-origin production-only override.
+18a. Closing Preferences by Save, Cancel, close button, Escape or outside dismissal returns focus to the active tab's content area after the dialog's close-focus handling. Map treats its canvas as the content area; a temporarily unavailable canvas uses the Map content focus handoff. Space immediately controls the map's existing hide behavior rather than reopening the profile menu.
 18. A bulk checkbox directly above the workout checkboxes is checked only when all available workouts are checked. Clicking it when checked selects none; clicking it when unchecked, including for a partial selection, selects all.
-19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, and base map when the mode changes. With a visible workout focused, switching between Routes and production Coverage refits that workout using the destination mode's bounds; without a focused workout the camera is preserved.
+19. Compact Routes and Coverage radio controls share the bulk-checkbox row and preserve the date range, workout subset, sort, base map and camera when the mode changes. Changing modes does not automatically refit, including when diagnostic results arrive.
 19a. A normal bulk-checkbox click still toggles all routes. Holding the primary pointer for 500ms opens **Show workout types** without toggling routes; Arrow Down provides keyboard access. The panel's top edge aligns with the scrolling routes list's top edge and its left edge and width match the full Workout routes frame. Other dropdowns retain their 12px gap. The checkbox uses the shared styled tooltip, with larger text and three lines: `Toggle checkboxes to show or hide all routes;`, `click and hold to filter routes by workout types`, and `(use space and down keys in keyboard mode)`. The tooltip is linked to the checkbox, adds no extra tab stop, and hides while the picker is open. The popup includes only types in the complete current route list. A type starts checked only when every route of that type is checked. Compact **Cancel** and **Apply** actions use equal 12px top/bottom/right insets and a 12px gap, and discard or atomically apply the draft: all routes of checked types become checked, and all others become unchecked. Outside click and Escape dismiss without applying. Hiding the focused route clears its focus; changing the route catalog closes an obsolete popup.
 20. The panel legend is Workouts. Coverage stats is always available beside Fit on map regardless of the active rendering mode.
 21. When Summary accepts a workout deletion, Map removes that entry from its cached list and checked IDs, clears matching focus/hover/overlays, and renews the tile capability. Other checked routes, the date range and sort remain unchanged; a full workout-collection refresh is not required for a known deleted ID. Failed deletions retain Map state. Stale asynchronous results cannot restore removed entries, and new workouts imported on a deleted date remain eligible.
@@ -771,8 +1218,9 @@ As a user, I want to compare the exact recorded paths of selected workouts.
   from matched path and park evidence, respecting path-display exclusions and
   name qualification, rather than inferred from raw GPS or simplified tiles.
 - A row/map focus action, restored focus, or single-workout deep link fits the
-  active mode's bounds. Switching modes refits the persistent focused workout,
-  not a transient hover preview. Fitting does not wait for exact geometry downloads
+  active mode's bounds. Switching modes preserves the current camera; explicit
+  fitting uses the persistent focused workout, not a transient hover preview.
+  Fitting does not wait for exact geometry downloads
   or tile completion, and does not replace the tile capability.
 - **Fit routes** uses the union of the checked workouts' bounds for the active
   mode. The diagnostic overlay retains its separate diagnostic-geometry fit.
@@ -902,7 +1350,67 @@ compression-latency improvement and time-to-usable-render/capacity acceptance.
 - Optional focus must belong to the created selection. Deleted, foreign, nonrouted or out-of-range focus returns not found, not temporary unavailability. Reauthentication into an unavailable focused route clears that focus and loads the current range with bounded recovery, preserving explicit checked-route scope and user preferences.
 - Public provider credentials and resources are separate from private tile authorization.
 
-### Route Continuity (009)
+### Feature: Retain Tab Workspaces
+
+1. Summary, Map, Stats and Data Sync initialize lazily on first visit and retain
+   their mounted UI resources for the current signed-in session. Switching tabs
+   hides the old workspace rather than destroying it. The first Map visit still
+   initializes its renderer; ordinary returns reuse its canvas, workers, loaded
+   provider resources, sources and applicable caches.
+2. Only the active workspace is visible, accessible or keyboard-interactive.
+   Hidden tabs cannot handle Space/application commands, expose floating help or
+   dialogs, redirect navigation, steal focus or change the visible tab's scroll.
+   Polling and provider retry loops pause while inactive. Existing in-flight
+   reads may finish under their normal scope/abort guards.
+3. Retain tab controls, pages, compatible table DOM, disclosures and document/
+   internal scroll. Focus returns to the active content area, with Map using its
+   canvas. Only real size/pixel-ratio changes resize the retained map. Returning
+   to an unchanged workspace does not re-fit the camera or replay prior intents.
+4. Retention does not extend authorization or data-scope validity. Renew expired
+   Map/report capabilities on return, revalidate sufficiently old Map scopes in
+   the background, and preserve unchanged sources when generation/display context
+   and membership remain valid. Fence report actions while refresh is pending.
+   Date/time-zone changes and accepted deletions hide obsolete private pixels
+   until the replacement scope is admitted; late responses cannot restore them.
+5. Explicit workout and entity navigation into an already-mounted Map still
+   focuses/fits the requested target, admits it to an explicit checked subset
+   where required, and scrolls its list row. Keep existing range policies,
+   readiness-based raw fallback and the explicit-entry diagnostic rule.
+6. Confirmed logout, expiration and session/identity replacement dispose all
+   retained workspaces and release the renderer and private caches. Tab retention
+   is not persisted across browser reloads or between accounts.
+
+### Map Layer Stack And Opacity
+
+Use the following map-rendered order **from bottom to top**, retaining current
+line widths, colors and geometry. Normal visible path geometry uses **90%
+per-layer opacity** in every mode and focus state; overlapping paths can still
+accumulate opacity. Existing provider labels are rendered once, above paths,
+without an additional canvas or offscreen compositing pass. Preserve provider
+label filters, zoom visibility and relative ordering. Visible road-name/shield
+text and symbols use 100% paint opacity, subject to the renderer's normal symbol
+placement/fade behavior.
+
+| Order | Layer/group | Applicable modes | State / opacity |
+|---|---|---|---|
+| 1 — bottom | Provider map geometry: imagery, terrain/hillshade, roads, land, water and buildings | Routes, production Coverage, Diagnostic | Original provider geometry order and styling |
+| 2 | Non-focused raw paths and stationary dots | Routes; temporary raw-tile handoff in Diagnostic | 90% while visible; 0% when hidden by the established visibility/Space behavior |
+| 2 | Aggregate road/path Coverage and park-boundary Coverage | Production Coverage | 90% while visible; 0% when non-focused Coverage is hidden |
+| 3 | Focused/hovered magenta raw paths and stationary dots | Routes | 90% when the focused/hover geometry is ready |
+| 3 | Focused road/path and park-boundary Coverage | Production Coverage | 90%, above aggregate Coverage |
+| 3 | Diagnostic focused raw path, matched/ambiguous evidence and selected/hovered evidence portion | Diagnostic | 90%; selected evidence remains above other focused path geometry |
+| 3 — interaction only | Diagnostic wide hit-target path | Diagnostic | Always 0%; retains pointer lookup without visible paint |
+| 4 | Existing provider road names/shields and other base-map symbol/label layers | All modes | Road names/shields at 100%; other symbols retain provider styling/visibility |
+| 5 | Directional arrows | Routes and Diagnostic when focused route geometry/camera are ready | 95% while visible; existing hide/readiness transitions remain |
+| 6 | Finish marker and start marker | Routes and Diagnostic when endpoint geometry is available/visible | 100%; preserve existing relative finish/start order for coincident endpoints |
+| 7 — top | Temporary white road/path/park selection blink | Production Coverage, while an explicit identity highlight is active | Attention exception: pulse between 100% and 0%, above labels, arrows and endpoints |
+
+HTML controls, panels, attribution and styled tooltips/popups are separate DOM
+overlays and retain their established order above the map canvas. Reapply the
+map policy after style/theme/family changes and private-layer recreation. Avoid
+reordering already-correct layers on ordinary camera frames.
+
+### Route Continuity And Display Membership (009/010)
 
 Raw routes retain their original GPS observations, but do not infer a continuous
 line between consecutive samples more than **200 metres** apart. This matches
@@ -912,6 +1420,36 @@ every non-gap edge. Do not join the samples on either side of an isolated outlie
 Singleton fragments cannot form a line; repeated-coordinate stationary runs stay
 visible. Build derived geometry during ingest before exact/LOD chunk maintenance,
 and use the same limit for focused raw lines and direction markers.
+
+The shared `raw-route-display-v3` membership additionally excludes both endpoints
+of a within-component positive-time edge above **12.5 m/s (45 km/h)** for the
+explicit Walk/Walking/Outdoor Walk/Indoor Walk and Run/Running/Outdoor Run/Indoor
+Run provider labels, compared case-insensitively. Other movement labels retain
+their existing policy. This check uses measured geographic displacement and
+elapsed time, not the provider's speed or accuracy estimate. Preserve the original
+cadence baseline and existing time/spatial breaks. Never join across excluded
+samples; discard isolated surviving fragments rather than inventing point dots.
+Valid repeated-coordinate stationary runs remain visible.
+
+Speed rejection alone can leave slower remnants of one failed GPS episode.
+For walking/running, an impossible-speed seed plus deteriorated accuracy can
+activate bounded recovery filtering. Establish the reference from at least eight
+usable, non-rejected accuracy fixes among the preceding 32, no more than 300
+seconds before the seed. The recovery accuracy ceiling is the greater of 3 m
+and twice the best reference accuracy. Include the degraded lead-in when a recent
+stable window identifies it. Require ten consecutive reliable fixes with positive
+time deltas and plausible recovery motion (up to 3 m/s walking or 6 m/s running)
+before retaining the recovery window. Recording gaps do not independently end
+the episode. Limit lookahead to 600 fixes and 300 seconds since the latest
+impossible-speed seed. Without a confirmed recovery inside those limits, retain
+the endpoint-only rule. These recovery limits do not globally cap valid movement;
+poor accuracy alone, legitimate fast running and other activity types are not
+grounds for this additional rejection.
+
+One owner-scoped database helper selects retained sequences and components for
+ingest-derived geometry and both exports. Focused raw rendering honors those
+authoritative components, including when the remaining timestamps would otherwise
+look continuous. Start/finish and arrows use the same filtered points.
 
 Existing workouts require an explicitly authorized, account-scoped scan and
 guarded derived-data repair, not deletion of provider input or an automatic
@@ -950,6 +1488,7 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 3. Deterministic OSM-derived segments remain the match-evidence and rendered-geometry units; they are not the user-facing counting or table-row identity.
 4. Source logical paths group graph-connected named segments by normalized name within one attribution scope, including road/path transitions, branches, and source-way transitions. Named road segments within one scope/name also connect within 15 meters, extended to 50 meters only when both are explicitly one-way, so divided carriageways remain one attribution. The scope is the containing named park when attributed, otherwise authoritative municipality, otherwise county, otherwise provider region. In a synthetic example, Example Boulevard in Example Borough and in Sample Borough remain separate source paths. Source 030 adds display grouping over these unchanged source identities, as specified below.
 5. Segment-to-locality assignment uses imported administrative boundaries and deterministic geometry rules. Segment derivation splits at locality boundaries where needed rather than assigning a cross-boundary geometry wholly to the wrong locality.
+5a. The same source-ordered clipping splits roads/paths at qualifying park boundaries and formally unnamed roads/paths at qualifying education boundaries before attribution. Inside pieces receive the containing-area attribution; outside pieces retain normal identity. A partially overlapping original segment must not cause its entire inside portion to be discarded or its outside portion to be attributed. Holes, repeated crossings, original geometry and graph connectivity are preserved. Validation rejects material unsplit park/education crossings even when no attribution tag was assigned.
 6. Connected unnamed segments share one logical identity within the same attribution scope and road/path class across simple two-segment continuations, even when source lineage changes. At a larger branch, one source way remains connected and the only two incident segments of one exact broad class may continue across source ways; other cross-source branches remain separate. Disconnected components always receive separate identities, including when they shared an incoming legacy ID. Driveway, parking-aisle, and parking-area logical paths remain rendered but are omitted from user-facing statistics/history.
 6a. A non-road municipality piece of at most 25 meters is treated as a municipal-boundary sliver and reassigned to county scope only when the immediately adjacent pieces of the same clipped source segment both belong to that county and preserve the same name state and exact broad class. Park-attributed pieces and road pieces never use this exception.
 7. Durable segment evidence contains at most one match per workout and physical segment. Overlapping or contiguous decoded traversal spans are dissolved regardless of direction, so repeated passes and GPS jitter neither create duplicate matches nor inflate covered length.
@@ -971,8 +1510,16 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 18a. Bulk delivery evaluates coverage once and is limited to **50,000 entities and 64 MiB of uncompressed JSON including metadata**. Exceeding either bound returns **422 Problem Details**, field `bulk`, code `limit`, with no partial results. The dialog asks the user to choose a smaller date range and never caches an oversized, failed, aborted or incomplete response. A complete bulk response reports page 1, page size 50,000, total items equal to the returned item count, and one total page (zero for an empty result). Valid page/pageSize inputs do not slice bulk results; server search/sort remain supported. Non-bulk API clients retain ordinary pagination capped at 100 rows.
 18b. Every column value stays within its padded content width. Overflow uses an ellipsis; only actually truncated values expose the complete text through the shared styled, single-line tooltip. The tooltip is portaled above the modal dialog, not clipped by the scrolling table or hidden below its overlay/content. Resizing, font loading and changed text update truncation without replacing focused buttons. No native HTML title duplicates this help.
 18c. Only one portaled tooltip owns an active hover/focus at a time. Wheel scrolling rechecks the element under the pointer: a disabled route row that moves away loses its tooltip before another row activates one. Merely repositioning or resizing a superseded tooltip cannot reopen it. Keyboard focus remains intact, while clipped or departed anchors do not leave floating help behind.
+18d. Freeze table capacity from the complete **unfiltered** result set, including unnamed roads and paths even when their display checkbox is off. Use up to `min(preferredPageSize,25)` rows; a short unfiltered set can establish a shorter initial dialog. Search, unnamed visibility, zero matches and partial pages retain blank row space and cannot shrink/recenter the dialog or move its input. Reopening with a saved filter/page derives size from the full cached membership, so clearing that filter does not enlarge it. Reserve initial loading capacity until membership is known; if the user has already focused/edited the search or changed controls, retain that reservation for the open session. Keep the footer present and reserve its unfiltered caption width too. Smaller viewports retain a scrollable table with reachable heading, search and footer controls.
+18e. Reserve viewport height independently of result rows. A zero-result Road Coverage or New visits table retains its header and an empty body, with slightly larger muted status text centered in the visible empty viewport. Do not render the message as the first row or add spacer result rows. Unused slots in a nonempty partial result are hidden. Viewport measurement uses untransformed layout metrics so dialog entry animations cannot alter its reserved size.
 19. Closing Road Coverage reveals the existing mounted map. The X button or Escape dismisses it.
 20. Clicking an entity name closes the dialog, fits its date-range geometry with a minimum 500-meter extent, and starts blinking it white immediately. The three-second highlight duration begins only after camera movement ends and MapLibre reports all requested base/Coverage tiles loaded; render and source events drive this check so the blink itself cannot prevent readiness, and a bounded fallback handles failed tile sources. Clicking an eligible visit date closes the dialog, selects and centers that workout in Coverage mode, and scrolls its route row into view.
+20a. Identity fits use one direct camera transition without a flight-arc zoom-out.
+The same exact-detail/fit/blink implementation handles Stats and Road Coverage
+clicks. The signed-in frame retains center, zoom, bearing and pitch across Map
+unmounts, captures the actual current camera on movement/exit and clears it with
+private frame state at session/identity replacement. Explicit target navigation
+does not start a default/geolocation or all-routes camera fit before detail arrives.
 21. Fit on map replaces Fit routes and fits raw-route bounds in Routes mode or covered member-segment bounds in Coverage mode.
 22. Preferences contains a **Diagnostics** section with an **Enable coverage diagnostics** checkbox, disabled by default.
 23. With coverage diagnostics disabled, Coverage hides raw GPS route layers, displays durable checked-route coverage, and overlays only the focused workout's attributed coverage.
@@ -1134,6 +1681,12 @@ their cache validity additionally includes display policy/revision.
   discards arbitrary nodes nor fabricates coverage across gaps. Failed attempts
   publish no partial results. Other processing limits are specified in the
   [shared architectural contract](architecture.md#shared-matching-contract).
+- A road split into finer pieces must not fail solely because it needs more than
+  a fixed number of graph hops. Expansion settles distances through cached edges
+  and loads each reachable node's adjacency at most once. Existing node/edge,
+  distance, query-response and execution bounds govern work; repeated corrections
+  do not consume an independent layer allowance. Final atomic persistence must
+  not be cancelled by a competing heartbeat waiting on its own job-row lock.
 - For identical input, OSM generations and effective matching parameters,
   diagnostics and production must make equivalent matching decisions and produce
   equivalent covered geometry, accounting for production's per-segment dissolution.
@@ -1252,11 +1805,25 @@ As a data owner, I want to delete one workout or an explicit period for privacy 
 1. Individual deletion targets one workout ID.
 2. Range deletion requires explicit inclusive start and end dates.
 3. Relative date enums are not accepted for deletion.
-4. Acceptance logically hides targets from Summary, Map, Coverage, and exports.
+4. Acceptance logically hides targets from Summary, Map, Coverage, Stats and exports; report first/predecessor history is recomputed without the hidden visits.
 5. UI deletion removes visible rows and routes optimistically.
 6. The worker purges the workout record, route points, attribution, detailed provenance, and affected aggregates after logical hiding.
 7. A retry uses the original immutable workout-ID set.
 8. A sanitized deletion audit retains requester, range, count, status, and timestamps.
+9. The confirmation has two logical lines separated by one explicit line break.
+   The first is **This workout will be hidden from view immediately.** or
+   **These workouts will be hidden from view immediately.** The second is:
+   **Workout data, including routes, workout-specific import and processing records,
+   and coverage attributions, will be purged by a background task, and stats will
+   be recalculated. This cannot be undone!**
+10. Physical deletion removes workout-owned rows, including raw/derived routes,
+    provenance, metrics, processing contexts/proofs and Coverage attributions.
+    Shared stats lose the workout's contribution rather than being removed in
+    their entirety. Task/job history and source-file bookkeeping remain, as do
+    deletion tombstones that prevent resurrection. Stale canonical report/map
+    contexts become unservable on generation/revision changes and are removed by
+    later context garbage collection, not directly by the deletion task. Source
+    export files and backups are outside this operation.
 
 ### Validation
 
@@ -1274,7 +1841,7 @@ As a data owner, I want to delete one workout or an explicit period for privacy 
 
 - Given a range deletion, when accepted, then later queries exclude the fixed target set.
 - Given cleanup failure, when the user reviews Data Sync, then a retry and relevant logs are available.
-- Given successful physical deletion and a later bounded ingest of the original files, then the workouts are recreated with new application IDs for testing.
+- Given successful physical deletion and a later ingest of the same provider/fallback identity, the retained deletion tombstone suppresses resurrection, including replacement sources under the provider-identity contract.
 
 ## Feature: Monitor Jobs And Diagnostics
 
@@ -1302,6 +1869,7 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 15a. Each successful run-detail refresh also refreshes the open Files page, including when the detail response is unchanged. When the job or a source child has recorded ingest activity, also refresh the open Events page, including the final successful detail refresh after the job becomes terminal. Preserve disclosure pages, the Files failure filter and scroll position; mark closed Files and applicable Events pages stale without fetching them. Logs remain manually refreshed. Opening or paging Files on an active run also refreshes the run counters. Failed detail refreshes do not initiate Files or Events refreshes. These remain separately sampled HTTP responses, not an atomic multi-endpoint snapshot.
 16. Manual and Automated sync show the actual current ingest activity after file counters and results, whether zero, one or many files were processed. File-counter completion does not imply job completion. Source details show their own activity; the root repeats the single active source's activity or labels each active source separately when several are active. Cancellation and terminal status take precedence over the last recorded phase.
 17. Task history Operation and Status controls use the same spacing between controls as their top, bottom and right insets. Both selection panels share one anchor spanning the full filter row: Operation's left edge through Status's right edge, 12px below the row. Long lists scroll in place. Radio selection, arrow-key navigation, Escape dismissal and page-reset/filter semantics remain available.
+17a. Order the Operation choices as All operations, Manual sync, Automated sync, Coverage update, Workout deletion.
 
 ### Ingest Activity Messages
 
@@ -1512,16 +2080,16 @@ As an administrator, I want to inspect and refresh public path data without affe
 As a user, I want the product to remain usable on desktop and iPad-sized tablets
 or larger.
 
-The 10/11/2026 scope decision assigns tablet-focused UI/UX to Milestone 10.
+The 10/11/2026 scope decision assigns tablet-focused UI/UX to what is now Milestone 11.
 References to mobile layouts in this specification target iPad-class tablets,
 not iPhone-sized screens; phone-focused development is explicitly out of scope.
 
 ### Behavior
 
 1. Desktop shows a bold Workouts Explorer wordmark at upper left.
-2. Summary/Map controls appear at the top left with the date control to their right.
+2. Primary tabs appear in Summary, Map, Stats, Data Sync order. Summary retains its date control; Map and Stats put the shared Date range picker first in their left panels.
 3. Map mode uses compact Routes/Coverage radio controls beside the bulk workout checkbox in the Workouts panel.
-4. The upper-right avatar opens Data Sync, Preferences, and Sign out.
+4. Data Sync is a primary tab; the upper-right avatar opens Preferences and Sign out.
 5. An About information control appears beside the avatar.
 6. Mobile omits the wordmark to maximize content space.
 7. Mobile Map overlays the avatar in the upper right.
@@ -1532,6 +2100,7 @@ not iPhone-sized screens; phone-focused development is explicitly out of scope.
 12. The unified workout list consumes the remaining panel height above Coverage stats and Fit on map and scrolls independently.
 13. Map legend/diagnostic cards and navigation controls share an outer inset of **0.75rem on mobile layouts and 1rem on desktop**; MapLibre's inner control margin is zero. The Road coverage legend reserves the zoom-control column and gutter rather than overlapping it on narrow maps. Existing viewport-bound map and sidebar scrolling remain unchanged.
 14. Route and Coverage tooltips are passive canvas-level popups above the legend, navigation controls and attribution. They do not intercept pointer events or interrupt hover; the map host must not trap their stacking below sibling overlays.
+15. Keyboard focus indicators remain visible on all sides for route-list actions, unavailable-route help, sorting headers and segmented choices. All shared sortable-table headers use the same cell-wide inset outline inside the cell borders, including Workout log, New Coverage and dialog tables. Use inset rings where overflow/rounded frames would clip an outward outline on other targets. Selected segments use a contrasting themed focus color, with system Highlight in forced-colors mode. Focus alone does not change route selection, activate a mode or sort the table. Narrow Stats layouts use available report width so a header target fits inside its scrolling frame; retain the centered half-width composition at the desktop breakpoint.
 
 ### Validation
 
@@ -1582,3 +2151,97 @@ As an owner or administrator, I want a discoverable and validated REST API for s
 
 - Given a misspelled JSON field, when an API command is submitted, then it is rejected rather than ignored.
 - Given a bearer session token in Swagger, when an owner operation is invoked, then normal account authorization still applies.
+
+## Feature: Install And Use The Public Release
+
+**Planned Milestone 13: GitHub Project Publication.** The owner's production
+deployment, capacity and environment-specific hardening move to Milestone 14.
+
+### User story
+
+As a public self-hosting operator, I want published images, installable charts and
+human-readable documentation so that I can run the product without access to the
+developer's private infrastructure or development history.
+
+### Publication and discovery
+
+1. Publish the initial stable product as **GitHub Release v1.0.0**. Root `VERSION`
+   becomes `1.0.0` during release preparation; chart `version`/`appVersion`, Git
+   release tag and component images identify that same verified release.
+2. Use **GitHub Actions** for public CI pipelines: PR build/test validation,
+   trusted release builds, GHCR image publication, Helm publication, documentation
+   validation and GitHub Pages deployment. Public build/test badges in README
+   link to those actual workflows and never substitute static passing labels.
+3. Release notes provide supported versions/architectures, prerequisites, artifact
+   references, installation/upgrade documentation and known limitations. Publish
+   license/notices, contribution and support/security reporting information.
+4. Public GHCR image packages include the UI, API, shared worker and OSM operator.
+   Release consumers can pull them anonymously. Stable version/digest references
+   identify reproducible content; a `latest` alias identifies the newest completed
+   stable release without changing existing version-pinned chart installations.
+
+### Helm installation and database choice
+
+1. Publish one versioned Helm package through both a conventional HTTPS Helm
+   repository (`index.yaml`) and a public OCI chart repository in GHCR. Document
+   both `helm repo add`/`helm install` and OCI `helm install` usage, including
+   namespace, release values and required Secret setup.
+2. Public chart defaults point to the newest compatible stable GHCR images at
+   chart release time, with matching version/digest pins and documented overrides.
+   No private Harbor access or manual image build is necessary.
+3. Include a standard **single-server/standalone PostgreSQL chart dependency**,
+   enabled by default. Document how to disable it and use **BYO PostgreSQL**.
+   Both modes support separate application and public OSM databases/roles, the
+   supported PostgreSQL/PostGIS versions and required UTF8/collation behavior.
+4. Bundled mode persists database storage and credentials across ordinary chart
+   upgrades. Explain storage classes, sizing, backup/restore, credential/key
+   retention and uninstall/PVC behavior. External mode uses explicit connection/
+   Secret and TLS settings without creating or replacing an external database server.
+5. A clean install waits for a usable database, establishes required roles and
+   schema, then bootstraps the application. Upgrades enforce supported migration
+   compatibility before incompatible workloads serve traffic. Database/dependency
+   failures stop initialization with actionable diagnostics rather than a Helm
+   hook deadlock, a partially initialized usable application or ignored errors.
+6. Document external requirements such as SMTP, ingress/TLS, base-map access and
+   source/OSM setup separately from components supplied by the chart. Operator
+   instructions cover keys/Secrets and administrator bootstrap before first signin.
+
+### Human-facing documentation
+
+1. Publish a **Docusaurus** documentation site built from Markdown/MDX as static
+   HTML on **GitHub Pages**, using **GitHub Actions** for validation and deployment.
+2. Provide distinct administrator and end-user navigation, search, stable links and
+   version-aligned guides. README links to the site, release and tested quick start.
+3. Administrator guides cover prerequisites, both installation/database modes,
+   configuration/Secrets, SMTP, invitations/account lifecycle, sources, initial OSM
+   import/refresh, operations, backup/restore, upgrades, recovery and uninstall.
+4. User guides cover invitations/signin/recovery, Summary, workout detail/actions,
+   Map/Routes/Coverage, Stats reports, Data Sync, notifications and preferences.
+5. Provide API/Swagger and Helm values references and runnable, portable examples.
+   Distinguish guide content from chronological developer implementation receipts;
+   public installation requires no private hostnames, source archives or credentials.
+
+### Validation and failure cases
+
+- A release fails publication checks when VERSION/tag/chart/image versions disagree,
+  required tests fail, referenced images are unavailable or docs/links fail to build.
+- Untrusted PR validation cannot publish images, charts, Pages or release assets.
+  Release reruns preserve existing immutable version artifacts or reject a conflict.
+- Both Helm channels must contain the identical package and retain previous chart
+  versions; users do not need to guess which package matches the release.
+- Missing installation prerequisites, failed migrations or unsupported database
+  extensions/collations produce actionable setup failures, not a false success.
+
+### Acceptance criteria
+
+- A new operator follows published guides on a clean cluster, pulls public images
+  and installs 1.0.0 using either Helm channel without private registry access.
+- Both bundled PostgreSQL and BYO paths complete bootstrap, import and core
+  Summary/Map/Coverage/Stats/Data Sync journeys, with working documented upgrade
+  and recovery paths and no pre-install dependency deadlock.
+- GitHub Actions build/test badges reflect the linked jobs; the public GitHub
+  Release, image manifests/digests, chart package and docs refer to the same source.
+- The GitHub Pages site works under its project base path, has searchable admin/
+  user guides and valid release-specific installation/API/Helm links.
+- Upgrades preserve supported database data/credentials; uninstall documentation
+  accurately states which data is retained and how explicit removal works.

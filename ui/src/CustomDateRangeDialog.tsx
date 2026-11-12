@@ -61,7 +61,7 @@ export function CustomDateRangeDialog({
     <Dialog.Root open={open} onOpenChange={changeOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content custom-range-dialog">
+        <Dialog.Content className="dialog-content compact-dialog custom-range-dialog">
           <div className="dialog-heading">
             <div>
               <Dialog.Title>Custom date range</Dialog.Title>

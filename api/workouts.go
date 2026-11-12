@@ -28,6 +28,7 @@ type readPreferences struct {
 type resolvedRange struct {
 	start, end time.Time
 	timezone   string
+	allTime    bool
 }
 
 type rangeInput struct {
@@ -68,8 +69,12 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		return
 	}
 	zone := (*string)(params.Tz)
-	resolved, field, err := resolveRange(rangeInput{params.StartDate, params.EndDate, params.DateRangeEnum, zone}, prefs, time.Now())
+	resolved, field, err := resolveAccountRange(r.Context(), tx, rangeInput{params.StartDate, params.EndDate, params.DateRangeEnum, zone}, prefs, time.Now())
 	if err != nil {
+		if field == "" {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
 		writeWorkoutRangeError(w, r, field, err.Error())
 		return
 	}
@@ -130,6 +135,7 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 func queryWorkoutColumnExtents(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) (int64, generated.WorkoutColumnExtents, error) {
 	var total int64
 	var duration, distance, pace, calories, heartRate, elevationGain *string
+	filter, arguments := dateRange.filter("w.local_start_date", 1)
 	err := tx.QueryRow(ctx, `SELECT count(*)::bigint,trim_scale(max(w.provider_duration))::text,
 		trim_scale(max(metrics.distance_value))::text,
 		trim_scale(max(CASE WHEN metrics.distance_value>0 THEN w.provider_duration/(60*metrics.distance_value) END))::text,
@@ -142,7 +148,7 @@ func queryWorkoutColumnExtents(ctx context.Context, tx pgx.Tx, dateRange resolve
 		max(value) FILTER (WHERE metric='heart_rate_average' AND unit='count/min') AS heart_rate_value,
 		max(value) FILTER (WHERE metric='elevation_up' AND unit='m') AS elevation_gain_value
 		FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=w.id) metrics ON true
-	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).
+	 `+filter, arguments...).
 		Scan(&total, &duration, &distance, &pace, &calories, &heartRate, &elevationGain)
 	if err != nil {
 		return 0, generated.WorkoutColumnExtents{}, err
@@ -308,7 +314,7 @@ func (s *Server) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, wor
 		return
 	}
 	defer tx.Rollback(r.Context())
-	result := generated.WorkoutPointsExport{SchemaVersion: generated.WorkoutPointsExportSchemaVersionN1, WorkoutId: compactUUID(id)}
+	result := generated.WorkoutPointsExport{SchemaVersion: generated.N2, DisplayPolicy: generated.WorkoutPointsExportDisplayPolicyRawRouteDisplayV3, WorkoutId: compactUUID(id)}
 	var localDate *time.Time
 	err = tx.QueryRow(r.Context(), `SELECT type.provider_label,workout.started_at,workout.ended_at,workout.local_start_date
 		FROM app.workouts workout JOIN app.workout_types type ON type.id=workout.workout_type_id AND type.account_id=workout.account_id
@@ -322,35 +328,8 @@ func (s *Server) ExportWorkoutPoints(w http.ResponseWriter, r *http.Request, wor
 		return
 	}
 	result.WorkoutType = healthautoexport.CanonicalActivityLabel(result.WorkoutType)
-	rows, err := tx.Query(r.Context(), `SELECT sequence,recorded_at,timestamp_offset_minutes,longitude,latitude,altitude,speed,course,
-		horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy
-		FROM app.workout_route_points WHERE workout_id=$1 AND account_id=$2 ORDER BY sequence`, id, *session.accountID)
+	result.Points, err = queryDisplayedRoutePoints(r.Context(), tx, id, *session.accountID)
 	if err != nil {
-		writeWorkoutUnavailable(w, r)
-		return
-	}
-	defer rows.Close()
-	result.Points = make([]generated.NormalizedRoutePoint, 0)
-	for rows.Next() {
-		var point generated.NormalizedRoutePoint
-		var offset *int
-		var altitude, speed, course, horizontalAccuracy, verticalAccuracy, speedAccuracy, courseAccuracy *float64
-		if err = rows.Scan(&point.Sequence, &point.RecordedAt, &offset, &point.Longitude, &point.Latitude, &altitude, &speed, &course,
-			&horizontalAccuracy, &verticalAccuracy, &speedAccuracy, &courseAccuracy); err != nil {
-			writeWorkoutUnavailable(w, r)
-			return
-		}
-		setNullable(&point.OriginalOffsetMinutes, offset)
-		setNullable(&point.AltitudeMeters, altitude)
-		setNullable(&point.SpeedMetersPerSecond, speed)
-		setNullable(&point.CourseDegrees, course)
-		setNullable(&point.HorizontalAccuracyMeters, horizontalAccuracy)
-		setNullable(&point.VerticalAccuracyMeters, verticalAccuracy)
-		setNullable(&point.SpeedAccuracyMetersPerSecond, speedAccuracy)
-		setNullable(&point.CourseAccuracyDegrees, courseAccuracy)
-		result.Points = append(result.Points, point)
-	}
-	if rows.Err() != nil {
 		writeWorkoutUnavailable(w, r)
 		return
 	}
@@ -383,32 +362,15 @@ func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 	defer tx.Rollback(r.Context())
-	result := generated.WorkoutGeoJSONFeature{Type: generated.WorkoutGeoJSONFeatureTypeFeature, Geometry: generated.GeoJSONLineString{Type: generated.LineString}}
+	result := generated.WorkoutGeoJSONFeature{Type: generated.WorkoutGeoJSONFeatureTypeFeature}
 	result.Properties.WorkoutId = compactUUID(id)
+	result.Properties.DisplayPolicy = generated.WorkoutGeoJSONPropertiesDisplayPolicyRawRouteDisplayV3
 	var localDate *time.Time
-	var minimumAltitude, maximumAltitude, elevationGain *float64
-	var completeAltitude bool
-	err = tx.QueryRow(r.Context(), `SELECT type.provider_label,workout.started_at,workout.ended_at,workout.local_start_date,
-		route.point_count,route.minimum_longitude,route.minimum_latitude,route.maximum_longitude,route.maximum_latitude,
-		route.minimum_altitude,route.maximum_altitude,route.elevation_gain,route.has_complete_altitude
-		FROM app.workouts workout JOIN app.workout_types type ON type.id=workout.workout_type_id AND type.account_id=workout.account_id
-		JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
-		WHERE workout.id=$1 AND workout.account_id=$2`, id, *session.accountID).
-		Scan(&result.Properties.WorkoutType, &result.Properties.StartedAt, &result.Properties.EndedAt, &localDate,
-			&result.Properties.PointCount, &result.Properties.Bounds.MinimumLongitude, &result.Properties.Bounds.MinimumLatitude,
-			&result.Properties.Bounds.MaximumLongitude, &result.Properties.Bounds.MaximumLatitude,
-			&minimumAltitude, &maximumAltitude, &elevationGain, &completeAltitude)
+	err = tx.QueryRow(r.Context(), `SELECT type.provider_label,workout.started_at,workout.ended_at,workout.local_start_date
+  FROM app.workouts workout JOIN app.workout_types type ON type.id=workout.workout_type_id AND type.account_id=workout.account_id
+  WHERE workout.id=$1 AND workout.account_id=$2`, id, *session.accountID).
+		Scan(&result.Properties.WorkoutType, &result.Properties.StartedAt, &result.Properties.EndedAt, &localDate)
 	if err == pgx.ErrNoRows {
-		var routeExists bool
-		lookupErr := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM app.workouts WHERE id=$1 AND account_id=$2)`, id, *session.accountID).Scan(&routeExists)
-		if lookupErr != nil {
-			writeWorkoutUnavailable(w, r)
-			return
-		}
-		if routeExists {
-			writeProblem(w, r, http.StatusConflict, "Conflict", "workout has no route to export")
-			return
-		}
 		writeProblem(w, r, http.StatusNotFound, "Not Found", "workout was not found")
 		return
 	} else if err != nil {
@@ -416,37 +378,16 @@ func (s *Server) ExportWorkoutGeoJSON(w http.ResponseWriter, r *http.Request, wo
 		return
 	}
 	result.Properties.WorkoutType = healthautoexport.CanonicalActivityLabel(result.Properties.WorkoutType)
-	if minimumAltitude != nil && maximumAltitude != nil && elevationGain != nil {
-		result.Properties.ElevationSummary.Set(generated.RouteElevation{MinimumMeters: *minimumAltitude, MaximumMeters: *maximumAltitude, GainMeters: *elevationGain})
-	} else {
-		result.Properties.ElevationSummary.SetNull()
-	}
-	if result.Properties.PointCount < 2 {
-		writeProblem(w, r, http.StatusConflict, "Conflict", "workout route needs at least two points for GeoJSON")
-		return
-	}
-	rows, err := tx.Query(r.Context(), `SELECT longitude,latitude,altitude FROM app.workout_route_points
-		WHERE workout_id=$1 AND account_id=$2 ORDER BY sequence`, id, *session.accountID)
+	points, err := queryDisplayedRoutePoints(r.Context(), tx, id, *session.accountID)
 	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
 	}
-	defer rows.Close()
-	result.Geometry.Coordinates = make([][]float64, 0, result.Properties.PointCount)
-	for rows.Next() {
-		var longitude, latitude float64
-		var altitude *float64
-		if err = rows.Scan(&longitude, &latitude, &altitude); err != nil || (completeAltitude && altitude == nil) {
-			writeWorkoutUnavailable(w, r)
-			return
-		}
-		coordinate := []float64{longitude, latitude}
-		if completeAltitude {
-			coordinate = append(coordinate, *altitude)
-		}
-		result.Geometry.Coordinates = append(result.Geometry.Coordinates, coordinate)
+	if len(points) < 2 {
+		writeProblem(w, r, http.StatusConflict, "Conflict", "workout has no displayed route to export")
+		return
 	}
-	if rows.Err() != nil || len(result.Geometry.Coordinates) != result.Properties.PointCount {
+	if err = populateDisplayedGeoJSON(&result, points); err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
 	}
@@ -544,7 +485,7 @@ func (s *Server) GetWorkoutSummary(w http.ResponseWriter, r *http.Request, param
 	if !ok {
 		return
 	}
-	tx, err := s.accountTransaction(r.Context(), *session.accountID)
+	tx, err := s.accountTransactionWithOptions(r.Context(), *session.accountID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
@@ -556,8 +497,12 @@ func (s *Server) GetWorkoutSummary(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	zone := (*string)(params.Tz)
-	resolved, field, err := resolveRange(rangeInput{params.StartDate, params.EndDate, params.DateRangeEnum, zone}, prefs, time.Now())
+	resolved, field, err := resolveAccountRange(r.Context(), tx, rangeInput{params.StartDate, params.EndDate, params.DateRangeEnum, zone}, prefs, time.Now())
 	if err != nil {
+		if field == "" {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
 		writeWorkoutRangeError(w, r, field, err.Error())
 		return
 	}
@@ -591,7 +536,7 @@ func resolveRange(input rangeInput, prefs readPreferences, now time.Time) (resol
 		if _, err := time.LoadLocation(prefs.timezone); err != nil {
 			return resolvedRange{}, "timezone", fmt.Errorf("stored time zone is invalid")
 		}
-		return resolvedRange{dateOnly(start), dateOnly(end), prefs.timezone}, "", nil
+		return resolvedRange{start: dateOnly(start), end: dateOnly(end), timezone: prefs.timezone}, "", nil
 	}
 	if input.shortcut == nil {
 		return resolvedRange{}, "dateRangeEnum", fmt.Errorf("provide dateRangeEnum or startDate and endDate")
@@ -607,6 +552,8 @@ func resolveRange(input rangeInput, prefs readPreferences, now time.Time) (resol
 	today := dateOnly(now.In(location))
 	start, end := today, today
 	switch *input.shortcut {
+	case generated.AllTimeRange:
+		return resolvedRange{start: today, end: today, timezone: zone, allTime: true}, "", nil
 	case generated.ThisWeek, generated.LastWeek:
 		first := time.Monday
 		if prefs.firstWeekday == "sunday" {
@@ -637,7 +584,28 @@ func resolveRange(input rangeInput, prefs readPreferences, now time.Time) (resol
 	default:
 		return resolvedRange{}, "dateRangeEnum", fmt.Errorf("is not supported")
 	}
-	return resolvedRange{start, end, zone}, "", nil
+	return resolvedRange{start: start, end: end, timezone: zone}, "", nil
+}
+
+func resolveAccountRange(ctx context.Context, tx pgx.Tx, input rangeInput, prefs readPreferences, now time.Time) (resolvedRange, string, error) {
+	result, field, err := resolveRange(input, prefs, now)
+	if err != nil || !result.allTime {
+		return result, field, err
+	}
+	// Display bounds never become query bounds for the unfiltered mode. Unknown
+	// workout-local dates use the recorded start in the selected display zone.
+	err = tx.QueryRow(ctx, `SELECT
+		coalesce(min(coalesce(local_start_date,(started_at AT TIME ZONE $1)::date)),$2::date),
+		greatest($2::date,coalesce(max(coalesce(local_start_date,(started_at AT TIME ZONE $1)::date)),$2::date))
+		FROM app.workouts WHERE deletion_requested_at IS NULL`, result.timezone, result.end).Scan(&result.start, &result.end)
+	return result, "", err
+}
+
+func (r resolvedRange) filter(column string, first int) (string, []any) {
+	if r.allTime {
+		return "", nil
+	}
+	return fmt.Sprintf(" WHERE %s BETWEEN $%d AND $%d", column, first, first+1), []any{r.start, r.end}
 }
 
 func dateOnly(value time.Time) time.Time {
@@ -697,8 +665,10 @@ const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_lab
 
 func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page, pageSize int, sorts []workoutSort) ([]generated.Workout, error) {
 	order := workoutOrderExpressions(sorts)
-	query := workoutSelect + ` WHERE w.local_start_date BETWEEN $1 AND $2 ORDER BY ` + strings.Join(order, ",") + ` LIMIT $3 OFFSET $4`
-	rows, err := tx.Query(ctx, query, dateRange.start, dateRange.end, pageSize, (page-1)*pageSize)
+	filter, arguments := dateRange.filter("w.local_start_date", 1)
+	query := workoutSelect + filter + ` ORDER BY ` + strings.Join(order, ",") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(arguments)+1, len(arguments)+2)
+	arguments = append(arguments, pageSize, (page-1)*pageSize)
+	rows, err := tx.Query(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -780,6 +750,7 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 }
 
 func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]generated.WorkoutTypeSummary, generated.SummaryTotals, error) {
+	filter, arguments := dateRange.filter("w.local_start_date", 1)
 	rows, err := tx.Query(ctx, `SELECT wt.id,wt.type_key,wt.provider_label,count(*)::bigint,trim_scale(sum(w.provider_duration))::text,
 		 trim_scale(sum(metrics.distance))::text,trim_scale(sum(metrics.energy))::text,count(route.workout_id)::bigint,
 		 trim_scale(sum(metrics.distance) FILTER (WHERE route.workout_id IS NOT NULL))::text,count(metrics.distance)::bigint
@@ -788,8 +759,8 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
 	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
-	 WHERE w.local_start_date BETWEEN $1 AND $2 GROUP BY wt.id,wt.type_key,wt.provider_label
-	 ORDER BY wt.provider_label COLLATE "C",wt.type_key,wt.id`, dateRange.start, dateRange.end)
+	 `+filter+` GROUP BY wt.id,wt.type_key,wt.provider_label
+	 ORDER BY wt.provider_label COLLATE "C",wt.type_key,wt.id`, arguments...)
 	if err != nil {
 		return nil, generated.SummaryTotals{}, err
 	}
@@ -827,7 +798,7 @@ func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]ge
 	  max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS energy
 	  FROM app.workout_aggregates a WHERE a.workout_id=w.id) metrics ON true
 	 LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id
-	 WHERE w.local_start_date BETWEEN $1 AND $2`, dateRange.start, dateRange.end).Scan(&duration, &distance, &energy, &routeCount, &routedDistance, &distanceCount)
+	 `+filter, arguments...).Scan(&duration, &distance, &energy, &routeCount, &routedDistance, &distanceCount)
 	if err != nil {
 		return nil, generated.SummaryTotals{}, err
 	}

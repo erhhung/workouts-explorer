@@ -121,7 +121,7 @@ func TestCoverageEntityStatsCanonicalParkAvailability(t *testing.T) {
 	visits := coverageDisplayFunction(t, source, "coverage_display_source_visits")
 	bounds := coverageEntityStatsCTE(t, visits, "park_bounds")
 	canonicalRequire(t, bounds, "FROM eligible JOIN app.workout_park_display_bounds bounds",
-		"FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end)",
+		"FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end))",
 		"min(bounds.region_id COLLATE \"C\") historical_region_id")
 	canonicalForbid(t, bounds, "app.workout_park_attributions", "HAVING", "ST_")
 	prepare := coverageDisplayFunction(t, source, "prepare_coverage_display_context")

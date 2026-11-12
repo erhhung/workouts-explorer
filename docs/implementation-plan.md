@@ -2,6 +2,23 @@
 
 This plan delivers vertical, testable product slices. It intentionally avoids a file-by-file task inventory. Each milestone should leave `main` deployable and preserve the contracts established in the product, functional, architecture, and ADR documents.
 
+Every UI slice starts with the [UI style guide](ui-style-guide.md) and the closest
+existing composition. Include visual and behavioral consistency in implementation
+and review rather than treating it as a later styling pass.
+
+## Milestone Sequence Update (11/5/2026)
+
+**Stats And New Coverage** is the new Milestone 9. Administration/operations,
+tablet UI/UX and MVP verification/release readiness move to **10, 11 and 12**.
+**GitHub Project Publication** is the new **Milestone 13**, and production
+deployment/scaling/security moves to **14**. Publication includes GitHub Actions
+CI, public release artifacts and human-facing installation/usage documentation.
+Forward references throughout the documentation use this sequence. Historical
+decision dates, measured results and completed M1-M8 acceptance remain unchanged.
+M9 Stats/New Coverage is complete and accepted; M10 is next planned and public
+publication remains M13 work. See the [M9 closeout](development-progress.md#milestone-9-closeout)
+and retained [initial implementation record](development-progress.md#stats-and-new-coverage-initial-implementation).
+
 ## Delivery Principles
 
 - Keep the OpenAPI document ahead of or synchronized with implementation.
@@ -472,7 +489,8 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 Complete under the user-approved scope in
 [Acceptance Decisions](#acceptance-decisions-10112026). Core functionality is
 accepted; remaining administration, tablet, benchmark and production work is
-assigned to Milestones 9-12. Automatic region addition remains indefinitely
+assigned to Milestones 10-12 and 14. Public distribution is Milestone 13.
+Automatic region addition remains indefinitely
 deferred. Scope completion does not turn unexecuted checks or historical budget
 misses into passing evidence or certify production capacity/security.
 
@@ -484,7 +502,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 
 - Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract. ADR 0008 is accepted with canonical multi-region promotion, executable overlap/replacement fixtures, and indexed xdev candidate-query evidence; the operator-run resumable updater is implemented.
 - Provision the public-data-only `osm` database on the production PostgreSQL server for shared development and production reads.
-- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The pinned importer image, failure-safe resumable generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented and exercised through derivation 20/generation 60. Administrator status/refresh API and job integration move to Milestone 9 by the 10/4/2026 scope decision; they are not unfinished Milestone 7 operator execution.
+- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The pinned importer image, failure-safe resumable generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented and exercised through derivation 20/generation 60. Administrator status/refresh API and job integration move to Milestone 10 (renumbered after the 10/4/2026 scope decision); they are not unfinished Milestone 7 operator execution.
 - Import authoritative locality boundaries and derive deterministic locality-scoped logical paths above matching segments.
 - Add offline IANA timezone boundaries. Completed with a pinned, checksummed,
   versioned `timezone-boundary-builder` import, direct route-start lookup,
@@ -499,7 +517,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Persist parent route counters for total, processed, succeeded, failed, cancelled, and superseded. Show those counters and authorized per-workout child status, attempts, duration, and safe failure category in the Data Sync Run detail without exposing coordinates.
 - Allow a failed or partially successful coverage parent to retry only failed/cancelled eligible routes using their current route revisions and matcher/OSM target; never rerun successful or superseded routes. Reuse the linear ingest retry contract: the original parent is First, each retry links to its immediate predecessor and root, only the latest parent may be retried, and Run detail navigates every parent by First, Second, ... latest ordinal. Link each retried route child to the corresponding unsuccessful child in the preceding parent. Do not advance the fully applied account/region watermark on partial failure or automatically hot-loop the failed target; retry only by user request or after desired work/OSM state advances.
 - Add PostgreSQL-coordinated global, per-account, and optional per-region matcher slots. Default to one active matcher route globally across production and diagnostics and one active production route per account, independent of worker or API replica count.
-- Give coverage workers dedicated least-privilege application credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts. Dedicated OSM reader credentials for production Coverage and diagnostics belong to the final production/security milestone, Milestone 12; xdev temporarily shares the updater credential without relaxing application-database isolation.
+- Give coverage workers dedicated least-privilege application credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts. Dedicated OSM reader credentials for production Coverage and diagnostics belong to the final production/security milestone, Milestone 14; xdev temporarily shares the updater credential without relaxing application-database isolation.
 - Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
 - Derive clipped positive-length segment traversals from decoded transitions; point projections alone create neither attribution nor rendered coverage.
 - Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning. Accepted on 9/11/2026 with matcher rules `coverage-experimental-v1` and path policy `coverage-path-policy-experimental-v82`.
@@ -512,8 +530,8 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Preserve route-level matcher review behind the per-user **Enable coverage diagnostics** preference in a **Diagnostics** preference section. When enabled, Coverage synchronously runs and displays diagnostics for only the selected route; when disabled, Coverage displays durable aggregate coverage and statistics for all checked routes. Keep the existing bounded request timeout, local gate, and fast `429 Retry-After` behavior; additionally require cluster-wide matcher admission so API replicas cannot multiply OSM load. Do not introduce diagnostic jobs or polling in this milestone.
 - Implement searchable, sortable, paginated Road Coverage in a modal dialog that preserves the mounted map and supports entity/workout navigation.
 - Serve production Coverage tiles and statistics only from durable application data. Poll bounded processing state rather than invoking matching interactively, refresh private capabilities after committed generation changes, and identify omitted pending, failed, or unavailable checked routes when presenting partial coverage.
-- Set separate CPU/memory requests and limits for UI, API, Martin, general-worker, Coverage-worker, and OSM/operator pods. The starting envelope is requests **25m CPU / 64Mi memory**, limits **250m CPU / 256Mi memory**, including chart hook containers. Keep shared matcher concurrency at one. Retain privacy-safe queue-age, matcher/route/admission timing, timeout/outcome, lease, retry, stale-rejection, pool-wait, and tile-latency instruments (see `coverage-metrics.md`); record a representative resource-capped backlog/interactive-latency run before raising concurrency. Full dashboards/alerts belong to Milestone 9, typical/stress benchmarking to Milestone 11, and final production sizing/hardening to Milestone 12.
-- Complete the operator-run OSM status, refresh/rebuild, and copied-segment reconciliation lifecycle. The remaining administrator status/refresh API and job/status contract belong to Milestone 9, not Milestone 7.
+- Set separate CPU/memory requests and limits for UI, API, Martin, general-worker, Coverage-worker, and OSM/operator pods. The starting envelope is requests **25m CPU / 64Mi memory**, limits **250m CPU / 256Mi memory**, including chart hook containers. Keep shared matcher concurrency at one. Retain privacy-safe queue-age, matcher/route/admission timing, timeout/outcome, lease, retry, stale-rejection, pool-wait, and tile-latency instruments (see `coverage-metrics.md`); record a representative resource-capped backlog/interactive-latency run before raising concurrency. Full dashboards/alerts belong to Milestone 10, typical/stress benchmarking to Milestone 12, and final production sizing/hardening to Milestone 14.
+- Complete the operator-run OSM status, refresh/rebuild, and copied-segment reconciliation lifecycle. The remaining administrator status/refresh API and job/status contract belong to Milestone 10, not Milestone 7.
 
 ### Acceptance
 
@@ -755,7 +773,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   replaced on committed data-generation changes even if readiness labels are unchanged.
 - Automatic region addition is indefinitely deferred; `osm.autoAddRegions` stays
   false. Missing promoted data leaves raw routes available and result-less Coverage
-  disabled. Dedicated OSM reader credentials are deferred to Milestone 12 before
+  disabled. Dedicated OSM reader credentials are deferred to Milestone 14 before
   production deployment; application role isolation remains required in xdev.
 - All application/OSM components start with the same 25m/64Mi requests and
   250m/256Mi limits. These are provisional dev settings, not measured production
@@ -763,8 +781,8 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   resource-capped validation. PostgreSQL resources/PVCs are not changed here.
 - Small Coverage lifecycle and tile measurements plus existing DB-pool metrics
   are the Milestone 7 observability scope. Matcher concurrency remains one;
-  dashboards/alerting move to Milestone 9, profile benchmarking to Milestone 11,
-  and final production sizing/scale tuning to Milestone 12.
+  dashboards/alerting move to Milestone 10, profile benchmarking to Milestone 12,
+  and final production sizing/scale tuning to Milestone 14.
 - The CoverageRunner end-to-end integration matrix passes ten cases and
   three race repetitions and runs in its own CI job. Month/year backend reads
   are recorded; earlier host full-length matcher correctness is separate from
@@ -775,7 +793,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   unexecuted checks remain unmeasured rather than passing evidence. See
   `coverage-acceptance.md` and its reports.
   The administrator status/refresh API and job/status contract are
-  formally moved to Milestone 9 by the 10/4/2026 decision; the completed operator
+  formally deferred by the 10/4/2026 decision, now Milestone 10; the completed operator
   lifecycle and automatic copied-segment reconciliation remain in Milestone 7.
 - Representative per-user acceptance uses `coverage-acceptance.md`: typical
   365/year with 329 routed workouts, stress 730/year with 511 routed workouts,
@@ -795,25 +813,25 @@ not removed requirements or a production-readiness claim.
 - **Resource-capped backlog: accepted for Milestone 7.** The current worker
   correctness evidence and conservative settings are sufficient for this milestone.
   Move the representative 48/96-route backlog and CPU/memory/throttling/peak-resource
-  measurements to Milestone 11. Matcher concurrency remains one; this decision
+  measurements to Milestone 12. Matcher concurrency remains one; this decision
   does not certify throughput, spare capacity or production sizing.
 - **Mixed-workload responsiveness: accepted for Milestone 7.** Dedicated Coverage
   execution and shared matcher admission controls are sufficient for this milestone.
   Move sustained Summary/Routes/Coverage/API latency and general-worker
   ingest/check/delete responsiveness during matching, including competing
-  diagnostics, to Milestone 11. No overlapping-load responsiveness pass is claimed.
+  diagnostics, to Milestone 12. No overlapping-load responsiveness pass is claimed.
 - **Profile benchmarking and visual matrix: accepted for Milestone 7.** Move
   typical/stress benchmarking and profile-specific theme/color-vision visual
-  review to MVP verification, now Milestone 11. The stress year tile and viewport
+  review to MVP verification, now Milestone 12. The stress year tile and viewport
   budget misses and unmeasured initial-map render timing remain recorded, not
   converted to passes. Tablet UI/UX development and its device-specific visual
-  review belong to the new Milestone 10. iPad-sized devices and larger are the supported mobile target;
+  review belong to Milestone 11. iPad-sized devices and larger are the supported mobile target;
   iPhone-sized UI/UX development is explicitly out of scope.
 - **Real-device and native-zoom checks: accepted for Milestone 7.** Move supported
-  iPad device, rotation, keyboard and browser-zoom validation to Milestone 10,
-  and desktop native-zoom regressions to Milestone 11. The existing UI is accepted
+  iPad device, rotation, keyboard and browser-zoom validation to Milestone 11,
+  and desktop native-zoom regressions to Milestone 12. The existing UI is accepted
   for this milestone without claiming that the unexecuted matrix passed.
-- **Production scaling and security hardening: deferred to Milestone 12.** The
+- **Production scaling and security hardening: deferred to Milestone 14.** The
   final milestone owns production deployment, capacity/scaling, final resource
   and retention settings, least-privilege OSM reader credentials, and production
   security controls. Earlier milestones retain application authorization,
@@ -833,8 +851,8 @@ is pending here, without reopening M8. The authoritative
 [Milestone 8 closeout](development-progress.md#milestone-8-closeout) records the
 deployed behavior, image lineage, browser/cleanup boundaries and private evidence
 retention. Historical results below remain scoped receipts, not new full-suite,
-capacity, load or failover passes. M9 administration, OSM administration and full
-monitoring/runbooks remain future work; M7/M11 benchmark exclusions are unchanged.
+capacity, load or failover passes. M10 administration, OSM administration and full
+monitoring/runbooks remain future work; M7/M12 benchmark exclusions are unchanged.
 
 ### Approved Source Adoption (Requires 26)
 
@@ -1187,7 +1205,108 @@ their original verification and hardening exclusions remain unchanged.
 - Credential redaction across API and worker
 - Optional real integration run outside CI when upstream ADP support works
 
-## Milestone 9: Administration And Operational Completion
+## Milestone 9: Stats And New Coverage
+
+**Complete and accepted 11/12/2026 at Helm 129.** Owner review closes the Stats/New
+Coverage slice and its navigation/UX follow-ups; see the authoritative
+[M9 closeout](development-progress.md#milestone-9-closeout). Current UI verification
+has 907 passing tests, deployed Chromium dark/WebKit light checks and retained-tab
+resource/performance evidence. M10 is next planned; the full tablet-device matrix,
+capacity/release verification and public publication remain M11-M13 work.
+
+**Initial implementation deployed 11/5/2026 at Helm 82; review was pending then.**
+Backend APIs and retained-history reads were implemented and verified before the
+UI. All 755 UI tests pass; native API/history and cold-context index-plan checks,
+catalog mutation checks and independent actual-backup-restore parity pass.
+Live Chromium/WebKit cover both rollups, count details, n/a, search and tab state.
+That initial checkpoint was not final milestone acceptance; see the
+[implementation record](development-progress.md#stats-and-new-coverage-initial-implementation).
+
+**Review follow-up deployed 11/6/2026 at Helm 83.** Shared typography and Map-style
+Month/Year controls, the centered two-thirds table, equal spacing and delayed
+header help replace the initial layout. Counts and dialog links use standard
+pointer/hover/date formatting; exact identity and in-range workout jumps preserve
+the main range and report page. Both pagers retain rows/height/scroll, and expired
+data scopes recover from transient renewal failures without remounting. The
+[review record](development-progress.md#stats-review-navigation-and-refresh)
+retains that checkpoint's verification; out-of-range previous dates are not clickable.
+
+### Outcome
+
+Users can explore statistics and trends through an extensible **Stats** tab
+between **Map** and **Data Sync**. The first report, **New Coverage**, distinguishes
+first-ever visits from first visits or returns after more than one calendar year.
+"Reports" is the navigation term for current tables and future tables/charts.
+
+### Vertical slice
+
+- Add Stats to the primary tab order: Summary, Map, Stats, Data Sync. Reuse the
+  Map-style left panel with the shared Date range picker first, then **Reports**
+  and selectable report titles. Use the existing magenta selected border plus
+  accessible selected-state semantics. New Coverage is initially selected.
+- Keep the active report and per-report controls in the parent UI frame so tab
+  switches preserve them. New Coverage defaults to **Show new visits by** Month,
+  with Year as the other radio option. Share date selection, shortcuts, recent
+  custom ranges and saved range behavior with Summary and Map.
+- Show every month/year intersecting the inclusive selected range, including zero
+  buckets and partial boundary buckets. Match Workout log styling, sortable
+  columns and the rows-per-page preference; default to date bucket descending.
+- Count named canonical Road Coverage identities using all eligible account
+  history for first/predecessor determination, then filter qualifying visits by
+  the selected workout-local dates. Reuse one full-selected-range canonical
+  context across buckets and details, independently of Map's checked workouts.
+- **New visits (all time)** counts first-ever visits. **New visits (past year)**
+  counts those same first visits plus returns strictly after the previous visit's
+  one-calendar-year anniversary. Clamp February 29 anniversaries to February 28.
+  Later repeat visits neither qualify nor replace a qualifying event's date.
+- Make each nonzero count's entire cell an accessible drill-down target. Reuse
+  Road Coverage dialog/search/table primitives with only the specified name,
+  place and event-date columns; add Previous visit for the past-year variant,
+  with grayed-out **n/a** for first-ever visits, matching missing Distance in the
+  Summary Workout log. Default New visit descending, hide the
+  unnamed toggle, narrow the dialog, shrink short tables and support Escape.
+- Add bounded account-scoped summary/detail API reads from retained canonical
+  visit evidence, generation/context guards and invalidation after data changes.
+  Stats must work without mounting Map or fetching tiles or geometry.
+- Keep the report registry extensible for future workout, route and Coverage
+  tables/charts; only New Coverage is delivered in this milestone.
+
+Detailed behavior and counting examples are in the
+[functional specification](functional-spec.md#feature-explore-stats-and-new-coverage);
+the [technical design](architecture.md#stats-reports-and-new-coverage-m9)
+defines history ordering, context scope, query boundaries and client state.
+
+### Acceptance
+
+- Tab switching restores the active report and Month/Year choice; changing the
+  shared range preserves the report choice and resets affected pages.
+- 3/25/2024 through 10/1/2026 shows March 2024 through October 2026, or
+  2024/2025/2026, while counting only visits on inclusive selected dates.
+- First-ever visits enter both columns; a repeat at exactly the anniversary does
+  not qualify, and a later visit qualifies only when its immediate predecessor
+  is more than a calendar year earlier. Out-of-range history still disqualifies.
+- Canonical merged members count once per workout/identity; named education
+  identities follow Road Coverage, and unnamed/otherwise excluded entities do not
+  enter either column. Each nonzero count agrees with the complete detail total.
+- Dialog dates identify qualifying events, not a later visit or all-time latest
+  date. Search, sorting, preference-sized paging, keyboard cell activation,
+  short-dialog sizing, Escape dismissal and focus restoration work in both themes.
+- Foreign/stale scopes and late responses cannot expose another account's data
+  or install counts/details from an obsolete range or generation.
+
+### Verification focus
+
+- First-ever/repeat/return histories, multiple workouts on one date, leap-day and
+  exact-anniversary boundaries, partial buckets, empty and all-zero ranges
+- Independent event/count oracle over all-history deduplicated canonical visits;
+  history before range, same-context cross-bucket consistency and count/detail parity
+- Account isolation, logical deletion, changed metadata/dates, retained stale
+  applied results, successful replacement and failed-rematch preservation
+- API validation, bounded pagination/payloads, stale generations and cache races
+- Desktop/tablet tab/sidebar/radio/table/dialog journeys, keyboard/focus,
+  light/dark themes, preference page sizes and narrow/short dialog layout
+
+## Milestone 10: Administration And Operational Completion
 
 ### Outcome
 
@@ -1207,7 +1326,7 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
 - Complete Helm resources, network policies where supported, service accounts, Secrets, probes, PodDisruptionBudget decisions, and emptyDir limits.
 - Document operator prerequisites for the final production milestone. Dedicated
   OSM reader credentials, enforced production network boundaries and final
-  production security/scaling validation belong to Milestone 12, not this
+  production security/scaling validation belong to Milestone 14, not this
   administration slice.
 - Add backup/restore and migration runbooks.
 - Add Argo CD multi-source example documentation for app chart plus `homelab-apps` values.
@@ -1228,21 +1347,22 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
 - Backup restore followed by migration
 - Alert rule tests from synthetic metrics
 
-## Milestone 10: Tablet-Focused UI/UX
+## Milestone 11: Tablet-Focused UI/UX
 
 ### Outcome
 
 The product is practical to use on iPad-sized tablets and larger, in portrait
 and landscape, without compromising the established desktop experience.
 iPhone-sized layouts and phone-focused development are explicitly out of scope.
-This milestone precedes the former Milestone 10, now Milestone 11.
+This milestone precedes MVP verification and release readiness, now Milestone 12.
 
 ### Vertical slice
 
 - Choose and document iPad-class reference devices and viewports; do not add
   iPhone-sized requirements or spend development effort on phone layouts.
-- Review navigation, authentication/preferences dialogs, Summary, Data Sync,
-  Map and Road Coverage as complete tablet user journeys, not just CSS reflow.
+- Review navigation, authentication/preferences dialogs, Summary, Stats, Data Sync,
+  Map, New Coverage details and Road Coverage as complete tablet user journeys,
+  not just CSS reflow.
 - Adapt dense tables, row expansion, filters, date controls, modal sizing and
   scroll ownership for portrait/landscape tablet use.
 - Make Map controls and sheets usable by touch, preserve map space, and provide
@@ -1267,15 +1387,16 @@ This milestone precedes the former Milestone 10, now Milestone 11.
 - Real iPad-class device and tablet browser checks
 - Portrait/landscape, touch, keyboard, zoom and safe-area scenarios
 - Tablet theme/contrast/color-vision review and desktop regressions
-- Summary/Data Sync/Map/dialog navigation and state-preservation journeys
+- Summary/Map/Stats/Data Sync/dialog navigation and state-preservation journeys
 
-## Milestone 11: MVP Verification And Release Readiness
+## Milestone 12: MVP Verification And Release Readiness
 
 ### Outcome
 
 The feature-complete MVP has reproducible benchmark, functional, privacy and
 recovery evidence and coordinated release artifacts. Production deployment,
-scaling and environment-specific security hardening remain Milestone 12.
+scaling and environment-specific security hardening remain Milestone 14; public
+GitHub publication follows this verification milestone as Milestone 13.
 
 ### Vertical slice
 
@@ -1292,8 +1413,9 @@ scaling and environment-specific security hardening remain Milestone 12.
 - Run dependency, container, OpenAPI, and migration compatibility checks.
 - Exercise failed source, worker crash, database restart, deletion failure, SMTP failure, and OSM failure runbooks.
 - Record benchmark resource envelopes and tuning recommendations; final production
-  resources, scale limits and retention decisions belong to Milestone 12.
-- Reconcile all documentation and prepare coordinated semver release artifacts.
+  resources, scale limits and retention decisions belong to Milestone 14.
+- Reconcile all documentation and prepare the verified release candidate and
+  coordinated semver artifact inputs for Milestone 13's public publication.
 
 ### Acceptance
 
@@ -1313,7 +1435,103 @@ scaling and environment-specific security hardening remain Milestone 12.
 - Failure injection and recovery
 - Release artifact and GitOps provenance
 
-## Milestone 12: Production Deployment, Scaling And Security Hardening
+## Milestone 13: GitHub Project Publication
+
+### Outcome
+
+A public user can discover the GitHub project, understand and install version
+**1.0.0**, obtain its images and Helm chart without private-registry access, and
+operate it using published administrator and user documentation. **GitHub Actions**
+provides the public CI and release pipelines. This milestone distributes the
+verified product; deployment to the owner's production host remains Milestone 14.
+
+### Vertical slice
+
+- Prepare the public GitHub repository and its release metadata, license/notices,
+  contribution/support/security guidance, issue templates and project links.
+  Keep public installation examples portable and based on synthetic data.
+- Bump root **VERSION to 1.0.0** during release preparation and synchronize Helm
+  `version`/`appVersion`, published component metadata and the `v1.0.0` Git tag.
+  Describe supported Kubernetes, Helm, PostgreSQL/PostGIS and CPU architectures.
+- Add **GitHub Actions** workflows under `.github/workflows/` for pull-request
+  validation and trusted-branch/release publication. Reuse the repository's Go,
+  UI, OpenAPI, database integration, image and chart checks rather than relying
+  on private Gitea runners or Harbor for the public installation path.
+- Build and publish public **GHCR OCI images** for UI, API, shared worker and the
+  OSM operator. Publish release-version, immutable commit/digest references and
+  a latest-stable alias, with coordinated source/revision metadata, checksums,
+  SBOMs and build provenance. Build/test supported architecture manifests and
+  verify anonymous image pulls; PR workflows validate without publication rights.
+- Create the initial public **GitHub Release v1.0.0**, with release notes, the
+  matching chart package, artifact checksums/provenance links, supported-version
+  information, installation/upgrade links and known limitations. Publish a
+  consistent completed artifact set before marking it the latest stable release.
+- Add README badges backed by real **GitHub Actions build and test** results,
+  plus useful release, license, documentation and chart links. Keep the README
+  focused on a tested quick start and product discovery.
+- Build a human-facing **Docusaurus** site from Markdown/MDX and publish static
+  HTML to **GitHub Pages through GitHub Actions**. Organize separate administrator
+  and user guides, with search/navigation, versioned release documentation and
+  generated or verified API/Helm references. Check links, site base paths and
+  snippets in CI; publish curated guides rather than development receipts.
+- Cover prerequisites; bundled/BYO database installation; SMTP, keys/Secrets,
+  administrator bootstrap and invitations; sources/iCloud/NFS and initial OSM
+  setup; Summary/Map/Stats/Data Sync; preferences, backups, upgrades, troubleshooting
+  and uninstall/data-retention behavior. Clearly identify operator actions and
+  external services that cannot be supplied by chart defaults.
+- Add an optional **standard standalone PostgreSQL Helm dependency**, enabled by
+  default and disableable for **BYO PostgreSQL**. Select and pin a maintained
+  single-server chart with a compatible, publicly available PostgreSQL/PostGIS
+  image; lock dependencies. Support separate application and OSM databases/roles
+  on that instance and explicit external connection/Secret settings when disabled.
+- Integrate database readiness, role provisioning, migrations and bootstrap for
+  clean installs and upgrades. A pre-install hook must not wait for an ordinary
+  dependency server that Helm has not yet created. Preserve least-privilege roles,
+  required extensions/collations, persistent credentials/storage and existing BYO
+  TLS/Secret behavior; test failure, retry and retained-data upgrade paths.
+- Publish the **same versioned Helm package** through both an HTTPS **legacy
+  chart repository** (`index.yaml` plus packages, hosted with GitHub Pages) and
+  an **OCI chart repository in GHCR**. Document both `helm repo add/install` and
+  `helm install oci://...` flows; preserve earlier packages and index entries.
+- Default public chart repositories to GHCR images for the newest compatible
+  stable release. Pin each released chart to its matching version/digests rather
+  than letting an unchanged chart drift with `latest`; retain explicit image,
+  registry, tag and digest overrides. Document latest-stable aliases separately.
+- Smoke-test fresh installation from both **published** chart channels, using
+  bundled and BYO PostgreSQL on a clean cluster with no private registry/runners
+  or homelab configuration. Exercise signin/bootstrap, import, Map/Coverage/Stats,
+  upgrades, failed migrations and documented recovery/uninstall behavior.
+
+See the [public installation contract](functional-spec.md#feature-install-and-use-the-public-release)
+and [publication architecture](architecture.md#github-publication-and-public-installation-planned-m13).
+
+### Acceptance
+
+- VERSION, chart/app versions, Git tag, GitHub Release and all component image
+  references agree on 1.0.0; public artifact pulls and both chart installation
+  instructions work without publisher credentials.
+- GitHub Actions reports real build/test results; release jobs publish only after
+  required checks pass, and docs/Helm/image artifacts identify the same source.
+- Both chart channels distribute the identical package; defaults use published
+  GHCR images and upgrading cannot silently change a released image digest.
+- Bundled PostgreSQL and BYO modes pass clean-install and upgrade tests with
+  actual extensions, collation, role separation, durable data and migration gates.
+- User/admin documentation is readable on GitHub Pages, version-aligned and
+  sufficient for a new operator to follow the tested installation/first-use path.
+- No chart defaults or release examples depend on private Harbor, Gitea, cluster
+  hostnames, development credentials or owner-specific data/configuration.
+
+### Verification focus
+
+- GitHub Actions PR/release permissions, version/tag consistency and rerun behavior
+- Public GHCR pulls, supported image manifests, SBOM/provenance and release assets
+- Helm lint/schema/render/package/index and OCI pull checks, package digest parity
+- Actual clean installs/upgrades for bundled/BYO databases, hook ordering, failed
+  initialization, extensions/collation, credential retention and PVC lifecycle
+- Docusaurus build, versioned/base-path links, README badges and executable examples
+- Published-artifact first-use journeys and installation/upgrade/recovery guidance
+
+## Milestone 14: Production Deployment, Scaling And Security Hardening
 
 ### Outcome
 

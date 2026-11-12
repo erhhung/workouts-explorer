@@ -157,7 +157,14 @@ Schema 28 enrolls failures as they occur after migration; it does not retry alre
 
 Only `coverage-route-timeout` and `coverage-transient-failed` (with a verified transient database-boundary cause) trigger automation. Generic map-processing, persistence, unknown/null, limit, validation, permission/authentication, schema/configuration and TLS failures are not themselves transient, but authoritative failed siblings with those causes travel with a qualifying mixed parent. Latest-only authority and all-failed-descriptor validation prevent a transient-only successor from stranding permanent siblings. The durable automatic budget is shared per root across descendants/restarts; manual retry does not reset it. Failure logs expose only bounded stages and validated SQLSTATE metadata, never original driver/query/route details.
 
-Typed graph node, edge, and expansion-layer limits are permanent processing limits, not timeouts, even if the operation context expires concurrently. Safe limit diagnostics contain only the `graph_node` / `graph_edge` / `graph_layer` field enum and a validated numeric bound.
+Typed graph node and edge limits are permanent processing limits, not timeouts,
+even if the operation context expires concurrently. Graph expansion caches each
+node's adjacency and settles distance corrections locally; there is no independent
+64-hop ceiling. The existing node/edge, distance, per-query and execution budgets
+bound work, and each node can trigger at most one topology lookup. Historical
+`graph_layer` failures remain recognized as permanent archived limit diagnostics;
+the current engine no longer emits that limit. Safe diagnostics retain only the
+`graph_node` / `graph_edge` / legacy `graph_layer` enum and a validated bound.
 
 Ordinary reconciliation scans do not create fresh roots for identical authoritative failed or cancelled targets, including historical failures and jobs still acknowledging cancellation. Advancing scan revisions does not reset a retry budget. A genuinely changed route input, OSM generation vector, matcher/rules/sampling/path-policy/minimum-traversal contract, regained readiness, or distinct forced-adoption event can create fresh work. Parent contexts snapshot the matcher contract so changes are distinct from unrelated scan/OSM events.
 

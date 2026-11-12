@@ -25,6 +25,14 @@ failure is not acceptable.
   than the 10-15 minute sizing target.
 
 Completed stage fences are immutable for a retained generation. If the SQL for
+an observational `validate` stage changes after validation completed, native
+resume may reset and rerun that entire stage under the corrected checks. Running
+validation cannot change fences mid-scan, and all geometry-producing stages stay
+immutable. Facility-crossing checks exclude only lines wholly within a
+`1e-9`-degree boundary buffer (less than a fifth of a millimeter), avoiding
+floating-point false crossings without ignoring real inside/outside portions.
+
+For geometry-producing stages, if the SQL for
 a completed stage changes, a later resume rejects the new image rather than mix
 outputs produced by different implementations. Therefore a generation must
 finish on the image that produced its completed fences, or resume from that
@@ -37,6 +45,14 @@ new generation.
 - Every storage-preflighted batch logs its starting PVC capacity/free space and,
   before its completion banner, the in-batch free-space low-water mark plus a
   fresh post-transaction/post-GC sample for post-run capacity analysis.
+- Operator Jobs immediately continue when fresh post-GC metrics show at least
+  10% free. Only low post-batch readings enter a five-second polling loop, bounded
+  by `OSM_STORAGE_SETTLE_TIMEOUT` (default maximum `90s`); polling stops as soon as
+  space recovers. Kubelet volume values can remain cached across fresh Prometheus
+  scrapes, so this gives temporary-file cleanup time to reach those values
+  without imposing a fixed per-batch wait. Cancellation interrupts polling. A
+  persistent low reading remains low for the next unit's normal starting-space
+  check, and a recorded block still requires an explicit operator unblock.
 - One database-wide advisory lock makes the updater the sole owner of build and
   resumability resources. After acquiring it, startup terminates stale
   `workouts-osm-update` backends from older Jobs and verifies that their
@@ -87,7 +103,8 @@ store a monotonic cursor and processed-row counters. The intended sequence is:
 4. Postprocess boundaries and attribution polygons.
 5. Compact derivation, checkpointed by source-way keysets for shared-node
    discovery and segment construction, followed by one index per unit.
-6. Clip candidate discovery, checkpointed by source segment UUID keyset.
+6. Clip locality/park and unnamed education-boundary candidate discovery,
+   checkpointed by source segment UUID keyset.
 7. Clip replacement construction, checkpointed by candidate segment keyset.
 8. Clip application, checkpointed delete/insert batches.
 9. Clip logical-path finalization.
@@ -157,8 +174,8 @@ cursor and future phase-qualified logs.
 
 | Order | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 19 | `clip-candidates` | Repeated, 200,000 segment UUIDs | Discover segments intersecting locality boundaries. |
-| 20 | `clip-replacements` | Repeated, 7,500 candidate UUIDs | Construct clipped replacement pieces and locality/logical-path identities. |
+| 19 | `clip-candidates` | Repeated, 200,000 segment UUIDs | Discover segments intersecting locality/park boundaries and unnamed segments intersecting education boundaries. |
+| 20 | `clip-replacements` | Repeated, 7,500 candidate UUIDs | Split at all applicable boundaries in source order, preserving repeated crossings and graph endpoints; construct replacement pieces and locality/logical-path identities. |
 | 21 | `clip-apply` | Repeated, 18,000 source UUIDs | Atomically delete original segments and insert all replacement pieces. |
 | 22 | `clip-residual` | Repeated, 10,000 segment UUIDs | Correct residual outside-locality assignments. |
 | 23 | `clip-finalize` | Once | Rebuild logical-path aggregates and remove clipping work tables. |
@@ -382,6 +399,14 @@ current stage and block reason, and launches the selected follow-up Job with the
 correct generation and audit fields. After storage remediation, choose
 `unblock`, provide a note, then choose `resume`; these remain separate so
 approval never implicitly executes database work.
+
+The operator's writer endpoint must keep every connection and checkpoint read on
+the PostgreSQL primary. A query-splitting proxy can return a stale just-written
+stage or acquire the updater advisory lock on a standby. Use a direct-primary
+endpoint or verified Job-local primary routing, retaining `sslmode=verify-full`
+and a hostname covered by the server certificate. Re-discover and verify the
+primary before replacement/resume Jobs after a failover. Operator writer routing
+is independent of the application's reader selectors and replica-only policy.
 
 Before launching a long-running `start` or `resume` replacement, the CLI deletes
 all prior Jobs labeled `app.kubernetes.io/component=osm-update` in the selected

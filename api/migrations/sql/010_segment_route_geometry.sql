@@ -14,6 +14,155 @@ ADD CONSTRAINT workout_routes_route_check CHECK (
     )
 );
 
+-- Shared display/export membership. Imported observations remain immutable.
+-- Suspect endpoints are excluded, never reconnected across a rejected sample.
+-- +goose StatementBegin
+CREATE FUNCTION app.raw_route_display_points(target_account_id uuid, target_workout_id uuid)
+RETURNS TABLE(sequence integer, component integer) LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, app, public AS $function$
+DECLARE
+    item record;
+    sequences integer[] := '{}';
+    components integer[] := '{}';
+    rejected boolean[] := '{}';
+    implausible boolean[] := '{}';
+    epochs double precision[] := '{}';
+    accuracies double precision[] := '{}';
+    deltas double precision[] := '{}';
+    speeds double precision[] := '{}';
+    prior_time timestamptz;
+    prior_geom geometry;
+    current_geom geometry;
+    elapsed double precision;
+    meters double precision;
+    positive_total double precision := 0;
+    positive_count integer := 0;
+    temporal_gap boolean;
+    spatial_gap boolean;
+    foot boolean := false;
+    recovery_speed double precision := 3;
+    reference_accuracy double precision;
+    reference_count integer;
+    recovery_accuracy double precision;
+    pending_start integer := 0;
+    pending_origin integer;
+    last_seed integer;
+    stable_count integer := 0;
+    good_count integer;
+    good_end integer;
+    current_component integer := 1;
+    n integer := 0;
+    start_index integer := 1;
+    i integer;
+    j integer;
+BEGIN
+    SELECT lower(btrim(type.provider_label)) IN
+        ('walk','walking','outdoor walk','indoor walk','run','running','outdoor run','indoor run'),
+        CASE WHEN lower(btrim(type.provider_label)) IN ('run','running','outdoor run','indoor run') THEN 6 ELSE 3 END
+    INTO foot,recovery_speed FROM app.workouts workout
+    JOIN app.workout_types type ON type.account_id=workout.account_id AND type.id=workout.workout_type_id
+    WHERE workout.account_id=target_account_id AND workout.id=target_workout_id;
+    FOR item IN SELECT p.sequence,p.recorded_at,p.longitude,p.latitude,p.horizontal_accuracy
+        FROM app.workout_route_points p
+        WHERE p.account_id=target_account_id AND p.workout_id=target_workout_id ORDER BY p.sequence
+    LOOP
+        n := n+1;
+        current_geom := ST_SetSRID(ST_MakePoint(item.longitude,item.latitude),4326);
+        temporal_gap := false;
+        spatial_gap := false;
+        IF n>1 THEN
+            elapsed := extract(epoch FROM item.recorded_at-prior_time);
+            meters := ST_DistanceSphere(prior_geom,current_geom);
+            temporal_gap := elapsed>0 AND positive_count>0 AND elapsed>=3*positive_total/positive_count;
+            spatial_gap := meters>200;
+            IF temporal_gap OR spatial_gap THEN current_component := current_component+1; END IF;
+            IF temporal_gap THEN positive_total:=0; positive_count:=0;
+            ELSIF elapsed>0 THEN positive_total:=positive_total+elapsed; positive_count:=positive_count+1;
+            END IF;
+        END IF;
+        sequences[n] := item.sequence;
+        components[n] := current_component;
+        rejected[n] := false;
+        implausible[n] := false;
+        epochs[n] := extract(epoch FROM item.recorded_at);
+        accuracies[n] := item.horizontal_accuracy;
+        deltas[n] := CASE WHEN n>1 THEN elapsed ELSE 0 END;
+        speeds[n] := CASE WHEN n>1 AND elapsed>0 THEN meters/elapsed ELSE NULL END;
+        IF n>1 AND foot AND NOT temporal_gap AND NOT spatial_gap AND elapsed>0 AND meters>12.5*elapsed THEN
+            implausible[n] := true;
+            rejected[n-1] := true;
+            rejected[n] := true;
+        END IF;
+        prior_time := item.recorded_at;
+        prior_geom := current_geom;
+    END LOOP;
+    -- Recover complete GPS failure episodes, including slower fragments between
+    -- bursts. Expansion requires a reliable baseline and a confirmed recovery;
+    -- an unresolved or over-budget episode retains endpoint-only rejection.
+    IF foot THEN
+        FOR i IN 2..n LOOP
+            IF pending_start=0 AND implausible[i] THEN
+                reference_accuracy := NULL;
+                reference_count := 0;
+                FOR j IN greatest(1,i-33)..i-2 LOOP
+                    IF NOT rejected[j] AND accuracies[j]>0 AND epochs[i]>=epochs[j] AND epochs[i]-epochs[j]<=300 THEN
+                        reference_accuracy := least(reference_accuracy,accuracies[j]);
+                        reference_count := reference_count+1;
+                    END IF;
+                END LOOP;
+                IF reference_count>=8 THEN
+                    recovery_accuracy := greatest(3,2*reference_accuracy);
+                    IF accuracies[i-1]>recovery_accuracy OR accuracies[i]>recovery_accuracy THEN
+                        pending_start:=i-1; pending_origin:=i; last_seed:=i; stable_count:=0;
+                        good_count:=0; good_end:=0;
+                        FOR j IN REVERSE (i-2)..greatest(1,i-33) LOOP
+                            IF NOT rejected[j] AND accuracies[j]>0 AND accuracies[j]<=recovery_accuracy
+                                AND deltas[j]>0 AND speeds[j]<=recovery_speed THEN
+                                IF good_count>0 AND components[j]<>components[j+1] THEN good_count:=0; END IF;
+                                IF good_count=0 THEN good_end:=j; END IF;
+                                good_count:=good_count+1;
+                                IF good_count=10 THEN pending_start:=good_end+1; EXIT; END IF;
+                            ELSE good_count:=0; good_end:=0;
+                            END IF;
+                        END LOOP;
+                    END IF;
+                END IF;
+            END IF;
+            IF pending_start>0 THEN
+                IF implausible[i] THEN last_seed:=i; END IF;
+                IF i-pending_origin>=600 OR epochs[i]-epochs[last_seed]>300 THEN
+                    pending_start:=0; stable_count:=0; CONTINUE;
+                END IF;
+                IF NOT rejected[i] AND accuracies[i]>0 AND accuracies[i]<=recovery_accuracy
+                    AND deltas[i]>0 AND speeds[i]<=recovery_speed THEN
+                    stable_count:=CASE WHEN components[i]=components[i-1] THEN stable_count+1 ELSE 1 END;
+                ELSE stable_count:=0;
+                END IF;
+                IF stable_count=10 THEN
+                    FOR j IN pending_start..i-10 LOOP rejected[j]:=true; END LOOP;
+                    pending_start:=0; stable_count:=0;
+                END IF;
+            END IF;
+        END LOOP;
+    END IF;
+    component := 0;
+    FOR i IN 1..n+1 LOOP
+        IF i<=n AND NOT rejected[i] AND (i=start_index OR components[i]=components[start_index]) THEN CONTINUE; END IF;
+        IF i-start_index>=2 THEN
+            component := component+1;
+            FOR j IN start_index..i-1 LOOP sequence:=sequences[j]; RETURN NEXT; END LOOP;
+        END IF;
+        start_index := CASE WHEN i<=n AND NOT rejected[i] THEN i ELSE i+1 END;
+    END LOOP;
+END;
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.raw_route_display_points(uuid,uuid) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.raw_route_display_points(uuid,uuid) FROM PUBLIC,workouts_worker,workouts_tiles;
+GRANT EXECUTE ON FUNCTION app.raw_route_display_points(uuid,uuid) TO workouts_api;
+
 -- A positive gap starts a new segment when it is at least three times the
 -- running average for the current segment. Duplicate or backward timestamps
 -- remain ordered points but do not distort the positive-delta baseline.
@@ -21,37 +170,15 @@ ADD CONSTRAINT workout_routes_route_check CHECK (
 CREATE FUNCTION app.build_segmented_workout_route(target_account_id uuid, target_workout_id uuid)
 RETURNS geometry LANGUAGE sql STABLE
 SET search_path = pg_catalog, app, public AS $function$
-    WITH RECURSIVE ordered AS (
-        SELECT point.sequence, point.recorded_at, point.latitude, point.longitude,
-               row_number() OVER (ORDER BY point.sequence) AS position
-        FROM app.workout_route_points point
-        WHERE point.account_id = target_account_id AND point.workout_id = target_workout_id
-    ), segmented(position, sequence, recorded_at, latitude, longitude, segment_id, positive_delta_total, positive_delta_count) AS (
-        SELECT point.position, point.sequence, point.recorded_at, point.latitude, point.longitude,
-               0::bigint, interval '0', 0::bigint
-        FROM ordered point WHERE point.position = 1
-        UNION ALL
-        SELECT point.position, point.sequence, point.recorded_at, point.latitude, point.longitude,
-               prior.segment_id + CASE WHEN decision.starts_segment THEN 1 ELSE 0 END,
-               CASE WHEN decision.starts_segment THEN interval '0'
-                    WHEN delta.value > interval '0' THEN prior.positive_delta_total + delta.value
-                    ELSE prior.positive_delta_total END,
-               CASE WHEN decision.starts_segment THEN 0
-                    WHEN delta.value > interval '0' THEN prior.positive_delta_count + 1
-                    ELSE prior.positive_delta_count END
-        FROM segmented prior JOIN ordered point ON point.position = prior.position + 1
-        CROSS JOIN LATERAL (SELECT point.recorded_at - prior.recorded_at AS value) delta
-        CROSS JOIN LATERAL (
-            SELECT delta.value > interval '0' AND prior.positive_delta_count > 0
-                AND delta.value >= 3 * (prior.positive_delta_total / prior.positive_delta_count::double precision)
-                AS starts_segment
-        ) decision
-    ), segment_lines AS (
-        SELECT segment_id,
-            ST_SetSRID(ST_MakeLine(ST_MakePoint(longitude, latitude) ORDER BY sequence), 4326) segment_line
-        FROM segmented GROUP BY segment_id HAVING count(*) >= 2
+    WITH segment_lines AS (
+        SELECT displayed.component,
+            ST_SetSRID(ST_MakeLine(ST_MakePoint(point.longitude,point.latitude) ORDER BY point.sequence),4326) segment_line
+        FROM app.raw_route_display_points(target_account_id,target_workout_id) displayed
+        JOIN app.workout_route_points point ON point.account_id=target_account_id
+            AND point.workout_id=target_workout_id AND point.sequence=displayed.sequence
+        GROUP BY displayed.component
     )
-    SELECT app.split_raw_route_spatial_gaps(ST_Multi(ST_Collect(segment_line ORDER BY segment_id)))
+    SELECT ST_Multi(ST_Collect(segment_line ORDER BY component))
     FROM segment_lines
 $function$;
 -- +goose StatementEnd
@@ -374,6 +501,7 @@ $function$;
 ALTER FUNCTION app.build_segmented_workout_route (uuid, uuid) OWNER TO workouts_migration;
 
 DROP FUNCTION app.build_segmented_workout_route (uuid, uuid);
+DROP FUNCTION app.raw_route_display_points (uuid, uuid);
 
 ALTER TABLE app.workout_route_points NO FORCE ROW LEVEL SECURITY;
 

@@ -4,17 +4,8 @@ export function installFocusVisibility(document: Document = window.document) {
   root.dataset.inputModality = "pointer";
 
   function keyboard(event: KeyboardEvent) {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const target = event.target as HTMLElement | null;
-    const editing = target?.matches?.(
-      "textarea, [contenteditable='true'], input:not([type='checkbox']):not([type='radio']):not([type='button']):not([type='submit'])",
-    );
-    if (
-      event.key === "Tab" ||
-      (!editing &&
-        ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
-    )
-      if (root.dataset.inputModality !== "keyboard") root.dataset.inputModality = "keyboard";
+    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (root.dataset.inputModality !== "keyboard") root.dataset.inputModality = "keyboard";
   }
 
   function pointer() {

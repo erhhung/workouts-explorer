@@ -25,7 +25,7 @@ SELECT $1 < 31 OR (
         ('app.raw_route_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,0,
             ARRAY['search_path=pg_catalog, app, public','jit=off'],false,true,'f92b4cb5358376574736869fa030b4fa'),
         ('app.coverage_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,1,
-            ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'9a04626be3ff4e8e95d3414f87d20cf5')
+            ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'d3bdc84e87b90d71d2310cca9a96a5c8')
     )
     SELECT (SELECT schema_version >= 31 AND minimum_runtime_version >= 31 AND minimum_runtime_version <= $1
         AND migration_baseline = 27 FROM app.schema_metadata WHERE singleton)

@@ -101,7 +101,7 @@ func TestStatusAndDisplayMigrationCheckpoints(t *testing.T) {
 		functions int
 	}{
 		{"029_ingest_status_reporting.sql", 29, 34},
-		{"030_coverage_display.sql", 30, 24},
+		{"030_coverage_display.sql", 30, 31},
 	} {
 		t.Run(checkpoint.file, func(t *testing.T) {
 			raw, err := migrations.Files.ReadFile(checkpoint.file)
@@ -843,10 +843,11 @@ func TestSegmentRouteGeometryMigrationContract(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"geometry(MultiLineString,4326)", "CREATE FUNCTION app.build_segmented_workout_route",
-		"row_number() OVER (ORDER BY point.sequence)", "point.recorded_at-prior.recorded_at",
-		"prior.positive_delta_count>0", "delta.value>=3*", "decision.starts_segment",
-		"WHEN decision.starts_segment THEN interval '0'", "HAVING count(*)>=2",
-		"ST_Multi(ST_Collect(segment_line ORDER BY segment_id))",
+		"CREATE FUNCTION app.raw_route_display_points", "item.recorded_at-prior_time",
+		"positive_count>0", "elapsed>=3*positive_total/positive_count",
+		"positive_total:=0", "IF i-start_index>=2", "meters>12.5*elapsed",
+		"rejected[n-1] := true", "rejected[n] := true",
+		"ST_Multi(ST_Collect(segment_line ORDER BY component))",
 		"ALTER TABLE app.workout_route_points NO FORCE ROW LEVEL SECURITY",
 		"ALTER TABLE app.workout_route_points FORCE ROW LEVEL SECURITY",
 		"SELECT app.build_segmented_workout_route(target_account_id,target_workout_id) INTO new_route",

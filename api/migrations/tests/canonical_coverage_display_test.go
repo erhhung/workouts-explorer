@@ -54,7 +54,7 @@ func TestCanonicalCoverageDisplayPrivateSchema(t *testing.T) {
 		"PRIMARY KEY (account_id, context_id, source_kind, source_id)",
 		"PRIMARY KEY (account_id, context_id, canonical_id, workout_id)",
 		"PRIMARY KEY (account_id, context_id, canonical_id)",
-		"UNIQUE (account_id, generation, revision, start_date, end_date, policy_version, label_locale)",
+		"UNIQUE (account_id, generation, revision, start_date, end_date, all_time, policy_version, label_locale)",
 		"ON app.coverage_display_members(account_id, context_id, canonical_id, source_kind, source_id)",
 		"ON app.coverage_display_members(account_id, canonical_id)",
 		"ON app.coverage_display_entities(account_id, context_id, canonical_id) WHERE range_workout_count > 0",
@@ -117,7 +117,7 @@ func TestCanonicalCoverageDisplayHistoricalUniverse(t *testing.T) {
 		"CASE WHEN bool_or(visit.education_key_present) THEN 'other'",
 		"COALESCE(min(visit.education_name COLLATE \"C\"), min(visit.name COLLATE \"C\"))",
 		"min(visit.locality_name COLLATE \"C\") locality_name",
-		"bool_or(visit.local_start_date BETWEEN selected_start AND selected_end) has_range",
+		"bool_or((selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) has_range",
 		"COALESCE(context.range_locality, CASE WHEN NOT identity.has_range THEN context.historical_locality END, identity.locality_name)",
 		"min(context.locality_name COLLATE \"C\") historical_locality",
 		"LEFT JOIN app.workout_park_display_bounds bounds",
@@ -186,19 +186,19 @@ func TestCanonicalCoverageDisplaySourceRangeBoundsAndVisibility(t *testing.T) {
 	canonicalForbid(t, parkVisits, "JOIN park_bounds", "range_minimum", "range_maximum")
 	parkBounds := coverageEntityStatsCTE(t, visits, "park_bounds")
 	canonicalRequire(t, parkBounds, "FROM eligible JOIN app.workout_park_display_bounds bounds",
-		"min(bounds.region_id COLLATE \"C\") FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_region_id",
+		"min(bounds.region_id COLLATE \"C\") FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_region_id",
 		"min(bounds.region_id COLLATE \"C\") historical_region_id",
-		"min(bounds.minimum_longitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_minimum_longitude",
-		"max(bounds.maximum_latitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_maximum_latitude")
+		"min(bounds.minimum_longitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_longitude",
+		"max(bounds.maximum_latitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_latitude")
 	canonicalForbid(t, parkBounds, "app.workout_park_attributions", "FROM park_visits", "ST_", ".geom")
 	if regexp.MustCompile(`(?m)^\s*WHERE eligible\.local_start_date`).MatchString(parkBounds) {
 		t.Fatal("historical park-region evidence must survive outside the selected date range")
 	}
 	parkIdentity := coverageEntityStatsCTE(t, visits, "park_identity")
-	canonicalRequire(t, parkIdentity, "COALESCE(min(visit.region_id COLLATE \"C\") FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end), bounds.range_region_id, min(visit.region_id COLLATE \"C\"), bounds.historical_region_id)")
+	canonicalRequire(t, parkIdentity, "COALESCE(min(visit.region_id COLLATE \"C\") FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)), bounds.range_region_id, min(visit.region_id COLLATE \"C\"), bounds.historical_region_id)")
 	pathIdentity := coverageEntityStatsCTE(t, visits, "path_identity")
-	canonicalRequire(t, pathIdentity, "min(visit.minimum_longitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_minimum_longitude",
-		"max(visit.maximum_latitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_maximum_latitude")
+	canonicalRequire(t, pathIdentity, "min(visit.minimum_longitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_longitude",
+		"max(visit.maximum_latitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_latitude")
 	prepare := coverageDisplayFunction(t, source, "prepare_coverage_display_context")
 	// A historical-only attributed park can still contribute range geometry on
 	// an unattributed workout. Count dates and member bounds must stay separate.

@@ -1,8 +1,10 @@
 # Development Progress
 
 This document tracks technical project status separately from the public
-[README](../README.md). Milestones 7 and 8 are complete; the authoritative
-[M8 closeout](#milestone-8-closeout) records approval and the final live browser pass.
+[README](../README.md). Milestones 1-9 are complete; the authoritative
+[M9 closeout](#milestone-9-closeout) records owner acceptance of Stats/New Coverage
+and the navigation/UX follow-ups. The [M8 closeout](#milestone-8-closeout) retains
+its approval and final live browser pass.
 Historical M7 measurements stay in
 [Coverage Acceptance Results](coverage-acceptance-results.md) and are not
 reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
@@ -12,20 +14,22 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Area | Status |
 |---|---|
 | M8 source implementation | Complete and accepted; iCloud ingest, available-map Coverage recovery and final live browser gate verified; see [closeout](#milestone-8-closeout) |
+| Milestone plan | M9 Stats/New Coverage complete and accepted; M10 administration is next planned, followed by M11 tablet, M12 verification, M13 GitHub publication and M14 production; see [M9 closeout](#milestone-9-closeout) and [publication](#github-publication-plan-update-1152026) |
 | Committed-route Coverage pipeline | Folded-028 contract introduced at Helm revision 29 remains deployed; exact eligible cohorts and mixed-failure automatic recovery active |
 | Metadata-driven Coverage reconciliation | Deployed at Helm 62; initialization complete; selected real PostgreSQL matrix and three live unchanged cycles PASS with no GPS/ROI, new jobs or changed rows |
 | Concurrent coverage and reader coordination | Deployed and focused verification complete; one coverage pod runs two jobs with shared least-active reader assignment |
 | Application database | Live source/schema/minimum runtime 31/31/31, baseline 27, ledger 0-31; fresh current catalog matched, retained history and sequence high-water preserved |
 | Historical database checkpoints | Superseded; detailed historical source/catalog receipts are private and do not define current compatibility |
 | OSM database | Native OSM 010 Up completed on actual PG17; schema/minimum runtime 10/10 verified on primary and two standbys; isolated matrix used PG18.6 |
-| Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity in 030 and the complete tile pipeline in 031 |
+| Park/education boundary correction | OSM generation 62, derivation 21 active; both account campaigns complete; the three former graph-layer failures are recovered with current generation-62 evidence |
+| Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity/Stats in 030 and the complete tile pipeline in 031 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
-| UI follow-up | Helm 80 disables empty applied Coverage rows with the neutral X and No map segments matched tooltip; Helm-79 mode-specific fitting and earlier picker polish remain active |
+| UI follow-up | Summary hover preserves standalone Alt/Command/Ctrl while live pointer and actual focus/visibility changes recover stale previews; Shift-held breakdowns, single ownership and retained tabs remain intact |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Helm 80 preserves all 18 configuration UID/resourceVersion/content tuples and the Martin pod; only API, shared-worker consumers and UI images roll |
+| Chart semantics | Helm 129 rolls only UI to preserve standalone modifier hover; rebuilt API/shared-worker/OSM references, Martin, four unrelated pods and all 18 configuration tuples preserved |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 80, persisted no-matches results and disabled empty Coverage actions; canonical dev-20261102 tags match deployed immutable references; all five deployments healthy |
+| Release | Helm 129, Summary standalone modifier hover preservation; canonical dev-20261111 tags match deployed pins; all five deployments healthy |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
 | Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
@@ -42,8 +46,47 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [empty-result follow-up](#empty-coverage-results) owns
-current deployment status. The [031 delivery record](#tile-rendering-and-delivery-031)
+The [modifier-hover follow-up](#standalone-modifier-hover) owns current deployment
+status. The [window-restore follow-up](#aggregate-window-restore-recovery) retains
+its Helm-128 checkpoint. The [aggregate preview follow-up](#shift-held-aggregate-previews)
+retains its Helm-127 checkpoint. The [retained workspace follow-up](#retained-tab-workspaces)
+retains its Helm-126 checkpoint. The [map presentation/focus follow-up](#map-layer-presentation-and-preferences-focus)
+retains its Helm-123/124 checkpoints. The [dialog paging follow-up](#search-dialog-arrow-paging)
+retains its Helm-122 checkpoint. The [focus-modality follow-up](#tab-only-focus-navigation) retains its
+Helm-121 checkpoint. The [keyboard/camera follow-up](#application-shortcuts-and-preserved-map-viewport)
+retains its Helm-120 checkpoint. The [empty/search continuity follow-up](#centered-empty-states-and-search-continuity)
+retains its Helm-119 checkpoint. The [frozen dialog follow-up](#frozen-table-dialog-capacity)
+retains its Helm-118 checkpoint. The [focus visibility follow-up](#map-and-stats-focus-visibility)
+retains its Helm-117 checkpoint. The [aggregate focus follow-up](#range-totals-keyboard-focus)
+retains its Helm-116 checkpoint. The [paging performance follow-up](#workout-log-paging-performance)
+retains its Helm-115 checkpoint. The [shared background follow-up](#shared-tab-content-background)
+retains its Helm-114 checkpoint. The [GPS recovery follow-up](#bounded-gps-recovery-filtering)
+retains its Helm-113 checkpoint. The [raw display/export follow-up](#shared-raw-route-display-and-exports)
+retains its Helm-112 checkpoint. The [Operation filter follow-up](#operation-order-and-raw-route-anomaly-investigation)
+retains its Helm-110 investigation checkpoint. The [compact pager follow-up](#compact-steady-pagination)
+retains its Helm-108/109 checkpoints. The [shared pagination follow-up](#shared-one-click-pagination) retains
+its Helm-107 checkpoint. The [dialog sizing follow-up](#road-coverage-content-sized-dialog)
+retains its Helm-106 checkpoint. The [graph-regression closure](#coverage-graph-expansion-regression-closure)
+retains its Helm-104/105 worker checkpoint. The [All time/navigation follow-up](#all-time-and-range-aware-job-route-navigation)
+retains its Helm-103 API/UI checkpoint. The [SVG finish-marker follow-up](#svg-raw-route-finish-marker)
+retains its Helm-102 checkpoint. The [offline rebuild completion](#offline-osm-rebuild-and-coverage-reconciliation)
+retains its Helm-101 operational checkpoint. OSM generation 62 is promoted; all-account
+Coverage campaigns and queued work are terminal, with three processing-limit
+exceptions explicitly retained. The [boundary-attribution correction](#park-and-education-boundary-attribution-correction)
+retains its initial updater-publication checkpoint. The
+[all-value fitting rollout](#shared-fitting-for-all-range-totals-values) retains
+the unchanged UI's Helm-93 checkpoint. The [Map-state/Duration rollout](#map-workspace-retention-and-duration-fitting)
+retains its Helm-92 checkpoint. The [direct-camera rollout](#direct-identity-camera-flow)
+retains its Helm-91 checkpoint. The [deletion-copy rollout](#workout-deletion-confirmation-copy-and-audit)
+retains its Helm-90 checkpoint. The [shared badge-size rollout](#shared-badge-size-verification)
+retains its Helm-89 checkpoint. The [badge-text alignment rollout](#shared-date-badge-text-alignment)
+retains its Helm-88 checkpoint. The [Summary/shared-dialog rollout](#summary-and-shared-dialog-ui-rollout)
+retains its Helm-86 checkpoint. The [width/grouping UI rollout](#stats-width-and-grouping-ui-rollout)
+retains its Helm-85 checkpoint. The [heading-margin UI rollout](#stats-heading-margin-ui-rollout)
+retains its Helm-84 checkpoint. The [Stats review follow-up](#stats-review-navigation-and-refresh)
+retains its Helm-83 checkpoint. The [initial Stats implementation](#stats-and-new-coverage-initial-implementation)
+retains its Helm-82 checkpoint. The [empty-result follow-up](#empty-coverage-results)
+retains its Helm-80 checkpoint. The [031 delivery record](#tile-rendering-and-delivery-031)
 retains its Helm-67 benchmark scope. The [031 release record](#tile-local-map-optimization-031) retains its
 Helm-65 checkpoint and limits. The [metadata release record](#metadata-driven-coverage-reconciliation)
 retains revision-61/62 evidence; the [029 follow-up](#ingest-phase-progress-follow-up-029)
@@ -54,6 +97,1269 @@ superseded earlier undeployed, pending-repair and old-live-contract wording at
 that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Milestone 9 Closeout
+
+**Complete and accepted 11/12/2026**, following owner review of Stats/New Coverage
+and the navigation/UX follow-ups. The owner confirmed that tab switching and the
+New visits date/name handoff to Map are quick and practical, and requested M9
+closure. The [README milestone table](../README.md#development-progress) now marks
+Milestone 9 complete. M10 administration/operational completion is next planned.
+
+### Accepted Scope
+
+- Stats sits between Map and Data Sync, with the shared date picker and an
+  extensible Reports sidebar. New Coverage supports monthly/yearly grouping,
+  inclusive partial/zero buckets, sorting and preference-sized paging.
+- First-ever and past-year return counts use all eligible canonical visit history,
+  named-identity deduplication and calendar-year anniversary rules, including
+  leap-day boundaries. Nonzero counts agree with their complete visit details.
+- Searchable New visits dialogs show qualifying/predecessor dates and first-visit
+  n/a correctly. Name and in-range date actions focus the intended Map entity or
+  workout without changing the shared range; out-of-range predecessors stay plain
+  text. Returning preserves report/grouping/page/sort and applicable dialog state.
+- Owned, expiring scopes, account isolation, stale/late response fences and bounded
+  renewal preserve private data and action validity across context changes.
+- Retained tab workspaces, guarded application shortcuts, Tab-only focus, steady
+  pagination/dialogs, Map camera/source reuse and Preferences content-focus return
+  make repeated Stats/dialog/Map journeys practical. Related Summary hover and
+  modifier refinements have also completed owner review.
+
+### Verification And Deployment
+
+The [initial implementation](#stats-and-new-coverage-initial-implementation) and
+[Stats review](#stats-review-navigation-and-refresh) retain the native PostgreSQL,
+API, catalog/readiness and independent actual-backup-restore evidence: anniversary
+and history boundaries, deduplication, count/detail/workout-target parity,
+foreign/stale scopes and the 394-query oracle across two ranges. Their original
+test counts, timings and deployment revisions remain historical checkpoints.
+
+The current [UI follow-up](#standalone-modifier-hover) has **907 passing UI tests**,
+successful type/build/CSS/CSP/format checks and candidate/deployed Chromium dark
+and WebKit light checks. The [retained workspace record](#retained-tab-workspaces)
+adds six-return, 500-synthetic-workout comparisons and verifies renderer/source/
+camera reuse, paused inactive polling, active-content focus and session cleanup.
+These scoped measurements support the accepted interactive workflow; they do not
+replace M12 typical/stress/large-history or mixed-workload capacity benchmarks.
+
+Acceptance is at **Helm 129**, with all five deployments healthy and reviewed
+assets verified on both strict-TLS origins. Canonical **dev-20261111** tags match
+the deployed pins. Application source/schema/minimum runtime remain **31/31/31**,
+baseline **27**, ledger **0-31**. This closeout records acceptance of deployed work;
+it requires no application, database or deployment change.
+
+M10 administration, the full M11 tablet-device/accessibility matrix, M12 release
+verification/capacity work, M13 public publication and M14 production hardening
+remain planned under their existing scopes. Future reports/charts remain
+extensions of the registry rather than missing M9 acceptance work.
+
+## Stats Milestone Plan Update (11/5/2026)
+
+The owner inserted **Stats And New Coverage** as the new **Milestone 9**. The
+previous administration/operations, tablet UI/UX and MVP verification are now
+**M10, M11 and M12**; production hardening is **M14** after the subsequent M13
+GitHub publication insertion below. Historical
+acceptance dates/results stay unchanged; milestone references use the current
+sequence. In particular, capacity benchmarking belongs to M12, not the new Stats
+milestone or M10 administration.
+
+The [milestone list](../README.md#development-progress),
+[implementation plan](implementation-plan.md#milestone-9-stats-and-new-coverage),
+[product brief](product-brief.md#stats-and-reports-milestone-9),
+[functional specification](functional-spec.md#feature-explore-stats-and-new-coverage)
+and [technical specification](architecture.md#stats-reports-and-new-coverage-m9)
+record the feature. Stats sits between Map and Data Sync, with the shared date
+picker above an extensible Reports sidebar and parent-owned report selection.
+New Coverage is the initial monthly/yearly report, counting named canonical
+identities with all-history first/predecessor evaluation before range filtering.
+Past-year counts include first-ever visits and returns strictly after a
+calendar-year anniversary; first-ever Previous visit shows grayed-out **n/a**,
+matching unavailable Summary Distance. Whole-cell nonzero actions open compact,
+searchable visit-detail dialogs with true qualifying event dates.
+
+This is a documentation/planning update. Stats implementation and verification
+remain future work; the current deployed application remains Helm 80.
+
+## GitHub Publication Plan Update (11/5/2026)
+
+The owner inserted **GitHub Project Publication** as **Milestone 13**, moving
+production deployment/scaling/security from 13 to **14**. M9-M12 retain their
+Stats, administration, tablet and verification assignments. The
+[milestone plan](implementation-plan.md#milestone-13-github-project-publication),
+[product brief](product-brief.md#public-distribution-planned-milestone-13),
+[functional contract](functional-spec.md#feature-install-and-use-the-public-release)
+and [technical design](architecture.md#github-publication-and-public-installation-planned-m13)
+record the public installation path.
+
+M13 prepares VERSION 1.0.0 and an initial public GitHub Release; explicitly uses
+**GitHub Actions** for tests, OCI image builds/GHCR publishing, chart publication
+and GitHub Pages deployment; adds real README badges; and publishes Docusaurus
+Markdown/MDX administrator/user documentation. One Helm package is distributed
+through both a legacy HTTPS chart repository and GHCR OCI, with public stable
+image defaults and an optional standard standalone PostgreSQL dependency plus
+tested BYO mode. PostGIS/collation compatibility, dependency/migration startup
+ordering, durable data/credentials and independent public installs are acceptance
+requirements. Owner production deployment and measured hardening remain M14.
+
+This is planned work: VERSION and runtime/chart/workflow files are not changed by
+this documentation update, and Helm 80 remains the current deployed application.
+
+## Standalone Modifier Hover
+
+Helm **129** removes anticipatory Alt/Command dismissal from Summary previews.
+Pressing or releasing Alt, Command/Meta or Ctrl alone now preserves a hovered
+card. Actual focus/visibility loss, window-focus restoration and live pointer
+boundary reconciliation continue to dismiss obsolete previews; missing-leave,
+cached-enter and lost-Shift-keyup recovery remain intact. Modified Tab is still
+not treated as fresh card keyboard-navigation intent.
+
+All **907 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Candidate and deployed Chromium dark/WebKit light checks verify modifier-only
+hover preservation, actual focus-loss dismissal, Shift interaction, single
+ownership and the three lost-event recovery cases. Both origins serve reviewed
+assets; all five deployments are healthy. Only UI changes under canonical
+**dev-20261111**; four unrelated pods and all 18 configuration tuples remain
+unchanged.
+
+## Aggregate Window Restore Recovery
+
+Helm **128** corrects a stale mouse preview after OS app switching. A controlled
+browser regression reproduces the Helm-127 failure by suppressing card leave
+events and moving onto a real Workout log row: row hover activates while the
+old preview remains open. Explicit blur/visibility tests alone did not exercise
+that missing-boundary-event path.
+
+While a mouse preview is open, capture-phase document pointer/mouse movement now
+checks the actual original/Shift-expanded bounds and observed Shift state.
+Moving elsewhere closes the obsolete preview even if leave or Shift keyup was
+lost, including a cached restore-enter event. Alt/Meta initiation and window-focus
+return dismiss old ownership without consuming OS shortcuts; modified Tab no
+longer resets the restored-focus guard. Genuine keyboard-only previews keep their
+focus-based behavior, and the single-owner, Shift-click and contrast contracts
+remain intact.
+
+All **906 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Candidate and deployed Chromium dark/WebKit light checks repeat the original
+interaction suite plus missing-leave, cached-enter, lost-keyup, actual Workout
+log hover and OS-modifier/focus-return regressions. These use synthetic private
+data and deliberate event-loss simulation, not desktop OS automation. Both
+origins serve reviewed assets and all five deployments are healthy. Only UI
+changes under canonical **dev-20261111**; four unrelated pods and all 18
+configuration tuples remain unchanged.
+
+## Shift-Held Aggregate Previews
+
+Helm **127** deploys Summary's extended Range totals/averages card interaction.
+Ordinary hover still closes at the original button boundary. While Shift is held,
+the visible breakdown extends that boundary; rows receive a subtle theme-aware
+gray hover background. Clicking a row or expanded padding delegates to the same
+totals/averages toggle exactly once and retains the original button's focus.
+Releasing Shift after using the expanded area closes it when the pointer is
+outside the original card; release over the original card restores normal hover.
+Keyboard-only Shift+Tab retains the existing one-stop-per-card navigation.
+
+One grid-local owner arbitrates keyboard focus and mouse hover, without rerendering
+the Workout log for preview changes. Superseded blur cannot close a newer owner.
+Window blur, hidden document, outside focus, Escape, resize and retained-tab exit
+clear the preview, held modifier and pending hints. Restored button focus alone
+cannot reopen a window-dismissed preview; fresh pointer/Tab intent can.
+
+All **898 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Candidate and deployed Chromium dark/WebKit light checks cover all four cards,
+original/expanded bounds, row/padding clicks, mixed mouse/keyboard ownership,
+focus/visibility loss, retained tab return and narrow keyboard scrolling. The
+browser fixture uses synthetic private data; headless window switching uses an
+explicit blur signal when the platform supplies none. Measured hover contrast is
+at least **10.29:1** for type labels and **5.26:1** for muted values across both
+themes. Both origins serve reviewed assets, all five deployments are healthy,
+and four unrelated pods plus all 18 configuration tuples remain unchanged. The
+UI uses the existing canonical **dev-20261111** tag.
+
+## Retained Tab Workspaces
+
+Helm **126** deploys the UI-only retained-workspace follow-up. Previously the
+Shell's conditional tab tree unmounted each old page: leaving Map disposed its
+MapLibre renderer, canvas, workers, sources and loaded resources, so each return
+created another renderer and capability despite retaining selected view state.
+
+Visited tabs now remain mounted within the session-keyed frame; unvisited tabs
+stay lazy. Inactive trees are hidden/inert and avoid unrelated reconciliation.
+Map keeps the same renderer, canvas, focused source, camera and valid caches;
+the dense route list is reused, and unchanged dimensions no longer invoke
+MapLibre resize's buffer reallocation/camera events. Inactive application polling,
+provider fallback retries, Space handling, hover and blink work pause. Reveal
+handles real resizing and capability expiry, while unchanged background
+validation does not replace sources or refetch points/tiles. Date/time-zone and
+deletion boundaries fence obsolete private pixels; late requests cannot restore
+them. Explicit target navigation, readiness fallback, active-content/Preferences
+focus and the diagnostic entry contract remain covered. Signout/session or
+identity replacement disposes all retained workspaces and the renderer.
+
+An identical synthetic **500-workout** fixture with real MapLibre/provider styles
+measures six returns per engine through Stats, Summary and Data Sync. Candidate
+median return times improve from **2679 to 571 ms** in Chromium dark (**79%**) and
+**2273 to 1125 ms** in WebKit light (**51%**). These are controlled headless-browser
+measurements, not actual-account end-to-end latency or capacity certification.
+Identity/source/camera checks verify reuse rather than relying on timing alone.
+
+All **885 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Candidate and deployed Chromium dark/WebKit light checks verify retained tab DOM,
+renderer/source identity, cached geometry/tiles, paused polling, resize/reveal,
+Stats grouping/page preservation, Preferences/Space focus, narrow containment and
+signout cleanup. Both origins serve the reviewed assets; all five deployments
+are healthy. Only the UI image changes under canonical **dev-20261111**; four
+unrelated pods and all 18 configuration tuples remain unchanged.
+
+## Map Layer Presentation And Preferences Focus
+
+Helm **123** rebuilds API, shared worker, UI and OSM operator images from the
+reviewed source using the requested **dev-20261111** tag. Helm **124** publishes
+the Preferences focus follow-up under that same canonical tag and rolls only UI;
+the rebuilt API/worker/OSM references and Martin remain intact. All five
+deployments are healthy, both origins serve the reviewed assets, and all 18
+configuration tuples are preserved. Application schema/minimum runtime remain
+31/31 with the retained migration ledger; no migration replay or OSM rebuild is
+part of this release.
+
+Normal path lines and stationary dots use **90% per-layer opacity** in Routes,
+production Coverage and Diagnostic states. The shared presentation policy orders
+provider geometry, background paths, focused paths, existing provider symbols,
+direction arrows and endpoints, then the temporary white selection blink. Road
+names/shields retain full paint opacity; the blink remains a full-strength
+100%/0% attention exception. Invisible diagnostic hit targets remain invisible.
+Style transformations and private-layer recreation share the same ordering;
+ordinary camera frames do not reorder already-correct layers. The functional
+specification's [layer table](functional-spec.md#map-layer-stack-and-opacity)
+records applicable modes, states and opacity.
+
+Changing the diagnostic preference in an existing focused Coverage visit now
+transitions directly to/from diagnostic review without refitting or losing the
+mode, including Stats-origin visits. Every Preferences close path returns focus
+to the active tab's content area; Map uses its canvas through the existing
+readiness handoff. The handoff runs after modal close-focus handling, so Space
+controls the map instead of reopening the profile menu.
+
+All **877 UI tests**, type/build/CSS/CSP, formatting and documentation checks
+pass. The full Go suite, vet, generated-source, version and UI-artifact checks
+also pass for the all-image rebuild. Candidate and deployed Chromium dark and
+WebKit light checks use synthetic private API data with real MapLibre/provider
+styles across all three families, style reloads, Space visibility, diagnostic
+transitions, camera retention and mobile containment. They exercise Save, Cancel,
+close button, Escape and outside dismissal on all four tabs, including immediate
+Space behavior on the Map canvas. Harbor cleanup removes **15 non-current
+artifacts** from exactly the four application repositories, preserving the four
+current images and their attached metadata; only dev-20261111 tags remain.
+
+## Search Dialog Arrow Paging
+
+Helm **122** deploys the UI-only paging exception for searchable modal tables.
+Left/Right and shifted five-page arrows target the active dialog when its search
+field is displayed but unfocused. Focused text entry/native editing widgets keep
+their arrow keys. The exception bypasses only the visible-field paging gate;
+modal/background ownership, unavailable/busy clamps, modifier/IME guards and the
+separate number/letter visibility rule remain intact. Arrow paging does not
+activate focus-ring mode; Tab/Shift+Tab still owns that transition.
+
+All **865 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Chromium dark and WebKit light candidate/deployed checks exercise Road Coverage
+and New visits paging from headers/pagers/checkboxes with visible unfocused
+search, native caret/selection arrows with focused search, five-page clamps,
+held-response extra-press fencing, background pager protection, other shortcut
+suppression and Tab-only ring behavior. Four unrelated pods and all 18
+configuration tuples are preserved; both origins serve reviewed assets and all
+five deployments are healthy.
+
+## Tab-Only Focus Navigation
+
+Helm **121** deploys the UI-only focus-modality refinement. Only Tab/Shift+Tab
+enters keyboard-navigation highlighting. The shared shortcut dispatcher no longer
+activates ring mode, and the modality tracker ignores arrows/Home/End and other
+non-Tab commands. Commands preserve an already-active Tab mode; pointer use exits
+it. Content landmarks and Map canvas handoffs retain actual focus but never draw
+a large-area outline. Smaller controls, including Files headings, retain normal
+focus rings only when the Tab-initiated mode is active. Existing paging/focus/
+scroll ownership and shortcut behavior remain intact.
+
+All **865 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Chromium dark and WebKit light candidate/deployed checks verify number/Map/group
+shortcuts without ring activation, Files single/five-page arrows in pointer mode,
+normal Files/header focus after Tab, prior-mode persistence during shortcuts,
+pointer reset, and outline-free large content/canvas targets even in Tab mode.
+The style guide and functional spec record the generic rule. Four unrelated pods
+and all 18 configuration tuples are preserved; both origins serve reviewed
+assets and all five deployments are healthy.
+
+## Application Shortcuts And Preserved Map Viewport
+
+Helm **120** deploys a shared document-level keyboard router for invisible
+application-tab, table-page, Map mode/focused-fit and Stats grouping commands.
+The functional specification owns the key map. Displayed text-entry surfaces
+block the commands even when unfocused; native widgets, menu typeahead, modals,
+modifiers and IME composition retain ownership. Pager routing chooses exactly
+one deepest/remembered/primary region and reuses the button path's clamp and
+pending fences. Tab navigation hands focus to programmatic content landmarks or
+the ready Map canvas without adding sequential stops or visual shortcut hints.
+
+Routes/Coverage switches now preserve center, zoom, bearing and pitch, including
+when a workout is focused. Mode changes and diagnostic-result arrival no longer
+create fit requests. Explicit route clicks, fit controls and focused-only `F`
+retain their current-mode bounds semantics. This supersedes the historical
+mode-transition auto-fit checkpoint below; initial entry/range fits retain their
+feature contracts.
+
+All **864 UI tests**, type/build/CSS/CSP, formatting and documentation checks pass.
+Native Chromium dark and WebKit light candidate/deployed checks exercise the
+requested keys, focus from ordinary controls, tabbing, editing/caret safety,
+visible unfocused search/date fields, modal/menu guards, page clamping/busy
+fences and independent Task history/Files/Events ownership. Actual MapLibre camera
+getters confirm unchanged custom pan/zoom state across both mode transitions;
+unit tests distinguish focused raw/Coverage bounds from aggregate selection
+bounds. No shortcut legends or label changes are rendered. Four unrelated pods
+and all 18 configuration tuples are preserved; both origins serve reviewed
+assets and all five deployments are healthy.
+
+## Centered Empty States And Search Continuity
+
+Helm **119** deploys `DialogTableViewport`, separating reserved height from data
+rows. Road Coverage and New visits show accepted zero-result messages in a
+slightly larger, centered viewport layer below the header; their actual result
+bodies contain no rows. The message remains centered after horizontal scrolling.
+Nonempty partial results reuse positional rows and hide unused slots. Measured
+header/row layout sizes ignore dialog entry transforms, and resize writes are
+scheduled outside observer delivery to keep reopened geometry stable.
+
+New visits no longer treats incremental search as an incompatible dataset.
+Within the same scope/group/bucket/metric, old rows remain mounted at full opacity
+while a response is pending, then values update in place. Pending row actions are
+guarded without native-disabled text flashing; action nodes retain record keys.
+Owner/date/bucket/metric boundaries, scope proof checks and late-response fences
+remain intact. The UI style guide explicitly covers search continuity and
+centered, header-only zero-result states alongside the generic frozen-size rule.
+
+All **829 UI tests**, type/build/CSS/CSP and formatting checks pass. Native
+Chromium dark and WebKit light candidate/deployed checks use short and multi-page
+synthetic sets, including a narrow layout. They verify empty bodies/header-only
+tables, larger text centered on both axes before/after horizontal scrolling,
+unchanged dialog/input/table/footer rectangles, zero row removals while a search
+response is deliberately held, retained row/cell identity after admission,
+hidden surplus rows and retry/cache restoration. Both origins serve reviewed
+assets; four unrelated pods and all 18 configuration tuples are preserved, and
+all five deployments are healthy.
+
+## Frozen Table-Dialog Capacity
+
+Helm **118** deploys shared unfiltered sizing for Road Coverage and New visits.
+`dialogTable` clamps dialog paging/capacity to the preference and 25-row feature
+limit. Road Coverage includes unnamed membership when reserving its rows, even
+with that display filter off. New visits uses the unfiltered bucket count rather
+than filtered pagination totals. Partial, empty and loading results retain blank
+row space; pager caption width is reserved from unfiltered pages to prevent
+footer rewrapping. Cached filter/page restoration starts from full membership,
+so clearing a restored search cannot enlarge the dialog. Initial reservations
+are held once editing/interaction begins before bulk membership is known.
+Search resets only internal vertical scroll, and visit retry feedback floats
+without changing layout. The style guide records this as a generic rule for
+every dialog containing a table, irrespective of contents.
+
+Shared sortable-header focus now uses the same inset, cell-wide treatment on
+Summary, Stats and dialog tables; this supersedes the preceding Summary-specific
+outset reference while retaining the other focus improvements.
+
+All **827 UI tests**, affected-suite rechecks, type/build/CSS/CSP and formatting
+checks pass. Chromium dark and WebKit light compare dialog/input/table/footer
+rectangles through narrowed/cleared/empty searches, unnamed toggles, partial
+pages, road-name dismissal/blink/reopen, cached state restoration, delayed
+responses and retry recovery, with short and multi-page synthetic datasets and
+narrow viewports. A separate early-edit case verifies no contraction while the
+initial bulk response is pending. Header checks confirm inside-cell focus paint
+on all four shared table compositions. Four unrelated pods and all 18
+configuration tuples are preserved; both origins serve reviewed assets and all
+five deployments are healthy.
+
+## Map And Stats Focus Visibility
+
+Helm **117** deploys the UI-only focus visibility fixes. Route action/help rings
+and Stats header rings now paint inside their hit targets, with route content
+clear of the ring. Joined Map/Stats mode controls retain rounded clipping while
+showing inset focus on either segment; selected fills use contrasting themed ink.
+System Highlight remains authoritative in forced-colors mode. Narrow Stats
+frames use their available width; the desktop composition and Summary reference
+header treatment remain intact.
+
+All **822 UI tests**, type/build/CSS/CSP and formatting checks pass. Native
+Chromium dark and WebKit light candidate/deployed checks reproduce the old
+clipping, then verify painted pixels on every edge, selected/unselected focus
+contrast, first/last/unavailable route controls, Stats and visit-dialog headers,
+narrow reports and the Map sheet. Focus does not activate selection, keyboard
+sorting still works, and pointer focus does not acquire keyboard rings. Four
+unrelated pods and all 18 configuration tuples are preserved; both origins serve
+reviewed assets and all five deployments are healthy.
+
+## Range Totals Keyboard Focus
+
+Helm **116** deploys the UI-only single-stop card focus fix. Duration's per-type
+precision tooltip had been a focusable descendant of its preview. Forward Tab
+entered it, blurring the owning button and hiding the newly focused target;
+backward traversal encountered the still-closed preview and skipped that stop.
+Duration preview hints are now passive styled help. Closed previews are inert,
+containers stay outside sequential focus, and overflow can be scrolled from the
+focused card without another stop. Escape and totals/averages activation retain
+their contracts; individual Workout log duration help remains keyboard-focusable.
+
+All **822 UI tests**, type/build/CSS/CSP and formatting checks pass. A browser
+focus-event trace reproduces the original forward-only focus loss, then verifies
+the exact four-card order in both directions. Chromium dark and WebKit light
+candidate/deployed checks cover desktop and narrow overflowing previews,
+keyboard scrolling, focus retention, Escape and average-mode activation. Four
+unrelated pods and all 18 configuration tuples are preserved, both origins
+serve reviewed assets, and all five deployments are healthy.
+
+## Workout Log Paging Performance
+
+Helm **115** deploys a UI-only rendering optimization. Read-only RLS-scoped SQL
+profiles and request timing directed investigation toward browser work. The
+former path repeatedly constructed Intl formatters, rendered collapsed mobile
+details and rebuilt the full time-zone choice list even with Preferences closed.
+The shared bounded formatter cache, lazy secondary content/options and reused
+desktop page cells remove that work. Menu roots stay keyed to workout identity;
+API payload, per-page requests and existing freshness behavior remain intact.
+
+All **820 UI tests**, type/build/CSS/CSP and formatting checks pass. Regressions
+cover DST/quarter-hour offsets, locale/clock/precision distinctions, invalid
+zones, bounded eviction, lazy details, deferred time-zone enumeration and menu
+identity when rows are replaced. Sequential unthrottled synthetic benchmarks
+use identical varied 25-row/all-column records and verify identical rendered
+values: median click-to-DOM improves from **1,628 to 174 ms** in Chromium and
+**1,662 to 472 ms** in WebKit. Warm-page Intl constructor counts fall from roughly
+five thousand to zero. Measurements describe controlled fixtures and the review
+browser environment. Deployed dark/light checks confirm the same zero-build
+hot path, one request per page and working mobile expansion/collapse. Four
+unrelated pods and all 18 configuration tuples are preserved; both origins
+serve reviewed assets and all five deployments are healthy.
+
+## Shared Tab Content Background
+
+Helm **114** deploys the UI-only shared background composition. Summary, Stats,
+Data Sync and the area beneath MapLibre now reuse `ContentBackground` and one
+semantic background rule for the dim grid, theme gradient and stepped corner
+contours. Map's loading state uses the same treatment. Decoration is clipped,
+noninteractive and hidden from assistive technology; report foreground surfaces
+remain above it. Sidebar/card surfaces and Map popup stacking retain their
+established behavior. The UI style guide explicitly requires this consistent
+composition and links its implementation.
+
+All **813 UI tests**, a focused Stats recheck, type/build/CSS/CSP/format checks
+pass. Chromium dark and WebKit light compare all four computed backgrounds and
+decorative geometry at desktop/mobile sizes, verify decoration does not alter
+report-table pixels, preserve Stats paging across tab switches, exercise the
+range picker, and check Map host containment/stacking. Both deployed origins serve
+reviewed assets; four unrelated pods and all 18 configuration tuples are
+preserved, and all five deployments are healthy.
+
+## Bounded GPS Recovery Filtering
+
+Helm **113** deploys `raw-route-display-v3` in API and shared workers. The
+endpoint-only speed rule could leave slower fragments between bursts or during
+GPS recovery. The shared display/export helper now expands a confirmed
+impossible-speed, degraded-accuracy episode only when a bounded lookahead finds
+sustained reliable recovery. It preserves original temporal/spatial boundaries
+and never reconnects across excluded samples. Points export remains schema 2,
+with the refined policy identifier and the same explicit components.
+
+Full Go suite/vet and generated-source checks pass. Fresh native schema and
+export/RLS/geometry tests cover recovery across recording gaps, preserved valid
+running after a spike, fast movement without a seed, poor accuracy alone,
+unconfirmed recovery, lookahead exhaustion, cycling and stationary controls.
+The original reported routes match an independent membership oracle in native
+replay and production, including exact source evidence, stored geometry and all
+tile detail levels. Original point/workout counts, Coverage fingerprint/match
+count and migration metadata/ledger are preserved. A fully restored route backup
+and operator rehearsal precede the derived rebuild; 001-031 remains the complete
+source inventory, schema/minimum 31/31 and baseline 27.
+
+Chromium dark and WebKit light candidate/deployed checks confirm export download
+compatibility and MapLibre loading with synthetic fixtures. UI and Martin pods
+are unchanged, all five deployments are healthy, both origins serve the existing
+reviewed UI assets, and all 18 configuration tuples are preserved. Private route
+diagnostics and backup artifacts remain outside the repository.
+
+## Shared Raw-Route Display And Exports
+
+Helm **112** deploys `raw-route-display-v2` across API, shared workers and UI.
+Folded 010 adds the owner-RLS display membership helper, shared by ingest-derived
+geometry and both route exports. The conservative positive-time walk/run speed
+rule excludes suspect endpoints as well as connecting edges. Original samples
+remain immutable evidence. Surviving singleton fragments do not create dots;
+explicit components prevent bridging removed samples in focused lines, endpoints,
+arrows, GeoJSON and points downloads. Exported bounds/count/elevation describe
+retained samples; version-2 points include original sequence IDs and components.
+
+The existing 001-031 inventory, schema/minimum 31/31 and baseline 27 remain.
+Guarded operator DDL and derived repair were rehearsed; the production route
+backup was fully restored and verified before rollout. An initial oversized
+diagnostic report aborted the rebuild before commit and left Helm 111 failed.
+The retry uses bounded counts/hashes, a short catalog transaction and an atomic
+derived backfill. All stored routes were checked and changed display geometries
+were rebuilt. Exact source samples for the reported routes, global source
+point/workout counts, Coverage-state fingerprint and match count, and migration
+metadata/ledger are preserved. The six reported routes agree exactly with the
+independent retained-membership oracle, stored geometry, full-detail chunks and
+every LOD. Historical receipts retain their original scope.
+
+All **813 UI tests**, full Go suite/vet, generated-source, type/build/CSS/format
+checks pass. Native PostgreSQL tests cover exports and stored geometry, endpoint
+removal without reconnecting gaps, evidence retention, owner isolation, cycling
+and stationary controls, complete rejection, and elevation across components.
+Chromium dark and WebKit light candidate/deployed checks exercise both export
+menu downloads and the real MapLibre map with synthetic filtered fixtures.
+All five deployments are healthy, both origins serve reviewed assets, Martin is
+unchanged, and all 18 configuration tuples are preserved.
+
+## Operation Order And Raw-Route Anomaly Investigation
+
+Helm **110** deploys the requested Operation menu order: All operations, Manual
+sync, Automated sync, Coverage update, Workout deletion. All **220 Data Sync
+tests**, type/build and format checks pass. Chromium dark and WebKit light verify
+the candidate and deployed menu ordering, Home/End/arrow/Enter selection, Escape
+focus return and unchanged filter query/page-reset semantics. Both origins serve
+reviewed assets; unrelated pods and all 18 configuration tuples are preserved.
+
+A separate read-only investigation confirms that continuous sequences of
+implausibly fast GPS fixes can survive the existing time-gap and per-edge spatial
+cutoffs. A walking/running-only speed-break candidate reproduces the stored
+baseline geometry and removes the confirmed high-speed connections without
+inventing replacement links or changing source samples. Synthetic controls
+retain walking, running and fast sprinting; other movement classes need their
+own policy. This candidate remains **offline research, not deployed behavior**;
+production raw geometry, imported facts and Coverage evidence are unchanged.
+Private captures and measurements remain outside the repository.
+
+## Compact Steady Pagination
+
+Helm **109** further reduces the centered glyph footprint by roughly one tenth,
+retaining compact button dimensions, stroke weight and first/last edge contact.
+The 11 focused pager tests, type/build/CSS/format checks and light/dark candidate
+and deployed browser measurements pass. The revision-108 behavior checks below
+retain their original scope.
+
+Helm **108** deploys the UI-only pager refinement. All six controls now share the
+compact Show workout types Cancel/Apply height and retain their width/height
+ratio. Smaller rounded SVGs use finer strokes; first/last bars and chevrons touch
+without overlapping. Standard theme surfaces and foregrounds replace the solid
+neutral enabled fill, and disabled symbols match table `n/a` gray.
+
+Pending page loads and same-page background refresh retain displayed boundary
+states, colors and cursors. Extra presses are ignored, with an immediate-click
+fence before the owner can render pending state. Boundary availability updates
+with rendered results; unavailable failed results retain their recovery guard.
+
+All **812 UI tests**, type/build/CSS/format checks pass, including immediate
+repeat presses, unchanged same-page refresh states, deferred direct Workout log
+jumps and existing paging/recovery contracts. Chromium dark and WebKit light
+candidate/deployed checks cover all eight pagers, compact popup height equality, stroke
+geometry, shared colors, clamping, narrow containment and native disabled-attribute
+observation during delayed navigation and same-page refresh. Deployment preserves
+four unrelated pods and all 18 configuration tuples; all five deployments are
+healthy and both origins serve the exact reviewed assets.
+
+## Shared One-Click Pagination
+
+Helm **107** deploys the UI-only shared `PageNavigation` composition across all
+eight paging locations: Workout log, Road Coverage, Stats report and New visits,
+Task history, Files, Events and Logs. First/last, clamped five-page jumps and
+single-page steps use equal SVG-only buttons, accessible names and no tooltips.
+Buttons preserve the former text-button height, use the requested width/height
+ratio, thick rounded strokes and enabled/disabled treatments in both themes.
+Narrow footers wrap controls without shrinking targets or clipping actions.
+
+All **809 UI tests**, type/build/CSS/format checks pass, including a deferred
+Workout log jump that requests only the destination while retaining rows and
+disabling competing actions. Chromium dark and WebKit light verify candidate
+and deployed assets with synthetic 58-page fixtures at all eight locations:
+repeated jumps, clamped boundaries, first/last availability, keyboard activation,
+SVG geometry, equal dimensions, cursors/colors, Files filter retention and narrow
+Workout log/Road Coverage containment. Both origins serve the exact reviewed
+assets; all five deployments are healthy, four unrelated pods and all 18
+configuration tuples are preserved.
+
+## Road Coverage Content-Sized Dialog
+
+Helm **106** deploys the UI-only sizing follow-up. Road Coverage now uses the
+table's natural height, following Stats New visits, rather than a fixed row-height
+estimate and JavaScript viewport row cap. Full 25-row pages fit without vertical
+overflow on a sufficiently tall viewport. Short and filtered results shrink;
+hidden, actual-height row slots keep the pager stationary on partial last pages.
+The rows-per-page preference, cached filters, focus return and small-viewport
+table scrolling remain intact.
+
+All **800 UI tests**, type/build/CSS/format checks pass. Chromium dark and WebKit
+light measured candidate and deployed assets with synthetic fixtures: 25 rows,
+seven/one/empty results, cached reopen, stable partial pages, resized desktop and
+mobile containment, unnamed visibility, Escape and Map-canvas focus return.
+A separate ten-row preference check passes. Both origins serve the exact reviewed
+assets; all five deployments are healthy, four unrelated pods and all 18
+configuration tuples are preserved.
+
+## Coverage Graph Expansion Regression Closure
+
+**Worker fixes deployed at Helm 104/105; all three authorized failures recovered.**
+Read-only, single-connection standby replays captured the exact failing windows
+and reproduced every old graph-layer error offline. Finer generation-62
+segmentation exposed two defects in the former 64-round guard: corrections to
+already-loaded shortest-distance labels repeatedly queried the same adjacency,
+while a valid short-piece chain could require more discovery hops despite fitting
+the actual node/edge and distance budgets. Private input and topology captures
+remain outside the repository; public regressions are independently synthetic.
+
+The graph bridge now caches adjacency (including empty leaves) and settles loaded
+edges with a deterministic distance-priority queue before fetching new nodes.
+Each node is fetched once, bounding cache and query work by the existing node
+budget. The independent hop ceiling is removed; **2,048 nodes, 4,096 edges**, the
+distance radius, bounded query responses, cancellation checkpoints, sampled-point
+and evidence/output limits, snapshot and caller deadlines remain enforced. No
+arbitrary pruning, prefix matching, weakened acceptance threshold, policy-version
+change or global rematch is introduced. A complete-input replay through the
+normal route pipeline, clipping and preparation succeeds for every affected route.
+
+Two synthetic regressions fail on the old implementation and pass on the fix:
+competing long/short paths through a short-piece chain, and a bounded deep chain.
+An independent fixed-point shortest-distance oracle checks randomized graph
+variants and both response orders. Tests also cover one lookup per node, reachable
+nodes discovered only after distance improvements, distance/node/reply bounds,
+cached-CPU cancellation, disconnected/foreign endpoints and invalid weights.
+
+Production retry validation exposed a separate finalization interaction: a
+heartbeat could wait on its own writer's job-row lock during a slow COMMIT, then
+cancel that commit at the control timeout. The third route recovered through
+normal lease recovery; Helm 105 prevents repetition by cooperatively stopping
+and draining renewal control before the final fenced transaction. It does not
+cancel the operation or extend the existing lease/deadline. All exit paths join
+the heartbeat safely and repeated shutdown is idempotent. A native PostgreSQL
+six-second deferred-COMMIT test fails on worker 104 and passes on the coordinated
+implementation. Native lease renewal/loss, stale ownership, cancellation, newer
+target/revision, atomic replacement and rollback tests pass. Full Go tests, vet
+and worker/Coverage race tests pass.
+
+Only the three authoritative failed targets were retried with the native
+constructor. All now have succeeded jobs, **current/matched generation-62 proofs**,
+unchanged input hashes/revisions and matching policy/sampling descriptors. Stored
+segment counts equal the read-only replay's prepared results and geometry is
+valid/current. Independent daily/all-time path and park rollup oracles have zero
+mismatches. No Coverage jobs or matcher slots remain active. Historical failed
+attempts remain auditable and are linked to successful successors; no successful
+sibling was rerun. The per-account persistence-admission safeguard remains one.
+
+Both rollouts preserve all **18 configuration tuples**, API/UI/Martin pods,
+OSM/Martin images, normal resources and APP **31/31** / OSM **10/10**. No schema
+change, Goose replay, OSM rebuild, provider fetch or raw-workout mutation is needed.
+Only canonical Harbor tags are used. Private receipts, scoped traces and native
+replay evidence are retained in `coverage-graph-layer-regression`.
+
+## All Time And Range-Aware Job Route Navigation
+
+**Deployed 11/9/2026 at Helm 103.** The shared picker places **All time** after Last
+year and before the Custom divider on Summary, Map and Stats. It is a persisted
+shortcut, not an MRU custom range. Workout lists, extents, Summary totals and route
+capability capture omit date predicates in this mode. Captured scopes and reusable
+canonical contexts carry an immutable unfiltered flag; detail/focus and Coverage
+tile readers bypass dates while retaining normal authorization, checked membership
+and deletion rules. A complete All time capability is not truncated to the bounded
+range limit. Display metadata starts at the earliest owner workout and ends at
+the later of local today or the latest owner workout; empty/unknown-date fallback
+and future dates are covered. Summary metadata/totals use one RR snapshot.
+
+Every available Route runs reference is a theme-text-to-orange anchor. A shared
+workout navigation action keeps an encompassing current range, otherwise selects
+the first covering preset in picker order and persists it. A changed selection
+uses the normal page/sort/catalog/checked/focus reset path, then requested-ID
+navigation fits/checks/centers the target after fresh capability data arrives.
+Renderable Coverage is preferred and missing Coverage falls back to raw Routes.
+Unknown local dates choose All time rather than guessing a bounded membership.
+Stats uses the preserve-range policy; out-of-range Previous visit dates remain
+plain noninteractive text. Map/Stats reselecting their current range no longer
+clears a catalog/scope without scheduling a reload; Summary save-retry behavior
+is retained.
+
+All **800 UI tests**, full Go tests, vet, generated-source checks, type checks,
+CSS/CSP guards, formatting and build pass. Native PostgreSQL checks include owner
+isolation, old/future/undated workouts, selected-zone today floors, empty-account
+metadata, **5,003 actual routed rows**, raw MVT inclusion of undated/old routes,
+and a deliberately narrow display span whose unfiltered context/detail/report
+still retains out-of-span history. Native canonical/tile authorization and geometry
+regressions pass. An old production-schema-only clone rehearses the guarded
+upgrade; genuine restricted API/worker/Coverage-worker roles pass full readiness
+and the catalog-mutation matrix, including unfiltered-flag/default corruption.
+
+Candidate and deployed Chromium dark/WebKit light fixtures verify all picker
+positions, All time request bodies, link hover/cursor, out-of-range expansion and
+persistence, Summary page/sort resets, in-range preservation, actual centered-list
+scroll calls, raw fallback, unchanged MRU ranges and noninteractive Previous visit.
+Narrow-layout checks cover Summary, job references and the Map controls sheet.
+These browser API fixtures are synthetic; no production preference is changed.
+
+The live guarded SQL preserves **31/31**, baseline **27**, ledger **0-31**, source
+facts and preferences. Applied Goose migrations are not replayed. API, shared
+worker/Coverage worker and UI roll; OSM/Martin image references and the Martin pod
+are unchanged, and all **18 configuration tuples** remain intact. Exact UI assets
+match both strict-TLS origins; all five deployments and all three application
+database health probes pass. Canonical Harbor tags only. Private receipts:
+`all-time-navigation`.
+
+## SVG Raw-Route Finish Marker
+
+**Deployed 11/9/2026 at Helm 102.** The remaining red finish-square font glyph is
+replaced with a self-contained SVG rectangle registered as a MapLibre image.
+It no longer requires provider glyph fonts. Theme outlines select a cached SVG
+image; style restoration re-registers it, and late image loads cannot modify an
+unmounted map. Endpoint ownership, overlap rules, fading and layer ordering stay
+in the existing MapLibre flow. Route status badges remain full SVG; the start
+marker, pending spinner and direction arrows were already non-text geometry.
+
+All **784 UI tests**, type checking, CSS/CSP/format/build checks pass. Candidate
+and deployed Chromium dark/WebKit light fixtures verify the existing badges and
+an installed finish image with no text field, preserved opacity transition and
+successful style restoration. The browser fixtures use synthetic routes and real
+MapLibre rendering. Exact assets match both strict-TLS origins; only UI rolls,
+the other four pods and **18 configuration tuples** are unchanged. Private
+receipts: `svg-route-finish-marker`.
+
+## Offline OSM Rebuild And Coverage Reconciliation
+
+**Completed with explicit route-limit exceptions on 11/9/2026, Helm 101.**
+Owner-authorized offline rebuild used an external custom-format OSM backup,
+fully decoded and restored on an owned isolated PostGIS server. Restored schema,
+generation/storage metadata, data counts and valid indexes were verified before
+retiring the old generation and reclaiming only its canonical data partitions.
+Application Coverage evidence, region/provider catalog, time zones and function
+definitions were preserved. Separate owner-authorized LiteLLM body expiration,
+compaction and Longhorn filesystem trimming restored shared PostgreSQL headroom;
+no PVC expansion or unrelated database cleanup was performed. Valid Longhorn
+snapshots were preserved and can continue pinning backend storage despite free
+filesystem space.
+
+The native rebuild retained generation **62**, importer **3**, derivation **21**
+through resumable checkpoints. A primary-pinned, verify-full TLS operator Job
+avoided query-splitting proxy read-after-write lag. Consumed staging structures
+were reclaimed only after their last consumer committed. During graph propagation,
+deferring the mutable parent index permitted HOT updates; it was rebuilt and
+verified valid after propagation. Geometry SQL fences stayed unchanged.
+
+Initial validation rejected apparent park crossings caused by interpolated
+coordinates straddling an exactly shared boundary at floating-point precision.
+All flagged lines were wholly boundary-aligned within a sub-millimeter envelope.
+The corrected observational check exempts only that envelope; PostGIS regression
+fixtures still reject real shallow crossings. Completed validation may restart
+fully with corrected checks; running validation and geometry-stage fences remain
+immutable. The full Go suite, including the disposable boundary/fence integration,
+passed. Native validation then reran from initialization, passed every zero-valued
+gate and promoted generation 62. Canonical indexes and native OSM readiness passed
+on the primary and both standbys; APP **31/31** and OSM **10/10** remain unchanged.
+
+Both active accounts' reconciliation campaigns finished. The queue drained with
+**1,652 generation-62 current results**. Seven concurrent path-rollup persistence
+collisions recovered through the native retry constructor after per-account
+matcher admission was reduced to one. Daily/all-time path rollups match an
+independent aggregation of their attribution facts with zero mismatches. Three
+route updates still hit the graph-layer processing guard after one isolated
+native retry each; they preserve prior evidence and remain explicitly failed/stale.
+Previously unavailable routes remain unavailable rather than being mislabeled as
+updated. Permanent rollup concurrency and dense-graph handling remain follow-ups.
+The reported park visit's copied generation-62 evidence contains the correctly
+attributed inside road piece and an independently unassigned outside piece.
+
+All five services are restored. Temporary Coverage surge replicas/resources are
+removed; the per-account admission safeguard remains one pending the concurrency
+fix, while global/region/reader limits are unchanged. All **18 configuration
+tuples** are preserved, both strict-TLS UI/API origins respond, and only the
+canonical Harbor tag is used. Added storage-settling waits were disabled during
+the final rebuild; independent logs/catalog/storage observations continued at
+five-minute intervals and Coverage observations at three-minute intervals. Owned
+monitors, completed importer Job, verification browser servers and local rehearsal
+server are stopped/removed after archiving their receipts. Backups and audits are
+retained under the protected `deploy-internal` bundles. No commits were made.
+
+## SVG Coverage Route Status Badges
+
+**Deployed 11/9/2026 at Helm 100.** Current Coverage checkmarks, stale clocks and
+failed exclamation marks now share the gray-X badge's full-SVG composition. Each
+circle and mark uses one coordinate system and theme tokens. Clock hands meet at
+the exact circle center; checkmarks and failure marks have explicit path geometry.
+Font-glyph nudges and CSS pseudo-element clock hands are removed. All static
+route-status marks are non-text; the existing CSS pending spinner remains
+non-glyph-based with its reduced-motion behavior intact. Accessible state labels,
+tooltips, route focus availability, colors and outer badge dimensions remain.
+
+All **783 UI tests**, type/CSS/CSP/format/build checks pass. Candidate and deployed
+Chromium dark/WebKit light checks cover repeated current/stale badges, failed and
+unavailable states, and desktop/intermediate/mobile-sheet layouts. Each SVG fills
+the badge box with its exact geometric center matching the wrapper center; no
+font marks or pseudo-element hands remain. Screenshots use synthetic account data
+and actual MapLibre rendering. Only UI rolls; all six non-UI pods and **18
+configuration tuples** are preserved while the Coverage refresh continues.
+Private receipts: `svg-route-status`.
+
+## Map And Stats Feedback Overlays
+
+**Deployed 11/9/2026 at Helm 99.** Upper Map status feedback is centered on the
+canvas and the measured vertical midpoint of the Checked routes/Road coverage
+card. Exact-identity feedback mirrors that anchor from the bottom. Card/stage
+resize and font completion refresh the measurement; a temporary absent card
+retains the last measurement. Existing warning dismissal and exact-detail
+Cancel/Retry behavior remain shared.
+
+Report recovery warnings now use the same banner surface, fixed near the lower
+viewport and horizontally centered on the report region. They stay visible on
+long/scrolled reports without occupying table/pager layout space. With existing
+compatible results, a warning is revealed only if it persists for half a second;
+initial preparation failures remain immediately actionable. Background failures
+retain the mounted rows and Retry path instead of flashing zero/empty results.
+
+All **783 UI tests**, type checking, CSS/CSP guards, formatting and build pass.
+Chromium dark and WebKit light verify candidate and deployed assets with synthetic
+API data and real MapLibre rendering at wide, intermediate and narrow viewports:
+measured upper alignment, mirrored lower anchor, canvas bounds, fixed report
+placement during scrolling, unchanged table/pager coordinates, quiet short
+failures and successful recovery. No production account state is changed by
+these browser fixtures. Exact assets match at both strict-TLS origins; only UI
+rolls and all **18 configuration tuples** remain unchanged. Coverage processing
+continues throughout. Private receipts: `status-feedback-alignment`.
+
+## Park And Education Boundary Attribution Correction
+
+**Updater published 11/7/2026 at Helm 94; existing-data repair pending.**
+Whole-segment containment previously abstained when a physical segment crossed a
+park or education boundary, losing attribution for the portion inside. The
+existing resumable clipping stages now split at locality/park boundaries and,
+for formally unnamed geometry, education boundaries before area attribution.
+Inside/outside pieces retain source geometry, original graph endpoints and
+adjacent-piece connectivity. Source-ordered edge positions retain repeated
+crossings of the same boundary location. Park precedence and named-campus-road
+behavior remain intact.
+
+Derivation **21** adds bounded promotion gates for material park/education
+crossings, including untagged segments. Real PostGIS regression tests execute the
+checked-in clipping, attribution and validation SQL with durable restart cursors:
+ordinary/named park crossings, unnamed school crossings, named-school exclusions,
+holes, overlapping parks, coincident park/school areas, tangencies, locality
+crossings and retraced geometry. They check geometry/length conservation,
+connectivity, outside exclusion and detection of deliberately reintroduced
+unsplit segments. Missing/nonzero boundary metrics prevent promotion. The full
+`go test ./...` suite passes with the disposable clipping integration enabled;
+other integration suites retain their explicit opt-in requirements. An isolated
+replay of the reported public source geometry also verifies exact inside/outside
+attribution using the actual SQL; private details remain outside the repository.
+
+The canonical updater image is published with an SPDX attachment and the existing
+runtime/toolchain preserved. A strict-TLS, read-only Kubernetes status Job checks
+the pulled immutable image and exact binary/pipeline bytes, then is removed.
+Helm **94** changes only the updater reference: all five application pods, their
+rendered specs and **18 configuration tuples** remain unchanged. Application
+schema/minimum runtime **31/31** and OSM **10/10** are unchanged.
+
+The active OSM generation and copied workout evidence remain unchanged.
+Existing results require a new regional build/promotion followed by normal
+Coverage reconciliation. Primary storage is below the updater's 10% starting
+threshold, so no rebuild, storage resize, active-generation removal or Coverage
+repair is started. Storage capacity/remediation requires an owner decision;
+publication is not a completed data repair. Private source, replay, image and
+deployment receipts are retained in `area-attribution-fix` under `deploy-internal`.
+
+## Shared Fitting For All Range Totals Values
+
+**Deployed 11/6/2026 at Helm 93.** Every headline value uses the same
+`FittedAggregateValue` implementation: total workouts, With routes, Duration,
+Distance and Energy. Each measures its own available line/grid-column width and
+reduces only its own font if needed, bounded by its normal CSS size. Normal-sized
+values remain unaffected by overflowing neighbors. Routed counts retain their
+right alignment and accessible label. The Duration-only opt-in is removed rather
+than copying measurement code into other cards.
+
+All **781 UI tests**, type checking, CSS/CSP guards, build and formatting pass.
+Deployed-asset Chromium/WebKit light/dark checks exercise deliberately oversized
+values, a short routed count beside a large total, and two overflowing paired
+counts. All five independently fit without ellipsis, select different fractional
+sizes and preserve the normal size when already fitting. Resize checks cover
+adjacent/wide/narrow viewports without page overflow; shorter replacement values
+restore CSS sizing. Fixtures are synthetic and verification changes no user data.
+
+Only UI rolls; the other four pods, **18 configuration tuples**, schema/minimum
+runtime **31/31** and canonical tag are preserved. Exact deployed assets are
+verified at both strict-TLS origins after rollout settling; all five deployments
+are healthy. Private receipts are retained in `all-aggregate-values-fit`.
+
+## Map Workspace Retention And Duration Fitting
+
+**Deployed 11/6/2026 at Helm 92.** Stats identity handoffs no longer clear the
+focused route, checked set, catalog or valid Road Coverage cache. The signed-in
+frame also retains manual base-map override and the last automatic family,
+restoring them for the handoff before metadata arrives. Automatic still follows
+the focused workout and remains sticky after focus is cleared. Normal Map visits
+retain their visit-local override contract; visit-date actions intentionally
+focus/add their actual workout rather than resetting an explicit checked set.
+The shared exact-detail/single-fit/blink camera flow remains intact.
+
+Summary's Duration value uses a dedicated fitted line without widening any cards.
+It measures shaped text at the CSS maximum and chooses the largest fitting
+fractional size before paint, remeasuring on value/width/resize/font-load changes.
+Only the overflowing line shrinks; shorter values restore CSS sizing. Actual
+fractional content width avoids integer rounding that could leave a clipped glyph.
+
+All **780 UI tests**, type checking, CSS/CSP guards, build and formatting pass.
+Regressions cover focused/checked state through the actual Shell handoff, sticky
+automatic/manual families, existing visit-local behavior and fractional fitting/
+restoration. Deployed-asset real MapLibre Chromium/WebKit checks cover focused
+and unfocused Automatic/Streets, manual Streets, manual Smooth with a focused
+route, and Road Coverage parity. The correct style is used from the first style
+request, and checked subsets/focus survive every identity jump.
+
+The synthetic long Duration line fits at **28.57px** versus its normal **30.72px**
+near a compact desktop width, then increases by a fraction for a nearby width.
+On a wide layout only **0.08-0.09px** reduction is needed from the normal 48px.
+Increasing it further would overflow; other cards remain at their normal sizes,
+and the shorter average value restores CSS sizing. These are scoped rendering
+checks, not a capacity measurement.
+
+Only UI rolls; all five deployments are healthy, both strict-TLS origins serve
+the exact assets, and the other four pods/**18 configuration tuples** remain
+unchanged. Schema/minimum runtime **31/31** and canonical tags are preserved.
+Private source/build/browser receipts are retained in `map-state-and-duration-fit`.
+
+## Direct Identity Camera Flow
+
+**Deployed 11/6/2026 at Helm 91.** Stats identity navigation no longer starts a
+default/geolocation or all-routes fit before exact geometry. The signed-in frame
+keeps the actual last camera in memory and restores center/zoom/bearing/pitch
+when Map is recreated. With no prior camera, wait for detail and initialize at
+its exact padded bounds, with no visible world view or second camera fit.
+
+Stats and Road Coverage both invoke the same existing detail/blink implementation
+and one linear exact-identity fit rather than a zoom-out flight arc. Fitted-key
+tracking is separate from layer/blink restoration, so style events cannot refit
+the same identity. Existing capability authorization, cache/abort rules, minimum
+extent, padding and readiness-based blink timing remain unchanged. Normal range
+and workout-focus fits retain their prior contracts; memory resets with the
+private Shell at confirmed session/principal replacement.
+
+All **773 UI tests**, type checking, CSS/CSP guards, build and formatting pass.
+Regressions cover saved camera, move-end/disposal capture, cold initialization,
+single fits, repeated/style-replayed intents and existing Map behavior. Real
+MapLibre Chromium/WebKit checks on deployed assets use controlled delayed detail
+responses: cold first zoom is about **15.49**, with no world frame/post-init fit;
+warm starts at the retained **zoom 12**, performs exactly one fit and never dips
+below that zoom. Road Coverage has identical fit options, one fit and no interim
+movement or flight arc. Data/style fixtures are synthetic; these checks make no
+backend latency or production-capacity claim.
+
+Only UI rolls; the other four pods, all **18 configuration tuples**, schema/minimum
+runtime **31/31** and canonical tag remain unchanged. Exact assets are verified at
+both strict-TLS origins after rollout settling; all five deployments are healthy.
+Private source/build/browser receipts are retained in `stats-direct-camera` under
+`deploy-internal`. Owned isolated browser servers are closed after verification.
+
+## Workout Deletion Confirmation Copy And Audit
+
+**Deployed 11/6/2026 at Helm 90.** Both Summary deletion dialogs use the owner's
+approved two-line confirmation with one explicit line break, singular/plural
+first sentences and the scoped cleanup/stat-recalculation explanation ending
+**This cannot be undone!** Confirmation guards and pending/focus behavior remain.
+
+The deployed purge function matches source (body MD5
+`6221f5453cbd6e74b5d329aac518e60d`). A read-only catalog/source audit confirms
+explicit provenance deletion followed by workout deletion and cascades for raw
+points/routes/chunks, metrics, Coverage facts/attributions/diagnostics/processing
+contexts and compact per-workout display facts. Shared aggregates are updated.
+Operational jobs/logs, source-file bookkeeping and resurrection-suppression
+tombstones remain. Old canonical contexts are invalidated immediately but persist
+until later cache GC; original exports and backups are outside the purge.
+This corrects the old specification's inaccurate re-import acceptance claim.
+
+All **161 App/Summary tests**, type checking, CSS/CSP guards, build and formatting
+pass. Deployed-asset Chromium/WebKit light/dark checks verify the exact two-line
+messages, Cancel focus and range DELETE guard without submitting any deletion.
+Only UI rolls; the other four pods, **18 configuration tuples**, schema/minimum
+runtime **31/31** and canonical tag remain unchanged. Both strict-TLS origins
+serve exact assets; private receipts are in `workout-delete-copy`.
+
+## Shared Badge Size Verification
+
+**Deployed 11/6/2026 at Helm 89.** The owner's shared badge font change from
+0.66rem to **0.6rem** is now deployed, retaining the shared text offset and other
+UI edits. Investigation found no Summary-range-specific override: the previous
+live UI still used 0.66rem, while the current source already gave the range,
+Workout log weekday and Workout log time-zone badges identical metrics.
+No extra local sizing override was introduced.
+
+Deployed-asset Chromium/WebKit checks confirm all three locations use **9.6px**
+text, **11.52px** line-height, the same weight/padding, and **17.3125px** badge
+height at default root size, in dark/light themes. All **81 Summary/Tooltip
+tests**, type checking, CSS guards, build and formatting pass. Only UI rolls;
+the other four pods, **18 configuration tuples**, schema/minimum runtime **31/31**
+and canonical tag remain unchanged. Both strict-TLS origins serve the exact
+assets. Private receipts are in `range-badge-size-fix` under `deploy-internal`.
+
+## Shared Date Badge Text Alignment
+
+**Deployed 11/6/2026 at Helm 88.** A common `.date-badge-text` span/style shifts
+weekday/time-zone lettering down **1px** without moving or resizing its badge.
+Summary's weekday renderer and shared ZoneBadge use the same rule, including
+Data Sync. Original padding, line-height, borders and backgrounds remain intact.
+Browser measurement rejected asymmetric padding because its baseline contribution
+also moved the outer badge; only the text receives the final relative offset.
+
+All **301 Summary/Tooltip/Data Sync tests**, type checking, CSS/CSP guards, build
+and formatting pass. Deployed-asset Chromium/WebKit checks measure **1px** text
+movement and **0px** changes to width, height or outer position for Summary weekday,
+Summary time zone and Data Sync time zone badges, in dark/light themes. They also
+repeat the full menu cursor sweep and range-delete icon/confirmation check.
+
+Only UI rolls; the other four pods, **18 configuration tuples**, schema/minimum
+runtime **31/31** and canonical tag remain unchanged. Both strict-TLS origins
+serve the exact assets, and all five deployments are healthy. Private receipts
+are retained in `badge-text-alignment` under `deploy-internal`.
+
+## Dropdown Cursor And Range Delete Icon
+
+**Deployed 11/6/2026 at Helm 87.** Shared action/radio/checkbox menu items and
+styled preference options use hand cursors across their padded rows and child
+labels/checkmarks. Disabled variants retain non-clickable cursors and pointer
+guards; headings/separators remain noninteractive. The style guide explicitly
+covers items inside dropdown panels rather than just their triggers.
+
+The Summary range-delete action uses Font Awesome Free's solid trash-can SVG
+inline, inheriting its existing color and retaining its hit target, accessible
+label and confirmation. Shared styled help replaces its native title tooltip;
+the icon attribution is maintained in the project-root [ATTRIBUTIONS](../ATTRIBUTIONS),
+covering Font Awesome Free SVG icons generally without individual icon notices.
+There is no external icon/font request or new icon-package dependency.
+
+The **381 App/Data Sync/Summary tests** pass; App/Summary's **161 tests** pass again
+after the icon change. Type/build/format and CSS guards pass. Chromium/WebKit
+verify avatar, date/base-map, row-context, history filter and styled preference
+items plus disabled variants and the confirmation. Its final content is retained
+by Helm 88; private build receipts are in `dropdown-hand-cursors`.
+
+## UI Style Guide Consolidation
+
+[The UI style guide](ui-style-guide.md) consolidates cross-cutting design and
+interaction reminders from the functional/technical specifications, UI/map ADRs,
+readiness and job/source contracts, and the recent review fixes. It introduces no
+CSS values or new visual system. Existing feature-specific requirements and
+historical decisions remain in place; contributor, architecture, product and
+implementation guidance link to the guide. `AGENTS.md` makes reading it and
+comparing the closest prior art part of future UI implementation/restyling.
+
+## Summary And Shared Dialog UI Rollout
+
+**Deployed 11/6/2026 at Helm 86.** Summary provenance/deletion dialogs and the
+shared Summary/Map/Stats custom-range dialog use Road Coverage's compact inset
+and consistent footer spacing. Close buttons use its orange hover border.
+Provenance timestamps have Workout log date emphasis and minute precision,
+respecting time zone/clock preferences. A common scrollport and sticky header
+keep the date's right edge flush with the close button, including long histories.
+
+All **771 UI tests**, type checking, CSS/CSP guards, build and formatting pass.
+Chromium/WebKit light/dark checks measure consistent **20px** content/action,
+above/below-divider, button-gap and outer insets. Dates match the table font and
+weight, omit seconds, and align with **0px** right-edge difference. Long history
+keeps its header fixed; all three tabs' custom-range dialogs and narrow layouts
+retain their controls. Deployed-asset browser checks use synthetic API data and
+perform no user-data mutations.
+
+Only UI rolls; the other four pods, all **18 configuration tuples**, schema/minimum
+runtime **31/31** and the canonical tag remain unchanged. Both strict-TLS origins
+serve the reviewed assets and all five deployments are healthy. Private receipts
+are retained in `summary-dialog-polish` under `deploy-internal`.
+
+## Stats Width And Grouping UI Rollout
+
+**Deployed 11/6/2026 at Helm 85.** The New Coverage table is now half Summary's
+Workout log width, with Month/Year widened from 32% to **38%**. Report controls
+retain their section spacing, while pagination inherits the shared margin rather
+than an extra grid gap. Month/Year requests retain compatible old rows and their
+correct header/labels, then update positional rows atomically and shrink/grow to
+the accepted result. Account/range/deletion boundaries still clear private data;
+late superseded grouping responses cannot replace the active result.
+
+All **118 focused App/Stats tests**, type checking, CSS guards, build and formatting
+pass. Deployed-asset Chromium/WebKit checks with controlled delayed responses
+measure **0.5** width ratio, **38%** date-column share, and the same **20px**
+table-to-button gap as Summary. Both grouping directions retain the first row's
+actual DOM node, contain no empty frames and resize only when the replacement
+data is ready. Existing report/dialog paging keeps **0px** button/height movement.
+Dark/light and narrow viewport checks retain the previous heading/label tweaks.
+
+Only UI rolls; the other four pods, **18 configuration tuples**, schema/minimum
+runtime **31/31** and canonical tag are preserved. Both strict-TLS origins serve
+the exact reviewed assets. Private receipts are in `stats-half-width` under
+`deploy-internal`; browser data is synthetic and verification changes no user data.
+
+## Stats Heading Margin UI Rollout
+
+**Deployed 11/6/2026 at Helm 84.** Restrict the shared zero-margin reset to
+Summary's `.section-line h2`, keeping the shared Reports/Summary rule for
+typography only. The owner's `.stats-report-nav h2` margin remains
+`-0.35rem 0 0.4rem 0`, along with the other UI edits, including Show new visits by.
+Live Chrome checks in dark/light themes measure **-5.6px / 0 / 6.4px / 0** at a
+16px root size; Summary headings retain zero margins. All **115 focused App/Stats
+tests**, type checking, CSS guards, production build and formatting pass.
+
+The UI-only rollout preserves the other four pods and all **18 configuration
+tuples**, keeps schema/minimum runtime **31/31** unchanged and serves exact assets
+from both strict-TLS origins. The canonical UI tag matches the deployed digest;
+all five deployments are healthy. Private build/browser receipts are retained in
+`stats-heading-margin-fix` under `deploy-internal`.
+
+## Stats Review, Navigation And Refresh
+
+**Deployed 11/6/2026 at Helm 83.** The review follow-up aligns Reports with Summary
+section typography and hand cursors, removes redundant explanatory copy, reuses
+Map's segmented Month/Year controls and centers the title and table. Shared
+Summary width tokens set the table to two-thirds width, capped by the available
+content; controls align with its left edge. The three vertical gaps use one
+token. The past-year header has the exact requested delayed two-line styled help.
+Count/name/date actions use normal text, orange-on-hover and hand cursors, without
+underlines or cell-level backgrounds. Dialogs have the smaller clamped heading,
+an intact top border, Road Coverage date formatting and no redundant visit caption.
+
+Both tables now keep compatible rows mounted at full opacity until replacement
+pages arrive and reserve `min(totalItems,pageSize)` slots, including a short last
+page. They retain page-button positions and document/table scrolling; small total
+or filtered results can still shrink. Account/range/group/deletion-context changes
+remain isolated from this continuity state.
+
+Names switch to Map production Coverage and use the existing exact identity fit/
+blink flow. In-range New visit/Previous visit links focus the actual workout,
+select it and scroll it to the list center when possible. Returning restores the
+active report/page/sort. **Out-of-range previous dates are plain text**: no path
+expands or overrides the main date range. Explicit Stats navigation suppresses
+diagnostics only for that Map visit, without changing the saved preference.
+
+The detail API now returns qualifying/predecessor workout IDs. The new API-only
+`app.stats_visit_workouts` helper uses authorized full-key history probes after
+page LIMIT/OFFSET and deterministic same-date start-instant/ID ties. It belongs
+to source 030; source/schema/minimum runtime stay **31/31/31**, baseline **27**,
+ledger **0-31**. Its guarded adoption preserves **18 existing business/ledger
+inventories**, adds no jobs and changes no existing data rows or function contracts.
+
+Idle behavior is repaired separately from authentication: visible refresh runs at
+the configured 10-60-second cadence (normally 30 seconds), while report scopes
+last at most 30 minutes and are clipped to the session deadline. Expiry/404
+renews the scope; transient preparation failures now retry with bounded backoff
+and on the normal visible/focus/online recovery path. A failed renewal no longer
+leaves Stats unable to recover until remount. Last-validated rows remain visible
+but stale actions are disabled until fresh authorization/data arrives.
+
+Verification:
+
+- **767 UI tests**, Go suite/vet, generated-code checks, type checking, production
+  build, formatting and CSP/dialog/map CSS checks pass. Tests cover delayed-page
+  continuity/spacers, header help, date formatting, one-shot Map intents, all
+  three navigation actions, unchanged range and parent report/page restoration.
+- Native PostgreSQL scenarios validate exact new/predecessor workout IDs,
+  same-date ties, out-of-range metadata and foreign-session denial. The expanded
+  catalog mutation matrix and fresh migration through 031 pass, including actual
+  restricted API/general/Coverage-worker readiness.
+- The protected actual-backup-restore oracle matches both rollups, every nonzero
+  detail page and every qualifying/predecessor workout target across two ranges:
+  **394 queries**, maximum observed read approximately **119 ms** in that restore.
+- Chromium/WebKit, light/dark desktop previews measure exact **2/3** width and
+  **20px/20px/20px** gaps at default scale. Frame sampling sees no empty table
+  frames during either pager and **0px** page-button/table-height movement on
+  short final pages. Tablet/narrow previews have no page overflow; the tooltip
+  delay, exact two lines, cursors, text-only hover and out-of-range dates pass.
+- Both engines pass against deployed assets/APIs and real basemaps: exact road
+  blinking, new/previous workout focus/check/centered-list scrolling, unchanged
+  range, report-page restoration and plain out-of-range previous dates. An owned
+  report scope is deliberately expired while authentication remains valid and
+  one preparation response is made transiently unavailable; Stats recovers in
+  place, without blank rows, logout or a tab switch. Saved preferences stay intact.
+
+All five deployments are healthy; both strict-TLS origins serve the exact UI
+assets. Canonical Harbor tags match deployed immutable references; all **18
+configuration tuples** and Martin are preserved. Verification jobs, owned browser
+servers/sessions/scopes and the local test server/proxy are cleaned up while
+protected backups/clones remain retained. Private receipts/screenshots live in
+`stats-review-031` under `deploy-internal`. At this checkpoint, these scoped checks
+did not close M9 without owner review or certify the M11 device matrix/production
+capacity. Subsequent owner acceptance is recorded in [M9 closeout](#milestone-9-closeout).
+
+## Stats And New Coverage Initial Implementation
+
+**Deployed 11/5/2026 at Helm 82; owner review was pending at this checkpoint.**
+Subsequent acceptance is recorded in [M9 closeout](#milestone-9-closeout). Backend implementation
+and native database/API verification preceded the UI. Stats sits between Map and
+Data Sync; its Map-style sidebar has the shared Summary/Map/Stats date picker,
+Reports navigation and the existing magenta selected border. Report selection,
+Month/Year grouping, sorting and paging live in the parent frame across tabs.
+
+New Coverage counts named canonical identities using all-history first/previous
+visits before inclusive date filtering. It fills every intersecting month/year,
+including zero and partial boundary buckets. First-ever visits enter both
+metrics; later past-year visits require a gap strictly longer than the previous
+visit's calendar-year anniversary, with February 29 clamped to February 28.
+Nonzero cells are whole-cell actions opening compact, searchable, sortable
+qualifying-event dialogs. Previous visit uses the Summary table's grayed-out
+**n/a** for first visits; Escape restores focus to the invoking action.
+
+Four Stats API routes prepare/release an expiring account/session-owned report
+scope and read paged bucket/detail results. Source 030 adds one private forced-RLS
+scope table and six narrowly granted helpers, reusing canonical precomputed visit
+history. Active scopes pin contexts independently of Map; reads use generation/
+policy validation and the same read-only RR snapshot. No Map capability, tile,
+geometry, source-provider request or matching job is needed for Stats.
+
+**Cold-context follow-up:** the first live read gate found a planner failure
+absent on the restored database and warm contexts. For a new context estimated as
+one row, PostgreSQL moved canonical equality into nested-loop join filters and
+repeatedly scanned the context's identity set, exhausting the read deadline.
+The corrected event helper scans history once, materializes qualifying events
+and uses a full-key correlated metadata index probe. A native plan regression
+checks the canonical index condition. Three independently verified, never-built
+live contexts subsequently returned **200**: preparation **2.0-4.7 seconds**,
+summary reads **39-87 ms**. These are scoped observations, not capacity acceptance.
+
+Verification:
+
+- **755 UI tests** pass, including actual Shell tab order/persistence, shared date
+  picker regressions, whole-cell actions, n/a, dialog search/sort/focus, stale and
+  late response fences, bounded renewal and hidden-tab polling. Type checking,
+  production build, formatting, CSP and existing CSS guards pass.
+- Native PostgreSQL API scenarios cover first/repeat/return histories, leap-day/
+  exact-anniversary rules, out-of-range predecessors, park/education/source-member
+  deduplication, zero buckets, pagination/search and count/detail parity. Foreign
+  sessions/accounts, expiry/revocation, context GC pins, failed replacements and
+  changed generations are verified; the new cold-plan regression passes.
+- The restricted-role catalog mutation matrix passes for the new private table
+  and helpers. Fresh source migration and API/general/Coverage-worker readiness
+  preserve source/schema/minimum runtime **31/31/31**, baseline **27**, ledger
+  **0-31**; no source migration 032 is introduced.
+- An independent calendar-history oracle on a protected full actual-application
+  restore matches both rollups and every nonzero drill-down over two ranges:
+  **394 summary/detail queries**, with maximum read approximately **99 ms** after
+  the cold-plan fix. Names, coordinates and account identifiers stay private.
+- Chromium and WebKit synthetic previews cover light/dark desktop, tablet and
+  narrow viewports without page overflow; both engines also pass live deployed-backend
+  count/detail, first-visit/previous-date/n-a, search, compact sizing, Escape/focus,
+  tab restoration and tablet checks. These are not the full M11 device matrix.
+
+Operations:
+
+- Retained a protected **1.65 GB** application backup and restored it before the
+  guarded adoption. Existing function owners/ACLs and **18 business/ledger table
+  inventories** are preserved in both the initial adoption and function follow-up;
+  existing data rows, generations/revisions, jobs and saved preferences are unchanged.
+- Helm 81 delivered API, both shared-worker consumers and UI. Helm 82 rolls only
+  API/general-worker/Coverage-worker for the plan/readiness change, preserving the
+  UI and Martin pods/images. All **18 configuration UID/resourceVersion/content
+  tuples** and both strict-TLS origins are preserved; all five deployments are healthy.
+- Canonical Harbor `dev-20261102` tags match deployed digests. OSM content is
+  unchanged. Owned verification jobs/browser servers/sessions/scopes are cleaned
+  up, with receipts and actual-data screenshots retained only in protected storage.
+
+The current private bundles are `milestone9-stats-031` and its final
+`milestone9-stats-cold-plan-031` follow-up under `deploy-internal`. This initial
+implementation was ready for owner review, not itself a declaration of M9
+acceptance; the later [closeout](#milestone-9-closeout) records acceptance.
 
 ## Empty Coverage Results
 
@@ -363,7 +1669,7 @@ or time-to-usable-render acceptance; software/remote-browser and CPU causes rema
 unisolated. Owned selections/session were cleaned up and preferences/account/source
 generations preserved. See the [scoped final result](coverage-acceptance-results.md#tile-delivery-status-031).
 
-M8 remains closed; this is not M9 capacity acceptance or a universal production
+M8 remains closed; this is not M12 capacity acceptance or a universal production
 SLO. Dense raw client completion remains the next investigation, not a demonstrated
 need for more server resources or changed request-rate/timeout/body limits. No
 benchmark/test rerun, database call or operational execution occurs in this
@@ -443,7 +1749,7 @@ this deployment record.** Actual signed-in browser validation, parallel bursts,
 p95, initial usable render and focus latency remain separate gates, not missing
 implemented optimizations. The [synthetic comparison](coverage-acceptance-results.md#tile-local-source-verification-031)
 still proves cardinality, not endpoint p95 or a speed multiplier. M8 remains
-closed with its original acceptance/browser receipt; no new M8 pass or M9 capacity
+closed with its original acceptance/browser receipt; no new M8 pass or M12 capacity
 certification is implied. This documentation closeout performs no operational
 execution and does not rerun the recorded tests.
 
@@ -1589,8 +2895,8 @@ separate responses as an atomic snapshot. Direction-arrow density follows screen
 space, with final-camera, current-source and tile-readiness guards preventing stale
 arrows from flashing during programmatic moves.
 
-Historical M7 measurements and the separate M11 capacity boundary are unchanged;
-this closeout adds no capacity certification. M9 administration,
+Historical M7 measurements and the separate M12 capacity boundary are unchanged;
+this closeout adds no capacity certification. M10 administration,
 OSM administration, full monitoring and operational runbooks remain future work;
 M8 completion does not close those milestones or production hardening. Rollback
 requires matching database and image recovery, never an incompatible image-only
@@ -1772,7 +3078,7 @@ The completed app-repository Harbor cleanup and protected local old-database/OCI
 rollback exports remain as recorded above. No global registry GC, blob-space
 reclamation, resource increase or storage expansion is claimed. The owner should
 review current headroom before another yearly batch; this closure does **not**
-declare the next year ready or certify M11 capacity. M8 still awaited explicit owner
+declare the next year ready or certify M12 capacity. M8 still awaited explicit owner
 acceptance at this checkpoint; its later [closeout](#milestone-8-closeout) is current.
 This documentation update changes no runtime or frozen
 chart/source files and authorizes no new operations.

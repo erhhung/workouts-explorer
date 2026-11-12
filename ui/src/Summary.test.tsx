@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
-import { type Preferences, type Workout, type WorkoutProvenance } from "./api";
+import { type Preferences, type Workout, type WorkoutList, type WorkoutProvenance } from "./api";
 import { Summary, formatAggregateDuration, formatDuration } from "./Summary";
+import { RetainedTab } from "./RetainedTab";
 
 const preferences: Preferences = {
   theme: "dark",
@@ -109,6 +110,7 @@ function renderSummary(
   const result = render(view(current));
   return {
     ...result,
+    client,
     onDateRangeSaved,
     rerenderPreferences(next: Partial<Preferences>) {
       current = { ...current, ...next };
@@ -117,7 +119,97 @@ function renderSummary(
   };
 }
 
+function aggregatePointerTargets(card: HTMLElement) {
+  const panel = document.getElementById(card.getAttribute("aria-controls")!)!;
+  vi.spyOn(card, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 100, 200, 120));
+  vi.spyOn(panel, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 220, 200, 200));
+  return {
+    panel,
+    row: panel.firstElementChild!,
+    header: { target: card, coords: { clientX: 150, clientY: 150 } },
+    breakdown: { target: panel.firstElementChild!, coords: { clientX: 150, clientY: 250 } },
+    outside: { target: document.body, coords: { clientX: 400, clientY: 500 } },
+  };
+}
+
 describe("Summary", () => {
+  test("reuses page cells while closing actions for a replaced workout identity", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    const showOnMap = vi.fn();
+    const { client } = renderSummary({}, vi.fn(), showOnMap);
+    const trigger = (
+      await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" })
+    )[0];
+    const row = trigger.closest("tr");
+    const user = userEvent.setup();
+    await user.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "Show on map" })).toBeVisible();
+    const replacement: Workout = {
+      ...workout,
+      id: "C".repeat(32),
+      type: { ...running, key: "walking", displayName: "Walking" },
+    };
+    act(() =>
+      client.setQueriesData<WorkoutList>({ queryKey: ["workouts"] }, (current) =>
+        current ? { ...current, items: [replacement] } : current,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: "Show on map" })).not.toBeInTheDocument(),
+    );
+    const nextTrigger = screen.getAllByRole("button", {
+      name: "Actions for Walking on 2026-08-05",
+    })[0];
+    expect(nextTrigger.closest("tr")).toBe(row);
+    expect(trigger).not.toBeInTheDocument();
+    await user.click(nextTrigger);
+    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    expect(showOnMap).toHaveBeenCalledExactlyOnceWith(replacement.id);
+  });
+
+  test("jumps directly to a distant workout page while retaining loaded rows and blocking extra jumps", async () => {
+    const requests: number[] = [];
+    let resolveJump!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      resolveJump = resolve;
+    });
+    const response = (page: number) => ({
+      ...workoutPage(page, [
+        { ...workout, type: { ...running, displayName: `Workout page ${page}` } },
+      ]),
+      pagination: { page, pageSize: 25, totalItems: 1450, totalPages: 58 },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = new URL(String(input), "https://test");
+      if (url.pathname === "/api/summary") return Promise.resolve(json(summary));
+      const page = Number(url.searchParams.get("page") ?? 1);
+      requests.push(page);
+      return page === 6 ? pending : Promise.resolve(json(response(page)));
+    });
+    renderSummary();
+    const nav = await screen.findByRole("navigation", { name: "Workout pages" });
+    await screen.findAllByText("Workout page 1");
+    const user = userEvent.setup();
+    await user.click(within(nav).getByRole("button", { name: "Forward 5 pages" }));
+    await waitFor(() => expect(requests).toEqual([1, 6]));
+    expect(screen.getAllByText("Workout page 1").length).toBeGreaterThan(0);
+    expect(nav).toHaveTextContent("Page 1 of 58");
+    expect(within(nav).getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(within(nav).getByRole("button", { name: "Next" })).toBeEnabled();
+    await user.click(within(nav).getByRole("button", { name: "Last page" }));
+    expect(requests).toEqual([1, 6]);
+    resolveJump(json(response(6)));
+    await waitFor(() => expect(nav).toHaveTextContent("Page 6 of 58"));
+    await user.click(within(nav).getByRole("button", { name: "Last page" }));
+    await waitFor(() => expect(nav).toHaveTextContent("Page 58 of 58"));
+    expect(requests).toEqual([1, 6, 58]);
+    await user.click(within(nav).getByRole("button", { name: "First page" }));
+    await waitFor(() => expect(nav).toHaveTextContent("Page 1 of 58"));
+    expect(screen.queryByText("Workout page 58")).not.toBeInTheDocument();
+  });
+
   test("shows recent custom ranges directly after Custom, keeps its checkmark, and skips reapplying the current range", async () => {
     const a = "2022-01-01/2026-11-01";
     const b = "2024-02-29/2024-03-03";
@@ -349,7 +441,7 @@ describe("Summary", () => {
     const view = renderSummary();
     let table = await screen.findByRole("table");
     let date = within(within(table).getAllByRole("row")[1])
-      .getByText("Wed", { selector: ".weekday-badge" })
+      .getByText("Wed", { selector: ".weekday-badge .date-badge-text" })
       .closest<HTMLElement>(".workout-date")!;
     expect(date).toHaveTextContent("WedAug 5, 2026, 7:30 AMMDT");
     const badge = within(date).getByLabelText("UTC-6:00 recorded");
@@ -365,7 +457,7 @@ describe("Summary", () => {
     view.rerenderPreferences({ clockFormat: "24h" });
     table = await screen.findByRole("table");
     date = within(within(table).getAllByRole("row")[1])
-      .getByText("Wed", { selector: ".weekday-badge" })
+      .getByText("Wed", { selector: ".weekday-badge .date-badge-text" })
       .closest<HTMLElement>(".workout-date")!;
     expect(date).toHaveTextContent("Aug 5, 2026, 07:30");
     expect(date).not.toHaveTextContent("AM");
@@ -475,7 +567,7 @@ describe("Summary", () => {
     const byTypeDuration = breakdown.querySelector<HTMLElement>(".duration-value")!;
     const byTypeTrigger = byTypeDuration.querySelector<HTMLElement>(".tooltip-trigger")!;
     expect(byTypeTrigger).not.toHaveAttribute("title");
-    expect(byTypeTrigger).toHaveAttribute("tabindex", "0");
+    expect(byTypeTrigger).not.toHaveAttribute("tabindex");
     expect(byTypeTrigger).toHaveAccessibleName(
       "Duration 1h 05m; rounded to nearest second 1h 05m 01s",
     );
@@ -632,6 +724,314 @@ describe("Summary", () => {
       expect(endDate).toHaveValue(expected);
     },
   );
+
+  test("keeps exactly one keyboard stop per aggregate card in both directions", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const cards = await screen.findAllByRole("button", { name: /By workout type/ });
+    const user = userEvent.setup();
+    cards[0].focus();
+    for (const index of [1, 2, 3]) {
+      await user.tab();
+      expect(cards[index]).toHaveFocus();
+      expect(cards[index]).toHaveAttribute("aria-expanded", "true");
+      const panel = document.getElementById(cards[index].getAttribute("aria-controls")!)!;
+      expect(panel).toHaveAttribute("tabindex", "-1");
+      expect(panel).not.toHaveAttribute("inert");
+      expect(panel.querySelectorAll('a,button,input,select,textarea,[tabindex="0"]')).toHaveLength(
+        0,
+      );
+    }
+    for (const index of [2, 1, 0]) {
+      await user.tab({ shift: true });
+      expect(cards[index]).toHaveFocus();
+      expect(cards[index]).toHaveAttribute("aria-expanded", "true");
+    }
+    await user.keyboard("{Escape}");
+    expect(cards[0]).toHaveFocus();
+    expect(document.getElementById(cards[0].getAttribute("aria-controls")!)!).toHaveAttribute(
+      "inert",
+    );
+  });
+
+  test.each(["Workouts", "Duration", "Distance", "Energy"])(
+    "holds %s over breakdown rows with Shift, toggles once per click, and closes on release outside the header",
+    async (label) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+        Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+      );
+      renderSummary();
+      const user = userEvent.setup();
+      const card = await screen.findByRole("button", {
+        name: new RegExp(`^${label}.*By workout type`),
+      });
+      const targets = aggregatePointerTargets(card);
+      await user.pointer(targets.header);
+      await user.keyboard("{Shift>}");
+      const { panel, row } = targets;
+      await user.pointer(targets.breakdown);
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      expect(card.closest("article")).toHaveClass("is-shift-held");
+      await user.click(row);
+      expect(screen.getByRole("heading", { name: "Range averages" })).toBeInTheDocument();
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      expect(card).toHaveFocus();
+      await user.click(card);
+      expect(screen.getByRole("heading", { name: "Range totals" })).toBeInTheDocument();
+      await user.pointer(targets.breakdown);
+      await user.keyboard("{/Shift}");
+      expect(card).toHaveAttribute("aria-expanded", "false");
+      expect(panel).toHaveAttribute("inert");
+    },
+  );
+
+  test("keeps the original hover boundary without Shift and after releasing Shift inside it", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const user = userEvent.setup();
+    const card = await screen.findByRole("button", { name: /^Workouts.*By workout type/ });
+    const targets = aggregatePointerTargets(card);
+    await user.pointer(targets.header);
+    await user.pointer(targets.breakdown);
+    expect(card).toHaveAttribute("aria-expanded", "false");
+    await user.pointer(targets.header);
+    await user.keyboard("{Shift>}");
+    await user.pointer(targets.breakdown);
+    expect(card).toHaveAttribute("aria-expanded", "true");
+    await user.pointer(targets.header);
+    await user.keyboard("{/Shift}");
+    expect(card).toHaveAttribute("aria-expanded", "true");
+    await user.pointer(targets.outside);
+    expect(card).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("uses one preview owner across keyboard focus, pointer hover and stale blur events", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const user = userEvent.setup();
+    const cards = await screen.findAllByRole("button", { name: /By workout type/ });
+    act(() => cards[0].focus());
+    expect(cards[0]).toHaveAttribute("aria-expanded", "true");
+    await user.hover(cards[1]);
+    expect(document.querySelectorAll(".aggregate-card.is-visible")).toHaveLength(1);
+    expect(cards[0]).toHaveFocus();
+    expect(cards[0]).toHaveAttribute("aria-expanded", "false");
+    await user.tab();
+    expect(cards[1]).toHaveFocus();
+    expect(cards[1]).toHaveAttribute("aria-expanded", "true");
+    await user.hover(cards[2]);
+    expect(document.querySelectorAll(".aggregate-card.is-visible")).toHaveLength(1);
+    fireEvent.blur(cards[1]);
+    expect(cards[2]).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test.each([
+    "window blur",
+    "hidden document",
+    "outside focus",
+    "outside pointer",
+    "Escape",
+    "resize",
+  ])("closes a Shift-held preview on %s and does not reopen it on window focus", async (reason) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const user = userEvent.setup();
+    const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+    const targets = aggregatePointerTargets(card);
+    await user.pointer(targets.header);
+    await user.keyboard("{Shift>}");
+    await user.pointer(targets.breakdown);
+    expect(card).toHaveAttribute("aria-expanded", "true");
+    if (reason === "window blur") fireEvent(window, new Event("blur"));
+    if (reason === "hidden document") {
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      fireEvent(document, new Event("visibilitychange"));
+    }
+    if (reason === "outside focus")
+      act(() => screen.getByRole("button", { name: "Select date range" }).focus());
+    if (reason === "outside pointer") await user.pointer(targets.outside);
+    if (reason === "Escape") await user.keyboard("{Escape}");
+    if (reason === "resize") fireEvent(window, new Event("resize"));
+    expect(card).toHaveAttribute("aria-expanded", "false");
+    fireEvent(window, new Event("focus"));
+    expect(card).toHaveAttribute("aria-expanded", "false");
+    if (reason === "window blur") {
+      act(() => card.focus());
+      expect(card).toHaveAttribute("aria-expanded", "false");
+      await user.keyboard("{/Shift}");
+      await user.tab();
+      await user.tab({ shift: true });
+      expect(card).toHaveFocus();
+      expect(card).toHaveAttribute("aria-expanded", "true");
+    }
+  });
+
+  test.each(["missing leave", "stale restored enter", "missed Shift keyup", "mouse-only move"])(
+    "reconciles hover over the Workout log after %s without another card boundary event",
+    async (scenario) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+        Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+      );
+      renderSummary();
+      const user = userEvent.setup();
+      const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+      const targets = aggregatePointerTargets(card);
+      await user.pointer(targets.header);
+      if (scenario === "stale restored enter") {
+        fireEvent(window, new Event("blur"));
+        fireEvent(window, new Event("focus"));
+        const enter = new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 150 });
+        Object.defineProperty(enter, "pointerType", { value: "mouse" });
+        fireEvent(card, enter);
+      }
+      if (scenario === "missed Shift keyup") {
+        await user.keyboard("{Shift>}");
+        await user.pointer(targets.breakdown);
+      }
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      const cell = (await screen.findByRole("table")).querySelector("tbody td")!;
+      const move = scenario === "mouse-only move" ? fireEvent.mouseMove : fireEvent.pointerMove;
+      move(cell, { pointerType: "mouse", clientX: 400, clientY: 500, shiftKey: false });
+      expect(card).toHaveAttribute("aria-expanded", "false");
+      expect(targets.panel).toHaveAttribute("inert");
+    },
+  );
+
+  test.each(["Alt", "Meta", "Control"])(
+    "keeps a hovered preview open for %s alone while still dismissing on actual focus loss",
+    async (key) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+        Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+      );
+      renderSummary();
+      const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+      await userEvent.hover(card);
+      act(() => card.focus());
+      const modifiers =
+        key === "Alt" ? { altKey: true } : key === "Meta" ? { metaKey: true } : { ctrlKey: true };
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...modifiers,
+      });
+      fireEvent(card, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      fireEvent.keyDown(card, { key: "x", ...modifiers });
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      fireEvent.keyUp(card, { key });
+      expect(card).toHaveAttribute("aria-expanded", "true");
+      fireEvent(window, new Event("blur"));
+      expect(card).toHaveAttribute("aria-expanded", "false");
+      fireEvent.keyDown(card, { key: "Tab", ...modifiers });
+      fireEvent.focus(card);
+      expect(card).toHaveAttribute("aria-expanded", "false");
+    },
+  );
+
+  test("dismisses an old preview on window focus even when deactivation was not delivered", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+    await userEvent.hover(card);
+    fireEvent(window, new Event("focus"));
+    expect(card).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("keeps keyboard-only previews open while the pointer moves elsewhere without new hover intent", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+    aggregatePointerTargets(card);
+    act(() => card.focus());
+    fireEvent.pointerMove(document.body, { pointerType: "mouse", clientX: 400, clientY: 500 });
+    expect(card).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("closes previews when a retained Summary becomes inactive", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const content = (
+      <Summary preferences={preferences} csrfToken="csrf" onDateRangeSaved={vi.fn()} />
+    );
+    const view = render(
+      <QueryClientProvider client={client}>
+        <RetainedTab id="/" active>
+          {content}
+        </RetainedTab>
+      </QueryClientProvider>,
+    );
+    const card = await screen.findByRole("button", { name: /^Duration.*By workout type/ });
+    await userEvent.hover(card);
+    expect(card).toHaveAttribute("aria-expanded", "true");
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <RetainedTab id="/" active={false}>
+          {content}
+        </RetainedTab>
+      </QueryClientProvider>,
+    );
+    expect(card).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("scrolls overflowing breakdowns from the focused card without adding a focus stop", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    const card = await screen.findByRole("button", { name: /Duration.*By workout type/ });
+    const user = userEvent.setup();
+    card.focus();
+    await waitFor(() => expect(card).toHaveAttribute("aria-expanded", "true"));
+    const panel = document.getElementById(card.getAttribute("aria-controls")!)!;
+    panel.style.overflowY = "auto";
+    let top = 0;
+    Object.defineProperties(panel, {
+      scrollHeight: { configurable: true, value: 480 },
+      clientHeight: { configurable: true, value: 160 },
+      scrollTop: {
+        configurable: true,
+        get: () => top,
+        set: (value) => {
+          top = Math.max(0, Math.min(320, value));
+        },
+      },
+    });
+    vi.spyOn(panel.firstElementChild!, "getBoundingClientRect").mockReturnValue({
+      height: 32,
+    } as DOMRect);
+    for (const [key, target] of [
+      ["ArrowDown", 32],
+      ["ArrowUp", 0],
+      ["PageDown", 160],
+      ["End", 320],
+      ["PageUp", 160],
+      ["Home", 0],
+    ] as const) {
+      await user.keyboard(`{${key}}`);
+      expect(panel.scrollTop).toBe(target);
+      expect(card).toHaveFocus();
+    }
+    fireEvent.keyDown(card, { key: "End", ctrlKey: true });
+    expect(panel.scrollTop).toBe(0);
+    await user.keyboard("{Escape}{ArrowDown}");
+    expect(panel.scrollTop).toBe(0);
+  });
 
   test("renders precise converted aggregate cards and exposes type breakdowns by pointer and keyboard state", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
@@ -1424,7 +1824,7 @@ describe("Summary", () => {
     expect(screen.getByText("Page 2 of 2", { selector: ".pagination span" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Sorting by Type ascending...");
     expect(screen.queryByText("Loading workouts...")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 
     resolveSort(json(workoutPage(1)));
@@ -1560,6 +1960,7 @@ describe("Summary", () => {
     expect(mobileCard).not.toHaveClass("is-expanded");
     const details = document.getElementById(mobileButton.getAttribute("aria-controls")!);
     expect(details).toHaveAttribute("hidden");
+    expect(details).toBeEmptyDOMElement();
     await userEvent.click(mobileButton);
     expect(mobileButton).toHaveAttribute("aria-expanded", "true");
     expect(mobileCard).toHaveClass("is-expanded");
@@ -1569,6 +1970,9 @@ describe("Summary", () => {
     expect(details).toHaveTextContent("Local end");
     expect(details).toHaveTextContent("8:35 AM");
     expect(within(details!).getAllByLabelText("UTC-6:00 recorded")).toHaveLength(2);
+    await userEvent.click(mobileButton);
+    expect(details).toHaveAttribute("hidden");
+    expect(details).toBeEmptyDOMElement();
   });
 
   test("opens full chronological provenance from desktop and mobile action positions", async () => {
@@ -1671,6 +2075,47 @@ describe("Summary", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "Close Workout provenance" }));
     await waitFor(() => expect(triggers[0]).toHaveFocus());
+  });
+
+  test("formats provenance like Workout log dates without seconds and retains the bold date class", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const path = String(input);
+      if (path.startsWith("/api/summary?")) return Promise.resolve(json(summary));
+      if (path.startsWith("/api/workouts?")) return Promise.resolve(json(workoutPage()));
+      if (path.endsWith("/provenance"))
+        return Promise.resolve(
+          json({
+            workoutId: workout.id,
+            items: [
+              {
+                id: "1".repeat(32),
+                kind: "created",
+                jobId: "2".repeat(32),
+                sourceId: workout.sourceId,
+                sourceName: "Fixture source",
+                sourceType: "health-auto-export-local",
+                sourceFile: "fixture.json",
+                warnings: [],
+                importedAt: "2026-10-30T21:57:53Z",
+              },
+            ],
+          }),
+        );
+      throw new Error(`Unhandled ${path}`);
+    });
+    const view = renderSummary({ timezone: "America/Los_Angeles" });
+    const user = userEvent.setup();
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Actions for Running on 2026-08-05" }))[0],
+    );
+    await user.click(screen.getByRole("menuitem", { name: "View provenance" }));
+    const dialog = await screen.findByRole("dialog", { name: "Workout provenance" });
+    const date = await within(dialog).findByText("Oct 30, 2026, 2:57 PM");
+    expect(date).toHaveClass("local-date-time");
+    expect(date).toHaveAttribute("datetime", "2026-10-30T21:57:53Z");
+    expect(dialog).not.toHaveTextContent("2:57:53");
+    view.rerenderPreferences({ clockFormat: "24h" });
+    expect(within(dialog).getByText("Oct 30, 2026, 14:57")).toBeInTheDocument();
   });
 
   test.each([0, 1])(
@@ -2137,8 +2582,13 @@ describe("Summary", () => {
     await user.click(screen.getByRole("menuitem", { name: "Delete workout" }));
     const dialog = screen.getByRole("dialog", { name: "Delete workout?" });
     expect(dialog).toHaveTextContent("Delete Running on Aug 5, 2026?");
-    expect(dialog).toHaveTextContent(
-      "This workout will be hidden from view immediately. All associated data, including route, import history, and derived data, will be purged by a background task. This cannot be undone. Are you sure?",
+    const message = dialog.querySelector(".deletion-confirmation-message")!;
+    expect(message.firstChild).toHaveTextContent(
+      "This workout will be hidden from view immediately.",
+    );
+    expect(message.querySelectorAll("br")).toHaveLength(1);
+    expect(message).toHaveTextContent(
+      "Workout data, including routes, workout-specific import and processing records, and coverage attributions, will be purged by a background task, and stats will be recalculated. This cannot be undone!",
     );
     expect(dialog).toHaveClass("single-deletion-dialog");
     await waitFor(() =>
@@ -2297,8 +2747,13 @@ describe("Summary", () => {
     expect(dialog).toHaveTextContent(
       "Delete all workouts from Aug 1, 2026 to Aug 31, 2026, inclusive?",
     );
-    expect(dialog).toHaveTextContent(
-      "These workouts will be hidden from view immediately. All associated data, including routes, import history, and derived data, will be purged by a background task. This cannot be undone.",
+    const message = dialog.querySelector(".deletion-confirmation-message")!;
+    expect(message.firstChild).toHaveTextContent(
+      "These workouts will be hidden from view immediately.",
+    );
+    expect(message.querySelectorAll("br")).toHaveLength(1);
+    expect(message).toHaveTextContent(
+      "Workout data, including routes, workout-specific import and processing records, and coverage attributions, will be purged by a background task, and stats will be recalculated. This cannot be undone!",
     );
     expect(within(dialog).queryByText("Confirmation")).not.toBeInTheDocument();
     await waitFor(() =>

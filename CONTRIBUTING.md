@@ -90,7 +90,16 @@ Secrets, disable bootstrap and delete the external bootstrap Secret after the
 first successful run.
 
 Milestone 2 exposes invitation creation and one-time registration only.
-Invitation listing, resend, and revocation remain sequenced for Milestone 9.
+Invitation listing, resend, and revocation remain sequenced for Milestone 10.
+
+## UI Implementation
+
+Read the [UI style guide](docs/ui-style-guide.md) before adding or restyling an
+interface. Start from the closest existing table, dialog, picker or control;
+consistency includes themes, spacing, cursors, tooltips, keyboard/focus behavior,
+state retention and no-flash pagination, not just visual resemblance.
+Feature contracts and accepted exceptions remain in the functional specification;
+the guide deliberately does not duplicate stylesheet values or historical ADRs.
 
 ## Code Formatting
 
@@ -557,3 +566,9 @@ printf '%s' "$CI_REGISTRY_PASSWORD" | buildah login "$CI_REGISTRY" \
 ```
 
 Pull requests build but never authenticate or push.
+
+These publication commands describe the current private Gitea/Harbor pipeline.
+[Milestone 13](docs/implementation-plan.md#milestone-13-github-project-publication)
+adds the public **GitHub Actions** CI/release workflows, GHCR images/OCI charts,
+legacy Helm repository and GitHub Pages documentation; production deployment is
+Milestone 14. Public-release installation must not require this private pipeline.

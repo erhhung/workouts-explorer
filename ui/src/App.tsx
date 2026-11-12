@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { rangeForWorkoutNavigation, type MapWorkoutTarget } from "./routeNavigation";
 import {
   lazy,
   Suspense,
@@ -8,6 +9,8 @@ import {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -25,10 +28,20 @@ import {
   api,
 } from "./api";
 import { DataSync } from "./DataSync";
+import { ContentBackground } from "./ContentBackground";
+import { useKeyboardShortcut } from "./keyboardShortcuts";
+import { RetainedTab } from "./RetainedTab";
+import { StatsPage, DEFAULT_STATS_STATE, type StatsMapTarget } from "./StatsPage";
 import { PreferenceSelect } from "./PreferenceSelect";
 import { initialRange, Summary, type AcceptedWorkoutDeletion } from "./Summary";
 import { applyTheme } from "./theme";
-import type { MapMode, RoadCoverageCache } from "./MapPage";
+import type {
+  CoverageEntityTarget,
+  MapBaseMapState,
+  MapCameraState,
+  MapMode,
+  RoadCoverageCache,
+} from "./MapPage";
 
 const MapPage = lazy(() => import("./MapPage"));
 
@@ -746,7 +759,7 @@ function Modal({
 function PreferencesDialog({
   open,
   onOpenChange,
-  returnFocus,
+  onCloseFocus,
   profile,
   preferences,
   csrfToken,
@@ -755,7 +768,7 @@ function PreferencesDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  returnFocus: React.RefObject<HTMLButtonElement | null>;
+  onCloseFocus: () => void;
   profile: Profile;
   preferences: Preferences;
   csrfToken: string;
@@ -767,7 +780,10 @@ function PreferencesDialog({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const initialTimeZone = preferences.initialized ? preferences.timezone : browserTimeZone();
-  const timeZoneOptions = sortedTimeZoneOptions(initialTimeZone);
+  const timeZoneOptions = useMemo(
+    () => (open ? sortedTimeZoneOptions(initialTimeZone) : []),
+    [open, initialTimeZone],
+  );
   const pageSizeChoices = PAGE_SIZE_CHOICES.filter((choice) => choice <= pageSizeMaximum);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -839,7 +855,7 @@ function PreferencesDialog({
           className="dialog-content preferences-dialog"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            returnFocus.current?.focus();
+            onCloseFocus();
           }}
         >
           <header className="dialog-heading preferences-header">
@@ -1041,18 +1057,37 @@ function Shell({
   path: string;
 }) {
   const queryClient = useQueryClient();
+  const shell = useRef<HTMLDivElement>(null);
+  const [contentFocusRequest, setContentFocusRequest] = useState(0);
   const [data, setData] = useState<{ profile: Profile; preferences: Preferences }>();
   const [loadError, setLoadError] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [visitRange, setVisitRange] = useState<DateRangePreference>();
   const [workoutSort, setWorkoutSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
   const [summaryPage, setSummaryPage] = useState(1);
+  const [statsState, setStatsState] = useState(DEFAULT_STATS_STATE);
+  const [statsMapVisit, setStatsMapVisit] = useState(false);
+  const [mapEntityRequest, setMapEntityRequest] = useState<{
+    key: number;
+    entity: CoverageEntityTarget;
+  }>();
+  const statsMapSequence = useRef(0);
+  const dateNavigationSequence = useRef(0);
+  const mapPreferences = useMemo(
+    () =>
+      statsMapVisit && data
+        ? { ...data.preferences, coverageDiagnosticsEnabled: false }
+        : data?.preferences,
+    [data?.preferences, statsMapVisit],
+  );
   const [mapWorkoutIds, setMapWorkoutIds] = useState<string[] | undefined>();
   const [mapAvailableWorkouts, setMapAvailableWorkouts] = useState<MapSelectionWorkout[]>([]);
   const [mapCatalogLoaded, setMapCatalogLoaded] = useState(false);
   const [mapFocusedWorkoutId, setMapFocusedWorkoutId] = useState<string>();
   const [mapMode, setMapMode] = useState<MapMode>("routes");
   const [mapCanvasFocusRequest, setMapCanvasFocusRequest] = useState(0);
+  const mapCameraState = useRef<MapCameraState | undefined>(undefined);
+  const mapBaseMapState = useRef<MapBaseMapState | undefined>(undefined);
   const [roadCoverageCache, setRoadCoverageCache] = useState<RoadCoverageCache>();
   const [mapDeletions, setMapDeletions] = useState<{
     revision: number;
@@ -1143,6 +1178,34 @@ function Shell({
   const canonicalJobId = jobMatch ? jobMatch[1].toUpperCase() : undefined;
   const dataSyncRoute = pathname === "/data-sync" || Boolean(jobMatch);
   const mapRoute = pathname === "/map";
+  const statsRoute = pathname === "/stats";
+  const activeTab = mapRoute ? "/map" : statsRoute ? "/stats" : dataSyncRoute ? "/data-sync" : "/";
+  function prepareTabNavigation(destination: string) {
+    if (destination === "/map") {
+      setStatsMapVisit(false);
+      setMapEntityRequest(undefined);
+    }
+    setContentFocusRequest((value) => value + 1);
+  }
+  useKeyboardShortcut("tab", shell, (shortcut) => {
+    if (shortcut.kind !== "tab" || !data) return false;
+    if (path === shortcut.path) prepareTabNavigation(shortcut.path);
+    else
+      shell.current
+        ?.querySelector<HTMLAnchorElement>(`nav[aria-label="Primary"] a[href="${shortcut.path}"]`)
+        ?.click();
+    return true;
+  });
+  useLayoutEffect(() => {
+    if (!data) return;
+    const workspace = shell.current?.querySelector(`[data-app-tab="${activeTab}"]`);
+    if (mapRoute) {
+      setMapCanvasFocusRequest((value) => value + 1);
+      const fallback = workspace?.querySelector<HTMLElement>("main[data-app-content]");
+      fallback?.focus({ preventScroll: true });
+    } else
+      workspace?.querySelector<HTMLElement>("[data-app-content]")?.focus({ preventScroll: true });
+  }, [activeTab, contentFocusRequest, Boolean(data)]);
   useEffect(() => {
     if (jobMatch && jobMatch[1] !== canonicalJobId)
       navigate(`/data-sync/jobs/${canonicalJobId}`, true);
@@ -1167,6 +1230,9 @@ function Shell({
     );
   const selectedRange = visitRange ?? initialRange(data.preferences.dateRange);
   const selectDateRange = (next: DateRangePreference) => {
+    dateNavigationSequence.current++;
+    setMapEntityRequest(undefined);
+    setStatsMapVisit(false);
     if (next !== selectedRange) {
       setWorkoutSort(DEFAULT_WORKOUT_SORT);
       setSummaryPage(1);
@@ -1177,6 +1243,53 @@ function Shell({
       setRoadCoverageCache(undefined);
     }
     setVisitRange(next);
+  };
+  const showWorkoutOnMap = (target: MapWorkoutTarget, allowRangeChange = true) => {
+    const next = allowRangeChange
+      ? rangeForWorkoutNavigation(selectedRange, target.localStartDate, data.preferences)
+      : selectedRange;
+    if (next !== selectedRange) {
+      selectDateRange(next);
+      const sequence = dateNavigationSequence.current;
+      void api<Preferences>(
+        "/api/me/preferences",
+        { method: "PATCH", body: JSON.stringify({ dateRange: next }) },
+        session.csrfToken,
+      )
+        .then((saved) => {
+          if (dateNavigationSequence.current !== sequence) return;
+          setData((current) =>
+            current
+              ? { ...current, preferences: { ...current.preferences, dateRange: saved.dateRange } }
+              : current,
+          );
+        })
+        .catch(() => {
+          if (dateNavigationSequence.current === sequence)
+            setMenuError("The map date range changed for this visit, but could not be saved.");
+        });
+    }
+    setStatsMapVisit(true);
+    setMapEntityRequest(undefined);
+    setMapMode("coverage");
+    setMapFocusedWorkoutId(target.workoutId);
+    setMapWorkoutIds((current) =>
+      current ? [...new Set([...current, target.workoutId])].sort() : undefined,
+    );
+    navigate(`/map?workoutId=${encodeURIComponent(target.workoutId)}`);
+  };
+  const showStatsOnMap = (target: StatsMapTarget) => {
+    if (target.kind === "workout") {
+      showWorkoutOnMap(target, false);
+      return;
+    }
+    setStatsMapVisit(true);
+    setMapMode("coverage");
+    setMapEntityRequest({
+      key: ++statsMapSequence.current,
+      entity: { entityId: target.entityId, entityKind: target.entityKind, name: target.name },
+    });
+    navigate("/map");
   };
   const saveRecentDateRanges = (ranges: string[]) => {
     setData((current) =>
@@ -1238,24 +1351,41 @@ function Shell({
     </span>
   );
   return (
-    <div className="shell">
+    <div className="shell" ref={shell}>
       <header className="app-header">
         <AppLink to="/" className="wordmark">
           <Mark compact />
           <span>Workouts Explorer</span>
         </AppLink>
         <nav aria-label="Primary">
-          <AppLink to="/" current={!dataSyncRoute && !mapRoute}>
+          <AppLink
+            to="/"
+            current={!dataSyncRoute && !mapRoute && !statsRoute}
+            onNavigate={() => prepareTabNavigation("/")}
+          >
             Summary
           </AppLink>
           <AppLink
             to="/map"
             current={mapRoute}
-            onNavigate={() => setMapCanvasFocusRequest((value) => value + 1)}
+            onNavigate={() => {
+              prepareTabNavigation("/map");
+            }}
           >
             Map
           </AppLink>
-          <AppLink to="/data-sync" current={dataSyncRoute}>
+          <AppLink
+            to="/stats"
+            current={statsRoute}
+            onNavigate={() => prepareTabNavigation("/stats")}
+          >
+            Stats
+          </AppLink>
+          <AppLink
+            to="/data-sync"
+            current={dataSyncRoute}
+            onNavigate={() => prepareTabNavigation("/data-sync")}
+          >
             Data Sync
           </AppLink>
         </nav>
@@ -1309,12 +1439,18 @@ function Shell({
       <PreferencesDialog
         open={dialog === "preferences"}
         onOpenChange={(open) => setDialog(open ? "preferences" : null)}
-        returnFocus={avatarTriggerRef}
+        onCloseFocus={() => setContentFocusRequest((current) => current + 1)}
         profile={data.profile}
         preferences={data.preferences}
         csrfToken={session.csrfToken}
         pageSizeMaximum={config.pageSizeMaximum}
-        onSaved={(profile, preferences) =>
+        onSaved={(profile, preferences) => {
+          if (
+            preferences.coverageDiagnosticsEnabled !== data.preferences.coverageDiagnosticsEnabled
+          ) {
+            setStatsMapVisit(false);
+            setMapEntityRequest(undefined);
+          }
           setData((current) =>
             current
               ? {
@@ -1322,8 +1458,8 @@ function Shell({
                   preferences: { ...preferences, dateRange: current.preferences.dateRange },
                 }
               : { profile, preferences },
-          )
-        }
+          );
+        }}
       />
       <Modal
         open={dialog === "about"}
@@ -1341,18 +1477,41 @@ function Shell({
           <p className="version">Milestone 6 &middot; Raw Route Map</p>
         </div>
       </Modal>
-      {dataSyncRoute ? (
+      <RetainedTab id="/data-sync" active={dataSyncRoute}>
         <DataSync
           csrfToken={session.csrfToken}
           preferences={data.preferences}
           pollingIntervalSeconds={config.pollingIntervalSeconds}
           selectedJobId={canonicalJobId}
           navigate={navigate}
+          onShowWorkoutOnMap={showWorkoutOnMap}
         />
-      ) : mapRoute ? (
+      </RetainedTab>
+      <RetainedTab id="/stats" active={statsRoute}>
+        <StatsPage
+          accountKey={session.id}
+          preferences={data.preferences}
+          csrfToken={session.csrfToken}
+          dateRange={selectedRange}
+          onDateRangeSelected={selectDateRange}
+          onRecentDateRangesSaved={saveRecentDateRanges}
+          state={statsState}
+          onStateChange={setStatsState}
+          pollingIntervalSeconds={config.pollingIntervalSeconds}
+          deletionRevision={mapDeletions.revision}
+          onShowOnMap={showStatsOnMap}
+        />
+      </RetainedTab>
+      <RetainedTab id="/map" active={mapRoute}>
         <Suspense
           fallback={
-            <main className="center-state" aria-busy="true">
+            <main
+              className="center-state content-background"
+              aria-busy="true"
+              data-app-content
+              tabIndex={-1}
+            >
+              <ContentBackground />
               <Mark />
               <p role="status">Opening your map...</p>
             </main>
@@ -1360,7 +1519,7 @@ function Shell({
         >
           <MapPage
             config={config}
-            preferences={data.preferences}
+            preferences={mapPreferences!}
             csrfToken={session.csrfToken}
             dateRange={selectedRange}
             onDateRangeSelected={selectDateRange}
@@ -1391,9 +1550,20 @@ function Shell({
             roadCoverageCache={roadCoverageCache}
             onRoadCoverageCacheChange={setRoadCoverageCache}
             explicitCanvasFocusRequest={mapCanvasFocusRequest}
+            navigationSearch={mapRoute ? (path.split("?")[1] ?? "") : undefined}
+            entityFocusRequest={mapEntityRequest}
+            cameraState={mapCameraState}
+            entryBaseMapState={statsMapVisit ? mapBaseMapState.current : undefined}
+            onBaseMapStateChange={(state) => {
+              mapBaseMapState.current = state;
+            }}
+            onEntityFocusHandled={(key) =>
+              setMapEntityRequest((current) => (current?.key === key ? undefined : current))
+            }
           />
         </Suspense>
-      ) : (
+      </RetainedTab>
+      <RetainedTab id="/" active={activeTab === "/"}>
         <Summary
           preferences={data.preferences}
           csrfToken={session.csrfToken}
@@ -1406,6 +1576,8 @@ function Shell({
           onPageChange={setSummaryPage}
           onWorkoutsDeleted={acceptWorkoutDeletion}
           onShowOnMap={(workoutId) => {
+            setStatsMapVisit(false);
+            setMapEntityRequest(undefined);
             const canonicalID = workoutId.toUpperCase();
             setMapWorkoutIds((current) =>
               current === undefined || current.includes(canonicalID)
@@ -1424,7 +1596,7 @@ function Shell({
             );
           }}
         />
-      )}
+      </RetainedTab>
     </div>
   );
 }

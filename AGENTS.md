@@ -8,3 +8,9 @@ for a separate deployment request.
 
 Keep Harbor's current image tags consistent with deployed image references.
 Do not create extra dated/review tag aliases for UI-only rollouts.
+
+# UI Consistency
+
+Before implementing or restyling UI, read `docs/ui-style-guide.md` and reuse the
+closest established composition. Check both appearance and behavior against that
+prior art in light and dark themes; preserve feature-specific contracts.

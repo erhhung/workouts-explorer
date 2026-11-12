@@ -205,7 +205,7 @@ func TestCoverageHeartbeatControlTimeoutCancelsWithoutDurableOutcome(t *testing.
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 	done := make(chan error, 1)
-	go r.heartbeat(ctx, coverageClaim{}, cancel, done)
+	go r.heartbeat(ctx, coverageClaim{}, cancel, done, nil)
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {

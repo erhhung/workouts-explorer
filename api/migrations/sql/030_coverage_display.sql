@@ -404,9 +404,10 @@ CREATE TABLE app.coverage_display_contexts (
     ready boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     last_used_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    all_time boolean NOT NULL DEFAULT false,
     PRIMARY KEY (account_id, id),
     CONSTRAINT coverage_display_contexts_scope_key
-        UNIQUE (account_id, generation, revision, start_date, end_date, policy_version, label_locale),
+        UNIQUE (account_id, generation, revision, start_date, end_date, all_time, policy_version, label_locale),
     CHECK (start_date <= end_date)
 );
 CREATE INDEX coverage_display_contexts_gc_idx ON app.coverage_display_contexts(account_id, last_used_at, id);
@@ -489,6 +490,35 @@ CREATE TABLE app.coverage_display_invalidations (
     account_id uuid NOT NULL,
     PRIMARY KEY (txid, account_id)
 );
+
+CREATE TABLE app.stats_report_scopes (
+    account_id uuid NOT NULL REFERENCES app.accounts(id) ON DELETE CASCADE,
+    id uuid NOT NULL,
+    session_id uuid NOT NULL REFERENCES app.sessions(id) ON DELETE CASCADE,
+    generation bigint NOT NULL CHECK (generation > 0),
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    timezone text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    coverage_display_context_id uuid,
+    all_time boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (account_id, id),
+    FOREIGN KEY (account_id, coverage_display_context_id)
+        REFERENCES app.coverage_display_contexts(account_id, id)
+        ON DELETE SET NULL (coverage_display_context_id),
+    CHECK (start_date <= end_date)
+);
+CREATE INDEX stats_report_scopes_context_idx
+    ON app.stats_report_scopes(account_id, coverage_display_context_id, expires_at);
+ALTER TABLE app.stats_report_scopes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.stats_report_scopes FORCE ROW LEVEL SECURITY;
+CREATE POLICY stats_report_scopes_owner_policy ON app.stats_report_scopes
+    FOR ALL TO workouts_security_owner USING (true) WITH CHECK (true);
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER TABLE app.stats_report_scopes OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON app.stats_report_scopes
+    FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
 
 ALTER TABLE app.map_selections ADD COLUMN coverage_display_context_id uuid;
 ALTER TABLE app.map_selections ADD CONSTRAINT map_selections_coverage_display_context_fk
@@ -590,17 +620,17 @@ RETURNS TABLE (
             CASE WHEN bool_or(visit.education_key_present) THEN 'other' ELSE min(visit.broad_class COLLATE "C") END broad_class,
             COALESCE(min(visit.education_name COLLATE "C"), min(visit.name COLLATE "C")) name,
             min(visit.locality_name COLLATE "C") locality_name,
-            bool_or(visit.local_start_date BETWEEN selected_start AND selected_end) has_range,
-            COALESCE(min(visit.region_id COLLATE "C") FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end),
+            bool_or((selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) has_range,
+            COALESCE(min(visit.region_id COLLATE "C") FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)),
                 min(visit.region_id COLLATE "C")) region_id,
-            min(visit.minimum_longitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_minimum_longitude,
-            min(visit.minimum_latitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_minimum_latitude,
-            max(visit.maximum_longitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_maximum_longitude,
-            max(visit.maximum_latitude) FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end) range_maximum_latitude
+            min(visit.minimum_longitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_longitude,
+            min(visit.minimum_latitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_latitude,
+            max(visit.maximum_longitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_longitude,
+            max(visit.maximum_latitude) FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_latitude
         FROM path_visits visit GROUP BY visit.entity_id
     ), path_context AS MATERIALIZED (
         SELECT context.entity_id,
-            min(context.locality_name COLLATE "C") FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_locality,
+            min(context.locality_name COLLATE "C") FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_locality,
             min(context.locality_name COLLATE "C") historical_locality
         FROM eligible JOIN app.workout_path_display_context context
             ON context.account_id = target_account_id AND context.workout_id = eligible.id
@@ -617,18 +647,18 @@ RETURNS TABLE (
         -- Independent evidence can supply current bounds/region even when this
         -- source has only historical attributions. Never synthesize a region.
         SELECT bounds.park_id,
-            min(bounds.region_id COLLATE "C") FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_region_id,
+            min(bounds.region_id COLLATE "C") FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_region_id,
             min(bounds.region_id COLLATE "C") historical_region_id,
-            min(bounds.minimum_longitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_minimum_longitude,
-            min(bounds.minimum_latitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_minimum_latitude,
-            max(bounds.maximum_longitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_maximum_longitude,
-            max(bounds.maximum_latitude) FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_maximum_latitude
+            min(bounds.minimum_longitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_longitude,
+            min(bounds.minimum_latitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_minimum_latitude,
+            max(bounds.maximum_longitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_longitude,
+            max(bounds.maximum_latitude) FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_maximum_latitude
         FROM eligible JOIN app.workout_park_display_bounds bounds
             ON bounds.account_id = target_account_id AND bounds.workout_id = eligible.id
         GROUP BY bounds.park_id
     ), park_identity AS MATERIALIZED (
         SELECT visit.entity_id,
-            COALESCE(min(visit.region_id COLLATE "C") FILTER (WHERE visit.local_start_date BETWEEN selected_start AND selected_end),
+            COALESCE(min(visit.region_id COLLATE "C") FILTER (WHERE (selected_start IS NULL OR visit.local_start_date BETWEEN selected_start AND selected_end)),
                 bounds.range_region_id, min(visit.region_id COLLATE "C"), bounds.historical_region_id) region_id
         FROM park_visits visit LEFT JOIN park_bounds bounds ON bounds.park_id = visit.entity_id
         GROUP BY visit.entity_id, bounds.range_region_id, bounds.historical_region_id
@@ -863,6 +893,7 @@ BEGIN
             WHERE context.account_id = NEW.account_id AND context.id = NEW.coverage_display_context_id
                 AND context.generation = NEW.generation AND context.revision = revision.revision AND context.ready
                 AND context.start_date = NEW.start_date AND context.end_date = NEW.end_date
+                AND context.all_time = NEW.all_time
                 AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en'
         ) THEN RAISE EXCEPTION 'invalid coverage display context' USING ERRCODE = '23514'; END IF;
         RETURN NEW;
@@ -902,7 +933,7 @@ BEGIN
         JOIN app.workout_routes route ON route.workout_id = workout.id AND route.account_id = workout.account_id
         WHERE selected_workout.account_id = NEW.account_id AND selected_workout.selection_id = NEW.id
             AND selected_workout.workout_id = NEW.focused_workout_id
-            AND workout.local_start_date BETWEEN NEW.start_date AND NEW.end_date
+            AND (NEW.all_time OR workout.local_start_date BETWEEN NEW.start_date AND NEW.end_date)
             AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL
     ) THEN RAISE EXCEPTION 'invalid focused map selection workout' USING ERRCODE = '23514'; END IF;
     RETURN NEW;
@@ -946,6 +977,9 @@ BEGIN
     WHERE context.account_id = target_account_id AND context.id = scope.bound_context_id
         AND context.generation = target_generation AND context.revision = scope.revision
         AND context.start_date = scope.start_date AND context.end_date = scope.end_date AND context.ready
+        AND context.all_time = (SELECT selection.all_time FROM app.map_selections selection
+            WHERE selection.account_id = target_account_id AND selection.id = target_selection_id
+                AND selection.session_id = target_session_id)
         AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en';
     IF NOT FOUND THEN
         RAISE EXCEPTION 'coverage display context is not ready; prepare selection again' USING ERRCODE = '55000';
@@ -960,26 +994,39 @@ CREATE FUNCTION app.prepare_coverage_display_context(target_account_id uuid, tar
     target_selection_id uuid, target_generation bigint)
 RETURNS TABLE (context_id uuid, display_revision bigint, policy_version text)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app SET jit = off AS $function$
-DECLARE scope record; prepared_id uuid; inserted_id uuid;
+DECLARE scope record; prepared_id uuid; inserted_id uuid; selected_all_time boolean;
 BEGIN
     SELECT * INTO scope FROM app.coverage_display_selection_scope(target_account_id, target_session_id,
         target_selection_id, target_generation);
+    IF NOT FOUND THEN
+        SELECT * INTO scope FROM app.stats_report_scope(target_account_id, target_session_id,
+            target_selection_id, target_generation);
+    END IF;
     IF NOT FOUND THEN RAISE EXCEPTION 'invalid map selection scope' USING ERRCODE = '42501'; END IF;
+    SELECT COALESCE(
+        (SELECT selection.all_time FROM app.map_selections selection WHERE selection.account_id = target_account_id
+            AND selection.id = target_selection_id AND selection.session_id = target_session_id),
+        (SELECT report.all_time FROM app.stats_report_scopes report WHERE report.account_id = target_account_id
+            AND report.id = target_selection_id AND report.session_id = target_session_id), false)
+    INTO selected_all_time;
     -- No account/generation lock: this uses the caller's RR selection snapshot.
-    INSERT INTO app.coverage_display_contexts(account_id, generation, revision, start_date, end_date)
-    VALUES (target_account_id, target_generation, scope.revision, scope.start_date, scope.end_date)
+    INSERT INTO app.coverage_display_contexts(account_id, generation, revision, start_date, end_date, all_time)
+    VALUES (target_account_id, target_generation, scope.revision, scope.start_date, scope.end_date, selected_all_time)
     ON CONFLICT ON CONSTRAINT coverage_display_contexts_scope_key DO NOTHING
     RETURNING id INTO inserted_id;
     IF inserted_id IS NULL THEN
         SELECT context.id INTO prepared_id FROM app.coverage_display_contexts context
         WHERE context.account_id = target_account_id AND context.generation = target_generation
             AND context.revision = scope.revision AND context.start_date = scope.start_date AND context.end_date = scope.end_date
+            AND context.all_time = selected_all_time
             AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en' AND context.ready;
         IF NOT FOUND THEN RAISE EXCEPTION 'coverage display context is not ready' USING ERRCODE = '55000'; END IF;
     ELSE
         prepared_id := inserted_id;
         WITH source_visits AS MATERIALIZED (
-            SELECT * FROM app.coverage_display_source_visits(target_account_id, scope.start_date, scope.end_date)
+            SELECT * FROM app.coverage_display_source_visits(target_account_id,
+                CASE WHEN selected_all_time THEN NULL ELSE scope.start_date END,
+                CASE WHEN selected_all_time THEN NULL ELSE scope.end_date END)
         ), identities AS (
             SELECT DISTINCT source_kind, source_id, broad_class, name, locality_name, region_id, region_name,
                 range_minimum_longitude, range_minimum_latitude, range_maximum_longitude, range_maximum_latitude
@@ -1021,7 +1068,7 @@ BEGIN
 
         -- Summarize visits once, then probe only each canonical group's members.
         WITH visits AS MATERIALIZED (
-            SELECT visit.*, visit.local_start_date BETWEEN scope.start_date AND scope.end_date in_range
+            SELECT visit.*, (selected_all_time OR visit.local_start_date BETWEEN scope.start_date AND scope.end_date) in_range
             FROM app.coverage_display_visits visit WHERE visit.account_id = target_account_id AND visit.context_id = prepared_id
         ), summaries AS MATERIALIZED (
             SELECT visit.canonical_id, count(*) FILTER (WHERE in_range) range_workout_count,
@@ -1073,6 +1120,8 @@ BEGIN
     END IF;
     UPDATE app.map_selections SET coverage_display_context_id = prepared_id
         WHERE account_id = target_account_id AND id = target_selection_id;
+    UPDATE app.stats_report_scopes SET coverage_display_context_id = prepared_id
+        WHERE account_id = target_account_id AND id = target_selection_id;
 
     IF inserted_id IS NOT NULL THEN
         -- Only a new build runs GC. Warm reuse writes its own selection, never
@@ -1090,6 +1139,15 @@ BEGIN
                         AND selection.expires_at > transaction_timestamp() AND selection.generation = target_generation
                         AND session_row.revoked_at IS NULL AND session_row.expires_at > transaction_timestamp()
                         AND principal.disabled_at IS NULL
+                         AND context.generation = target_generation AND context.revision = scope.revision AND context.ready)
+                AND NOT EXISTS (SELECT 1 FROM app.stats_report_scopes report
+                    JOIN app.sessions session_row ON session_row.id = report.session_id
+                    JOIN app.authentication_principals principal ON principal.id = session_row.principal_id
+                    JOIN app.users account_owner ON account_owner.principal_id = principal.id AND account_owner.account_id = report.account_id
+                    WHERE report.account_id = context.account_id AND report.coverage_display_context_id = context.id
+                        AND report.expires_at > transaction_timestamp() AND report.generation = target_generation
+                        AND session_row.revoked_at IS NULL AND session_row.expires_at > transaction_timestamp()
+                        AND principal.disabled_at IS NULL
                         AND context.generation = target_generation AND context.revision = scope.revision AND context.ready)
         )
         DELETE FROM app.coverage_display_contexts context USING unpinned
@@ -1102,6 +1160,178 @@ BEGIN
 END;
 $function$;
 -- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_report_scope(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint)
+RETURNS TABLE (start_date date, end_date date, revision bigint, bound_context_id uuid)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+    SELECT report.start_date, report.end_date, revision.revision, report.coverage_display_context_id
+    FROM app.stats_report_scopes report
+    JOIN app.sessions session_row ON session_row.id = report.session_id
+    JOIN app.authentication_principals principal ON principal.id = session_row.principal_id
+    JOIN app.users account_owner ON account_owner.principal_id = principal.id AND account_owner.account_id = report.account_id
+    JOIN app.accounts account ON account.id = account_owner.account_id
+    JOIN app.account_data_generations generation ON generation.account_id = report.account_id
+    JOIN app.coverage_display_revisions revision ON revision.account_id = report.account_id
+    WHERE report.account_id = target_account_id AND report.id = target_report_id
+        AND report.session_id = target_session_id AND report.generation = target_generation
+        AND generation.generation = target_generation AND report.expires_at > transaction_timestamp()
+        AND session_row.revoked_at IS NULL AND session_row.expires_at > transaction_timestamp()
+        AND principal.disabled_at IS NULL AND account.state = 'active'
+        AND target_account_id = app.current_account_id() AND target_session_id = app.current_session_id()
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_report_authorized_context(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint) RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+    SELECT context.id FROM app.stats_report_scope(target_account_id, target_session_id, target_report_id, target_generation) scope
+    JOIN app.coverage_display_contexts context ON context.account_id = target_account_id AND context.id = scope.bound_context_id
+        AND context.generation = target_generation AND context.revision = scope.revision
+        AND context.start_date = scope.start_date AND context.end_date = scope.end_date AND context.ready
+        AND context.all_time = (SELECT report.all_time FROM app.stats_report_scopes report
+            WHERE report.account_id = target_account_id AND report.id = target_report_id
+                AND report.session_id = target_session_id)
+        AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en'
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_prepare_report_scope(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint, selected_start date, selected_end date,
+    selected_timezone text, requested_expiry timestamptz, selected_all_time boolean DEFAULT false)
+RETURNS TABLE (context_id uuid, display_revision bigint, policy_version text)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app SET jit = off AS $function$
+BEGIN
+    IF target_account_id IS DISTINCT FROM app.current_account_id() OR target_session_id IS DISTINCT FROM app.current_session_id()
+        OR selected_all_time IS NULL THEN
+        RAISE EXCEPTION 'invalid stats report scope' USING ERRCODE = '42501';
+    END IF;
+    DELETE FROM app.stats_report_scopes report WHERE report.account_id = target_account_id
+        AND (report.expires_at <= transaction_timestamp() OR report.generation <> target_generation);
+    INSERT INTO app.stats_report_scopes(account_id, id, session_id, generation, start_date, end_date, timezone, expires_at, all_time)
+    SELECT target_account_id, target_report_id, target_session_id, target_generation, selected_start, selected_end,
+        selected_timezone, LEAST(requested_expiry, session_row.expires_at, transaction_timestamp() + interval '30 minutes'), selected_all_time
+    FROM app.sessions session_row
+    JOIN app.authentication_principals principal ON principal.id = session_row.principal_id
+    JOIN app.users account_owner ON account_owner.principal_id = principal.id AND account_owner.account_id = target_account_id
+    JOIN app.accounts account ON account.id = account_owner.account_id
+    JOIN app.account_data_generations generation ON generation.account_id = account.id
+    WHERE session_row.id = target_session_id AND session_row.revoked_at IS NULL
+        AND session_row.expires_at > transaction_timestamp() AND principal.disabled_at IS NULL
+        AND account.state = 'active' AND generation.generation = target_generation
+        AND requested_expiry > transaction_timestamp();
+    IF NOT FOUND THEN RAISE EXCEPTION 'invalid stats report scope' USING ERRCODE = '42501'; END IF;
+    RETURN QUERY SELECT * FROM app.prepare_coverage_display_context(target_account_id, target_session_id,
+        target_report_id, target_generation);
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_read_report_scope(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint)
+RETURNS TABLE (start_date date, end_date date, timezone text, expires_at timestamptz, display_revision bigint, policy_version text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+    SELECT report.start_date, report.end_date, report.timezone, report.expires_at, context.revision, context.policy_version
+    FROM app.stats_report_scopes report
+    JOIN app.coverage_display_contexts context ON context.account_id = report.account_id
+        AND context.id = app.stats_report_authorized_context(target_account_id, target_session_id, target_report_id, target_generation)
+    WHERE report.account_id = target_account_id AND report.id = target_report_id
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_delete_report_scope(target_account_id uuid, target_session_id uuid, target_report_id uuid)
+RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+BEGIN
+    IF target_account_id IS DISTINCT FROM app.current_account_id() OR target_session_id IS DISTINCT FROM app.current_session_id() THEN
+        RAISE EXCEPTION 'invalid stats report scope' USING ERRCODE = '42501';
+    END IF;
+    DELETE FROM app.stats_report_scopes WHERE account_id = target_account_id AND session_id = target_session_id AND id = target_report_id;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_new_coverage_events(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint)
+RETURNS TABLE (entity_id uuid, entity_kind text, broad_class text, name text, locality_name text,
+    region_id text, region_name text, new_visit date, previous_visit date, all_time_new boolean)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, app SET jit = off AS $function$
+DECLARE authorized_id uuid; selected_start date; selected_end date; selected_all_time boolean;
+BEGIN
+    authorized_id := app.stats_report_authorized_context(target_account_id, target_session_id, target_report_id, target_generation);
+    IF authorized_id IS NULL THEN RETURN; END IF;
+    SELECT report.start_date, report.end_date, report.all_time INTO selected_start, selected_end, selected_all_time
+        FROM app.stats_report_scopes report WHERE report.account_id = target_account_id AND report.id = target_report_id;
+    RETURN QUERY WITH history AS (
+        SELECT visit.canonical_id, visit.local_start_date,
+            lag(visit.local_start_date) OVER (PARTITION BY visit.canonical_id
+                ORDER BY visit.local_start_date, visit.started_at, visit.workout_id) predecessor
+        FROM app.coverage_display_visits visit
+        WHERE visit.account_id = target_account_id AND visit.context_id = authorized_id
+    ), qualifying AS MATERIALIZED (
+        SELECT history.* FROM history
+        WHERE (selected_all_time OR history.local_start_date BETWEEN selected_start AND selected_end)
+            AND (history.predecessor IS NULL OR history.local_start_date > (history.predecessor + interval '1 year')::date)
+    )
+    SELECT entity.canonical_id, entity.entity_kind, entity.broad_class, entity.name, entity.locality_name,
+        entity.region_id, entity.region_name, qualifying.local_start_date, qualifying.predecessor, qualifying.predecessor IS NULL
+    FROM qualifying
+    -- A fresh context has no statistics yet. Keep the canonical key in the index
+    -- probe instead of rescanning its entire estimated-one-row identity set.
+    JOIN LATERAL (
+        SELECT metadata.* FROM app.coverage_display_entities metadata
+        WHERE metadata.account_id = target_account_id AND metadata.context_id = authorized_id
+            AND metadata.canonical_id = qualifying.canonical_id AND metadata.range_workout_count > 0
+            AND metadata.name IS NOT NULL AND metadata.name <> ''
+        OFFSET 0
+    ) entity ON true;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.stats_visit_workouts(target_account_id uuid, target_session_id uuid,
+    target_report_id uuid, target_generation bigint, target_entity_id uuid,
+    target_new_visit date, target_previous_visit date)
+RETURNS TABLE (new_workout_id uuid, previous_workout_id uuid)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+DECLARE authorized_id uuid;
+BEGIN
+    authorized_id := app.stats_report_authorized_context(target_account_id, target_session_id, target_report_id, target_generation);
+    IF authorized_id IS NULL THEN RETURN; END IF;
+    RETURN QUERY SELECT
+        (SELECT visit.workout_id FROM app.coverage_display_visits visit
+            WHERE visit.account_id = target_account_id AND visit.context_id = authorized_id
+                AND visit.canonical_id = target_entity_id AND visit.local_start_date = target_new_visit
+            ORDER BY visit.started_at, visit.workout_id LIMIT 1),
+        (SELECT visit.workout_id FROM app.coverage_display_visits visit
+            WHERE visit.account_id = target_account_id AND visit.context_id = authorized_id
+                AND visit.canonical_id = target_entity_id AND visit.local_start_date = target_previous_visit
+            ORDER BY visit.started_at DESC, visit.workout_id DESC LIMIT 1)
+    FROM app.coverage_display_entities entity
+    JOIN app.coverage_display_contexts context ON context.account_id = entity.account_id AND context.id = entity.context_id
+    WHERE entity.account_id = target_account_id AND entity.context_id = authorized_id
+        AND entity.canonical_id = target_entity_id AND entity.range_workout_count > 0
+        AND entity.name IS NOT NULL AND entity.name <> ''
+        AND target_new_visit BETWEEN context.start_date AND context.end_date;
+END;
+$function$;
+-- +goose StatementEnd
+
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.stats_visit_workouts(uuid, uuid, uuid, bigint, uuid, date, date) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_report_scope(uuid, uuid, uuid, bigint) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_report_authorized_context(uuid, uuid, uuid, bigint) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_prepare_report_scope(uuid, uuid, uuid, bigint, date, date, text, timestamptz, boolean) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_read_report_scope(uuid, uuid, uuid, bigint) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_delete_report_scope(uuid, uuid, uuid) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.stats_new_coverage_events(uuid, uuid, uuid, bigint) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION app.map_selection_coverage_entities (
@@ -1212,10 +1442,19 @@ REVOKE ALL ON FUNCTION app.coverage_display_normalize(text), app.coverage_displa
     app.seed_coverage_display_revision(), app.validate_map_selection(), app.validate_map_selection_focus(),
     app.coverage_display_selection_scope(uuid, uuid, uuid, bigint), app.coverage_display_authorized_context(uuid, uuid, uuid, bigint),
     app.prepare_coverage_display_context(uuid, uuid, uuid, bigint), app.map_selection_coverage_entities(uuid, uuid, uuid, bigint, text),
+    app.stats_report_scope(uuid, uuid, uuid, bigint), app.stats_report_authorized_context(uuid, uuid, uuid, bigint),
+    app.stats_prepare_report_scope(uuid, uuid, uuid, bigint, date, date, text, timestamptz, boolean),
+    app.stats_read_report_scope(uuid, uuid, uuid, bigint), app.stats_delete_report_scope(uuid, uuid, uuid),
+    app.stats_new_coverage_events(uuid, uuid, uuid, bigint),
+    app.stats_visit_workouts(uuid, uuid, uuid, bigint, uuid, date, date),
     app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid),
     app.map_selection_coverage_entity_members(uuid, uuid, uuid, bigint, text, uuid)
 FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
 GRANT EXECUTE ON FUNCTION app.prepare_coverage_display_context(uuid, uuid, uuid, bigint),
+    app.stats_visit_workouts(uuid, uuid, uuid, bigint, uuid, date, date),
+    app.stats_prepare_report_scope(uuid, uuid, uuid, bigint, date, date, text, timestamptz, boolean),
+    app.stats_read_report_scope(uuid, uuid, uuid, bigint), app.stats_delete_report_scope(uuid, uuid, uuid),
+    app.stats_new_coverage_events(uuid, uuid, uuid, bigint),
     app.map_selection_coverage_entities(uuid, uuid, uuid, bigint, text),
     app.map_selection_coverage_entity_stats(uuid, uuid, uuid, bigint, text, uuid),
     app.map_selection_coverage_entity_members(uuid, uuid, uuid, bigint, text, uuid) TO workouts_api;
@@ -1281,7 +1520,7 @@ AS $function$
         ), eligible AS MATERIALIZED (
             SELECT workout.id FROM app.map_selections selection
             JOIN app.workouts workout ON workout.account_id = selection.account_id
-                AND workout.local_start_date BETWEEN selection.start_date AND selection.end_date
+                AND (selection.all_time OR workout.local_start_date BETWEEN selection.start_date AND selection.end_date)
             JOIN app.workout_routes route ON route.workout_id = workout.id AND route.account_id = workout.account_id
             JOIN app.workout_coverage_states coverage ON coverage.workout_id = workout.id
                 AND coverage.account_id = workout.account_id
@@ -1400,7 +1639,7 @@ BEGIN
         JOIN app.workout_coverage_states coverage ON coverage.account_id = workout.account_id AND coverage.workout_id = workout.id
         CROSS JOIN selected WHERE workout.account_id = target_account_id AND workout.deletion_requested_at IS NULL
             AND route.route IS NOT NULL AND coverage.applied_route_input_revision IS NOT NULL
-            AND workout.local_start_date BETWEEN selected.start_date AND selected.end_date
+            AND (selected.all_time OR workout.local_start_date BETWEEN selected.start_date AND selected.end_date)
     ), checked AS MATERIALIZED (
         SELECT match.*, segment.highway, segment.tags FROM app.map_selection_workouts selected_workout
         JOIN eligible ON eligible.id = selected_workout.workout_id
@@ -1507,7 +1746,7 @@ BEGIN
         AND principal.disabled_at IS NULL AND account.state = 'active'
         AND target_account_id = app.current_account_id() AND target_session_id = app.current_session_id()
         AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL
-        AND workout.local_start_date BETWEEN selection.start_date AND selection.end_date
+        AND (selection.all_time OR workout.local_start_date BETWEEN selection.start_date AND selection.end_date)
         AND context.generation = target_generation AND context.revision = revision.revision
         AND context.start_date = selection.start_date AND context.end_date = selection.end_date
         AND context.ready AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en';

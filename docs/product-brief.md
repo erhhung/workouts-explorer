@@ -8,8 +8,18 @@ Fitness platforms record individual workouts and GPS routes, but they do not mak
 - Which roads and paths have I covered, and how often?
 - Which nearby paths have I not visited?
 - How has my activity changed across days, weeks, months, and years?
+- Which places did I visit for the first time, or revisit after more than a year?
 
-Workouts Explorer imports workout records and GPS tracks, normalizes them independently of the source provider, and presents both raw routes and path-level coverage on an interactive map.
+Workouts Explorer imports workout records and GPS tracks, normalizes them independently of the source provider, and presents both raw routes and path-level coverage on an interactive map, with statistics and trends organized into reports.
+
+**Milestone 9 complete:** Stats sits between Map and Data Sync, starting with
+New Coverage; accepted 11/12/2026 after owner review of reports and navigation/UX.
+See the [M9 closeout](development-progress.md#milestone-9-closeout).
+Administration/operations, tablet UI/UX and MVP verification
+are **M10-M12**. **Milestone 13** now prepares GitHub project publication and
+public installation artifacts; production deployment/scaling/security is **M14**.
+See the [milestone plan](implementation-plan.md#milestone-9-stats-and-new-coverage)
+and [publication scope](implementation-plan.md#milestone-13-github-project-publication).
 
 Current source ends at **030**, with final source/runtime support and
 schema/minimum runtime **30**, baseline **27**, ledger **0-30**. Combined **029**
@@ -41,6 +51,9 @@ Each user owns one personal workout account. Users cannot access another account
 
 ## Primary User Journeys
 
+Across these journeys, new interfaces reuse established visual and behavioral
+patterns in both themes; see the [UI style guide](ui-style-guide.md).
+
 ### Explore workout history
 
 1. The user signs in.
@@ -64,6 +77,33 @@ Each user owns one personal workout account. Users cannot access another account
 10. The user opens Road Coverage over the map without unloading it, then searches, sorts, and pages through locality-scoped road, path, and park counts and visit dates.
 11. The user can return directly from a Road Coverage name or visit date to the entity or workout on the map.
 
+### Explore statistics and trends
+
+1. The user switches to Stats, between Map and Data Sync.
+2. A Map-style left panel starts with the shared Date range picker, followed by
+   **Reports** and selectable report titles. The current report has the existing
+   magenta selection border and remains selected across tab switches.
+3. The initial **New Coverage** report offers **Show new visits by** Month or Year
+   and a sortable, preference-paginated table styled like Summary's Workout log.
+4. Each intersecting calendar month/year appears, newest first, including zero
+   buckets. Only visits on inclusive selected dates contribute to boundary buckets.
+5. **New visits (all time)** counts first-ever visits to named canonical Road
+   Coverage identities. **New visits (past year)** includes first-ever visits and
+   returns after more than one calendar year since the immediately previous visit.
+   History outside the selected range still determines whether a visit qualifies.
+6. Clicking anywhere in a nonzero count cell opens a narrower Road Coverage-style
+   dialog with searchable identities and their qualifying **New visit** dates,
+   not later repeat dates. The past-year dialog also shows **Previous visit**;
+   first-ever visits display grayed-out **n/a**, matching missing Distance values
+   in the Summary Workout log. Escape closes the dialog.
+7. Reports is an extensible home for future workout, route and Coverage tables
+   and charts; New Coverage is the first report rather than a fixed one-off layout.
+8. Identity-name actions switch to Map and blink the exact road/path/park group.
+   In-range visit-date actions focus the actual workout and scroll it into view;
+   out-of-range previous dates stay plain text. Returning restores the report's
+   page/sort without changing the shared date range. Paging retains rows and
+   control positions, and expired report scopes recover without a tab switch.
+
 ### Keep data synchronized
 
 1. The user creates a source through the authenticated REST API.
@@ -80,6 +120,24 @@ Each user owns one personal workout account. Users cannot access another account
 3. Invitees choose a unique username, full display name, and password.
 4. The administrator can revoke invitations, delete accounts, publish in-app announcements, and trigger OSM maintenance.
 5. The administrator cannot view private workouts, routes, source credentials, or user ingest logs.
+
+### Install the public release (planned Milestone 13)
+
+1. A new operator finds the public GitHub project, release notes and README build/
+   test badges backed by **GitHub Actions**, then follows the versioned quick start.
+2. Administrator and user guides are published as a **Docusaurus Markdown/MDX
+   static site on GitHub Pages**, with navigation, search and Helm/API references.
+3. The operator installs the chart from either a conventional HTTPS Helm repository
+   or GHCR's OCI chart repository. Both distribute the same versioned package.
+4. Public chart defaults pull the latest compatible stable **GHCR OCI images**
+   without private-registry credentials, using release-aligned versions/digests.
+5. The standard single-server PostgreSQL dependency supplies a persistent compatible
+   PostgreSQL/PostGIS server by default. The operator can disable it and configure
+   BYO PostgreSQL using documented connection and Secret references.
+6. The operator configures required external services and keys, bootstraps the
+   administrator, invites a user, adds a source, prepares OSM data and explores
+   imported workouts. Docs explain backups, upgrades, troubleshooting and retained
+   data on uninstall as well as ordinary Summary/Map/Stats/Data Sync use.
 
 ## MVP Scope
 
@@ -167,7 +225,7 @@ closeout after its browser gate.
 
 ### Map and coverage
 
-- Responsive desktop and iPad-sized tablet map; tablet-focused UI/UX is Milestone 10, with iPhone-sized development explicitly out of scope
+- Responsive desktop and iPad-sized tablet map; tablet-focused UI/UX is Milestone 11, with iPhone-sized development explicitly out of scope
 - Raw route and path-coverage modes named Routes and Coverage
 - Workout subset filtering
 - Automatic extent fitting with configurable padding
@@ -185,6 +243,37 @@ closeout after its browser gate.
 - Workout-type style defaults, a Smooth fallback, and a current-visit style selector
 - Provider-specific visible attribution and direct or privately cached public base-map resources
 
+### Stats and reports (Milestone 9)
+
+- Primary tab order: Summary, Map, Stats, Data Sync
+- Map-style sidebar with the shared date picker above an extensible Reports list
+- Active report and report controls retained in the parent UI frame across tabs
+- Monthly/yearly New Coverage table with sortable columns and preference page size
+- Named identities and eligibility consistent with Road Coverage, including named
+  parks and education identities, deduplicated across canonical source members
+- First-ever and more-than-one-calendar-year return counts, determined from all
+  eligible account history before applying the inclusive display date range
+- Whole-cell nonzero drill-down links with searchable, sortable visit-date tables,
+  compact dialog sizing, short-content height and keyboard dismissal
+- Calendar-year anniversaries rather than a fixed 365-day threshold; first-ever
+  Previous visit values use the Summary table's grayed-out n/a presentation
+
+### Public distribution (planned Milestone 13)
+
+- Initial public **GitHub Release v1.0.0**, with root **VERSION = 1.0.0** and
+  coordinated chart/app/image versions, release notes and installation links
+- **GitHub Actions** CI for validation/tests, GHCR image build/publication,
+  Helm package/repository publication and GitHub Pages documentation deployment
+- Public UI, API, shared-worker and OSM-operator images, documented CPU support,
+  immutable references, latest-stable aliases, SBOMs and build provenance
+- README build/test badges and release, license, documentation and chart links
+- Docusaurus administrator/user guides on GitHub Pages, maintained with releases
+- Identical Helm packages in an HTTPS `index.yaml` repository and GHCR OCI registry
+- Optional standard standalone PostgreSQL chart dependency, enabled by default,
+  with PostgreSQL/PostGIS compatibility and a tested BYO connection/Secret path
+- Fresh-install, upgrade and first-use validation from published artifacts without
+  homelab-only infrastructure, credentials or manually built images
+
 ### API and operations
 
 - OpenAPI 3.0.3 design-first REST API under `/api`
@@ -196,7 +285,7 @@ closeout after its browser gate.
 - PostgreSQL schema versioning and data migrations
 - OpenTelemetry metrics and traces
 - In-app warnings plus Alertmanager-compatible metrics
-- Kubernetes deployment through Helm and Argo CD
+- Kubernetes installation through Helm, with optional Argo CD GitOps deployment
 
 ## Non-Goals
 
@@ -233,6 +322,9 @@ The following are architectural non-goals at the expected scale:
 - Raw routes and path coverage are visible for selected date ranges and workout subsets.
 - Each locality-scoped logical path counts a workout at most once, even when several member segments are traversed repeatedly in that workout.
 - Fully contained state- and national-park roads and paths retain their individual identities and use the park as City/Region context, including outside municipal boundaries.
+- New Coverage bucket counts agree with their detail rows, preserve true qualifying
+  visit dates, and do not turn historical repeat visits into new visits when the
+  selected date range changes.
 - Account isolation tests prevent cross-account access to records, tiles, jobs, logs, exports, and notifications.
 - Source secrets, GPS coordinates, and health values do not appear in logs or telemetry.
 - Ordinary API queries complete within 500 ms at p95 under a documented representative homelab benchmark.
@@ -240,6 +332,9 @@ The following are architectural non-goals at the expected scale:
 - Pan and zoom remain interactive while ingest or OSM jobs run.
 - Failed sync and deletion jobs produce actionable notifications and redacted diagnostics.
 - API, worker, and database upgrades preserve existing imported data through versioned migrations.
+- A public operator can install release 1.0.0 from either Helm channel, anonymously
+  pull its GHCR images and complete the documented first-use journey with bundled
+  or BYO PostgreSQL; GitHub Actions results and GitHub Pages docs are public.
 
 The release benchmark must record dataset size, normalized route-point count, account count, concurrent request mix, pod resources, active worker load, cache state, and measurement window so these targets remain reproducible.
 
@@ -247,12 +342,19 @@ The release benchmark must record dataset size, normalized route-point count, ac
 
 - The product runs in a homelab Kubernetes cluster with outbound internet access.
 - There is one primary deployment environment based on the `main` branch.
-- Gitea Actions runs tests and builds images.
-- Images are pushed to Harbor as `workouts-ui`, `workouts-api`, and `workouts-worker`.
-- Images receive an immutable eight-character commit-SHA tag and a mutable root-`VERSION` semver tag.
-- Argo CD deploys immutable SHA tags using values from `homelab-apps/workouts-explorer/values.yaml`.
+- Current private development uses Gitea Actions and Harbor; public CI/release
+  pipelines use **GitHub Actions and GHCR** in Milestone 13.
+- Public publication includes `workouts-ui`, `workouts-api`, `workouts-worker`
+  and the operator-only `workouts-osm` image, not just the browser/API workloads.
+- Public releases align with root `VERSION`, immutable source/digest references
+  and latest-stable aliases. Released charts retain matching image versions/
+  digests; a newer `latest` alias does not silently alter an installed release.
+- Helm installation does not require Argo CD, Harbor, Gitea or an owner-specific
+  values repository. Environment-specific GitOps values remain operator-owned.
 - The application Helm chart lives under `helm/` and is namespace-agnostic.
-- PostgreSQL/PostGIS, SMTP, OTel Collector, Prometheus, and Alertmanager already exist in the homelab.
+- PostgreSQL/PostGIS, SMTP, OTel Collector, Prometheus, and Alertmanager already
+  exist in the homelab. Public docs identify which dependencies the chart supplies
+  and how to configure external services, without assuming that homelab setup.
 - OSM hierarchy and derived paths live in a separate PostgreSQL/PostGIS database.
 - Raw Health Auto Export files remain in iCloud Drive or an NFS archive and are not retained by the application.
 - Rclone iCloud support is experimental, needs periodic interactive reauthentication, and may be blocked by upstream ADP issues.

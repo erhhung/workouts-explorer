@@ -9,12 +9,12 @@ SELECT $1 < 31 OR (
             ARRAY['search_path=pg_catalog, public'],false,'c6cce11de27bde21cb3d7ce9b5cf893f'),
         ('app.maintain_raw_route_lod_chunks()','trigger','plpgsql','v',true,false,'u',false,0,
             ARRAY['search_path=pg_catalog, app, public','jit=off'],false,'179d3b83117cac37eb15d5f1ea25d0e1'),
-        ('app.tile_scope(json,boolean)','TABLE(account_id uuid, selection_id uuid, context_id uuid, start_date date, end_date date)','plpgsql','s',false,false,'u',true,0,
-            ARRAY['search_path=pg_catalog, app'],false,'8ef86e9b902c45293f60f889ce80ad9a'),
+        ('app.tile_scope(json,boolean)','TABLE(account_id uuid, selection_id uuid, context_id uuid, start_date date, end_date date, all_time boolean)','plpgsql','s',false,false,'u',true,0,
+            ARRAY['search_path=pg_catalog, app'],false,'6716407995444f19da4f9c935a791cad'),
         ('app.raw_route_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,0,
             ARRAY['search_path=pg_catalog, app, public','jit=off'],true,'f92b4cb5358376574736869fa030b4fa'),
         ('app.coverage_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,1,
-            ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],true,'9a04626be3ff4e8e95d3414f87d20cf5')
+            ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],true,'d3bdc84e87b90d71d2310cca9a96a5c8')
     )
     SELECT (SELECT schema_version >= 31 AND minimum_runtime_version >= 31 AND minimum_runtime_version <= $1
         AND migration_baseline = 27 FROM app.schema_metadata WHERE singleton)

@@ -17,7 +17,6 @@ func TestOSMExpansionLimitsAreTyped(t *testing.T) {
 	}{
 		{"nodes", func(options *OSMEvaluationOptions) { options.MaxGraphNodes = 1 }, "graph node", 1},
 		{"edges", func(options *OSMEvaluationOptions) { options.MaxGraphEdges = 1 }, "graph edge", 1},
-		{"layers", func(options *OSMEvaluationOptions) { options.MaxExpansionLayers = 0 }, "graph layer", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := DefaultOSMEvaluationOptions()

@@ -28,7 +28,6 @@ type GeographicObservation struct {
 
 type OSMEvaluationOptions struct {
 	MaxCandidatesPerObservation int
-	MaxExpansionLayers          int
 	MaxGraphNodes               int
 	MaxGraphEdges               int
 	MovementMode                MovementMode
@@ -49,7 +48,6 @@ func (e *OSMEvaluationLimitError) Error() string {
 func DefaultOSMEvaluationOptions() OSMEvaluationOptions {
 	return OSMEvaluationOptions{
 		MaxCandidatesPerObservation: 32,
-		MaxExpansionLayers:          64,
 		MaxGraphNodes:               2048,
 		MaxGraphEdges:               4096,
 		MovementMode:                MovementSharedPublic,
@@ -62,7 +60,7 @@ type OSMEvaluationStats struct {
 	CandidateCount                 int
 	GraphNodeCount                 int
 	GraphEdgeCount                 int
-	ExpansionLayers                int
+	ExpansionLayers                int // Loads of unseen adjacency, excluding cached distance corrections.
 	InputObservationCount          int
 	SampledObservationCount        int
 	SuppressedPedestrianCandidates int
@@ -88,7 +86,7 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	if err := ctx.Err(); err != nil {
 		return Result{}, OSMEvaluationStats{}, err
 	}
-	if options.MaxCandidatesPerObservation < 1 || options.MaxExpansionLayers < 0 ||
+	if options.MaxCandidatesPerObservation < 1 ||
 		options.MaxGraphNodes < 1 || options.MaxGraphEdges < 1 || !options.RoadGeometry.valid() {
 		return Result{}, OSMEvaluationStats{}, fmt.Errorf("invalid OSM evaluation bounds")
 	}
@@ -578,95 +576,6 @@ func (segment physicalSegment) directed(origin GeographicObservation, forward bo
 		IndependentPath: independentPedestrianWay(segment.highway, segment.tags),
 		ContinuityClass: continuityClassForWay(segment.highway, segment.tags),
 	}
-}
-
-func expandOSMGraph(ctx context.Context, topology osmTopology, segments map[uuid.UUID]physicalSegment, policy pathPolicy, options OSMEvaluationOptions, maxDistance float64, stats *OSMEvaluationStats) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	var checks uint
-	g := compiledGraph{ctx: ctx}
-	bestDistance := make(map[uuid.UUID]float64)
-	frontier := make([]uuid.UUID, 0, len(segments)*2)
-	for _, segment := range segments {
-		if g.canceled(&checks) {
-			return ctx.Err()
-		}
-		for _, node := range []uuid.UUID{segment.startNode, segment.endNode} {
-			if _, exists := bestDistance[node]; !exists {
-				bestDistance[node] = 0
-				frontier = append(frontier, node)
-			}
-		}
-	}
-	for layer := 0; layer < options.MaxExpansionLayers && len(frontier) > 0; layer++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if len(bestDistance) > options.MaxGraphNodes {
-			return &OSMEvaluationLimitError{Field: "graph node", Limit: options.MaxGraphNodes}
-		}
-		sort.Slice(frontier, func(i, j int) bool { return frontier[i].String() < frontier[j].String() })
-		next := make([]uuid.UUID, 0)
-		for start := 0; start < len(frontier); start += 256 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			end := min(len(frontier), start+256)
-			remaining := options.MaxGraphEdges - len(segments)
-			if remaining < 1 {
-				return &OSMEvaluationLimitError{Field: "graph edge", Limit: options.MaxGraphEdges}
-			}
-			edges, err := topology.IncidentEdges(ctx, frontier[start:end], remaining)
-			if err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			for _, edge := range edges {
-				if g.canceled(&checks) {
-					return ctx.Err()
-				}
-				segment := physicalFromEdge(edge)
-				if !policy.transitionEligible(segment.highway, segment.tags) {
-					continue
-				}
-				segment.transitionOnly = !policy.eligible(segment.highway, segment.tags)
-				segment.continuityConnector = segment.transitionOnly && pedestrianContinuityConnector(segment.highway, decodeTags(segment.tags))
-				segment.drivewayConnector = segment.transitionOnly && pedestrianDriveway(segment.highway, decodeTags(segment.tags))
-				segment.accessoryConnector = segment.transitionOnly && pedestrianAccessoryConnector(segment.highway, decodeTags(segment.tags))
-				segment.parkingAisleConnector = segment.transitionOnly && pedestrianParkingAisle(segment.highway, decodeTags(segment.tags))
-				segments[segment.id] = segment
-				distance, exists := bestDistance[edge.RequestedNodeID]
-				if !exists {
-					return fmt.Errorf("OSM incident edge returned an unrequested graph node")
-				}
-				other := segment.startNode
-				if other == edge.RequestedNodeID {
-					other = segment.endNode
-				} else if segment.endNode != edge.RequestedNodeID {
-					return fmt.Errorf("OSM incident edge is disconnected from its requested graph node")
-				}
-				candidateDistance := distance + segment.length
-				prior, seen := bestDistance[other]
-				if candidateDistance <= maxDistance && (!seen || candidateDistance < prior) {
-					bestDistance[other] = candidateDistance
-					next = append(next, other)
-				}
-			}
-		}
-		stats.ExpansionLayers = layer + 1
-		frontier = next
-		if len(segments) > options.MaxGraphEdges {
-			return &OSMEvaluationLimitError{Field: "graph edge", Limit: options.MaxGraphEdges}
-		}
-	}
-	if len(frontier) > 0 {
-		return &OSMEvaluationLimitError{Field: "graph layer", Limit: options.MaxExpansionLayers}
-	}
-	stats.GraphNodeCount, stats.GraphEdgeCount = len(bestDistance), len(segments)
-	return ctx.Err()
 }
 
 func directedID(id uuid.UUID, forward bool) string {

@@ -118,7 +118,7 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	altitude, altitudeErr := points.Points[0].AltitudeMeters.Get()
-	if points.SchemaVersion != generated.WorkoutPointsExportSchemaVersionN1 || points.WorkoutId != compactUUID(workouts[1]) || points.WorkoutType != "Cycling" || len(points.Points) != 2 ||
+	if points.SchemaVersion != generated.N2 || points.WorkoutId != compactUUID(workouts[1]) || points.WorkoutType != "Cycling" || len(points.Points) != 2 ||
 		points.Points[0].Sequence != 0 || points.Points[1].Sequence != 1 || !points.Points[0].RecordedAt.Equal(points.Points[1].RecordedAt) || altitudeErr != nil || altitude != 1600.25 || points.Points[1].AltitudeMeters.IsNull() {
 		t.Fatalf("normalized points=%#v altitude=%v err=%v", points, altitude, altitudeErr)
 	}
@@ -133,13 +133,16 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	elevation, elevationErr := geo.Properties.ElevationSummary.Get()
-	if geo.Type != generated.WorkoutGeoJSONFeatureTypeFeature || geo.Geometry.Type != generated.LineString || len(geo.Geometry.Coordinates) != 2 || len(geo.Geometry.Coordinates[0]) != 3 ||
-		geo.Geometry.Coordinates[0][0] != -105 || geo.Geometry.Coordinates[0][2] != 1600.25 || elevationErr != nil || elevation.GainMeters != 1 || geo.Properties.Bounds.MaximumLatitude != 40.1 {
+	line, lineErr := geo.Geometry.AsGeoJSONLineString()
+	if lineErr != nil || geo.Type != generated.WorkoutGeoJSONFeatureTypeFeature || line.Type != generated.LineString || len(line.Coordinates) != 2 || len(line.Coordinates[0]) != 3 ||
+		line.Coordinates[0][0] != -105 || line.Coordinates[0][2] != 1600.25 || elevationErr != nil || elevation.GainMeters != 1 || geo.Properties.Bounds.MaximumLatitude != 40.0001 {
 		t.Fatalf("3D GeoJSON=%#v elevation=%#v err=%v", geo, elevation, elevationErr)
 	}
 	twoDimensional := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[0])+"/route", bearer)
 	var twoDimensionalGeo generated.WorkoutGeoJSONFeature
-	if err := json.Unmarshal(twoDimensional.Body.Bytes(), &twoDimensionalGeo); err != nil || twoDimensional.Code != http.StatusOK || len(twoDimensionalGeo.Geometry.Coordinates) != 2 || len(twoDimensionalGeo.Geometry.Coordinates[0]) != 2 || !twoDimensionalGeo.Properties.ElevationSummary.IsNull() {
+	decodeErr := json.Unmarshal(twoDimensional.Body.Bytes(), &twoDimensionalGeo)
+	twoLine, twoErr := twoDimensionalGeo.Geometry.AsGeoJSONLineString()
+	if decodeErr != nil || twoErr != nil || twoDimensional.Code != http.StatusOK || len(twoLine.Coordinates) != 2 || len(twoLine.Coordinates[0]) != 2 || !twoDimensionalGeo.Properties.ElevationSummary.IsNull() {
 		t.Fatalf("2D GeoJSON status=%d feature=%#v err=%v", twoDimensional.Code, twoDimensionalGeo, err)
 	}
 	noRoute := routeOwnerRead(handler, "/api/workouts/"+compactUUID(workouts[2])+"/route/points", bearer)
@@ -586,9 +589,9 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 	if err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO app.workout_route_points(account_id,workout_id,sequence,recorded_at,timestamp_offset_minutes,latitude,longitude,altitude,speed,course,horizontal_accuracy,vertical_accuracy,speed_accuracy,course_accuracy) VALUES
 		 ($1,$2,0,'2026-03-08T15:01:00Z',-420,40,-105,1600.25,3.5,180,4.2,5.3,0.4,1.5),
-		 ($1,$2,1,'2026-03-08T15:01:00Z',-420,40.1,-104.9,1601.25,NULL,NULL,NULL,NULL,NULL,NULL),
+       ($1,$2,1,'2026-03-08T15:01:00Z',-420,40.0001,-104.9999,1601.25,NULL,NULL,NULL,NULL,NULL,NULL),
 		 ($1,$3,0,'2026-03-07T15:01:00Z',-420,39.9,-105.1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
-		 ($1,$3,1,'2026-03-07T15:02:00Z',-420,40,-105,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`, accountID, workouts[1], workouts[0])
+       ($1,$3,1,'2026-03-07T15:02:00Z',-420,39.9001,-105.0999,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`, accountID, workouts[1], workouts[0])
 	}
 	if err == nil {
 		var replaced bool

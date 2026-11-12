@@ -80,6 +80,23 @@ type coverageRoute struct {
 	timeoutRetryCount      int
 }
 
+type coverageHeartbeatControl struct {
+	stop chan struct{}
+	done chan error
+	once sync.Once
+}
+
+func newCoverageHeartbeatControl() *coverageHeartbeatControl {
+	return &coverageHeartbeatControl{stop: make(chan struct{}), done: make(chan error, 1)}
+}
+
+func (control *coverageHeartbeatControl) stopAndWait() {
+	control.once.Do(func() {
+		close(control.stop)
+		<-control.done
+	})
+}
+
 func NewCoverageRunner(db, osmDB *pgxpool.Pool, logger *slog.Logger) *CoverageRunner {
 	return NewCoverageRunnerWithOptions(db, osmDB, logger, CoverageRunnerOptions{})
 }
@@ -208,15 +225,16 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	}
 	opCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	heartbeatDone := make(chan error, 1)
-	go r.heartbeat(opCtx, claim, cancel, heartbeatDone)
+	heartbeat := newCoverageHeartbeatControl()
+	go r.heartbeat(opCtx, claim, cancel, heartbeat.done, heartbeat.stop)
+	defer heartbeat.stopAndWait()
 
 	route, err := r.loadRoute(opCtx, claim, started)
 	if err != nil {
 		failure := classifyCoverageFailure(opCtx, coverageStageRouteRead, err)
 		cause := context.Cause(opCtx)
 		cancel(err)
-		<-heartbeatDone
+		heartbeat.stopAndWait()
 		if handled, interruptedErr := r.handleInterruption(claim, cause); handled {
 			return true, interruptedErr
 		}
@@ -225,7 +243,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	digest := canonicalRouteInputSHA256(route.points)
 	if !bytes.Equal(digest[:], claim.routeDigest) {
 		cancel(errors.New("coverage route digest changed"))
-		<-heartbeatDone
+		heartbeat.stopAndWait()
 		return true, r.failClassifiedDetached(claim, started, coverageStageRouteRead, coverageFailure{code: "coverage-route-invalid", summary: "Coverage route input changed before matching."})
 	}
 
@@ -236,7 +254,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 		if acquireErr != nil {
 			r.metrics.admissionWait.Record(ctx, time.Since(admissionStarted).Seconds())
 			cancel(acquireErr)
-			<-heartbeatDone
+			heartbeat.stopAndWait()
 			if handled, interruptedErr := r.handleInterruption(claim, context.Cause(opCtx)); handled {
 				return true, interruptedErr
 			}
@@ -255,7 +273,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 			}
 			cause := context.Cause(opCtx)
 			cancel(cause)
-			<-heartbeatDone
+			heartbeat.stopAndWait()
 			_, interruptedErr := r.handleInterruption(claim, cause)
 			return true, interruptedErr
 		case <-timer.C:
@@ -279,14 +297,14 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	if err != nil {
 		if errors.Is(err, readerplacement.ErrCleanupUnconfirmed) {
 			cancel(readerplacement.ErrCleanupUnconfirmed)
-			<-heartbeatDone
+			heartbeat.stopAndWait()
 			return true, readerplacement.ErrCleanupUnconfirmed
 		}
 		cleanupConfirmed = true
 		cause := context.Cause(opCtx)
 		failure := classifyCoverageFailure(opCtx, coverageStageSnapshotBegin, coverageDatabaseFailure(err))
 		cancel(err)
-		<-heartbeatDone
+		heartbeat.stopAndWait()
 		released = r.releaseSlotDetached(claim, slotID) == nil
 		if handled, interruptedErr := r.handleInterruption(claim, cause); handled {
 			return true, interruptedErr
@@ -322,7 +340,12 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 		if matchErr == nil {
 			failureStage = coverageStagePersist
 			generations, _ := json.Marshal(claim.targetGenerations)
-			outcome, matchErr = r.persist(matchCtx, claim, int(time.Since(started).Milliseconds()), generations, payload)
+			// Persistence owns the job row through COMMIT. Finish any in-flight
+			// renewal first so its next heartbeat cannot cancel its own writer.
+			heartbeat.stopAndWait()
+			if matchErr = matchCtx.Err(); matchErr == nil {
+				outcome, matchErr = r.persist(matchCtx, claim, int(time.Since(started).Milliseconds()), generations, payload)
+			}
 		}
 	}
 	// Classify before cleanup can cancel or expire the matcher context.
@@ -334,7 +357,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	stopMatch()
 	if !cleanupConfirmed {
 		cancel(readerplacement.ErrCleanupUnconfirmed)
-		<-heartbeatDone
+		heartbeat.stopAndWait()
 		return true, readerplacement.ErrCleanupUnconfirmed
 	}
 	if closeErr != nil {
@@ -357,7 +380,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 			cause = errCancellationRequested
 		}
 		cancel(matchErr)
-		<-heartbeatDone
+		heartbeat.stopAndWait()
 		if handled, interruptedErr := r.handleInterruption(claim, cause); handled {
 			return true, interruptedErr
 		}
@@ -367,7 +390,7 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 		return true, r.failClassifiedDetached(claim, started, failureStage, failure)
 	}
 	cancel(nil)
-	<-heartbeatDone
+	heartbeat.stopAndWait()
 	r.logger.Info("coverage route completed", "job_id", claim.jobID, "outcome", outcome,
 		"segments", len(prepared), "duration_ms", time.Since(started).Milliseconds(), "timeout_ms", matchTimeout.Milliseconds())
 	return true, nil
@@ -605,13 +628,20 @@ func coverageRouteTimeout(base time.Duration, timeoutRetryCount int) time.Durati
 	return maximumCoverageRouteTimeout
 }
 
-func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, cancel context.CancelCauseFunc, done chan<- error) {
+func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, cancel context.CancelCauseFunc, done chan<- error, stop <-chan struct{}) {
 	ticker := time.NewTicker(r.heartbeatInterval)
 	defer ticker.Stop()
 	defer func() { done <- context.Cause(ctx) }()
 	for {
 		select {
+		case <-stop:
+			return
+		default:
+		}
+		select {
 		case <-ctx.Done():
+			return
+		case <-stop:
 			return
 		case <-ticker.C:
 			// Bound the entire control transaction so a blocked call cannot

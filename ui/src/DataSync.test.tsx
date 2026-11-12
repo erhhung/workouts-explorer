@@ -3329,7 +3329,7 @@ describe("DataSync", () => {
         expect(results.closest("[aria-busy='true']")).not.toBeNull();
         expect(results.style.minHeight).toBe("500px");
         expect(nav).toHaveTextContent("Page 1 of 3");
-        expect(next).toBeDisabled();
+        expect(next).toBeEnabled();
         expect(previous).toBeDisabled();
         expect(within(disclosure).queryByText(`Loading ${kind}...`)).not.toBeInTheDocument();
         expect(signals).toHaveLength(2);
@@ -3354,8 +3354,8 @@ describe("DataSync", () => {
         await userEvent.click(next);
         expect(within(list).getAllByRole("listitem")).toEqual(secondRows);
         expect(nav).toHaveTextContent("Page 2 of 3");
-        expect(next).toBeDisabled();
-        expect(previous).toBeDisabled();
+        expect(next).toBeEnabled();
+        expect(previous).toBeEnabled();
         expect(results.style.minHeight).toBe("500px");
         expect(frames.size).toBe(1);
         height = 120;
@@ -3373,8 +3373,8 @@ describe("DataSync", () => {
         await waitFor(() => expect(secondReads).toBe(2));
         expect(within(disclosure).getByRole("list")).toBe(list);
         expect(within(disclosure).getByRole("navigation")).toBe(nav);
-        expect(previous).toBeDisabled();
-        expect(next).toBeDisabled();
+        expect(previous).toBeEnabled();
+        expect(next).toBeEnabled();
         expect(results.style.minHeight).toBe("500px");
         expect(list).toHaveTextContent(`${kind}-page-2-row-0`);
         expect(results.closest("[aria-busy='true']")).not.toBeNull();
@@ -3422,8 +3422,8 @@ describe("DataSync", () => {
         await userEvent.click(within(nav).getByRole("button", { name: "Next" }));
         await waitFor(() => expect(reads).toBe(1));
         if (resolution === "background") {
-          expect(within(nav).getByRole("button", { name: "Next" })).toBeDisabled();
-          expect(within(nav).getByRole("button", { name: "Previous" })).toBeDisabled();
+          expect(within(nav).getByRole("button", { name: "Next" })).toBeEnabled();
+          expect(within(nav).getByRole("button", { name: "Previous" })).toBeEnabled();
           expect(client.getQueryState(["job-artifacts", JOB_ID, "files", 2])?.fetchStatus).toBe(
             "fetching",
           );
@@ -3502,7 +3502,7 @@ describe("DataSync", () => {
       expect(within(list).getAllByRole("listitem")).toHaveLength(25);
       expect(results.style.minHeight).toBe("500px");
       expect(results.closest("[aria-busy='true']")).not.toBeNull();
-      expect(next).toBeDisabled();
+      expect(next).toBeEnabled();
       expect(previous).toBeDisabled();
       expect(nav.getBoundingClientRect().top).toBe(2295);
       await waitFor(() => expect(frames.size).toBe(2));
@@ -3610,7 +3610,7 @@ describe("DataSync", () => {
         expect(within(results).getByRole("list")).toBe(list);
         expect(within(list).getAllByRole("listitem")).toEqual(rows);
         expect(results.style.minHeight).toBe("500px");
-        expect(next).toBeDisabled();
+        expect(next).toBeEnabled();
         expect(previous).toBeDisabled();
         expect(frames.size).toBe(frameCount);
         expect(window.scrollTo).toHaveBeenCalledTimes(scrollCount);
@@ -5305,7 +5305,7 @@ describe("DataSync", () => {
     await screen.findByRole("menuitemradio", { name: "All operations" });
     expect(screen.getByRole("menuitemradio", { name: "All operations" })).toHaveFocus();
     await userEvent.keyboard("{End}");
-    expect(screen.getByRole("menuitemradio", { name: "Coverage update" })).toHaveFocus();
+    expect(screen.getByRole("menuitemradio", { name: "Workout deletion" })).toHaveFocus();
     await userEvent.keyboard("{Home}{ArrowDown}{ArrowDown}");
     expect(screen.getByRole("menuitemradio", { name: "Automated sync" })).toHaveFocus();
     await userEvent.keyboard("{Enter}");

@@ -119,6 +119,8 @@ Browser    --> public base-map tiles
 
 ### UI
 
+- Uses the [UI style guide](ui-style-guide.md) for cross-cutting composition and
+  interaction conventions, reusing established product components and semantic styles.
 - Loads public runtime presentation settings from `/api/config`.
 - Authenticates through the API and keeps bearer tokens out of persistent browser storage.
 - Uses the HTTP-only session cookie and session-bound CSRF token for browser mutations.
@@ -127,6 +129,8 @@ Browser    --> public base-map tiles
 - Optimistically removes UI-created deletions while accepting eventual consistency for other sessions.
 - Uses MapLibre for selectable, theme-aware public base-map styles and authenticated private vector layers.
 - Reinstalls product-owned private sources and layers after a public style change without resetting current map state.
+- M9: presents an extensible Stats report registry and keeps report
+  selection/controls in the parent UI frame alongside the shared date-range state.
 - Never receives source credentials, database topology, or the internal tile-server URL.
 - Exposes nginx `stub_status` only on `127.0.0.1:8083/nginx_status` for its local native receiver; no public status/metrics route or API proxy is added.
 
@@ -141,6 +145,8 @@ Browser    --> public base-map tiles
 - Stores encrypted current source configuration and creates encrypted job-scoped snapshots.
 - Enqueues durable jobs and coalesces equivalent queued or running jobs.
 - Serves Summary, workout, provenance, coverage, preference, job, and notification queries.
+- M9: serves bounded Stats summaries and qualifying-visit detail queries
+  from canonical retained Coverage evidence, independently of map/tile lifecycles.
 - Authenticates private tile requests and proxies them to internal Martin.
 - Redacts errors and diagnostics before returning them.
 
@@ -635,6 +641,395 @@ map API exposes the explicit `no_matches` result status. Production Coverage
 disables their row focus/hover action, uses the neutral X icon and the **No map
 segments matched** tooltip. Raw-mode access and diagnostic review remain separate.
 
+### Map Layer Presentation
+
+Map path presentation uses a shared 90% opacity constant and deterministic
+layer-group order, specified in the functional specification's
+[layer table](functional-spec.md#map-layer-stack-and-opacity). Provider geometry
+stays below private background/focused paths; existing provider symbols remain
+above paths, followed by arrows and endpoints, with the temporary blink last.
+The policy preserves symbol ordering and avoids duplicate labels. Public
+`getLayersOrder`/`getLayer` APIs reconcile only misplaced layers, without style
+serialization or an extra rendering pass. Style transformation also applies the
+same order before replay. Diagnostic hit geometry remains invisible.
+
+Diagnostic preference transitions retain the committed map mode while handing
+between shell-owned production mode and visit-local diagnostic mode. They clear
+obsolete diagnostic evidence without resetting Coverage to Routes or refitting.
+An explicit preference change also clears the shell's Stats-origin production
+override, so saving the preference takes effect in the existing Map visit.
+
+### Retained Tab Workspaces
+
+The session/identity/role-keyed Shell owns four lazy `RetainedTab` workspaces.
+After first activation, each keeps its React tree and DOM until the private Shell
+is disposed. Inactive workspaces are hidden and inert; their memo boundary admits
+new parent props on reveal rather than reconciling offscreen tables on every
+shell update. A lightweight activity context controls background work without
+unmounting effects that own expensive resources. Document scroll is remembered
+only by the active tab. Shell focus lookup is scoped to the active workspace;
+Map's existing canvas-readiness handoff remains the content target.
+
+MapLibre's instance, WebGL canvas, workers, images, provider resources, private
+sources and bounded geometry/tile caches survive ordinary tab switches. Hidden
+Map stops camera animation, hover work, the temporary blink, Space handling,
+provider-fallback retries and capability/readiness polling. Reveal resizes only
+after an actual container-size or device-pixel-ratio change: MapLibre's public
+resize method reallocates the drawing buffer and emits camera events even for
+an unchanged size. The dense route-list element is memoized separately from
+canvas focus/visibility updates, with event proxies reading committed actions.
+
+Warm returns reuse an unexpired capability. After a sufficiently long inactive
+interval, a background validation compares generation, display policy/revision
+and membership/readiness. An unchanged candidate is released without replacing
+sources or re-downloading tiles/points. Expired capabilities renew in place.
+Date/time-zone/deletion boundaries fence old private pixels until the new scope
+is admitted, and request-owner keys reject obsolete responses. Explicit workout
+URL and Stats entity intents still use their target fit/list-scroll flow once;
+ordinary return never replays a previous fit. Base-map override and automatic
+family stay with the retained workspace. Diagnostic review retains its existing
+explicit-entry rule and returns to Routes on tab exit.
+
+Summary and Data Sync disable inactive query observers, including artifact-page
+reads; Stats pauses polling/retry timers and revalidates its retained response on
+return. Compatible rows remain mounted, with actions fenced during refresh.
+Background responses cannot move another tab's document scroll or focus, and
+inactive Data Sync completion cannot redirect the active tab. Closing transient
+dialogs/tooltips does not clear durable tab controls, pages or disclosures.
+Confirmed logout, expiration or identity/session replacement disposes every
+workspace and MapLibre instance; no retained tab state is persisted to storage.
+
+### Summary Aggregate Preview Ownership
+
+Summary's aggregate grid owns one preview identity shared by its four cards, so
+preview changes do not rerender the Workout log. Opening by
+mouse or keyboard replaces that identity; closing uses an owner-conditional state
+update so a superseded card's blur cannot close its replacement. Each card keeps
+ephemeral pointer/modifier refs and attaches loss/key listeners only while open.
+The expanded pointer boundary is the union of the original button and breakdown
+rectangles, including the desktop panel positioned outside the article's layout
+box. Shift release tests the current original-button bounds after mode/layout
+changes; keyboard-only Shift+Tab does not acquire a pointer hold.
+
+Expanded mouse clicks retain focus on the existing card button and bubble to one
+mode-toggle handler. Rows remain passive and add no Tab stops. The parent owner,
+hint timers and held modifier are cleared on tab/window/visibility or outside-focus
+loss. A window-loss guard prevents restored native button focus from reopening
+the old preview until fresh pointer or Tab intent. Theme-derived row hover color
+preserves label and muted-value contrast in both themes.
+
+Hover dismissal does not depend solely on element leave events: while a mouse
+preview is open, capture-phase document pointer/mouse movement validates its
+actual original/Shift-expanded bounds and the event's current modifier state.
+This also clears a missed Shift keyup without disturbing keyboard-only previews.
+Window-focus return clears old ownership without preventing OS shortcuts.
+Standalone Alt/Meta/Ctrl preserves hover; dismissal is driven by actual focus,
+visibility or pointer-boundary changes. Only unmodified Tab/Shift+Tab clears the restored-focus guard;
+Alt/Meta/Ctrl+Tab is not a new card-navigation intent. Browser regressions suppress
+leave events deliberately, move onto real Workout log rows and verify both row
+hover and preview dismissal, including cached restore-enter and lost-keyup cases.
+
+### Application Keyboard Routing
+
+`keyboardShortcuts` maintains one capture-phase key dispatcher per document and
+lifecycle-bound registrations for application tabs, context commands and pagers.
+Handlers read committed callbacks. Displayed text-entry surfaces, native editing
+widgets, menus, modal scope, modifiers and composition are checked before routing.
+Modal paging alone permits a displayed but unfocused search field; the focused
+editing-widget guard still runs first, so arrows never page while editing.
+Semantic paging regions identify the deepest focused owner; a remembered visible
+owner or primary pager resolves otherwise ambiguous pages. Shared pagination
+retains its existing in-flight fence for buttons and arrows alike.
+
+Shell navigation focuses a programmatic content landmark, and Map's existing
+canvas-focus request handles lazy canvas readiness. Map/Stats commands reuse the
+mode/group actions; focused-only fit uses the current mode's workout bounds and
+never aggregate selection bounds. Registrations and remembered owners are
+removed with their components. No shortcut key hints are rendered in the UI;
+the functional specification owns the key map and exceptions.
+
+Actual focus and focus-ring modality are independent. Only Tab/Shift+Tab enters
+the navigation-ring mode; the shortcut dispatcher never changes it. Pointer
+interaction exits it, while subsequent shortcuts preserve an already-active
+mode. Content/canvas landmarks accept focus without a large outline; descendants
+retain the normal scoped control indicators. Artifact paging keeps its existing
+focus/scroll ownership without enabling rings merely because an arrow was used.
+
+Routes/Coverage switching is presentation-only for the camera. Neither a mode
+transition nor diagnostic-result arrival creates a fit request. Manually panned,
+zoomed, rotated or pitched views remain intact until an explicit fit/focus action
+or another feature's intentional entry/range-fit request. Buttons and shortcuts
+share this behavior; canvas focus itself uses `preventScroll`.
+
+### Workout Log Rendering Cost
+
+Workout log paging retains the complete API record and existing request,
+freshness, sorting and deletion semantics. The client reuses bounded Intl
+formatter configurations (64 date/time and 16 number configurations) rather than
+reconstructing them for every rendered value. Locale/options define the keys;
+formatted values, private records and per-instant offsets are not cached.
+Formatting still resolves each instant independently across DST and recorded
+offset fallbacks. Column-width samples are calculated once per table render.
+
+Collapsed mobile details are built on expansion from the loaded record. Desktop
+page cells retain their positions during replacement, while action-menu roots
+remain keyed to workout identity so open actions cannot retarget a different
+record. The closed Preferences dialog does not enumerate and format every time
+zone during Shell page-state updates. Its options are prepared on open and
+recomputed on reopening so current-offset labels remain meaningful.
+
+### Stats Reports And New Coverage (M9)
+
+This is the technical specification for the completed
+[Stats implementation](functional-spec.md#feature-explore-stats-and-new-coverage),
+accepted 11/12/2026 at Helm 129 after review/navigation, retention and UX follow-ups.
+The [M9 closeout](development-progress.md#milestone-9-closeout) owns acceptance; the
+[implementation record](development-progress.md#stats-and-new-coverage-initial-implementation)
+retains the original backend/database verification evidence. M9 precedes
+administration/operations (M10), tablet UI/UX (M11), MVP verification (M12),
+GitHub publication (M13) and production hardening (M14).
+
+#### Client Shell And Report Registry
+
+- Add Stats to the primary Summary/Map/Stats/Data Sync tab order. Reuse the Map
+  sidebar frame and existing Date range picker, then a Reports navigation list.
+  Report descriptors have stable IDs, displayed titles and content components;
+  `new-coverage` is the initial/default ID. Future table/chart reports register
+  here without replacing the tab shell or storing selection inside one report.
+- The signed-in parent UI frame owns active report ID and per-report state.
+  New Coverage state includes Month/Year grouping, sort and page. Transient dialog
+  search/sort/page controls belong to the open dialog and close on scope changes.
+  Month is the default; tab unmount/remount does not reset selection or grouping.
+  Unknown report IDs fall back to the default; signout/account replacement clears
+  private report state and cached data. Cross-session persistence of report choice
+  is not required by the current feature; existing date preferences still persist.
+- Summary, Map and Stats consume the same selected/resolved range and recent
+  custom-range behavior. A range/grouping change resets affected report paging
+  and bucket-descending sort, closes obsolete detail state and cancels requests.
+  Stats sorting is independent of the shared Summary/Map workout sort.
+- Reuse Workout log table/pagination and Road Coverage modal/search/overflow-help
+  primitives. Configure the dialog's three/four columns and widths rather than
+  reusing Most recent visit metadata as event dates. Null Previous visit renders
+  as the same muted **n/a** used by unavailable Summary Distance, sorting last.
+  Nonzero count actions fill their cells with one accessible link-style tab stop;
+  zero has none. The dialog restores focus and freezes capacity from its unfiltered
+  bucket count, within the preference and 25-row dialog limit, up to a viewport
+  cap. Search/empty/loading/partial pages retain blank row space. The report table
+  keeps its own result-based sizing; dialog filtering never shrinks the frame.
+  Layout effects preserve paging scroll and reset vertical table scroll for a
+  changed search so the matching rows remain visible above reserved blank space.
+  Shared `dialogTable` sizing and the pager's invisible caption-width sample keep
+  data rows, table viewport, search line and footer geometry stable. Road Coverage
+  uses full bulk membership, including unnamed entries, even when restoring a
+  cached filter/page. Initial loading reservations are retained once editing
+  begins; visit retry feedback floats outside layout.
+- `DialogTableViewport` owns reserved height independently of the data table.
+  It measures the actual header and a noninteractive, accessibility-hidden row
+  metric using untransformed layout sizes; resize writes are scheduled outside
+  observer delivery. Empty result bodies contain no rows, and centered feedback
+  is a viewport layer independent of table width/horizontal scrolling. Nonempty
+  partial results keep positional rows with unused slots hidden.
+- New visits continuity includes scope/group/bucket/metric, not search text.
+  A compatible search retains current rows until the response is ready, then
+  replaces cell values in place. Obsolete responses are aborted/fenced; row
+  actions are blocked without native-disabled text flashing during pending work.
+  Action nodes retain record-specific keys while row/cell positions are reused.
+- Shared Summary content-width tokens define Stats' centered desktop one-half-width table.
+  Narrow layouts use the available report width so sorting-header focus targets
+  fit inside the scrolling frame. Focus rings in clipped route/header controls
+  are inset; sortable headers share that same treatment across all tabs/dialogs.
+  Segmented controls use contrasting selected/unselected focus
+  treatments without changing the selection on focus.
+  Title, control and table gaps share one token. Reports shares Summary section
+  typography, Month/Year reuses Map's segmented controls, and the past-year header
+  uses the existing delayed portal tooltip. Shared text/hover styles and date-only
+  formatting replace separate orange/underlined counts and numeric date formatting.
+  The date bucket receives 38% of the table. Pagination inherits the shared margin
+  rather than a report-section grid gap. Month/Year share the same owner/range/
+  deletion continuity key, with displayed header/date labels taken from the
+  retained response. Positional row keys update cells in place when new grouping
+  data is accepted; Year can shrink to its shorter result without an empty frame.
+
+#### Canonical History Scope
+
+Prepare or reuse **one full-selected-range canonical display context** using the
+existing account/generation/display-revision/policy/date/locale contract. Both
+Month and Year rollups and every drill-down use that same context, not separate
+contexts per bucket and not a separate all-time context with different membership.
+The context already contains full eligible visit histories for its resolved
+members; retain history-only sources and Road Coverage's name/place merging,
+park/education precedence, exclusions and live eligibility rules.
+
+Filter to named canonical entities using the actual display-name qualification,
+not rendered fallback labels such as Unnamed road. Named education-ground entities
+count consistently with Road Coverage. Deduplicate `(canonical_id, workout_id)`
+before history ordering: several source members, segments or park/path sources
+that form one displayed identity contribute one visit from a workout. Use stored
+`local_start_date` for membership and visit dates, including earlier history;
+order by `(local_start_date, started_at, workout_id)` for deterministic ties.
+First/predecessor computation must not be limited to the selected range, the
+selected bucket, checked map workouts or only previously qualifying events.
+
+For every canonical identity/workout visit, derive history before joining display
+eligibility metadata:
+
+```text
+previous_visit = lag(visit) over (
+  partition by canonical_id
+  order by local_start_date, started_at, workout_id
+)
+all_time_new = previous_visit is null
+past_year_new = previous_visit is null
+  or local_start_date > anniversary(previous_visit.local_start_date, +1 year)
+```
+
+The calendar-year anniversary uses calendar-date arithmetic, clamping February 29
+to February 28 in the next non-leap year. In PostgreSQL, compare the candidate date with
+`(previous_visit_date + interval '1 year')::date`; do not subtract one year from
+the candidate as an interchangeable leap-day expression, use 365 elapsed days,
+compare UTC-hour durations, or use the date of the last *qualifying* event.
+Strict greater-than excludes the anniversary itself. First-ever visits enter
+both metrics and retain a null previous date.
+
+**After** this all-history window step, restrict qualifying events to the inclusive
+resolved range. Group by the workout-local calendar month/year. Generate the full
+intersecting bucket series and left join counts so empty buckets have numeric
+zeros. Boundary buckets contain only selected dates. Rollup and detail predicates
+share a common event relation; the detail query returns qualifying event dates,
+not canonical latest-date extrema. A repeat after a qualifying event cannot
+overwrite its New visit or Previous visit. With Month/Year buckets the gap rule
+permits at most one qualifying event per identity/bucket/metric. Tests must prove
+that property rather than mask duplicate source visits with a late count fix.
+For a fixed range/context, each year's totals must equal the sum of its included
+month buckets, and every bucket's past-year count must be at least its all-time
+count because first-ever visits qualify for both.
+
+The implementation scans the indexed context history once, materializes the
+qualifying events, then probes each identity's metadata through a correlated
+`LATERAL ... OFFSET 0` full-key lookup. Named/visible-entity qualification occurs
+at that lookup, after history evaluation. The barrier is deliberate: a freshly
+inserted context can have no useful per-context statistics, so an ordinary join
+can turn the canonical predicate into a join filter and repeatedly scan its whole
+identity set. The native plan regression requires canonical identity in the
+metadata index condition. Live never-before-built contexts validate this cold
+path separately from warm-context or restored-database timing.
+
+#### Report API And Consistency
+
+Design-first OpenAPI resources expose:
+
+- `POST /api/stats/report-scopes` for inclusive range resolution and preparation
+- `DELETE /api/stats/report-scopes/{reportScopeId}` for owned idempotent release
+- `GET /api/stats/report-scopes/{reportScopeId}/new-coverage` for paged bucket counts
+- `GET /api/stats/report-scopes/{reportScopeId}/new-coverage/visits` for paged details
+
+Both reads require generation and validate scope/generation/policy on the same
+read-only Repeatable Read snapshot as the data. POST/DELETE require cookie CSRF.
+The private forced-RLS `app.stats_report_scopes` rows, five API-only entry points
+and two private authorization helpers belong to source 030; 031 stays the high
+watermark. Existing indexed canonical visits supply the precomputations, so no
+additional monthly/yearly fact table or worker job is necessary.
+Scope preparation reuses the existing canonical preparation transaction, but
+Stats does not create private map-tile capabilities,
+require MapLibre to mount, call Martin, fetch route/coverage geometry or launch
+imports/matching/OSM work to display a report.
+
+- Use an account/session-owned, expiring report scope bound to resolved dates,
+  account generation, display revision/policy and the prepared canonical context.
+  It pins that context while valid; extend context cleanup's active-reference
+  rules to report scopes, preserving the existing soft unreferenced-context limit.
+  Prepare transactionally; read-only summary/detail requests never rebuild it.
+- All time is an explicit unfiltered mode, separate from display dates. Map
+  selections, report scopes and reusable canonical contexts carry an immutable
+  `all_time` flag; context uniqueness and authorization include it. Workout/list
+  and aggregate SQL omit date predicates, capability capture is not truncated to
+  the bounded-range route limit, and Coverage detail/focus/tile eligibility bypass
+  dates while retaining account/session, checked membership, generation and
+  deletion guards. Metadata uses account date extrema and the local-today floor
+  in the same snapshot. Undated rows remain in All time workout/raw-route results;
+  chronological visit reports retain their existing requirement for a visit date.
+- Summary parameters include allowlisted `month|year` grouping, sort and bounded
+  pagination. Rows expose a chronological bucket start and the two nonnegative
+  counts; the client formats Month/Year labels. Return resolved range, scope/generation/policy
+  metadata and pagination totals, including zero-filled buckets.
+- Detail parameters include the same scope/grouping, bucket key,
+  `all_time|past_year` metric, literal case-insensitive name/place search, sort and
+  pagination. Validate bucket alignment and range intersection, and intersect it
+  with the original inclusive range rather than expanding a partial bucket.
+  Rows expose canonical identity/kind, display name/place, qualifying New visit
+  date, nullable Previous visit date, `newVisitWorkoutId` and nullable
+  `previousVisitWorkoutId`. The API-only `app.stats_visit_workouts` probes the
+  existing history index only after page LIMIT/OFFSET: earliest `(started_at,id)`
+  on the qualifying date, latest on the immediate predecessor date. Authorization
+  is repeated against the same report context/RR snapshot. Return unsearched and
+  filtered totals for internal consistency/pagination without another UI caption.
+- All table columns are allowlisted sortable fields. Summary count ties use
+  bucket date descending; detail ties use displayed name/place ascending then
+  stable canonical ID. Null previous dates remain last regardless of direction.
+  Bound rows, payload bytes and query lifetime using normal API policies; signal
+  limits/errors explicitly and never publish incomplete results as exact counts.
+- Enforce data-owner authorization, active account/session, report-scope ownership,
+  expiry and generation/display-context validity in the same read snapshot. Do
+  not grant administrators report access or underlying fact-table access. Preserve
+  forced RLS, private security-definer ownership/ACL/search-path conventions and
+  exact readiness checks for any new database helpers under the migration policy.
+- Ingest/backfills, logical deletion, changed dates/names/context, applied-result
+  replacements and other existing display invalidations make old scopes stale.
+  Retained stale applied evidence is eligible; an empty result supplies no visits,
+  and a failed replacement preserves the previous evidence. Reject stale detail
+  scopes and refresh the report rather than mixing new detail with old counts.
+
+The current client retains its latest response and owned scope in the session's
+Stats workspace, releases owned scopes on disposal/context replacement and
+revalidates on return; a valid scope is reused, while expired/stale scopes renew
+in place. Parent-owned report controls remain independent of response validity.
+It refreshes while visible at
+the configured interval clamped to 10-60 seconds and pauses in hidden tabs.
+Proactively renew scopes near expiry and handle 404 generations with bounded
+backoff. Transient preparation failures retry within that burst, then on the
+normal visible cadence; visibility, window focus and online events also recover
+without remounting the tab. Retain compatible last-validated rows but disable
+their actions until the new scope/data is accepted; never treat them as fresh
+authorization. Clear errors on recovery and fence old account/range requests.
+Future response caches must be bounded, keyed by account/session, dates,
+generation, display revision/policy and report/query controls, and respect the
+existing five-minute maximum; known-stale generations remain invalid. Fence late responses by
+current request/scope, cancel superseded work and clear obsolete dialog data.
+Cached tab state is separate from cached data validity. A retryable error is never
+a zero; background invalidation cannot reopen a dismissed dialog. Report telemetry
+uses aggregate timings/outcomes, not private dates, identity names or workout IDs.
+
+Stats-to-Map navigation is a parent-frame intent, independent of report sorting
+and page state. Identity intents retain the current focus/catalog/checked set, enter production
+Coverage and invoke Map's existing exact-detail/fit/blink flow once a capability
+is ready. Consume the intent once; do not replay it on a later normal Map visit.
+The owner-scoped Shell retains camera center/zoom/bearing/pitch in a ref, updated
+on move-end and before disposal; it is never persisted to browser storage. New
+Map instances restore it in constructor options. An identity entry suppresses
+default/geolocation and selection-wide fits. Without a prior camera, defer the
+canvas until exact detail supplies constructor bounds, then avoid a redundant
+fit. A separate fitted-highlight key prevents style-load replay from reapplying
+camera movement, independently of blink/layer restoration. Both Stats and Road
+Coverage use the same linear exact-identity fit, avoiding a flight-arc zoom detour.
+The frame also remembers manual override and last automatic base-map family.
+Cold Stats handoffs restore this state during construction, before catalog requests
+finish; warm tab returns retain the existing instance and base-map override. A
+focused workout still drives Automatic's family, and removing focus retains that
+last automatic family. Date intents focus their actual workout and add it to an
+explicit checked subset rather than resetting all membership.
+Date intents use the normal focused-workout URL, membership/fitting and centered
+list-scroll flow. Explicit Stats visits suppress diagnostics only for that Map
+visit, without changing the saved preference. Previous dates outside the resolved
+main range have no action. No navigation path expands/overrides the range or
+changes the retained report/table page; no Map/tile/geometry work runs merely to
+view a Stats table.
+
+Verification needs an independent synthetic-history oracle, actual PostgreSQL
+window/calendar behavior and canonical source deduplication, scope/RLS negatives,
+generation/deletion races, count/detail parity, bounded delivery and real UI
+keyboard/tab/dialog journeys. Check query plans on representative multi-year data
+without reusing Summary or tile latency receipts as a Stats performance claim.
+
 ### Notifications and announcements
 
 | Entity | Purpose |
@@ -810,7 +1205,7 @@ explicit timeouts. API, Martin, general-worker, and coverage-worker pods have
 separate CPU/memory requests and limits.
 
 Dedicated least-privilege OSM reader credentials for Coverage and API diagnostics
-remain a pre-production requirement in Milestone 12. xdev currently permits
+remain a pre-production requirement in Milestone 14. xdev currently permits
 the explicit development exception of sharing the updater's OSM credential; a separate pool
 or read-only transaction is not equivalent to a read-only database login.
 The global reader flag controls strict standby-role validation only; component
@@ -928,6 +1323,7 @@ agree with these limits; diagnostics must not retain a smaller matching ceiling.
 | Sampled GPS points | **12,000** | One route, after sampling |
 | Graph nodes | 2,048 | One matching window |
 | Graph edges | 4,096 | One matching window |
+| Topology queries | At most the graph-node limit | One window; each node's adjacency is fetched once |
 | Evidence portions, including dissolved preparation portions | 10,000 | One route |
 | Unique matched segments | 4,096 | One route |
 | OSM generation entries | 256 | One route |
@@ -943,6 +1339,17 @@ correction below scopes these windows to continuous legs rather than letting a
 whole-route window span disjoint clusters before decoder splitting. Only typed
 graph-node/edge exhaustion invokes bounded retries at the same start with 64,
 then 32 points.
+Graph expansion caches adjacency per node and uses a distance-priority queue to
+settle shorter paths through already loaded edges before fetching unseen nodes.
+The former independent 64-round cap is removed: finer physical segmentation can
+require more hops without exceeding node/edge or distance budgets, and repeated
+label corrections are CPU work rather than new topology. Each query includes at
+least one previously unfetched node, so the node limit also bounds query count;
+empty adjacency is cached too. Distance, per-query node/row bounds, route-level
+output limits, the admitted snapshot and caller deadline remain enforced. Unknown
+requested endpoints, disconnected responses and nonpositive/nonfinite weights
+fail closed. `ExpansionLayers` reports actual topology-loading waves, not cached
+distance corrections. No matching-policy or sampling change is required.
 The next accepted window starts at the preceding accepted end minus one, and
 normal size 128 is tried again. Record starts/ordinals and observations/evidence
 only for accepted windows. Supplemental turn/tangent rematches also use bounded
@@ -981,11 +1388,21 @@ postdeployment failed-only retry and completed verification are described in the
 with owner-specific operational evidence kept private.
 
 Every attempt reuses the same snapshot, admitted capacity and deadline; graph
-node/edge and expansion-layer bounds remain unchanged. No arbitrary node pruning,
+node/edge bounds remain unchanged. Cached adjacency bounds actual work instead of
+the former segmentation-sensitive expansion-layer ceiling. No arbitrary node pruning,
 deadline renewal or implicit parallelism is permitted. Cancellation, database
 errors, other processing bounds and exhausted minimum-size windows propagate as
 errors, not silently successful partial matching. No APP transaction spans these
 OSM matching attempts.
+
+Periodic lease renewal remains active through matching and preparation. Immediately
+before final fenced persistence, the runner cooperatively stops renewal and joins
+any in-flight control transaction. Persistence owns the job row through COMMIT;
+a competing heartbeat on the same claim would otherwise hit its own lock timeout
+and cancel a valid commit. Shutdown neither cancels the operation nor renews its
+deadline; the existing lease, writer fences, SQL limits and operation context bound
+finalization. It is idempotent across normal/error cleanup paths. Cancellation,
+lease loss or retargeting committed before persistence is still rejected normally.
 
 For the same raw input, OSM snapshot, movement mode, sampling, matching rules and
 road geometry, both adapters must produce equivalent matching evidence; production
@@ -1096,8 +1513,9 @@ checkpoint. See [current status](development-progress.md#current-status) for the
 subsequent active reader policy; scoped fixture passes do not establish capacity.
 
 OSM importer version 3 retains bounded named local, state, and national-park polygons only
-inside the generation build schema. The current derivation version 20 attaches stable park
-metadata to fully contained segments before canonical partitions are prepared;
+inside the generation build schema. Derivation version 21 first splits physical
+segments at locality/park boundaries and unnamed segments at education boundaries,
+then attaches stable park metadata to the fully contained pieces before canonical partitions are prepared;
 park polygons themselves are not promoted. Local park identity remains scoped by
 authoritative municipality and OSM source. State and national park identity is
 instead scoped by provider region and OSM source, so one regional park remains
@@ -1125,6 +1543,14 @@ Named school, college, university, and generic education-ground polygons are als
 retained. Education scope applies only to unnamed segments, outranks park scope
 for those segments, and is exposed by matcher copy as a display-name fallback;
 canonical source names remain unchanged.
+The existing keyset-checkpointed clipping stages include all applicable area
+boundaries in one source-ordered split. Synthetic cut nodes preserve original
+endpoints and connect adjacent pieces, including repeated visits to the same
+boundary location. Material inside and outside lengths cannot remain on one
+segment: bounded validation checks untagged as well as tagged geometry and blocks
+promotion if a park/education crossing remains. Publication alone does not repair
+an existing generation or copied match evidence; rebuild/promotion and normal
+Coverage reconciliation are required.
 For unnamed non-road geometry, park scope takes precedence over locality, so
 contained geometry cannot bridge to outside geometry. Named final identities
 remain locality-scoped even though graph components are computed across boundaries.
@@ -1387,6 +1813,23 @@ LOD, Coverage deduplication and browser delivery path without editing 031.
   is independent of background tiles; stable filters/paint writes avoid repaint
   loops, and pending tiles during a user pan do not erase the current line or ready arrows.
   Focused Coverage hover fallback preserves canonical IDs and source kind.
+- Raw display and export membership comes from
+  `app.raw_route_display_points(account_id,workout_id)` in folded 010. It retains
+  source sequence IDs and assigns explicit components after time/spatial breaks,
+  conservative walk/run speed rejection and removal of non-renderable fragments.
+  Rejected endpoints remain in `workout_route_points` as evidence; they are absent
+  from projected exact/LOD tile chunks, focused raw lines/dots/markers, GeoJSON
+  and version-2 points downloads. GeoJSON preserves multiple components and
+  recomputes export bounds/count/elevation from retained samples. The helper is
+  security-invoker, API-readable under existing owner RLS, and included in strict
+  runtime readiness. It does not rewrite Coverage inputs, hashes or results.
+- The `raw-route-display-v3` refinement handles slower GPS-recovery remnants
+  around a confirmed impossible-speed burst. A bounded second pass combines
+  recent reliable accuracy with sustained recovery motion, carries suspicion
+  across recording gaps, and commits expanded rejection only after recovery is
+  confirmed. Unresolved episodes fall back to endpoint rejection; valid fast
+  running and poor accuracy without an impossible-speed seed remain untouched.
+  Both exports retain the same component-aware schema as the preceding policy.
 - Separate raw and Coverage focus LRUs each hold **16 entries / 8 MiB serialized
   JSON**, with fixed **five-minute TTLs** from load, not access. Generation/context,
   deletion, cancellation and latest-request guards prevent stale geometry reuse,
@@ -1621,7 +2064,7 @@ Application-layer authorization is mandatory. ADR 0002 adds selective, forced Po
 
 ### CI and images
 
-Gitea Actions performs:
+Current private-development Gitea Actions performs:
 
 1. Formatting, linting, unit, contract, migration, and UI tests.
 2. OpenAPI generation-drift validation.
@@ -1630,6 +2073,117 @@ Gitea Actions performs:
 5. Push to Harbor using both an immutable eight-character commit SHA and a mutable semver from `VERSION`.
 
 Helm `version` and `appVersion` follow `VERSION` for the coordinated release.
+
+The planned public CI uses **GitHub Actions**, publishes images/charts to GHCR
+and deploys human-facing documentation to GitHub Pages, as defined below.
+
+### GitHub Publication And Public Installation (Planned M13)
+
+[Milestone 13](implementation-plan.md#milestone-13-github-project-publication)
+publishes the verified product for third-party installation. Owner production
+deployment/scaling/security follows in M14. This section is planned design, not
+an assertion that public artifacts, workflows or a bundled database exist today.
+
+#### GitHub Actions And Release Artifacts
+
+- Define public CI in **GitHub Actions** workflows under `.github/workflows/`.
+  Pull requests run Go/UI/OpenAPI generation checks, actual PostgreSQL/PostGIS
+  integration tests, chart validation and documentation builds. Trusted main/tag
+  jobs build OCI images; release jobs publish images, both chart channels, GitHub
+  Release assets and Pages content only after their required checks pass.
+- Reuse shared repository build/test commands from the current private pipeline;
+  public jobs run without access to private Gitea/Harbor or homelab infrastructure.
+  Use GitHub Actions permissions scoped by job: read-only PR validation, package
+  publishing for GHCR, release-asset access and Pages deployment permissions only
+  where needed. Release credentials are not exposed to untrusted PR code.
+- During release preparation set root `VERSION=1.0.0` and synchronize chart
+  `version`/`appVersion`, component metadata and Git tag `v1.0.0`. Check this
+  agreement before publishing. Build once from the tested source and associate
+  image manifests, chart package, documentation and release notes with that commit.
+- Publish public OCI images for `workouts-ui`, `workouts-api`, `workouts-worker`
+  and operator-only `workouts-osm` under the agreed GHCR project namespace. Retain
+  tested non-root/runtime properties, supported architecture manifests, license/
+  source/revision/version OCI labels, SBOMs and build provenance. Declare/test
+  supported architectures rather than assuming every dependency is multi-platform.
+- Stable semver and immutable source/digest references identify released content;
+  update a `latest` alias only for a completed stable release. Do not overwrite
+  existing released version artifacts on a rerun. Released chart defaults point
+  to current compatible stable GHCR versions/digests, never a private image or an
+  unconstrained moving alias; explicit registry/tag/digest overrides remain.
+- Publish initial **GitHub Release v1.0.0** with notes, chart package/checksums,
+  image/provenance links, supported prerequisites and versioned docs. Stage and
+  verify the complete public artifact set before marking the release latest;
+  make partial publication retryable without rewriting immutable outputs.
+- README build/test badges link to actual GitHub Actions workflow results.
+  Release, license, documentation and chart badges/links describe available
+  artifacts rather than planned status presented as a passing result.
+
+#### Documentation Site And Chart Channels
+
+Use **Docusaurus** as the broadly adopted Markdown/MDX static HTML generator.
+Keep its source/configuration and lockfile in the repository; GitHub Actions
+builds it with pinned dependencies and deploys it to **GitHub Pages**. Curate
+administrator/user guides, navigation/search and release-version documentation;
+link or generate API and Helm references from their source contracts. Validate
+site build, project base path, internal/versioned links and runnable install
+examples. Development design documents and chronological receipts are not the
+default navigation for public users.
+
+Publish the same `workouts-explorer-<version>.tgz` through:
+
+- A conventional HTTPS Helm repository on GitHub Pages, with `index.yaml` and
+  versioned packages for `helm repo add` and normal repository-based installation.
+- A public GHCR OCI chart repository for `helm pull/install oci://...`.
+
+Resolve and lock dependencies before packaging, and include what the packaged
+chart needs to install. Build the package once and verify identical digests across
+both channels. Preserve older index entries/packages and chart metadata. Coordinate
+Pages deployment as one complete site artifact containing the docs **and** the
+chart repository, so a docs deploy cannot erase `index.yaml` or older packages and
+a chart publish cannot overwrite the documentation. Document permanent channel
+URLs and upgrade/version-selection commands when the project namespace is chosen.
+
+#### Optional Standalone PostgreSQL Dependency
+
+Add a standard maintained PostgreSQL Helm subchart configured for **one server**,
+enabled by default with an explicit disable/BYO mode. Select the upstream chart
+and pin its version only after testing its publicly pullable image/configuration
+against application requirements: PostGIS extensions, required UTF8/collation
+behavior (including the current PostgreSQL 18 `pg_c_utf8` contract), separate APP/
+OSM databases, and least-privilege runtime/migration/operator roles. A stock
+PostgreSQL-only image is not proof of PostGIS compatibility; use a compatible
+public image or publish a tested derived image if the chosen chart requires it.
+No HA/operator cluster is required for this bundled first-install option.
+
+Expose persistence/storage-class/resource settings and existing-Secret support.
+Preserve generated credentials and key material across upgrades; do not silently
+regenerate them or destroy retained PVCs. Initialization establishes separate
+application/OSM databases, extensions and roles without letting runtime containers
+use the database administrator credential. In BYO mode, emit no database server;
+retain explicit APP/OSM connection references, external TLS/Secret overrides and
+the ability to place those databases on separate external servers.
+
+Fresh-install orchestration must account for Helm's dependency/hook ordering:
+current pre-install migration hooks cannot wait for a normal dependency StatefulSet
+that Helm will create only after the hooks finish. Design the bundled bootstrap
+sequence so the database can become ready before provisioning/migrations, while
+incompatible application workloads remain gated until initialization succeeds.
+Upgrade sequencing must still run/check required migrations before incompatible
+runtimes serve traffic. Preserve database advisory locking, retry/error reporting
+and safe credential/PVC behavior; do not solve bootstrap by disabling migration
+checks or exposing the database publicly. Test both Helm and documented GitOps
+paths, fresh/retained volumes, failed initialization and repeat installation.
+
+Guides must cover all components the chart does not automatically supply: SMTP,
+ingress/TLS, source credentials/encryption keys, public base-map configuration,
+initial OSM import/refresh, storage/backup policy and optional observability.
+Separate end-user workflows from operator setup and recovery. Public chart
+defaults and examples must be usable outside the owner's namespace, registry,
+hostnames and automation. Verify both published chart channels against bundled
+and BYO PostgreSQL on a clean cluster using anonymous artifact pulls, then run
+bootstrap/signin/import/Map/Coverage/Stats and documented upgrade/recovery flows.
+This installation evidence does not replace M14's environment-specific production
+capacity, network/credential provisioning and host-cluster recovery validation.
 
 ### Deployment Ownership
 

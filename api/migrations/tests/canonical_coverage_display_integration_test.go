@@ -63,6 +63,46 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 	coverageDisplayCheck(t, db, `SELECT schema_version=31 AND minimum_runtime_version=31
 		AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`)
 
+	t.Run("AllTimeScopeDoesNotUseItsDisplayDatesAsFilters", func(t *testing.T) {
+		f := newCanonicalDisplayFixture(t, db)
+		checked := append([]uuid.UUID{f.workouts[5]}, f.workouts[:5]...)
+		checked = append(checked, f.workouts[6])
+		tx := canonicalDisplayAPI(t, db, f)
+		scope := canonicalDisplayCapture(t, db, tx, f, "2026-01-10", "2026-01-12", checked, true)
+		canonicalDisplayPrepare(t, db, tx, f, &scope)
+		coverageDisplayCommit(t, db, tx)
+		city := canonicalDisplayFind(t, canonicalDisplayRows(t, db, f, scope), "Synthetic City")
+		canonicalDisplayAssert(t, city, "range_workout_count", float64(7), "all_time_workout_count", float64(7))
+		canonicalDisplaySurfaces(t, db, f, scope, city)
+		bounded := canonicalDisplaySelection(t, db, f, "2026-01-10", "2026-01-12", nil)
+		if bounded.context == scope.context {
+			t.Fatal("All time and bounded scopes with identical display dates must not share a context")
+		}
+		tx = canonicalDisplayAPI(t, db, f)
+		defer tx.Rollback(db.ctx)
+		var focus []byte
+		if err := tx.QueryRow(db.ctx, `SELECT app.map_selection_coverage_focus($1,$2,$3,$4,$5)`, f.account, f.session, scope.id, scope.generation, f.workouts[5]).Scan(&focus); err != nil {
+			t.Fatal(err)
+		}
+		var collection struct {
+			Features []json.RawMessage `json:"features"`
+		}
+		if err := json.Unmarshal(focus, &collection); err != nil || len(collection.Features) == 0 {
+			t.Fatalf("out-of-display-range All time focus lost its geometry: %s error=%v", focus, err)
+		}
+		reportID := uuid.New()
+		var contextID uuid.UUID
+		var revision int64
+		var policy string
+		if err := tx.QueryRow(db.ctx, `SELECT * FROM app.stats_prepare_report_scope($1,$2,$3,$4,'2026-01-10','2026-01-12','UTC',transaction_timestamp()+interval '20 minutes',true)`, f.account, f.session, reportID, scope.generation).Scan(&contextID, &revision, &policy); err != nil || contextID != scope.context {
+			t.Fatalf("All time report did not reuse the correct unfiltered context: %s %v", contextID, err)
+		}
+		var early int
+		if err := tx.QueryRow(db.ctx, `SELECT count(*) FROM app.stats_new_coverage_events($1,$2,$3,$4) WHERE new_visit='2026-01-01'`, f.account, f.session, reportID, scope.generation).Scan(&early); err != nil || early == 0 {
+			t.Fatalf("All time report filtered its historical first visit: count=%d error=%v", early, err)
+		}
+	})
+
 	t.Run("DisconnectedClassesAndCityReentry", func(t *testing.T) {
 		f := newCanonicalDisplayFixture(t, db)
 		s := canonicalDisplaySelection(t, db, f, "2026-01-10", "2026-01-12", nil)
@@ -1151,7 +1191,7 @@ func canonicalDisplayAPI(t *testing.T, db testDatabases, f coverageDisplayFixtur
 	return deferredBeginSelection(t, db, f.account, f.session)
 }
 
-func canonicalDisplayCapture(t *testing.T, db testDatabases, tx pgx.Tx, f coverageDisplayFixture, start, end string, checked []uuid.UUID) canonicalDisplayScope {
+func canonicalDisplayCapture(t *testing.T, db testDatabases, tx pgx.Tx, f coverageDisplayFixture, start, end string, checked []uuid.UUID, allTime ...bool) canonicalDisplayScope {
 	t.Helper()
 	s := canonicalDisplayScope{coverageDisplaySelection: coverageDisplaySelection{id: uuid.New()}}
 	if err := tx.QueryRow(db.ctx, `SELECT app.lock_account_data_generation()`).Scan(&s.generation); err != nil {
@@ -1161,8 +1201,8 @@ func canonicalDisplayCapture(t *testing.T, db testDatabases, tx pgx.Tx, f covera
 	if len(checked) > 0 {
 		focus = checked[0]
 	}
-	coverageDisplayExec(t, db, tx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id)
-		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes',$5::date,$6::date,'explicit_subset',$7)`, s.id, f.account, f.session, s.generation, start, end, focus)
+	coverageDisplayExec(t, db, tx, `INSERT INTO app.map_selections(id,account_id,session_id,generation,expires_at,start_date,end_date,selection_kind,focused_workout_id,all_time)
+		VALUES($1,$2,$3,$4,transaction_timestamp()+interval '30 minutes',$5::date,$6::date,'explicit_subset',$7,$8)`, s.id, f.account, f.session, s.generation, start, end, focus, len(allTime) > 0 && allTime[0])
 	for order, workout := range checked {
 		coverageDisplayExec(t, db, tx, `INSERT INTO app.map_selection_workouts(account_id,selection_id,workout_id,sort_order) VALUES($1,$2,$3,$4)`, f.account, s.id, workout, order)
 	}

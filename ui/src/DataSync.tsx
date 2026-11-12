@@ -1,5 +1,7 @@
 import * as Popover from "@radix-ui/react-popover";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTabActive } from "./RetainedTab";
+import type { MapWorkoutTarget } from "./routeNavigation";
 import {
   type CSSProperties,
   type FormEvent,
@@ -36,6 +38,8 @@ import {
 } from "./api";
 import { InfoTip, instantZone, ZoneBadge } from "./Tooltip";
 import { completeDateRangeOnBlur } from "./dateRange";
+import { PageNavigation } from "./PageNavigation";
+import { ContentBackground } from "./ContentBackground";
 
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "running"]);
 const ACTIVITY_LABELS: Record<IngestActivity["phase"], string> = {
@@ -96,8 +100,8 @@ const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as Array<[JobDisplayStatus,
 const OPERATION_OPTIONS = [
   ["manual_sync", "Manual sync"],
   ["automated_sync", "Automated sync"],
-  ["workout_deletion", "Workout deletion"],
   ["coverage_update", "Coverage update"],
+  ["workout_deletion", "Workout deletion"],
 ] as const;
 
 function validDate(value: string) {
@@ -582,6 +586,7 @@ function ArtifactDisclosure({
   filesFailed?: number;
   jobStatus?: JobStatus;
 }) {
+  const tabActive = useTabActive();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -609,7 +614,7 @@ function ArtifactDisclosure({
         `/api/jobs/${encodeURIComponent(jobId)}/${kind}?page=${page}&pageSize=${PAGE_SIZE}${failuresOnly ? "&failuresOnly=true" : ""}`,
         { signal },
       ),
-    enabled: open,
+    enabled: tabActive && open,
     placeholderData: (previousData, previousQuery) => {
       const key = previousQuery?.queryKey;
       return key?.[0] === "job-artifacts" &&
@@ -644,7 +649,7 @@ function ArtifactDisclosure({
   );
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!tabActive || !open) return;
     const stopRestoring = () => {
       if (pendingScroll.current) pendingScroll.current.restore = false;
     };
@@ -669,7 +674,7 @@ function ArtifactDisclosure({
       window.removeEventListener("touchmove", stopRestoring);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [tabActive, open]);
 
   function reserveHeight() {
     const height = resultsRef.current?.getBoundingClientRect().height;
@@ -707,7 +712,13 @@ function ArtifactDisclosure({
   }
 
   useLayoutEffect(() => {
-    if (!open || query.isPlaceholderData || !query.isSuccess || query.data.pagination.page !== page)
+    if (
+      !tabActive ||
+      !open ||
+      query.isPlaceholderData ||
+      !query.isSuccess ||
+      query.data.pagination.page !== page
+    )
       return;
     const loaded = query.data;
     const finalPartial =
@@ -739,13 +750,21 @@ function ArtifactDisclosure({
       window.scrollTo(pending.x, y);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [open, page, query.data, query.isFetching, query.isPlaceholderData, query.isSuccess]);
+  }, [
+    tabActive,
+    open,
+    page,
+    query.data,
+    query.isFetching,
+    query.isPlaceholderData,
+    query.isSuccess,
+  ]);
 
   function escape(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") close();
   }
   return (
-    <div className="artifact-disclosure" onKeyDown={escape}>
+    <div className="artifact-disclosure" onKeyDown={escape} data-paging-region>
       <button
         type="button"
         className="artifact-trigger"
@@ -823,10 +842,14 @@ function ArtifactDisclosure({
             )}
           </div>
           {(kind === "files" || (data && data.pagination.totalPages > 1)) && (
-            <nav
-              className={`pagination${kind === "files" ? " artifact-files-pagination" : ""}`}
-              aria-label={`${label} pages`}
+            <PageNavigation
+              className={kind === "files" ? "artifact-files-pagination" : ""}
+              label={`${label} pages`}
               ref={paginationRef}
+              value={data?.pagination ?? { page, totalPages: 0 }}
+              busy={query.isFetching}
+              unavailable={!data || (!query.isFetching && data.pagination.page !== page)}
+              onPage={changePage}
             >
               {kind === "files" && (
                 <label className="artifact-failures-filter">
@@ -844,32 +867,7 @@ function ArtifactDisclosure({
                   Show failures only
                 </label>
               )}
-              <button
-                type="button"
-                className="secondary"
-                disabled={!data || page <= 1 || query.isFetching || data.pagination.page !== page}
-                onClick={() => changePage(page - 1)}
-              >
-                Previous
-              </button>
-              <span>
-                Page {data?.pagination.page ?? page} of{" "}
-                {Math.max(1, data?.pagination.totalPages ?? 0)}
-              </span>
-              <button
-                type="button"
-                className="secondary"
-                disabled={
-                  !data ||
-                  page >= data.pagination.totalPages ||
-                  query.isFetching ||
-                  data.pagination.page !== page
-                }
-                onClick={() => changePage(page + 1)}
-              >
-                Next
-              </button>
-            </nav>
+            </PageNavigation>
           )}
         </div>
       )}
@@ -885,6 +883,7 @@ function JobDetailCard({
   onRetry,
   onSelectJob,
   blockedRetryReason,
+  onShowWorkoutOnMap,
 }: {
   job: JobDetail;
   preferences: Preferences;
@@ -893,6 +892,7 @@ function JobDetailCard({
   onRetry: () => void;
   onSelectJob: (jobId: string) => void;
   blockedRetryReason?: RetryUnavailableReason;
+  onShowWorkoutOnMap: (target: MapWorkoutTarget) => void;
 }) {
   const deletion = job.operation === "workout_deletion";
   const coverage = job.operation === "coverage_update";
@@ -1085,14 +1085,27 @@ function JobDetailCard({
               {coverage ? (
                 <div className="coverage-route-run-heading">
                   <div className="coverage-route-title">
-                    <strong>{child.coverageRoute?.workoutType ?? "Workout unavailable"}</strong>{" "}
-                    <span>
-                      (
-                      {child.coverageRoute?.localStartDate
-                        ? calendarDate(child.coverageRoute.localStartDate)
-                        : dateTime(child.coverageRoute?.startedAt, preferences)}
-                      )
-                    </span>
+                    {child.coverageRoute ? (
+                      <a
+                        className="coverage-route-reference"
+                        href={`/map?workoutId=${encodeURIComponent(child.coverageRoute.workoutId)}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          onShowWorkoutOnMap(child.coverageRoute!);
+                        }}
+                      >
+                        <strong>{child.coverageRoute.workoutType}</strong>{" "}
+                        <span>
+                          (
+                          {child.coverageRoute.localStartDate
+                            ? calendarDate(child.coverageRoute.localStartDate)
+                            : dateTime(child.coverageRoute.startedAt, preferences)}
+                          )
+                        </span>
+                      </a>
+                    ) : (
+                      <strong>Workout unavailable</strong>
+                    )}
                   </div>
                   {child.coverageRoute && (
                     <table className="coverage-generation-list">
@@ -1313,13 +1326,18 @@ export function DataSync({
   pollingIntervalSeconds,
   selectedJobId,
   navigate,
+  onShowWorkoutOnMap,
 }: {
   csrfToken: string;
   preferences: Preferences;
   pollingIntervalSeconds: number;
   selectedJobId?: string;
   navigate: (to: string, replace?: boolean) => void;
+  onShowWorkoutOnMap?: (target: MapWorkoutTarget) => void;
 }) {
+  const tabActive = useTabActive();
+  const tabActiveRef = useRef(tabActive);
+  tabActiveRef.current = tabActive;
   const queryClient = useQueryClient();
   const [historyPage, setHistoryPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
@@ -1346,6 +1364,7 @@ export function DataSync({
   const reprocessHelpId = useId();
 
   const snapshot = useQuery({
+    enabled: tabActive,
     queryKey: ["data-sync"],
     queryFn: ({ signal }) => api<DataSyncModel>("/api/data-sync", { signal }),
     refetchInterval: pollingIntervalSeconds * 1000,
@@ -1368,7 +1387,7 @@ export function DataSync({
     queryKey: ["job", effectiveJobId],
     queryFn: ({ signal }) =>
       api<JobDetail>(`/api/jobs/${encodeURIComponent(effectiveJobId!)}`, { signal }),
-    enabled: Boolean(effectiveJobId),
+    enabled: tabActive && Boolean(effectiveJobId),
     retry: (failureCount, error) =>
       !(error instanceof ApiError && error.status === 404) && failureCount < 3,
     refetchOnWindowFocus: (query) =>
@@ -1441,8 +1460,8 @@ export function DataSync({
   ]);
   const detailNotFound = detail.error instanceof ApiError && detail.error.status === 404;
   useEffect(() => {
-    if (selectedJobId && detailNotFound) navigate("/data-sync", true);
-  }, [selectedJobId, detailNotFound, navigate]);
+    if (tabActive && selectedJobId && detailNotFound) navigate("/data-sync", true);
+  }, [tabActive, selectedJobId, detailNotFound, navigate]);
   const snapshotJobSignature = `${snapshot.data?.activeJob?.id ?? ""}:${snapshot.data?.activeJob?.status ?? ""}:${snapshot.data?.activeJob?.updatedAt ?? ""}:${snapshot.data?.latestJob?.id ?? ""}:${snapshot.data?.latestJob?.status ?? ""}:${snapshot.data?.latestJob?.updatedAt ?? ""}`;
   const previousSnapshotJobs = useRef<string | null>(null);
   useEffect(() => {
@@ -1459,6 +1478,7 @@ export function DataSync({
   if (statusFilter) historyParams.set("status", statusFilter);
   const historyQueryKey = ["jobs", historyPage, operationFilter, statusFilter] as const;
   const jobs = useQuery({
+    enabled: tabActive,
     queryKey: historyQueryKey,
     queryFn: ({ signal }) => api<JobList>(`/api/jobs?${historyParams}`, { signal }),
     // Terminal Coverage projections and filtered totals can change independently.
@@ -1489,6 +1509,7 @@ export function DataSync({
 
   useEffect(() => {
     if (
+      !tabActive ||
       !pendingHistoryPageScroll.current ||
       jobs.isFetching ||
       jobs.isPlaceholderData ||
@@ -1499,14 +1520,16 @@ export function DataSync({
     pendingHistoryPageScroll.current = undefined;
     const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
     return () => window.cancelAnimationFrame(frame);
-  }, [jobs.dataUpdatedAt, jobs.isFetching, jobs.isPlaceholderData, jobs.isSuccess]);
+  }, [tabActive, jobs.dataUpdatedAt, jobs.isFetching, jobs.isPlaceholderData, jobs.isSuccess]);
 
   function selectJob(jobId: string, command?: string) {
-    navigate(`/data-sync/jobs/${jobId}`);
+    if (tabActiveRef.current) navigate(`/data-sync/jobs/${jobId}`);
     if (command) setAnnouncement(command);
     void queryClient.invalidateQueries({ queryKey: ["data-sync"] });
     void queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    setTimeout(() => detailRef.current?.focus());
+    setTimeout(() => {
+      if (tabActiveRef.current) detailRef.current?.focus();
+    });
   }
 
   async function refreshOperations(jobId?: string) {
@@ -1701,8 +1724,8 @@ export function DataSync({
   const connected = snapshot.data?.sources.filter((source) => source.status === "connected") ?? [];
   const notifications = snapshot.data?.notifications ?? [];
   return (
-    <main className="data-sync-page">
-      <div className="summary-contours" aria-hidden="true" />
+    <main className="data-sync-page content-background" data-app-content tabIndex={-1}>
+      <ContentBackground />
       <a
         className="mobile-back"
         href="/"
@@ -2045,6 +2068,11 @@ export function DataSync({
               onCancel={() => void cancel()}
               onRetry={() => void retry()}
               onSelectJob={selectJob}
+              onShowWorkoutOnMap={(target) =>
+                onShowWorkoutOnMap
+                  ? onShowWorkoutOnMap(target)
+                  : navigate(`/map?workoutId=${encodeURIComponent(target.workoutId)}`)
+              }
               blockedRetryReason={
                 blockedRetry && blockedRetry.jobId === detail.data.id
                   ? blockedRetry.reason
@@ -2055,7 +2083,7 @@ export function DataSync({
         </section>
       )}
 
-      <section className="history-section" aria-labelledby="history-heading">
+      <section className="history-section" aria-labelledby="history-heading" data-paging-region>
         <div className="history-heading">
           <div>
             <p className="card-kicker">Task history</p>
@@ -2171,27 +2199,13 @@ export function DataSync({
           </div>
         )}
         {jobs.data && jobs.data.pagination.totalPages > 1 && (
-          <nav className="pagination" aria-label="Task history pages">
-            <button
-              type="button"
-              className="secondary"
-              disabled={historyPage <= 1 || jobs.isFetching}
-              onClick={() => changeHistoryPage(historyPage - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Page {jobs.data.pagination.page} of {jobs.data.pagination.totalPages}
-            </span>
-            <button
-              type="button"
-              className="secondary"
-              disabled={historyPage >= jobs.data.pagination.totalPages || jobs.isFetching}
-              onClick={() => changeHistoryPage(historyPage + 1)}
-            >
-              Next
-            </button>
-          </nav>
+          <PageNavigation
+            value={jobs.data.pagination}
+            label="Task history pages"
+            keyboardDefault
+            busy={jobs.isFetching}
+            onPage={changeHistoryPage}
+          />
         )}
       </section>
     </main>

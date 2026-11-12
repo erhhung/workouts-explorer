@@ -973,7 +973,7 @@ func updateCustomDateRangeHistory(value *generated.Preferences, patch generated.
 
 func validDateRangePreference(value string) bool {
 	switch value {
-	case "thisWeek", "lastWeek", "last7Days", "last30Days", "thisMonth", "lastMonth", "thisYear", "lastYear":
+	case "thisWeek", "lastWeek", "last7Days", "last30Days", "thisMonth", "lastMonth", "thisYear", "lastYear", "allTime":
 		return true
 	}
 	parts := strings.Split(value, "/")

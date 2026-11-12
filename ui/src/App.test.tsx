@@ -400,9 +400,13 @@ describe("public authentication", () => {
         expect(
           screen.queryByText("Routes could not be prepared for this map."),
         ).not.toBeInTheDocument();
+        const stage = document.querySelector(".map-stage");
         await user.click(screen.getByRole("link", { name: "Summary" }));
+        expect(stage?.closest("[data-app-tab]")).toHaveAttribute("hidden");
+        expect(stage?.closest("[data-app-tab]")).toHaveAttribute("inert");
         await user.click(screen.getByRole("link", { name: "Map" }));
-        await waitFor(() => expect(bodies).toHaveLength(scenario === "ordinary" ? 2 : 3));
+        await waitFor(() => expect(bodies).toHaveLength(scenario === "ordinary" ? 1 : 2));
+        expect(document.querySelector(".map-stage")).toBe(stage);
         await waitFor(() =>
           expect(screen.queryByText("Updating routes...")).not.toBeInTheDocument(),
         );
@@ -633,6 +637,356 @@ describe("public authentication", () => {
 });
 
 describe("authenticated shell", () => {
+  test.each(["name", "new", "previous", "name-with-focus", "enable-diagnostics"] as const)(
+    "opens a Stats %s on Map without changing the main range and restores the report page",
+    async (action) => {
+      const kind =
+        action === "name-with-focus" ? "name" : action === "enable-diagnostics" ? "new" : action;
+      const range = { startDate: "2024-07-07", endDate: "2026-08-05", timezone: "America/Denver" };
+      const scope = {
+        id: "7".repeat(32),
+        dataGeneration: 1,
+        expiresAt: new Date(Date.now() + 1800000).toISOString(),
+        coverageDisplayRevision: 1,
+        coverageDisplayPolicy: "coverage-display-identity-v1",
+        range,
+      };
+      const work = deletionMapWorkouts.map((w, i) =>
+        i
+          ? {
+              ...w,
+              localStartDate: "2024-08-01",
+              startedAt: "2024-08-01T13:00:00Z",
+              endedAt: "2024-08-01T14:00:00Z",
+            }
+          : w,
+      );
+      const mapSelection = {
+        id: "1".repeat(32),
+        expiresAt: scope.expiresAt,
+        dataGeneration: 1,
+        coverageDisplayRevision: 1,
+        coverageDisplayPolicy: scope.coverageDisplayPolicy,
+        range,
+        bounds: work[0].bounds,
+        coverageBounds: work[0].coverageBounds,
+        workouts: work,
+        focusedWorkoutId: null,
+        routeTileUrl: "/api/map-selections/" + "1".repeat(32) + "/route-tiles/1/{z}/{x}/{y}.pbf",
+        coverageTileUrl:
+          "/api/map-selections/" + "1".repeat(32) + "/coverage-tiles/1/{z}/{x}/{y}.pbf",
+      };
+      const entity = {
+        entityId: "F".repeat(32),
+        entityKind: "path",
+        broadClass: "road",
+        name: "Stats Road",
+        localityName: "Fixture Town",
+        regionId: "fixture:region",
+        regionName: "Fixture Region",
+        rangeWorkoutCount: 2,
+        rangeFirstDate: "2024-08-01",
+        rangeFirstWorkoutId: work[1].id,
+        rangeLatestDate: "2026-08-05",
+        rangeLatestWorkoutId: work[0].id,
+        allTimeWorkoutCount: 3,
+        allTimeFirstDate: "2022-01-01",
+        allTimeFirstWorkoutId: work[1].id,
+        allTimeLatestDate: "2026-08-05",
+        allTimeLatestWorkoutId: work[0].id,
+        bounds: work[0].bounds,
+        fitBounds: work[0].bounds,
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [-105.3, 39.8],
+            [-105.1, 40.1],
+          ],
+        },
+      };
+      const fetch = authenticatedFetch((path, method, init) => {
+        if (action === "enable-diagnostics" && path === "/api/me" && method === "PATCH")
+          return json(profile);
+        if (action === "enable-diagnostics" && path === "/api/config")
+          return json({ ...publicConfig, features: { coverageMatcherDiagnostics: true } });
+        if (action === "name-with-focus" && path.startsWith("/api/workouts?"))
+          return json({
+            range,
+            items: [oneWorkout],
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+          });
+        if (action === "name-with-focus" && path.startsWith("/api/summary?"))
+          return json({
+            ...emptySummary,
+            range,
+            totals: { ...emptySummary.totals, count: 1, routeCount: 1, duration: "3600" },
+          });
+        if (path === "/api/me/preferences" && method === "GET")
+          return json({
+            ...preferences,
+            dateRange: `${range.startDate}/${range.endDate}`,
+            coverageDiagnosticsEnabled: action !== "enable-diagnostics",
+          });
+        if (action === "enable-diagnostics" && path === "/api/me/preferences" && method === "PATCH")
+          return json({
+            ...preferences,
+            dateRange: `${range.startDate}/${range.endDate}`,
+            ...JSON.parse(String(init?.body)),
+          });
+        if (action === "enable-diagnostics" && path.endsWith("/coverage-diagnostic-runs"))
+          return new Promise<Response>(() => {});
+        if (path === "/api/stats/report-scopes") return json(scope, 201);
+        if (path.startsWith("/api/stats/report-scopes/") && method === "DELETE")
+          return new Response(null, { status: 204 });
+        if (path.includes("/new-coverage/visits?"))
+          return json({
+            scope,
+            groupBy: "month",
+            bucketStart: "2026-08-01",
+            metric: "past_year",
+            totalVisits: 1,
+            items: [
+              {
+                entityId: entity.entityId,
+                entityKind: "path",
+                name: entity.name,
+                place: "Fixture Town",
+                newVisit: "2026-08-05",
+                previousVisit: "2024-08-01",
+                newVisitWorkoutId: work[0].id,
+                previousVisitWorkoutId: work[1].id,
+              },
+            ],
+            pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+          });
+        if (path.includes("/new-coverage?")) {
+          const q = new URL(path, "https://example.test").searchParams,
+            page = Number(q.get("page") ?? 1),
+            asc = q.get("sort") === "bucket:asc";
+          const items = Array.from({ length: 26 }, (_, i) => {
+            const d = new Date(Date.UTC(2024, 6 + i, 1));
+            const bucketStart = d.toISOString().slice(0, 10);
+            return { bucketStart, allTime: 0, pastYear: bucketStart === "2026-08-01" ? 1 : 0 };
+          });
+          if (!asc) items.reverse();
+          return json({
+            scope,
+            groupBy: "month",
+            items: items.slice((page - 1) * 25, page * 25),
+            pagination: { page, pageSize: 25, totalItems: 26, totalPages: 2 },
+          });
+        }
+        if (path === "/api/map-selections" && method === "POST")
+          return json(
+            {
+              ...mapSelection,
+              focusedWorkoutId: JSON.parse(String(init?.body)).focusedWorkoutId ?? null,
+            },
+            201,
+          );
+        if (path.includes("/coverage/path/")) return json(entity);
+        if (path.includes("/coverage-focus/"))
+          return json({ type: "FeatureCollection", features: [] });
+        if (method === "DELETE" && path.startsWith("/api/map-selections/"))
+          return new Response(null, { status: 204 });
+        return undefined as unknown as Response;
+      });
+      const user = userEvent.setup();
+      renderApp(action === "name-with-focus" ? "/" : "/stats");
+      if (action === "name-with-focus") {
+        await user.click(
+          (await screen.findAllByRole("button", { name: /^Actions for Running on/ }))[0],
+        );
+        await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+        await waitFor(() =>
+          expect(document.querySelector(`[data-workout-id="${work[0].id}"]`)).toHaveClass(
+            "is-focused",
+          ),
+        );
+        await user.click(screen.getByRole("checkbox", { name: /Show Hiking/ }));
+        await waitFor(() =>
+          expect(screen.getByRole("checkbox", { name: /Show Hiking/ })).not.toBeChecked(),
+        );
+        await user.click(
+          within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+            name: "Stats",
+          }),
+        );
+      }
+      await screen.findByText("August 2026");
+      await user.click(
+        within(screen.getByRole("columnheader", { name: "Month" })).getByRole("button"),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("columnheader", { name: "Month" })).toHaveAttribute(
+          "aria-sort",
+          "ascending",
+        ),
+      );
+      await user.click(
+        within(screen.getByRole("navigation", { name: "New Coverage pages" })).getByRole("button", {
+          name: "Next",
+        }),
+      );
+      await screen.findByText("Page 2 of 2");
+      await user.click(
+        screen.getByRole("button", { name: "New visits (past year) in August 2026: 1" }),
+      );
+      const dialog = screen.getByRole("dialog");
+      await within(dialog).findByText("Stats Road");
+      await user.click(
+        within(dialog).getByRole("button", {
+          name: kind === "name" ? "Stats Road" : kind === "new" ? "Aug 5, 2026" : "Aug 1, 2024",
+        }),
+      );
+      await waitFor(() => expect(location.pathname).toBe("/map"));
+      await waitFor(() =>
+        expect(
+          fetch.mock.calls.some(
+            ([p, init]) => p === "/api/map-selections" && init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      if (kind === "name")
+        await waitFor(() =>
+          expect(
+            fetch.mock.calls.some(([p]) => String(p).includes("/coverage/path/" + entity.entityId)),
+          ).toBe(true),
+        );
+      else
+        await waitFor(() =>
+          expect(
+            document.querySelector(
+              `[data-workout-id="${kind === "new" ? work[0].id : work[1].id}"]`,
+            ),
+          ).toHaveClass("is-focused"),
+        );
+      const body = JSON.parse(
+        String(
+          fetch.mock.calls.find(
+            ([p, init]) => p === "/api/map-selections" && init?.method === "POST",
+          )![1]?.body,
+        ),
+      );
+      expect(body.startDate).toBe(range.startDate);
+      expect(body.endDate).toBe(range.endDate);
+      if (action === "name-with-focus") {
+        expect(document.querySelector(`[data-workout-id="${work[0].id}"]`)).toHaveClass(
+          "is-focused",
+        );
+        expect(screen.getByRole("checkbox", { name: /Show Hiking/ })).not.toBeChecked();
+        const latest = fetch.mock.calls
+          .filter(([p, init]) => p === "/api/map-selections" && init?.method === "POST")
+          .at(-1)!;
+        const request = JSON.parse(String(latest[1]?.body));
+        expect(request.focusedWorkoutId).toBe(work[0].id);
+        expect(request.workoutIds).toEqual([work[0].id]);
+      }
+      expect(fetch.mock.calls.some(([p]) => String(p).includes("coverage-diagnostic"))).toBe(false);
+      expect(
+        fetch.mock.calls.some(
+          ([p, init]) => p === "/api/me/preferences" && init?.method === "PATCH",
+        ),
+      ).toBe(false);
+      if (action === "enable-diagnostics") {
+        await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+        await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
+        await user.click(
+          await screen.findByRole("checkbox", { name: "Enable coverage diagnostics" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Save" }));
+        await screen.findByRole("heading", { name: "Coverage review" });
+        await waitFor(() =>
+          expect(
+            fetch.mock.calls.some(
+              ([p, init]) =>
+                String(p).endsWith("/coverage-diagnostic-runs") && init?.method === "POST",
+            ),
+          ).toBe(true),
+        );
+        await waitFor(() => expect(document.querySelector(".map-stage")).toHaveFocus());
+        await user.keyboard(" ");
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      }
+      await user.click(
+        within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+          name: "Stats",
+        }),
+      );
+      await screen.findByText("Page 2 of 2");
+      expect(screen.getByRole("columnheader", { name: "Month" })).toHaveAttribute(
+        "aria-sort",
+        "ascending",
+      );
+      expect(screen.getByRole("button", { name: "New Coverage" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    },
+  );
+  test("places Stats between Map and Data Sync and preserves its parent-owned grouping", async () => {
+    const scope = {
+      id: "7".repeat(32),
+      dataGeneration: 1,
+      expiresAt: new Date(Date.now() + 1800000).toISOString(),
+      coverageDisplayRevision: 1,
+      coverageDisplayPolicy: "coverage-display-identity-v1",
+      range: { startDate: "2026-11-01", endDate: "2026-11-30", timezone: "America/Denver" },
+    };
+    authenticatedFetch((path, method) => {
+      if (path === "/api/stats/report-scopes") return json(scope, 201);
+      if (path.startsWith("/api/stats/report-scopes/") && method === "DELETE")
+        return new Response(null, { status: 204 });
+      if (path.includes("/new-coverage?")) {
+        const groupBy = new URL(path, "https://example.test").searchParams.get("groupBy");
+        return json({
+          scope,
+          groupBy,
+          items: [
+            {
+              bucketStart: groupBy === "year" ? "2026-01-01" : "2026-11-01",
+              allTime: 0,
+              pastYear: 0,
+            },
+          ],
+          pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+        });
+      }
+      return undefined as unknown as Response;
+    });
+    renderApp("/stats");
+    await screen.findByText("November 2026");
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    expect(
+      within(navigation)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["Summary", "Map", "Stats", "Data Sync"]);
+    expect(within(navigation).getByRole("link", { name: "Stats" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "Summary" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    const user = userEvent.setup();
+    await user.click(
+      within(screen.getByRole("group", { name: "Show new visits by" })).getByRole("button", {
+        name: "Year",
+      }),
+    );
+    await screen.findByText("2026", { selector: "td" });
+    await user.click(within(navigation).getByRole("link", { name: "Summary" }));
+    await screen.findByRole("heading", { name: /workout log/i });
+    await user.click(within(navigation).getByRole("link", { name: "Stats" }));
+    expect(
+      within(screen.getByRole("group", { name: "Show new visits by" })).getByRole("button", {
+        name: "Year",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await screen.findByText("2026", { selector: "td" });
+  });
   test("switching accounts reloads profile labels and uses a different avatar cache URL", async () => {
     const nextSession = {
       ...session,
@@ -1846,6 +2200,8 @@ describe("authenticated shell", () => {
     async (resultStatus) => {
       const maps: Array<Record<string, any>> = [];
       class MockMap {
+        resize = vi.fn();
+        stop = vi.fn();
         layers = new Map<string, any>();
         sources = new Map<string, any>();
         handlers = new Map<string, () => void>();
@@ -1867,6 +2223,7 @@ describe("authenticated shell", () => {
         getCanvas = () => this.canvas;
         project = ([x, y]: number[]) => ({ x, y });
         getStyle = () => ({ layers: [] });
+        getLayersOrder = () => [...this.layers.keys()];
         setStyle = vi.fn(() => this.handlers.get("style.load")?.());
         addSource = (id: string, source: object) =>
           this.sources.set(id, {
@@ -1896,6 +2253,10 @@ describe("authenticated shell", () => {
           options.container.append(this.canvas);
           maps.push(this);
         }
+        getCenter = () => ({ lng: 0, lat: 0 });
+        getZoom = () => 0;
+        getBearing = () => 0;
+        getPitch = () => 0;
       }
       vi.spyOn(maplibregl, "Map").mockImplementation(function (options) {
         return new MockMap(options as { container: HTMLElement }) as never;
@@ -2013,6 +2374,8 @@ describe("authenticated shell", () => {
       await user.click(screen.getByRole("button", { name: "Next" }));
       await screen.findByText("Page 2 of 2", { selector: ".pagination span" });
       const beforeShow = bodies.length;
+      const retainedMap = maps.at(-1)!;
+      retainedMap.fitBounds.mockClear();
       await user.click(
         screen.getAllByRole("button", { name: "Actions for Cycling on 2026-07-20" })[0],
       );
@@ -2025,6 +2388,7 @@ describe("authenticated shell", () => {
         ),
       );
       const map = maps.at(-1)!;
+      expect(map).toBe(retainedMap);
       await waitFor(() => expect(map.fitBounds).toHaveBeenCalledTimes(1));
       expect(map.fitBounds).toHaveBeenLastCalledWith(
         resultStatus === "none"
@@ -2089,7 +2453,97 @@ describe("authenticated shell", () => {
     },
   );
 
+  test("switches tabs by number from focused controls and hands focus to content", async () => {
+    const scope = {
+      id: "7".repeat(32),
+      dataGeneration: 1,
+      coverageDisplayRevision: 1,
+      coverageDisplayPolicy: "coverage-display-identity-v1",
+      expiresAt: session.expiresAt,
+      range: emptySummary.range,
+    };
+    authenticatedFetch((path, method) => {
+      if (path === "/api/stats/report-scopes") return json(scope, 201);
+      if (path.startsWith("/api/stats/report-scopes/") && method === "DELETE")
+        return json(undefined, 204);
+      if (path.includes("/new-coverage?")) {
+        const q = new URL(path, "https://test").searchParams;
+        return json({
+          scope,
+          groupBy: q.get("groupBy"),
+          items: [{ bucketStart: "2026-08-01", allTime: 1, pastYear: 1 }],
+          pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1 },
+        });
+      }
+      if (path === "/api/map-selections" && method === "POST")
+        return json({
+          id: "A".repeat(32),
+          dataGeneration: 1,
+          coverageDisplayRevision: 1,
+          coverageDisplayPolicy: "coverage-display-identity-v1",
+          expiresAt: session.expiresAt,
+          range: emptySummary.range,
+          bounds: deletionMapWorkouts[0].bounds,
+          coverageBounds: deletionMapWorkouts[0].coverageBounds,
+          workouts: deletionMapWorkouts,
+          routeTileUrl: "/api/map-selections/" + "A".repeat(32) + "/route-tiles/1/{z}/{x}/{y}.pbf",
+        });
+      if (path.startsWith("/api/map-selections/") && method === "DELETE")
+        return json(undefined, 204);
+      if (path === "/api/config") return json(publicConfig);
+      if (path === "/api/session") return json(session);
+      if (path === "/api/me") return json(profile);
+      if (path === "/api/me/preferences") return json(preferences);
+      if (path.startsWith("/api/summary?")) return json(emptySummary);
+      if (path.startsWith("/api/workouts?")) return json(emptyWorkouts);
+      if (path === "/api/data-sync") return json(dataSync);
+      if (path.startsWith("/api/jobs?")) return json(emptyJobs);
+      throw new Error(`Unexpected ${method} ${path}`);
+    });
+    renderApp();
+    await screen.findByRole("heading", { name: "Range totals" });
+    await waitFor(() => expect(document.querySelector(".summary-page")).toHaveFocus());
+    const primary = screen.getByRole("navigation", { name: "Primary" });
+    const link = within(primary).getByRole("link", { name: "Summary" });
+    link.focus();
+    fireEvent.keyDown(link, { key: "3" });
+    await screen.findByRole("heading", { name: "New Coverage" });
+    expect(document.querySelector(".stats-report")).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "y" });
+    expect(screen.getByRole("button", { name: "Year", pressed: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.keyDown(document.activeElement!, { key: "4" });
+    await screen.findByRole("heading", { name: "Start a sync" });
+    expect(document.querySelector(".data-sync-page")).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    await screen.findByRole("button", { name: "Fit routes" });
+    await waitFor(() => expect(document.querySelector(".map-stage")).toHaveFocus());
+    fireEvent.keyDown(document.activeElement!, { key: "1" });
+    await screen.findByRole("heading", { name: "Range totals" });
+    expect(document.querySelector(".summary-page")).toHaveFocus();
+    const length = history.length;
+    fireEvent.keyDown(document.activeElement!, { key: "1" });
+    expect(history.length).toBe(length);
+    const search = document.createElement("input");
+    search.type = "search";
+    document.querySelector(".summary-page")!.append(search);
+    link.focus();
+    fireEvent.keyDown(link, { key: "2" });
+    expect(location.pathname).toBe("/");
+    search.remove();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+    fireEvent.keyDown(document, { key: "2" });
+    expect(location.pathname).toBe("/");
+    await user.keyboard("{Escape}");
+    fireEvent.keyDown(document, { key: "2", ctrlKey: true });
+    expect(location.pathname).toBe("/");
+  });
+
   test("preserves the Summary workout page across tabs and resets it for a new date range", async () => {
+    const enumerateZones = vi.spyOn(Intl, "supportedValuesOf");
     authenticatedFetch((path, method) => {
       if (path.startsWith("/api/workouts?") && method === "GET") {
         const page = Number(new URL(path, "https://test").searchParams.get("page"));
@@ -2119,6 +2573,7 @@ describe("authenticated shell", () => {
     expect(
       await screen.findByText("Page 1 of 3", { selector: ".pagination span" }),
     ).toBeInTheDocument();
+    expect(enumerateZones).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(
       await screen.findByText("Page 2 of 3", { selector: ".pagination span" }),
@@ -2134,6 +2589,19 @@ describe("authenticated shell", () => {
     expect(
       await screen.findByText("Page 1 of 3", { selector: ".pagination span" }),
     ).toBeInTheDocument();
+    expect(enumerateZones).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
+    await screen.findByRole("dialog", { name: "Preferences" });
+    expect(enumerateZones).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Close Preferences" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Page 2 of 3", { selector: ".pagination span" });
+    expect(enumerateZones).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /Open account menu/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
+    await screen.findByRole("dialog", { name: "Preferences" });
+    expect(enumerateZones).toHaveBeenCalledTimes(2);
   });
 
   test.each(["none", "active", "latest"] as const)(
@@ -2268,6 +2736,132 @@ describe("authenticated shell", () => {
     await userEvent.click(screen.getByRole("link", { name: "Workouts Explorer" }));
     expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
     expect(location.pathname).toBe("/");
+  });
+
+  test.each([
+    {
+      date: "2026-08-06",
+      range: "2026-08-01/2026-08-31",
+      expected: "2026-08-01/2026-08-31",
+      available: true,
+    },
+    { date: "2022-03-02", range: "thisWeek", expected: "allTime", available: true },
+    { date: "2022-03-02", range: "thisWeek", expected: "allTime", available: false },
+  ])("opens a job route dated $date in $expected (Coverage=$available)", async (fixture) => {
+    const jobId = "D".repeat(32),
+      childId = "C".repeat(32);
+    const target = {
+      ...deletionMapWorkouts[0],
+      localStartDate: fixture.date,
+      coverageBounds: fixture.available ? deletionMapWorkouts[0].coverageBounds : null,
+      coverageReadiness: fixture.available
+        ? deletionMapWorkouts[0].coverageReadiness
+        : {
+            mapDataStatus: "ready",
+            processingStatus: "failed",
+            resultStatus: "none",
+          },
+    };
+    const calls: Array<Record<string, unknown>> = [];
+    const patches: unknown[] = [];
+    const progress = {
+      current: 1,
+      total: 1,
+      filesDiscovered: 0,
+      filesSkipped: 0,
+      filesSucceeded: 0,
+      filesFailed: 0,
+      workoutsCreated: 0,
+      workoutsUpdated: 0,
+      workoutsUnchanged: 0,
+      workoutsRejected: 0,
+    };
+    authenticatedFetch((path, method, init) => {
+      if (path === "/api/me/preferences" && method === "GET")
+        return json({ ...preferences, dateRange: fixture.range });
+      if (path === "/api/me/preferences" && method === "PATCH") {
+        const patch = JSON.parse(String(init?.body));
+        patches.push(patch);
+        return json({ ...preferences, ...patch });
+      }
+      if (path === `/api/jobs/${jobId}`)
+        return json({
+          id: jobId,
+          operation: "coverage_update",
+          trigger: "system",
+          status: "succeeded",
+          attempt: 0,
+          progress,
+          createdAt: "2026-08-06T12:00:00Z",
+          updatedAt: "2026-08-06T12:00:00Z",
+          terminalAt: "2026-08-06T12:00:00Z",
+          cancelRequested: false,
+          retriedByJobIds: [],
+          children: [
+            {
+              id: childId,
+              status: fixture.available ? "succeeded" : "failed",
+              progress,
+              cancelRequested: false,
+              coverageRoute: {
+                workoutId: target.id,
+                workoutType: "Outdoor Walk",
+                localStartDate: fixture.date,
+                startedAt: "2022-03-02T12:00:00Z",
+                targetGenerations: [],
+              },
+            },
+          ],
+        });
+      if (path === "/api/map-selections" && method === "POST") {
+        calls.push(JSON.parse(String(init?.body)));
+        return json({
+          id: "B".repeat(32),
+          dataGeneration: 1,
+          expiresAt: new Date(Date.now() + 1800000).toISOString(),
+          coverageDisplayRevision: 1,
+          coverageDisplayPolicy: "coverage-display-identity-v1",
+          range: emptySummary.range,
+          workouts: [target, deletionMapWorkouts[1]],
+          bounds: target.bounds,
+          coverageBounds: target.coverageBounds,
+          routeTileUrl: "/route/{z}/{x}/{y}.pbf",
+          coverageTileUrl: "/coverage/{z}/{x}/{y}.pbf",
+          focusedWorkoutId: target.id,
+        });
+      }
+      if (path.includes("/coverage-focus/"))
+        return json({ type: "FeatureCollection", features: [] });
+      if (path.endsWith("/route/points")) return json({ points: [] });
+      if (method === "DELETE" && path.startsWith("/api/map-selections/"))
+        return new Response(null, { status: 204 });
+      return undefined as never;
+    });
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    renderApp(`/data-sync/jobs/${jobId}`);
+    const link = await screen.findByRole("link", { name: /Outdoor Walk/ });
+    expect(link).toHaveAttribute("href", `/map?workoutId=${target.id}`);
+    await userEvent.click(link);
+    await screen.findByRole("checkbox", { name: /Show Running/ });
+    await waitFor(() =>
+      expect(document.querySelector(`[data-workout-id="${target.id}"]`)).toHaveClass("is-focused"),
+    );
+    expect(location.pathname).toBe("/map");
+    expect(
+      screen.getByRole("button", { name: fixture.available ? "Coverage" : "Routes" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(scroll).toHaveBeenCalledWith({ block: "center", inline: "nearest" });
+    if (fixture.expected === "allTime") {
+      expect(screen.getByRole("button", { name: "Select date range" })).toHaveTextContent(
+        "All time",
+      );
+      expect(calls[0].dateRangeEnum).toBe("allTime");
+      expect(patches).toContainEqual({ dateRange: "allTime" });
+    } else {
+      expect(calls[0].startDate).toBe("2026-08-01");
+      expect(calls[0].endDate).toBe("2026-08-31");
+      expect(patches).toHaveLength(0);
+    }
   });
 
   test("canonicalizes lowercase compact job IDs before API use", async () => {
@@ -2555,6 +3149,55 @@ describe("authenticated shell", () => {
     });
     expect(document.documentElement.dataset.theme).toBe("light");
   });
+
+  test.each([
+    ["/", ".summary-page"],
+    ["/stats", ".stats-report"],
+    ["/data-sync", ".data-sync-page"],
+    ["/map", ".map-stage"],
+  ])(
+    "returns Preferences focus to active content on %s for every close action",
+    async (path, selector) => {
+      const scope = {
+        id: "7".repeat(32),
+        dataGeneration: 1,
+        expiresAt: session.expiresAt,
+        range: emptySummary.range,
+        coverageDisplayRevision: 1,
+        coverageDisplayPolicy: "coverage-display-identity-v1",
+      };
+      authenticatedFetch((url, method, init) => {
+        if (url === "/api/me" && method === "PATCH") return json(profile);
+        if (url === "/api/me/preferences" && method === "PATCH")
+          return json({ ...preferences, ...JSON.parse(String(init?.body)) });
+        if (url === "/api/stats/report-scopes") return json(scope, 201);
+        if (url.includes("/new-coverage?"))
+          return json({ scope, groupBy: "month", items: [], pagination: emptyWorkouts.pagination });
+        if (url === "/api/map-selections")
+          return json(
+            { ...scope, bounds: null, workouts: [], routeTileUrl: "/tiles/{z}/{x}/{y}.pbf" },
+            201,
+          );
+        if (method === "DELETE") return new Response(null, { status: 204 });
+        return undefined as never;
+      });
+      renderApp(path);
+      const user = userEvent.setup();
+      for (const action of ["Save", "Cancel", "Close Preferences", "Escape"]) {
+        await user.click(await screen.findByRole("button", { name: /Open account menu/ }));
+        await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
+        await screen.findByRole("dialog", { name: "Preferences" });
+        if (action === "Escape") await user.keyboard("{Escape}");
+        else await user.click(screen.getByRole("button", { name: action }));
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Preferences" })).not.toBeInTheDocument(),
+        );
+        await waitFor(() => expect(document.querySelector(selector)).toHaveFocus());
+        await user.keyboard(" ");
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      }
+    },
+  );
 
   test("keeps preference header and actions outside the scrolling body", async () => {
     authenticatedFetch();

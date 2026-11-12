@@ -588,6 +588,7 @@ DELETE FROM app.map_selections;
 ALTER TABLE app.map_selections
 ADD COLUMN start_date date NOT NULL,
 ADD COLUMN end_date date NOT NULL,
+ADD COLUMN all_time boolean NOT NULL DEFAULT false,
 ADD COLUMN selection_kind text NOT NULL CHECK (selection_kind IN ('complete_range', 'explicit_subset')),
 ADD CHECK (start_date <= end_date);
 
@@ -799,7 +800,7 @@ SET
     app,
     public AS $function$
     WITH selected AS MATERIALIZED (
-        SELECT selection.start_date, selection.end_date, selection.selection_kind
+        SELECT selection.start_date, selection.end_date, selection.selection_kind, selection.all_time
           FROM app.map_selections selection
           JOIN app.sessions session ON session.id = selection.session_id
           JOIN app.authentication_principals principal ON principal.id = session.principal_id
@@ -815,7 +816,7 @@ SET
         SELECT rollup.logical_path_id, sum(rollup.workout_count)::bigint AS workout_count
           FROM selected selection JOIN app.account_path_daily_rollups rollup
             ON selection.selection_kind = 'complete_range' AND rollup.account_id = target_account_id
-           AND rollup.visit_date BETWEEN selection.start_date AND selection.end_date
+           AND (selection.all_time OR rollup.visit_date BETWEEN selection.start_date AND selection.end_date)
          GROUP BY rollup.logical_path_id
         UNION ALL
         SELECT attribution.logical_path_id, count( * )::bigint
@@ -947,13 +948,13 @@ BEGIN
     ) THEN RAISE EXCEPTION 'invalid or expired map selection' USING ERRCODE = '42501'; END IF;
     bounds := ST_TileEnvelope(z, x, y);
     WITH selected AS MATERIALIZED (
-        SELECT selection.selection_kind, selection.start_date, selection.end_date
+        SELECT selection.selection_kind, selection.start_date, selection.end_date, selection.all_time
         FROM app.map_selections selection WHERE selection.id = target_selection_id AND selection.account_id = target_account_id
     ), counts AS MATERIALIZED (
         SELECT rollup.logical_path_id, sum(rollup.workout_count)::bigint AS workout_count
         FROM selected selection JOIN app.account_path_daily_rollups rollup
           ON selection.selection_kind = 'complete_range' AND rollup.account_id = target_account_id
-         AND rollup.visit_date BETWEEN selection.start_date AND selection.end_date
+         AND (selection.all_time OR rollup.visit_date BETWEEN selection.start_date AND selection.end_date)
         GROUP BY rollup.logical_path_id
         UNION ALL
         SELECT attribution.logical_path_id, count( * )::bigint

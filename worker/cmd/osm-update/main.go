@@ -147,8 +147,9 @@ func runUpdate(ctx context.Context, getenv func(string) string, stdout io.Writer
 	prometheusURL := valueOrDefault(getenv("OSM_PROMETHEUS_URL"), osm.DefaultPrometheusURL)
 	pvcTemplate := valueOrDefault(getenv("OSM_PROMETHEUS_PVC_TEMPLATE"), osm.DefaultPVCTemplate)
 	maximumSampleAge, ageErr := durationOrDefault(getenv("OSM_PROMETHEUS_MAX_SAMPLE_AGE"), osm.DefaultMaximumAge)
+	storageSettleTimeout, settleErr := durationOrDefault(getenv("OSM_STORAGE_SETTLE_TIMEOUT"), 90*time.Second)
 	logLocation, locationErr := time.LoadLocation(valueOrDefault(getenv("OSM_LOG_TIMEZONE"), "America/Los_Angeles"))
-	if regionID == "" || scratch == "" || pipelineRoot == "" || err != nil || maximumBytes < 1 || ageErr != nil || maximumSampleAge <= 0 || locationErr != nil {
+	if regionID == "" || scratch == "" || pipelineRoot == "" || err != nil || maximumBytes < 1 || ageErr != nil || maximumSampleAge <= 0 || settleErr != nil || storageSettleTimeout < 0 || locationErr != nil {
 		return fmt.Errorf("OSM region, download, scratch, pipeline, and Prometheus storage-preflight configuration are required")
 	}
 	databaseURL := getenv("OSM_MIGRATION_DATABASE_URL")
@@ -157,6 +158,7 @@ func runUpdate(ctx context.Context, getenv func(string) string, stdout io.Writer
 		HTTPClient: &http.Client{Timeout: 2 * time.Hour}, Download: osm.DownloadRegion,
 		MaximumBytes: maximumBytes, ScratchRoot: scratch, ResumeGenerationID: resumeGenerationID,
 		Log: stdout, LogLocation: logLocation,
+		StorageSettleTimeout: storageSettleTimeout,
 		StoragePreflight: osm.PrometheusStoragePreflight{
 			DB: pool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: prometheusURL,
 			PVCTemplate: pvcTemplate, MaximumAge: maximumSampleAge,

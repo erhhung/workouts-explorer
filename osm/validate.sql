@@ -125,7 +125,9 @@ BEGIN
             ('localityScopeSliversAbsorbed', (SELECT to_jsonb(absorbed_segments) FROM attribution_scope_sliver_stats)),
             ('localityScopeSliverLengthMeters', (SELECT to_jsonb(absorbed_length_m) FROM attribution_scope_sliver_stats)),
             ('logicalPathMismatches', '0'),
-            ('materialLocalityResiduals', '0');
+            ('materialLocalityResiduals', '0'),
+            ('materialParkBoundaryCrossings', '0'),
+            ('materialEducationBoundaryCrossings', '0');
         PERFORM osm_catalog.checkpoint_generation_stage(target_generation, 'validate', expected_batch,
             jsonb_build_object('version', 1, 'phase', 'ways'), processed);
         RETURN;
@@ -233,6 +235,37 @@ BEGIN
         UPDATE validation_metrics
         SET value = to_jsonb((value::text)::bigint + metric_count)
         WHERE metric = 'materialLocalityResiduals';
+        -- Check untagged segments too: whole-segment attribution can otherwise
+        -- silently abstain on a missed facility-boundary split.
+        SELECT count(*) INTO metric_count
+        FROM validation_segment_keys AS key
+        JOIN validation_segments AS segment USING (segment_id)
+        WHERE EXISTS (
+            SELECT 1 FROM park_areas park
+            WHERE park.geom && segment.geom
+                AND ST_Length(ST_CollectionExtract(ST_Intersection(segment.geom,park.geom),2)::geography)>0.01
+                AND ST_Length(ST_CollectionExtract(ST_Difference(segment.geom,park.geom),2)::geography)>0.01
+                -- Substring endpoints can straddle an exactly shared boundary
+                -- by floating-point noise. Exempt only wholly boundary-aligned
+                -- geometry within 1e-9 degrees (less than 0.2 mm).
+                AND NOT ST_CoveredBy(segment.geom,ST_Buffer(ST_Boundary(park.geom),1e-9))
+        );
+        UPDATE validation_metrics
+        SET value = to_jsonb((value::text)::bigint + metric_count)
+        WHERE metric = 'materialParkBoundaryCrossings';
+        SELECT count(*) INTO metric_count
+        FROM validation_segment_keys AS key
+        JOIN validation_segments AS segment USING (segment_id)
+        WHERE segment.normalized_name IS NULL AND EXISTS (
+            SELECT 1 FROM education_areas education
+            WHERE education.geom && segment.geom
+                AND ST_Length(ST_CollectionExtract(ST_Intersection(segment.geom,education.geom),2)::geography)>0.01
+                AND ST_Length(ST_CollectionExtract(ST_Difference(segment.geom,education.geom),2)::geography)>0.01
+                AND NOT ST_CoveredBy(segment.geom,ST_Buffer(ST_Boundary(education.geom),1e-9))
+        );
+        UPDATE validation_metrics
+        SET value = to_jsonb((value::text)::bigint + metric_count)
+        WHERE metric = 'materialEducationBoundaryCrossings';
         PERFORM osm_catalog.checkpoint_generation_stage(target_generation, 'validate', expected_batch,
             jsonb_build_object('version', 1, 'phase', phase, 'last_id', next_cursor, 'batch_size', residual_batch_size,
                 'batch_index', batch_index + 1, 'batch_total', batch_total), processed + batch_rows);

@@ -6,9 +6,9 @@ Accepted. The canonical multi-region promotion contract and operator-run
 download, import, resumable derivation, validation, promotion and storage-GC
 lifecycle are implemented, as is automatic application Coverage reconciliation
 after promotion. Current tooling uses Osmium 1.19.0, osm2pgsql 2.3.1, importer
-version 3 and derivation version 20. Administrator status/refresh workflows
-remain Milestone 9 work; dedicated OSM reader credential provisioning belongs
-to the final production/security Milestone 12. Automatic region addition is
+version 3 and derivation version 21. Administrator status/refresh workflows
+remain Milestone 10 work; dedicated OSM reader credential provisioning belongs
+to the final production/security Milestone 14. Automatic region addition is
 independently and indefinitely deferred. See the
 [resumable rebuild contract](../osm-resumable-rebuild.md) for checkpoint and
 operator-blocking behavior.
@@ -224,7 +224,15 @@ Authoritative national-park tagging is `boundary=national_park`,
 `protected_area=national_park`, or case-insensitive
 `protection_title=National Park`; these named areas qualify from 1 km² through
 100,000 km², including when `protect_class=2`. Unrelated `protect_class=2`,
-invalid polygons, unnamed polygons, and material partial overlaps abstain. Local
+invalid polygons and unnamed polygons abstain. Before area attribution, the
+resumable clipping stages split physical geometry at qualifying park boundaries
+and unnamed geometry at qualifying education boundaries, in addition to locality
+boundaries. Only the resulting fully contained pieces receive attribution;
+outside pieces remain independent. Polygon holes and repeated boundary crossings
+preserve source order and graph connectivity. Bounded validation rejects material
+unsplit crossings, including untagged ones. Existing generations and copied
+workout evidence require a new regional build/promotion and Coverage reconciliation
+to adopt this derivation correction. Local
 parks still require an authoritative named municipality. State and national parks
 take precedence in overlap selection because they supply regional context; ties
 then prefer smaller area, relation before way, and source ID.
@@ -469,7 +477,7 @@ transactional single-flight generation reservation, bounded download provenance,
 an injectable validation-gated pipeline, schema-4 promotion, and retryable
 post-promotion storage GC. It intentionally remains an operator-run command.
 The 10/4/2026 closeout decision formally assigns the remaining administrator
-status/refresh API and job/status contract to Milestone 9. Milestone 7 covers the
+status/refresh API and job/status contract to what is now Milestone 10. Milestone 7 covers the
 completed operator status/refresh/rebuild lifecycle and automatic copied-segment
 reconciliation; it does not require an administrator API or UI. Automatic
 route-triggered region addition remains independently and indefinitely deferred.

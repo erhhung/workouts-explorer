@@ -1569,10 +1569,10 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'CHECK ((revision > 0))']),
 			('coverage_display_contexts',ARRAY['account_id:uuid:true','id:uuid:true','generation:bigint:true','revision:bigint:true',
 				'start_date:date:true','end_date:date:true','policy_version:text:true','label_locale:text:true','ready:boolean:true',
-				'created_at:timestamp with time zone:true','last_used_at:timestamp with time zone:true'],ARRAY[
+				'created_at:timestamp with time zone:true','last_used_at:timestamp with time zone:true','all_time:boolean:true'],ARRAY[
 				'PRIMARY KEY (account_id, id)',
 				'FOREIGN KEY (account_id) REFERENCES app.accounts(id) ON DELETE CASCADE',
-				'UNIQUE (account_id, generation, revision, start_date, end_date, policy_version, label_locale)',
+				'UNIQUE (account_id, generation, revision, start_date, end_date, all_time, policy_version, label_locale)',
 				'CHECK ((policy_version = ''coverage-display-identity-v1''::text))',
 				'CHECK ((label_locale = ''en''::text))','CHECK ((start_date <= end_date))']),
 			('coverage_display_members',ARRAY['account_id:uuid:true','context_id:uuid:true','source_kind:text:true','source_id:uuid:true',
@@ -1598,13 +1598,20 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'FOREIGN KEY (account_id, context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE CASCADE',
 				'CHECK ((entity_kind = ANY (ARRAY[''path''::text, ''park''::text])))',
 				'CHECK (((range_workout_count >= 0) AND (all_time_workout_count >= range_workout_count)))']),
-			('coverage_display_invalidations',ARRAY['txid:bigint:true','account_id:uuid:true'],ARRAY['PRIMARY KEY (txid, account_id)'])
+			('coverage_display_invalidations',ARRAY['txid:bigint:true','account_id:uuid:true'],ARRAY['PRIMARY KEY (txid, account_id)']),
+			('stats_report_scopes',ARRAY['account_id:uuid:true','id:uuid:true','session_id:uuid:true','generation:bigint:true',
+				'start_date:date:true','end_date:date:true','timezone:text:true','expires_at:timestamp with time zone:true','coverage_display_context_id:uuid:false','all_time:boolean:true'],ARRAY[
+				'PRIMARY KEY (account_id, id)',
+				'FOREIGN KEY (account_id) REFERENCES app.accounts(id) ON DELETE CASCADE',
+				'FOREIGN KEY (session_id) REFERENCES app.sessions(id) ON DELETE CASCADE',
+				'FOREIGN KEY (account_id, coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE SET NULL (coverage_display_context_id)',
+				'CHECK ((generation > 0))','CHECK ((start_date <= end_date))'])
 		), functions(signature,language,volatility,definer,strict,parallel,returns_set,defaults,result,config,api,tiles,body_hash) AS (VALUES
 			('app.coverage_display_normalize(text)','sql','i',false,true,'s',false,0,'text',ARRAY['search_path=pg_catalog'],false,false,'f9b737c67fbf910ef932ddd4f8af727b'),
 			('app.coverage_display_identity(text,text,text,text)','plpgsql','i',false,true,'s',false,0,'uuid',ARRAY['search_path=pg_catalog'],false,false,'528503a039e38e7c00894fdf42755fb6'),
 			('app.coverage_display_source_visits(uuid,date,date)','sql','s',true,false,'u',true,0,
 				'TABLE(source_kind text, source_id uuid, workout_id uuid, local_start_date date, started_at timestamp with time zone, broad_class text, name text, locality_name text, region_id text, region_name text, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, range_minimum_longitude double precision, range_minimum_latitude double precision, range_maximum_longitude double precision, range_maximum_latitude double precision)',
-				ARRAY['search_path=pg_catalog, app','jit=off'],false,false,'2eaba9321e59962a8c01bd30a3684497'),
+				ARRAY['search_path=pg_catalog, app','jit=off'],false,false,'4963e05686bdde44b6c3ba5b278f3acd'),
 			('app.enqueue_coverage_display_invalidations(uuid[])','sql','v',true,false,'u',false,0,'void',ARRAY['search_path=pg_catalog, app'],false,false,'1ef60d0526acf6d35d98e1c37042cbd4'),
 			('app.advance_account_data_generation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'e23dd0a699cdeef1541efa1fa9920bfa'),
 			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'4e1c86a9fcd6b98e1212ea7c3ee62321'),
@@ -1612,13 +1619,29 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2254b7798bfb3ddce49202a0c60783ef'),
 			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c06ee64c7a96972646b33c0133ef6e31'),
 			('app.seed_coverage_display_revision()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'eebad7997cf527699c48dade43c3e348'),
-			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2538af856c9bea2a1219c8ddbe12f0ca'),
-			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2c883759bf98b433aff57f66fc576d10'),
+			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'8a84db8e9eedf7085e96bbb565085148'),
+			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c49333eb85ccb0292f3c9383e491b9de'),
 			('app.coverage_display_selection_scope(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',true,0,
 				'TABLE(start_date date, end_date date, revision bigint, bound_context_id uuid)',ARRAY['search_path=pg_catalog, app'],false,false,'9371cd17c0320f9edfe3515e787cc6dd'),
-			('app.coverage_display_authorized_context(uuid,uuid,uuid,bigint)','plpgsql','s',true,false,'u',false,0,'uuid',ARRAY['search_path=pg_catalog, app'],false,false,'5214b99b7492208640f05f89e460057b'),
+			('app.coverage_display_authorized_context(uuid,uuid,uuid,bigint)','plpgsql','s',true,false,'u',false,0,'uuid',ARRAY['search_path=pg_catalog, app'],false,false,'75773f460785303cb025b4d3686e5cd8'),
 			('app.prepare_coverage_display_context(uuid,uuid,uuid,bigint)','plpgsql','v',true,false,'u',true,0,
-				'TABLE(context_id uuid, display_revision bigint, policy_version text)',ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'6f29c0f5528f602a0ed49088a4081616'),
+				'TABLE(context_id uuid, display_revision bigint, policy_version text)',ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'0941574369479274f464accdd3d13b20'),
+			('app.stats_report_scope(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',true,0,
+				'TABLE(start_date date, end_date date, revision bigint, bound_context_id uuid)',ARRAY['search_path=pg_catalog, app'],false,false,'e4669cc4acc7779822677ef2d26e1376'),
+			('app.stats_report_authorized_context(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',false,0,
+				'uuid',ARRAY['search_path=pg_catalog, app'],false,false,'5a86021801400a8c90bba6372783d531'),
+			('app.stats_prepare_report_scope(uuid,uuid,uuid,bigint,date,date,text,timestamptz,boolean)','plpgsql','v',true,false,'u',true,1,
+				'TABLE(context_id uuid, display_revision bigint, policy_version text)',ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'6994a665a6bcabfc61c5c9c13fb0c529'),
+			('app.stats_read_report_scope(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',true,0,
+				'TABLE(start_date date, end_date date, timezone text, expires_at timestamp with time zone, display_revision bigint, policy_version text)',
+				ARRAY['search_path=pg_catalog, app'],true,false,'3212aa98d9f38a72280ed801aba413a7'),
+			('app.stats_delete_report_scope(uuid,uuid,uuid)','plpgsql','v',true,false,'u',false,0,
+				'void',ARRAY['search_path=pg_catalog, app'],true,false,'cc90d0351a9d9891eff06cf2e6a971d1'),
+			('app.stats_new_coverage_events(uuid,uuid,uuid,bigint)','plpgsql','s',true,false,'u',true,0,
+				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, new_visit date, previous_visit date, all_time_new boolean)',
+				ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'6eb686da62b2ce2eddc9e711a41f94ad'),
+			('app.stats_visit_workouts(uuid,uuid,uuid,bigint,uuid,date,date)','plpgsql','s',true,false,'u',true,0,
+				'TABLE(new_workout_id uuid, previous_workout_id uuid)',ARRAY['search_path=pg_catalog, app'],true,false,'3b8ca7fdce5e6ce4f00acf2cb7a277b2'),
 			('app.map_selection_coverage_entities(uuid,uuid,uuid,bigint,text)','plpgsql','s',true,false,'u',true,1,
 				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
 				ARRAY['search_path=pg_catalog, app','jit=off'],true,false,'d243719d05988f76a2d7ab6d345ba0aa'),
@@ -1629,11 +1652,11 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'TABLE(source_kind text, source_id uuid)',ARRAY['search_path=pg_catalog, app'],true,false,'04862cedaf0cbdcd472a57f867081996'),
 			('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)','sql','s',true,false,'u',true,0,
 				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, geometry jsonb, fit_minimum_longitude double precision, fit_minimum_latitude double precision, fit_maximum_longitude double precision, fit_maximum_latitude double precision)',
-				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'8b532de5af2b4ff065715cd6eb562872'),
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'716b666af75155e76e106a53071add26'),
 			('app.coverage_mvt(integer,integer,integer,json)','plpgsql','s',true,false,'u',false,1,'bytea',
-				ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'9a04626be3ff4e8e95d3414f87d20cf5'),
+				ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'d3bdc84e87b90d71d2310cca9a96a5c8'),
 			('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)','plpgsql','s',true,false,'u',false,0,'jsonb',
-				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'639f6f1f0554094dfc4bc6c52e4dd93a')
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'1b28db14908f5980ec407853a4a4d08f')
 		)
 		SELECT (SELECT schema_version>=30 AND minimum_runtime_version>=30 AND migration_baseline=27
 			FROM app.schema_metadata WHERE singleton)
@@ -1676,6 +1699,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 						OR pg_get_expr(d.adbin,d.adrelid) IS DISTINCT FROM CASE
 							WHEN expected.name='coverage_display_entities' AND a.attname='entity_id' THEN 'canonical_id'
 							WHEN expected.name='coverage_display_revisions' AND a.attname='revision' THEN '1'
+							WHEN a.attname='all_time' THEN 'false'
 							WHEN expected.name='coverage_display_contexts' THEN CASE a.attname
 								WHEN 'id' THEN 'gen_random_uuid()' WHEN 'policy_version' THEN '''coverage-display-identity-v1''::text'
 								WHEN 'label_locale' THEN '''en''::text' WHEN 'ready' THEN 'false'
@@ -1707,6 +1731,10 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 					AND (has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 						OR has_any_column_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
 		)
+		AND EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+			WHERE a.attrelid=to_regclass('app.map_selections') AND a.attname='all_time'
+				AND a.atttypid='boolean'::regtype AND a.attnotnull AND NOT a.attisdropped
+				AND pg_get_expr(d.adbin,d.adrelid)='false')
 		AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=to_regclass('app.map_selections')
 			AND a.attname='coverage_display_context_id' AND a.atttypid='uuid'::regtype AND a.atttypmod=-1
 			AND NOT a.attisdropped AND NOT a.attnotnull AND NOT a.atthasdef AND a.attgenerated='' AND a.attidentity=''
@@ -1727,7 +1755,8 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				('app.coverage_display_members_collision_idx','app.coverage_display_members',ARRAY['account_id','canonical_id'],NULL::text),
 				('app.coverage_display_visits_date_idx','app.coverage_display_visits',ARRAY['account_id','context_id','canonical_id','local_start_date','started_at','workout_id'],NULL::text),
 				('app.coverage_display_entities_visible_idx','app.coverage_display_entities',ARRAY['account_id','context_id','canonical_id'],'(range_workout_count > 0)'),
-				('app.map_selections_coverage_display_context_idx','app.map_selections',ARRAY['account_id','coverage_display_context_id','expires_at'],NULL::text)
+				('app.map_selections_coverage_display_context_idx','app.map_selections',ARRAY['account_id','coverage_display_context_id','expires_at'],NULL::text),
+				('app.stats_report_scopes_context_idx','app.stats_report_scopes',ARRAY['account_id','coverage_display_context_id','expires_at'],NULL::text)
 			) expected(name,relation,columns,predicate)
 			LEFT JOIN pg_class c ON c.oid=to_regclass(expected.name)
 			LEFT JOIN pg_index i ON i.indexrelid=c.oid LEFT JOIN pg_am am ON am.oid=c.relam
@@ -1750,7 +1779,8 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				OR p.provolatile::text<>expected.volatility OR p.prolang<>(SELECT oid FROM pg_language WHERE lanname=expected.language)
 				OR p.proretset<>expected.returns_set OR p.pronargdefaults<>expected.defaults OR p.proleakproof
 				OR pg_get_expr(p.proargdefaults,0) IS DISTINCT FROM CASE WHEN expected.defaults=1 THEN
-					CASE WHEN expected.tiles THEN '''{}''::json' ELSE 'NULL::text' END END
+					CASE WHEN expected.signature LIKE 'app.stats_prepare_report_scope(%' THEN 'false'
+						WHEN expected.tiles THEN '''{}''::json' ELSE 'NULL::text' END END
 				OR pg_get_function_result(p.oid)<>expected.result OR p.proconfig IS DISTINCT FROM expected.config
 				OR md5(p.prosrc)<>expected.body_hash
 				OR has_function_privilege('workouts_api',p.oid,'EXECUTE')<>expected.api

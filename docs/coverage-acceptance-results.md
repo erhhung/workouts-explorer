@@ -45,7 +45,7 @@ all required views complete and no observed delivery errors. Dense high-zoom raw
 client completion remained slow.**
 Schema **31/minimum 31**, baseline **27**, ledger **0-31** retain shipped worker-31
 compatibility and all 001-031 SQL. [Deployment/source verification](development-progress.md#tile-rendering-and-delivery-031)
-is distinct from the scoped live result below, M9 capacity or a new M8 pass.
+is distinct from the scoped live result below, M12 capacity or a new M8 pass.
 
 The earlier authorized pre-fix Helm-65 normal/4K viewport reproduction found
 **1s admission queue 503s**, **4s SQL timeouts (`57014`)** and exhaustion of the old
@@ -94,7 +94,7 @@ and source generation were unchanged. Detailed comparisons, times, counts and
 screenshots remain private. The remaining investigation is dense raw client
 completion, not a demonstrated need for another migration, increased server CPU,
 resources, request rate, timeout or body-limit settings. **M8 remains closed; this
-bounded result is not M9 capacity certification or a universal production SLO.**
+bounded result is not M12 capacity certification or a universal production SLO.**
 
 ## 10/5/2026
 
@@ -438,24 +438,24 @@ to the future milestones listed below, not an inferred benchmark or production p
 
 - **Resource-capped backlog: accepted for Milestone 7.** Carry the unexecuted
   representative 48/96-route backlog and CPU/memory/throttling/peak-resource
-  measurements to Milestone 11. Retain matcher concurrency at one. This closes
+  measurements to Milestone 12. Retain matcher concurrency at one. This closes
   the milestone item without asserting measured throughput or spare capacity.
 - **Mixed-workload responsiveness: accepted for Milestone 7.** Carry the unmeasured
   overlapping Coverage/general-worker/API and competing-diagnostic workload
-  validation to Milestone 11. Worker separation and admission controls are
+  validation to Milestone 12. Worker separation and admission controls are
   implemented; sustained interactive responsiveness under that load is not proved.
 - **Profile benchmarking and visual matrix: accepted for Milestone 7.** Carry
   typical/stress benchmarks and profile-specific theme/color-vision review to
-  Milestone 11 (the former Milestone 10 verification/release scope). Preserve
+  Milestone 12 (verification/release readiness in the current sequence). Preserve
   the recorded stress year tile/viewport budget failures and missing initial-map
-  render measurements. The newly inserted Milestone 10 owns tablet-focused UI/UX
+  render measurements. Milestone 11 owns tablet-focused UI/UX
   and device-specific visual
   review on iPad-sized devices and larger; iPhone-sized development is excluded.
 - **Real-device and native-zoom checks: accepted for Milestone 7.** Carry iPad
-  device/rotation/keyboard/browser-zoom validation to Milestone 10 and desktop
-  native-zoom regression checks to Milestone 11. No unexecuted device matrix is
+  device/rotation/keyboard/browser-zoom validation to Milestone 11 and desktop
+  native-zoom regression checks to Milestone 12. No unexecuted device matrix is
   relabeled as passed.
-- **Production scaling and security hardening: deferred to Milestone 12.** The
+- **Production scaling and security hardening: deferred to Milestone 14.** The
   final milestone owns production deployment, scale/resource/retention decisions,
   dedicated OSM reader credentials and environment-specific security hardening.
   The development evidence above does not establish production readiness.

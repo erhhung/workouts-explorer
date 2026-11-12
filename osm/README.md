@@ -9,13 +9,19 @@ The current assets implement the measured NorCal import and graph derivation.
 ADR 009 accepts matcher rules `coverage-experimental-v1`, adaptive sampling,
 and path policy `coverage-path-policy-experimental-v82` as the production baseline.
 
-Importer version 3 and derivation version 18 retain bounded named local, state,
+Importer version 3 and derivation version 21 retain bounded named local, state,
 and national-park polygons during generation construction and attach stable park
 metadata to fully contained path segments. Local parks require an authoritative
 named municipality and keep municipality-scoped IDs. State and national parks may
 cover segments without a municipality; their IDs are scoped by provider region
 and OSM source identity. Roads and paths inside those regional parks use the park
 name as their application display context instead of municipality or county.
+Before attribution, the existing resumable clipping stages split segments at
+locality and qualifying park boundaries, and unnamed segments at qualifying
+education boundaries. A boundary-crossing source way therefore contributes its
+inside pieces without attributing the outside pieces. Polygon holes and repeated
+crossings retain their source order and graph connectivity. Validation rejects
+remaining material park/education crossings, including untagged segments.
 Connectivity scope is the selected named park when present, otherwise municipality,
 otherwise county, otherwise provider region. Both `admin_level=8` municipalities
 and `admin_level=6` counties are retained; the smallest covering polygon wins so
@@ -46,6 +52,10 @@ education tags and education-area identity scope; named campus geometry retains
 its own OSM name and normal scope. Matcher copies expose the education name as
 the display/path name fallback without overwriting canonical OSM `name` tags.
 Park polygons are build-only and are not copied into canonical storage.
+Existing generations and copied workout evidence do not change when an updater
+image is published: derivation changes require a new regional build/promotion
+followed by application Coverage reconciliation. Never fix a missing inside
+portion by assigning an entire cross-boundary segment to a facility.
 Application reconciliation converts matching segment metadata into
 once-per-workout park visits. Driveway and parking geometry remains
 matchable and tile-visible but is omitted from path statistics.

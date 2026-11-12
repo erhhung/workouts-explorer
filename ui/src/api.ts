@@ -43,7 +43,8 @@ export type DateRangeEnum =
   | "thisMonth"
   | "lastMonth"
   | "thisYear"
-  | "lastYear";
+  | "lastYear"
+  | "allTime";
 export type DateRangePreference = DateRangeEnum | `${string}/${string}`;
 export type WorkoutColumn =
   "date" | "type" | "duration" | "distance" | "pace" | "calories" | "heartRate" | "elevationGain";
@@ -195,6 +196,52 @@ export interface BaseMapsConfig {
     normalizedTypeKey: string;
     familyId: string;
   }>;
+}
+
+export type StatsGrouping = "month" | "year";
+export type NewCoverageMetric = "all_time" | "past_year";
+
+export interface StatsReportScope {
+  id: string;
+  dataGeneration: number;
+  expiresAt: string;
+  range: ResolvedDateRange;
+  coverageDisplayRevision: number;
+  coverageDisplayPolicy: "coverage-display-identity-v1";
+}
+
+export interface NewCoverageBucket {
+  bucketStart: string;
+  allTime: number;
+  pastYear: number;
+}
+
+export interface NewCoverageBucketList {
+  scope: StatsReportScope;
+  groupBy: StatsGrouping;
+  items: NewCoverageBucket[];
+  pagination: Pagination;
+}
+
+export interface NewCoverageVisit {
+  entityId: string;
+  entityKind: "path" | "park";
+  name: string;
+  place: string;
+  newVisit: string;
+  previousVisit: string | null;
+  newVisitWorkoutId: string;
+  previousVisitWorkoutId: string | null;
+}
+
+export interface NewCoverageVisitList {
+  scope: StatsReportScope;
+  groupBy: StatsGrouping;
+  bucketStart: string;
+  metric: NewCoverageMetric;
+  totalVisits: number;
+  items: NewCoverageVisit[];
+  pagination: Pagination;
 }
 
 export interface MapSelectionWorkout {

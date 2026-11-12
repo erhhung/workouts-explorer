@@ -4,6 +4,10 @@
 
 Accepted
 
+Cross-cutting implementation reminders are consolidated in the
+[UI style guide](../ui-style-guide.md). This ADR retains the foundation decision
+and its historical evaluation; current feature contracts describe later refinements.
+
 ## Context
 
 ADR 0001 selects React, TypeScript, Vite, TanStack Query, TanStack Table, and

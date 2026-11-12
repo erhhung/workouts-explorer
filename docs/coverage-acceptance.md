@@ -258,8 +258,8 @@ monthly workouts or shorten routes to make the backlog finish faster.
 
 Browser measurements use real MapLibre/MVT, the profile-specific SQL oracle,
 light/dark desktop/tablet and color-vision simulations. The 10/11/2026 scope
-decision carries profile benchmarking to Milestone 11 and tablet-focused UI/UX
-to Milestone 10. Adapt the existing visual harness to the approved iPad-class
+decision carries profile benchmarking to Milestone 12 and tablet-focused UI/UX
+to Milestone 11. Adapt the existing visual harness to the approved iPad-class
 targets before tablet acceptance; legacy narrow-screen captures do not imply
 iPhone support or authorize phone-focused development:
 
@@ -299,7 +299,7 @@ The retained runs contain no warm serial phase or latency retry. The tile budget
 is provisional, not an accepted tile-specific product target. Earlier host matcher
 correctness is separate from the current profile receipts, whose matcher-smoke
 fields are null. Browser acceptance and resource-capped backlogs remain unmeasured,
-with profile benchmarking carried to Milestone 11 by the closeout scope decision.
+with profile benchmarking carried to Milestone 12 by the closeout scope decision.
 
 ## Worker Correctness Suite
 
@@ -314,7 +314,7 @@ three race repetitions and runs in the dedicated CI job:
 make coverage-worker-test
 ```
 
-Administrator OSM status/refresh API work belongs to Milestone 9, not these
+Administrator OSM status/refresh API work belongs to Milestone 10, not these
 Milestone 7 acceptance profiles.
 
 ## Tile-Local Source Verification (031)

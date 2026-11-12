@@ -9,8 +9,13 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { dateTimeFormatter } from "./formatters";
 
 let activePortalTooltip: { id: string; close: () => void } | undefined;
+
+export function dismissActivePortalTooltip() {
+  activePortalTooltip?.close();
+}
 
 export function Tooltip({
   id,
@@ -322,7 +327,7 @@ export function offsetLabel(offset: number, compact = false) {
 
 export function zoneOffsetAt(timeZone: string, instant: Date) {
   try {
-    const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
+    const name = dateTimeFormatter("en-US", { timeZone, timeZoneName: "longOffset" })
       .formatToParts(instant)
       .find((part) => part.type === "timeZoneName")?.value;
     const match = /^(?:GMT|UTC)(?:([+-])(\d{1,2})(?::?(\d{2}))?)?$/.exec(name ?? "");
@@ -346,7 +351,7 @@ export function instantZone(timeZone: string, instant: Date) {
 
 export function zoneAbbreviation(timeZone: string, instant: Date) {
   return (
-    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+    dateTimeFormatter("en-US", { timeZone, timeZoneName: "short" })
       .formatToParts(instant)
       .find((part) => part.type === "timeZoneName")?.value ?? timeZone
   );
@@ -363,7 +368,7 @@ export function ZoneBadge({
 }) {
   return (
     <Tooltip content={title} className="timezone-badge" focusable={focusable} label={title}>
-      {label}
+      <span className="date-badge-text">{label}</span>
     </Tooltip>
   );
 }

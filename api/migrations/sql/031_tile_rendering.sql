@@ -307,7 +307,7 @@ $function$;
 -- never ambient account/session GUCs; the API cache helper remains unchanged.
 -- +goose StatementBegin
 CREATE FUNCTION app.tile_scope(query_params json, coverage boolean)
-RETURNS TABLE(account_id uuid, selection_id uuid, context_id uuid, start_date date, end_date date)
+RETURNS TABLE(account_id uuid, selection_id uuid, context_id uuid, start_date date, end_date date, all_time boolean)
 LANGUAGE plpgsql STABLE
 SET search_path = pg_catalog, app AS $function$
 DECLARE
@@ -334,7 +334,7 @@ BEGIN
         RAISE EXCEPTION 'invalid tile scope' USING ERRCODE = '22023';
     END IF;
     RETURN QUERY
-    SELECT selection.account_id, selection.id, selection.coverage_display_context_id, selection.start_date, selection.end_date
+    SELECT selection.account_id, selection.id, selection.coverage_display_context_id, selection.start_date, selection.end_date, selection.all_time
     FROM app.map_selections selection
     JOIN app.sessions session_row ON session_row.id = selection.session_id
     JOIN app.authentication_principals principal ON principal.id = session_row.principal_id
@@ -352,6 +352,7 @@ BEGIN
             WHERE context.account_id = selection.account_id AND context.id = selection.coverage_display_context_id
                 AND context.generation = target_generation AND context.revision = revision.revision
                 AND context.start_date = selection.start_date AND context.end_date = selection.end_date
+                AND context.all_time = selection.all_time
                 AND context.ready AND context.policy_version = 'coverage-display-identity-v1' AND context.label_locale = 'en'));
     IF NOT FOUND THEN RAISE EXCEPTION 'invalid or expired map selection' USING ERRCODE = '42501'; END IF;
 END;
@@ -455,7 +456,7 @@ BEGIN
                 AND selected.workout_id = local_workout.workout_id
                 AND workout.deletion_requested_at IS NULL AND route.route IS NOT NULL
                 AND state.applied_route_input_revision IS NOT NULL
-                AND workout.local_start_date BETWEEN scope.start_date AND scope.end_date
+                AND (scope.all_time OR workout.local_start_date BETWEEN scope.start_date AND scope.end_date)
             OFFSET 0
         ) checked
     ), render_inputs AS MATERIALIZED (

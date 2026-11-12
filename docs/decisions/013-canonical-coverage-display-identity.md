@@ -171,7 +171,7 @@ See [rendering/delivery](../architecture.md#tile-rendering-and-delivery-031).
 Helm 67 delivery is live; its canonical authorized desktop/4K run completed required
 views without observed delivery errors. Matched high-zoom responses retained decoded
 bytes and feature/layer counts, not evidence of pruning for wire savings. Dense
-high-zoom raw client completion remained slow: not a new M8 pass, M9 capacity/latency
+high-zoom raw client completion remained slow: not a new M8 pass, M12 capacity/latency
 claim or change to display-identity policy.
 
 ## Consequences And Release Gates

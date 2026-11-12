@@ -69,7 +69,7 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 		"WHEN 'ready' THEN 'false'", "WHEN 'id' THEN 'gen_random_uuid()'", "THEN 'pg_catalog.\"C\"'::regcollation::oid",
 		"cardinality(expected.definitions)", "k.convalidated AND k.conenforced AND NOT k.condeferrable AND NOT k.condeferred",
 		"pg_get_constraintdef(k.oid)=definition", "PRIMARY KEY (txid, account_id)",
-		"UNIQUE (account_id, generation, revision, start_date, end_date, policy_version, label_locale)",
+		"UNIQUE (account_id, generation, revision, start_date, end_date, all_time, policy_version, label_locale)",
 		"FOREIGN KEY (account_id, context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE CASCADE",
 		"FOREIGN KEY (account_id, coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE SET NULL (coverage_display_context_id)",
 		"NOT a.attisdropped AND NOT a.attnotnull AND NOT a.atthasdef", "has_column_privilege('workouts_security_owner',a.attrelid,a.attnum,'UPDATE')",
@@ -124,8 +124,8 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	fingerprints := regexp.MustCompile(`(?s)\('app\.([a-z_]+)\([^']*\)'.*?,'([a-f0-9]{32})'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(functions) != 21 || len(fingerprints) != len(functions) {
-		t.Fatalf("want 21 protected canonical functions including detail/MVT/focus in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
+	if len(functions) != 28 || len(fingerprints) != len(functions) {
+		t.Fatalf("want 28 protected canonical functions including Stats/detail/MVT/focus in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
 	}
 	for _, function := range functions {
 		t.Run(function[1], func(t *testing.T) {
@@ -211,8 +211,8 @@ func TestCanonicalCoverageDisplayReadinessPhysicalColumns(t *testing.T) {
 
 func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 	tuples := regexp.MustCompile(`(?s)\('app\.(\w+)\(([^']*)\)','(sql|plpgsql)','([isv])',(true|false),(true|false),'([su])',(true|false),(\d+),\s*'([^']*)',\s*ARRAY\[([^]]*)\],(true|false),(true|false),'[a-f0-9]{32}'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(tuples) != 21 {
-		t.Fatalf("want 21 complete function attribute tuples, got %d", len(tuples))
+	if len(tuples) != 28 {
+		t.Fatalf("want 28 complete function attribute tuples, got %d", len(tuples))
 	}
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	tile, err := migrations.Files.ReadFile("031_tile_rendering.sql")
@@ -279,7 +279,8 @@ func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 		if workMem := regexp.MustCompile(`SET work_mem = '([^']+)'`).FindStringSubmatch(header); len(workMem) == 2 {
 			config += ",'work_mem=" + workMem[1] + "'"
 		}
-		api := function[1] == "prepare_coverage_display_context" || strings.HasPrefix(function[1], "map_selection_coverage_")
+		api := function[1] == "prepare_coverage_display_context" || strings.HasPrefix(function[1], "map_selection_coverage_") ||
+			strings.HasPrefix(function[1], "stats_") && function[1] != "stats_report_scope" && function[1] != "stats_report_authorized_context"
 		want := []string{strings.Join(types, ","), language[1], volatility,
 			fmt.Sprint(strings.Contains(header, "SECURITY DEFINER")), fmt.Sprint(strings.Contains(header, "STRICT")),
 			parallel, fmt.Sprint(returnsSet), fmt.Sprint(defaults), result, config, fmt.Sprint(api), fmt.Sprint(function[1] == "coverage_mvt")}
@@ -368,7 +369,7 @@ func TestCanonicalCoverageDisplayReadinessCorrectedSemantics(t *testing.T) {
 			t.Error("a non-NULL empty locality must not fall through to a region label")
 		}
 		require(t, prepare,
-			"SELECT * FROM app.coverage_display_source_visits(target_account_id, scope.start_date, scope.end_date)",
+			"CASE WHEN selected_all_time THEN NULL ELSE scope.start_date END",
 			"app.coverage_display_normalize(COALESCE(locality_name, '')) normalized_locality",
 			"app.coverage_display_identity(key_region, normalized_name, normalized_locality, key_discriminator)")
 		if strings.Index(prepare, "app.coverage_display_source_visits(") >= strings.Index(prepare, "app.coverage_display_identity(") {
@@ -406,7 +407,7 @@ func TestCanonicalCoverageDisplayReadinessCorrectedSemantics(t *testing.T) {
 			if strings.HasPrefix(column, "maximum") {
 				aggregate = "max"
 			}
-			require(t, parkBounds[1], aggregate+"(bounds."+column+") FILTER (WHERE eligible.local_start_date BETWEEN selected_start AND selected_end) range_"+column)
+			require(t, parkBounds[1], aggregate+"(bounds."+column+") FILTER (WHERE (selected_start IS NULL OR eligible.local_start_date BETWEEN selected_start AND selected_end)) range_"+column)
 			require(t, rangeBounds[1], aggregate+"(member.range_"+column+") OVER () canonical_"+column)
 			require(t, source, "source.range_"+column)
 		}
