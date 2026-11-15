@@ -29,11 +29,13 @@ feature requirements and accepted exceptions remain in their original documents.
 | Dense searchable dialogs, clickable identity/date cells, focus and fit | Road Coverage in [MapPage](../ui/src/MapPage.tsx) |
 | Map path opacity and provider/private overlay stacking | [mapPresentation](../ui/src/mapPresentation.ts) and the [layer contract](functional-spec.md#map-layer-stack-and-opacity) |
 | Report sidebar, grouped table replacement and table-to-Map navigation | [StatsPage](../ui/src/StatsPage.tsx) |
+| Timeline bar charts, outlier scales and report disclosures | [ConsistencyReport](../ui/src/ConsistencyReport.tsx), [chart helpers](../ui/src/consistency.ts) and the [Consistency contract](functional-spec.md#consistency-report) |
 | Session-owned tab retention, visibility and scroll ownership | [RetainedTab](../ui/src/RetainedTab.tsx) and the [workspace contract](functional-spec.md#feature-retain-tab-workspaces) |
 | Shared first/last, single-step and multi-page navigation | [PageNavigation](../ui/src/PageNavigation.tsx) |
 | Guarded invisible keyboard accelerators and table ownership | [keyboardShortcuts](../ui/src/keyboardShortcuts.ts) and the [shortcut contract](functional-spec.md#feature-keyboard-shortcuts) |
 | Consistent tab content backgrounds and clipped decorative atmosphere | [ContentBackground](../ui/src/ContentBackground.tsx) and the shared content-background rule in the [product stylesheet](../ui/src/styles.css) |
 | Task filters, disclosures, progress and notifications | [DataSync](../ui/src/DataSync.tsx) |
+| Transactional long-press column filters, checkbox columns and numeric comparisons | [WorkoutColumnFilter](../ui/src/WorkoutColumnFilter.tsx), [filter scales](../ui/src/workoutFilters.ts), [Map type selection](../ui/src/WorkoutTypeSelection.tsx) and the [column-filter contract](functional-spec.md#feature-filter-workout-log-columns) |
 | Shared period selection and custom-range editing | [DateRangePicker](../ui/src/DateRangePicker.tsx), [CustomDateRangeDialog](../ui/src/CustomDateRangeDialog.tsx), [RecentDateRanges](../ui/src/RecentDateRanges.tsx) |
 | Styled selection controls and menus | [PreferenceSelect](../ui/src/PreferenceSelect.tsx) and existing action/filter menus |
 | Delayed help and truncated table values | [Tooltip](../ui/src/Tooltip.tsx), [CoverageTableCell](../ui/src/CoverageTableCell.tsx) |
@@ -57,6 +59,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   grid, theme-aware gradient and stepped corner contours. Reuse `ContentBackground`
   with the shared `content-background` surface instead of creating tab-specific
   variants. This also applies beneath the Map canvas and in its loading state.
+- Keep authenticated navigation and side controls bounded to the viewport. Assign
+  scrolling to the content surface, preserve its position per workspace and use
+  that owner for paging/focus anchoring. Do not restore document coordinates into
+  an independently scrolling pane or let a background reply move another tab.
   Preserve intentional sidebar/card surfaces, and keep decorative layers clipped,
   noninteractive and hidden from assistive technology. Verify consistency in both
   themes and at desktop/mobile sizes.
@@ -111,6 +117,11 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   than enabling it; pointer interaction exits that mode. Programmatic content-area
   and canvas handoffs retain actual focus without outlining the entire large
   surface. Smaller actionable controls still show their normal rings after Tab.
+- **Suppress focus outlines on large surface containers globally**, not just on
+  a particular tab: panels, cards, sections, report/content regions and dialogs
+  may receive programmatic focus without drawing a giant border. The shared focus
+  rule targets native/ARIA interactive controls and intentional row/value targets;
+  controls inside a focused surface retain their normal keyboard indicators.
 - Inside scrolling or rounded/clipped frames, keep the focus ring within the
   target's available surface and clear of its content. Do not remove deliberate
   clipping or scroll ownership to expose an outward ring. Segmented choices need
@@ -169,12 +180,19 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   intercept pointers or cover controls/attribution needed for interaction.
 - Keep one active tooltip owner. Scroll, resize, blur or an anchor moving away
   must remove obsolete help; a superseded tooltip cannot reopen itself.
+- Opt-in cursor help shares the established pointer offset, follows with bounded
+  frame work and keeps its original reveal delay while moving. Preserve element
+  anchoring for keyboard focus. Do not add an auto-hide timer unless the specific
+  feature requires one.
 
 ## Tables, Sorting And Pagination
 
 - Begin with an existing semantic table, scoped headers, accessible sort state
   and the standard sort indicators. Use documented initial directions, stable
   tie-breaks and the established handling of unavailable values.
+- Centered loading, empty and error copy uses the shared table-message typography,
+  including messages in Road Coverage and New visits viewports. Do not introduce
+  per-dialog font overrides or resize the frozen table to accommodate status text.
 - Respect the rows-per-page preference and its configured maximum for report and
   dialog tables. Use the shared page controls, alignment, button widths and
   table-to-pagination spacing instead of a feature-specific extra gap.
@@ -183,6 +201,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   flash loading rows or unnecessarily dim already displayed content. After an
   accepted partial result, hide surplus row slots rather than rebuilding the
   visible rows. Block obsolete row actions while the replacement is pending.
+- Apply the same fetch-then-swap rule to selected detail panels and prepared action
+  menus: retain accepted content until the complete replacement is ready, and do
+  not reveal a popup whose choices are still being determined. Anchor a requested
+  detail landing only after its final content is admitted, within its scroll owner.
 - An accepted zero-result table keeps its header but no result rows. Show its
   empty message as slightly larger, muted text centered horizontally and vertically
   in the visible reserved results area below the header, outside the table body.
@@ -192,6 +214,12 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   and Next must stay in the same position on the last partial page too. A short
   unfiltered result can establish a shorter initial frame. Preserve document and
   internal table scroll during replacement.
+- Verify reserved height against the natural full-page table, not just stability
+  between results. Measurement rows must match real cell padding, borders and
+  controls after the complete stylesheet cascade is applied.
+- Verify chart geometry with zero and very small values as well as ordinary bars.
+  Tooltip wrappers must not introduce an inline text baseline that displaces
+  short bars from the numeric zero axis; check the final stylesheet cascade.
 - **Freeze the size of every dialog containing a table from its complete
   unfiltered result set, irrespective of table contents.** Include items reachable
   through display filters that are off by default, within the active data scope,
@@ -264,6 +292,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Reuse shared date pickers, styled selects, action menus and segmented choices.
   The same control should not acquire a different appearance or behavior on a
   newly added tab.
+- Disabled dropdown indicators use the shared disabled color for native, ARIA
+  and headless-widget disabled states; an inactive dropdown must not retain an
+  accented chevron. Disabled numeric ranges mute both endpoint labels as well as
+  their current value and controls. Restore normal colors when enabled.
 - Match the established trigger width, aligned edges, opening anchor and spacing.
   Long panels scroll within the available viewport rather than drifting from the
   requested anchor. Respect feature-specific anchors such as a shared filter row.
@@ -273,6 +305,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   established Apply/Cancel behavior; dismissing must not commit an unfinished draft.
 - Use visible labels, fieldsets/legends, field errors and accessible error
   summaries. Keep submission and date validation behavior when replacing controls.
+- Reuse the shared long-press duration. Sorting and filtering share one header
+  target without a held press also sorting. Only one draft popup owns focus;
+  closing an old popup must not refocus it over its replacement. Unfiltered choices
+  and slider domains stay stable as committed column filters narrow the rows.
 
 ## State, Navigation And Background Refresh
 

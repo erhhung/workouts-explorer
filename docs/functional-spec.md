@@ -672,6 +672,12 @@ As a user, I want explicit dates and common shortcuts so that Summary, Map and S
 
 ## Feature: Review Summary
 
+Range totals retain their existing refresh fade when Summary revalidates on tab
+return: cards fade from 30% to full opacity over 500ms using ten equal 50ms steps
+(`steps(10, end)`, seven percentage points per step). It does not delay requests
+or interactions, does not dim the Workout log, and becomes immediate under the
+reduced-motion preference.
+
 ### User story
 
 As a user, I want a concise statistical and tabular summary of workouts in a selected period.
@@ -693,7 +699,7 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 7. Desktop shows preferred columns.
 8. Mobile shows date/time zone, workout type, and duration, with tap-to-expand details.
 9. Elevation fields are available for all routes and shown by default for configured types such as Hiking.
-10. Pagination keeps the current table mounted at full opacity while the next page loads, reserves its measured height so a short final page does not collapse the document, swaps rows in place, and restores the captured document scroll position.
+10. Pagination keeps the current table mounted at full opacity while the next page loads, reserves its measured height so a short final page does not collapse the content viewport, swaps rows in place, and restores the captured owning content-pane scroll position.
 11. The Workouts card pairs the total workout count with an equally prominent, right-aligned count labeled With routes. The labels By workout type and With routes share the footer row. These counts remain counts in averages mode; measured distance without GPS does not imply a route.
 12. The Distance card and its type breakdown include every workout type with a valid measured distance, independently of GPS or activity name. Distance averages divide measured distance by the number of workouts with that measurement, globally and per type. Explicit measured zero counts; missing or unsupported-unit measurements do not become zero or enter the denominator. Other aggregate denominators are unchanged.
 13. Each aggregate has exactly one sequential keyboard stop. Tab visits Workouts, Duration, Distance and Energy, and Shift+Tab reverses that order. Preview-only duration hints retain styled precision help without their own Tab stops; hidden previews are inert and their containers are not sequential focus targets. Escape closes the preview while retaining card focus. When a preview scrolls internally, Arrow Up/Down, Page Up/Down and Home/End scroll it from the card; modified browser shortcuts retain their normal behavior. Enter/Space retain the existing totals/averages toggle.
@@ -707,7 +713,8 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
     padding toggles all cards between totals and averages exactly once. Expanded
     clicking delegates to the existing card action and retains that button's
     focus; no extra sequential focus targets are added. A hovered breakdown row
-    has a subtle theme-aware gray highlight with readable type and value text.
+    uses the same subtle theme-aware row-hover mixture as the Workout log, with
+    readable type and value text.
 16. One Summary-owned preview identity arbitrates keyboard and mouse opening.
     New hover/focus supersedes the old card, and an old blur cannot dismiss the
     new owner. Window blur, document hiding, outside focus, Escape, resize or
@@ -748,7 +755,116 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 - Given route-less workouts with measured distance, when totals or averages are displayed, then their types appear in the Distance breakdown. Workouts without measured distance remain excluded even if they have GPS routes.
 - Given a workout deletion, when the optimistic update hides it, then total, routed and measured-distance counts update independently and roll back together if enqueueing fails.
 
+## Feature: Filter Workout Log Columns
+
+### Behavior
+
+- Date, Type, Duration, Distance, Pace, Calories, Heart rate and Elev gain each
+  support a column filter. A short header click or Enter sorts as before; holding
+  for the shared 500 ms opens its popup without sorting. Space or Arrow Down opens
+  it from the focused header. The styled three-line help reads:
+  `Click to sort or toggle sort direction; click`,
+  `and hold to apply custom filter (use space`,
+  `and down keys in keyboard mode)`.
+- At most one column popup is open. It uses the Map workout-type popup's themed
+  composition and explicit Cancel/Apply footer. Outside interaction, Escape,
+  Cancel and retained-tab exit discard the draft. A superseded popup cannot
+  restore focus over its replacement. Only Apply changes the committed filters.
+  All column popups sit 0.7rem lower and to the right of their normal placement.
+- Date lists all seven weekdays, beginning with the First weekday preference.
+  Type lists only types represented anywhere in the complete selected date
+  range, alphabetically, including workouts without routes. Both initially check
+  every item. The heading's None link (Deselect all help) appears only when all
+  items are checked; otherwise All (Select all help) selects every item. Empty
+  selections match nothing. A fully checked selection disables that filter.
+  All/None and Enable/Disable links use plain themed orange text and a hand cursor,
+  without hover underlining. Their styled help dismisses when the pointer leaves,
+  even if popup autofocus or earlier keyboard navigation keeps the button focused.
+  Genuine keyboard focus still provides help until pointer interaction supersedes it.
+  These links have a 3rem-wide, 1rem-tall clickable area with right-aligned text on
+  the title's original baseline. Tooltip wrappers match the button's exact bounds
+  and use the hand cursor; there is no extra help-cursor strip above or below it.
+- Type choices use `ceil(count / 8)` columns and `ceil(count / columns)` rows,
+  filling top-to-bottom before the next column: 12 becomes 6/6, 16 becomes 8/8
+  and 19 becomes 7/7/5. Checkbox columns are equal-width and at least 16rem wide;
+  the same minimum applies to the weekday column. Wide lists scroll inside the
+  viewport-contained popup.
+- Numeric popups have a Show duration/distance/pace/calorie/heart rate/elevation
+  gain range title, with enough space before the heading's Enable/Disable link
+  (Enable filter/Disable filter help). Disabled filters retain their draft
+  operator/value; enabling, disabling and moving a slider commit only with Apply.
+  Disabled styling also mutes the dropdown chevron and both minimum/maximum slider
+  labels. Enabling restores their usual colors along with the existing controls.
+  Comparison operators are `>`, `≥`, `<`, `≤`, initially `>`, except Pace uses
+  `<`, `≤`, `>`, `≥`, initially `<`. Inclusive symbols keep the same API operators.
+- An operator dropdown precedes the slider on the same row. Its current value is
+  centered above the slider; minimum/maximum labels sit outside its 20rem track
+  area. Narrow viewports can reduce that width to keep controls/actions reachable.
+  Slider arrows adjust the value rather than paging the background table.
+  Keep the native HTML range input for keyboard, touch and snapping behavior, but
+  style it with a neutral track, no value/progress fill, and an elongated rounded
+  rectangular handle. Disabled controls use the corresponding themed muted colors.
+
+| Column | Minimum / initial value | Snap interval | Maximum |
+|---|---|---|---|
+| Duration | 0m | 15m | Range maximum rounded up, capped at 24h 0m |
+| Distance | 0 mi or 0 km | 0.5 mi or 0.5 km | Range maximum rounded up; uncapped |
+| Pace | Minimum 1m 0s; initially the maximum | 30s | Range maximum in preferred distance units rounded up, capped at 60m 0s |
+| Calories | 0 kcal | 100 kcal | Range maximum rounded up; uncapped |
+| Heart rate | 0 bpm | 10 bpm | Range maximum average heart rate rounded up; uncapped |
+| Elev gain | 0 ft or 0 m | 100 ft or 25 m | Range maximum rounded up; uncapped |
+
+- Slider domains and type choices ignore all column filters and pagination. An
+  empty/very-small domain reserves at least one step above its minimum. Thresholds
+  compare exact underlying measurements, not rounded table labels. Missing or
+  unsupported measurements do not satisfy an enabled numeric comparison.
+- Applied column filters combine with AND on the server before count, sort and
+  pagination. Date compares the recorded local start weekday, not UTC or the
+  account's current time zone. Unknown local dates cannot match a selected day.
+- Each enabled filter has the Font Awesome classic filter SVG immediately before
+  its column label in themed medium blue. Clear all filters replaces the redundant
+  session/page heading text; it is gray and disabled without an enabled filter.
+  Clearing resets selections/disables comparisons without changing sort.
+  Clear all filters uses plain themed link text and a hand cursor when enabled,
+  without an underline on hover; its disabled gray/default-cursor state is unchanged.
+- Apply and clear return to page 1. Preserve existing rows at full opacity until
+  the latest compatible response arrives, then replace positional cells in place.
+  Reserve the unfiltered page capacity even for partial/zero results. A no-match
+  result keeps headers, a centered message and stable pager placement. Pending or
+  failed replacement disables old row actions; failure retains compatible rows
+  read-only with Retry. Late responses cannot replace the current selection.
+- Range totals/averages continue to describe the complete date range. The pager
+  shows the filtered session count. Column filters are retained across tab changes
+  within the current date/time-zone/weekday scope and reset at scope changes;
+  unit changes preserve physical thresholds. Popups reopen on the current unit's
+  nearest valid slider tick without committing until Apply. Narrow layouts expose
+  the same column controls above the existing expandable workout cards.
+
+### Acceptance Criteria
+
+- A filter applied on page 2 searches all in-range workouts and returns page 1,
+  while preserving sort and the unfiltered type choices/slider maxima.
+- Combining weekday, workout type and numeric comparisons returns only records
+  satisfying every enabled filter, with matching server totals/page counts.
+- Cancel/outside/Escape leave committed criteria untouched; selecting all removes
+  a checkbox filter, and clearing preserves the selected sort direction.
+- Full, partial and zero-match results retain the same desktop table frame;
+  replacement and error recovery do not erase compatible rows or retarget actions.
+
 ## Feature: Navigate Table Pages
+
+In the authenticated shell, the app header and side controls remain bounded to
+the viewport; only the active content pane scrolls. Stats has an independent fixed
+sidebar/report split, stacked on narrow layouts. Summary/Data Sync scroll within
+their retained workspaces; Map continues to size its stage and list to available
+space. Preserve each owner position across tabs and use it for page/filter
+anchoring rather than moving the document. The Task history bottom inset matches
+Data Sync section gaps, except where a larger device safe area is required.
+
+Centered table-state messages share a 1.1rem font, including Road Coverage,
+New visits, New Coverage and Workout log loading/empty states. The shared viewport
+applies that style to any message in the centered position without changing its
+frozen row capacity or header placement.
 
 Use the shared pager in Workout log, Road Coverage, Stats reports and visit
 dialogs, Task history, and run-detail Files, Events and Logs.
@@ -793,7 +909,8 @@ suffixes. Letter commands are case-insensitive.
 | `R` on Map | Select Routes mode |
 | `F` on Map | Fit only the visible, persistently focused workout in the current mode |
 | `M` on Stats | Select Month grouping |
-| `Y` on Stats | Select Year grouping |
+| `W` on Stats / Consistency | Select Week grouping |
+| `Y` on Stats / New Coverage | Select Year grouping |
 
 1. A document-level handler receives the commands while Tab navigation focuses
    ordinary buttons, links or content. The web document must have keyboard focus;
@@ -840,7 +957,8 @@ suffixes. Letter commands are case-insensitive.
    routes and does not change checked membership or persistent focus.
 7. Map mode and Stats grouping commands use the same actions as their controls.
    Map mode changes preserve the current viewport; fitting is an explicit action.
-   A changed Stats grouping resets its page/sort as usual; requesting the already
+   A changed New Coverage grouping resets its page/sort; Consistency preserves its
+   section state while changing periods. Requesting the already
    selected grouping is a no-op. Native Map canvas arrow navigation remains
    available when there is no eligible table pager.
 8. Ignore Ctrl/Command/Alt combinations, IME composition and already-prevented
@@ -865,7 +983,8 @@ so that I can see when I explored new places or returned after a long absence.
 1. Add **Stats** between **Map** and **Data Sync** in the primary tab bar.
 2. Use a left-side panel following Map's layout. Its top-most control is the same
    shared **Date range** picker, followed by the heading **Reports** and a list of
-   selectable report titles. The initial entry and default report is **New Coverage**.
+   selectable report titles. **Consistency** is first/default, followed by
+   **New Coverage**.
    Reports uses the same all-caps typography as Summary's Range totals and Workout
    log headings. Every selectable report's whole row has a hand cursor.
 3. Mark the selected report with the existing magenta focus/selection border,
@@ -875,6 +994,87 @@ so that I can see when I explored new places or returned after a long absence.
    report's controls, sorting and pagination across tab switches as well.
 5. The report area supports future tables and charts. **Reports** is the shared
    navigation term; report-specific controls belong above the report content.
+
+### Consistency report
+
+- Show **Show aggregate stats by** with exclusive Week/Month controls matching
+  New Coverage; Week is initially selected. Guarded W/M shortcuts use the same
+  actions. New Coverage retains M/Y. Editing, modifier, native-widget, composition
+  and modal guards follow the shared keyboard contract.
+- Align **Close all sections** at the control row's right, using the plain Clear
+  all filters link treatment. Show **Open all sections** only when all seven are
+  closed. Sections start open and their titled headers toggle them independently.
+- Chart order: **Active days per week/month**, **Workout duration per week/month**,
+  **Distance covered per week/month**, **Calories burned per week/month**,
+  **Longest duration per workout per week/month**, **Longest distance per workout
+  per week/month**, **Highest calories per workout per week/month**.
+- Sections use Summary's shared maximum content width, bounded by the report
+  area, and Data Sync card surfaces, heading treatment and interior padding. Each
+  chart viewport is 1.5 times the responsive Range totals card height. Section
+  titles have no divider line and use larger disclosure chevrons.
+- Aggregate the complete shared range independently of Workout log filters/page.
+  Active days count distinct recorded local dates, not workouts. Duration uses
+  exact provider seconds; distance and total calories use the same normalized
+  metrics as Workout log. Include empty calendar buckets; partial edges contain
+  only in-range workouts. Unknown local dates are excluded and counted separately
+  for All time. Missing measurements stay unavailable; empty bucket totals are
+  zero and empty per-workout maxima are unavailable.
+  Future calendar periods are omitted: use today in the resolved preferred time
+  zone as the upper limit for dates and bucket generation, including the current
+  partial week/month. Preserve the selected range itself; entirely future ranges
+  have no plotted periods.
+- Weeks start on the preferred weekday and use unpadded **M/D/YY** labels for that
+  date; months use **Oct 2026**-style labels. Plot oldest-to-newest, left-to-right.
+  Week and month bars use the same width, 75% of a common date-label slot width.
+  Bars use **#bc067a**, 3px rounded top corners, and a bottom-to-top opacity
+  gradient from 70% to 100%; overflow caps use **#d70d0d**. The chart fills its
+  section even for short ranges. Pointer/trackpad/touch scrolling reaches the last
+  period while the Y axis stays put. Native scrollbars are never shown. A hand
+  cursor invites click-and-drag horizontal panning; vertical touch scrolling and
+  pinch zoom remain available. Initial and Week/Month replacement views open at
+  the right edge with the latest period fully visible. Later tab/report returns
+  preserve a manually panned position.
+  All charts share one horizontal position. Offset only the bar/date-label tracks
+  to compensate for variable axis widths, keeping corresponding periods at the
+  same screen X coordinates without changing Y-label/gridline origins. Dragging,
+  trackpad and keyboard scrolling any chart updates the others; reopening a section
+  joins the current shared position.
+- Weekly active days uses domain 0-7, ticks/lines **2, 4, 6**, with no top line
+  for 7 or 8. Monthly uses domain 0-31, ticks **7, 14, 21, 28**, with no top line
+  at 31. Other charts have four equally spaced nonzero ticks. Their highest
+  non-outlier value occupies 75%-100% of the top labeled value; prefer round steps
+  within that bound rather than adding excessive headroom. Duration/sub-unit tick
+  labels gain only the precision needed to remain distinct and nonzero; ordinary
+  values retain Workout log formatting. Robust typical-value scaling prevents rare
+  large values from dwarfing ordinary ones; excess appears as a short red segment
+  above the top line, with the full actual value in shared delayed styled help.
+  Week help reads `Week of 2/7/2022  ━  7 days`; month help reads
+  `August 2022  ━  31 days` (full month). The single dash has a regular space plus
+  a nonbreaking space on each side. Week tooltip dates are unpadded with
+  four-digit years; values retain each chart's units. Suppress help during panning.
+  After the shared initial delay, pointer help follows the cursor above it using
+  the same 0.65rem gap as Summary's Range totals hint. Movement within the bar does
+  not restart the delay or auto-hide visible help; leaving the bar, scrolling it
+  away, dragging, changing context or losing the window dismisses it. Keyboard
+  focus retains the normal element-anchored help path.
+  Do not add an overflow-cap explanatory caption or reserve space for it. The
+  chart-to-panel bottom inset equals the panel's other content insets.
+  The bottom plot line always represents zero. Bars and their tooltip wrappers
+  must share that baseline, including zero, very small and unavailable values;
+  inline text-baseline alignment must not displace short bars below the axis.
+  Use a 12px date-slot gap, reducing the previous inter-bar spacing by 4px without
+  changing bar width. Measurement, virtualization and keyboard scrolling share
+  that spacing definition.
+  Active days per month alone awards a perfect calendar month with a gold star
+  inside the top of its bar. Active days must equal that month's actual day count,
+  including Gregorian leap-year rules. The star is 22px square; its equal
+  left/top/right margins are half the remaining bar width. Partial months and weekly bars do not
+  receive a star.
+- Virtualize long timelines without truncating data. One roving bar stop per chart
+  supports Left/Right and Home/End. Grouping, disclosures and chart scroll survive
+  tab/report changes. Hidden reads/help pause. Compatible replacements retain old
+  charts/labels at full opacity; errors keep accepted data with Retry. Account,
+  range, time-zone, weekday and deletion boundaries clear incompatible pixels.
 
 ### New Coverage table
 
@@ -1014,7 +1214,7 @@ so that I can see when I explored new places or returned after a long absence.
    different widths. Cap dimensions to the viewport and use heading size
    `clamp(1.4rem, 5vw, 2rem)`. Keep the table's top border visible above its sticky
    header. Retain shared ellipsis/overflow help. Keep rows mounted during paging,
-   reserve full-page slots on the last page and preserve table/document scroll;
+   reserve full-page slots on the last page and preserve table/content-owner scroll;
    shorten the body only when the filtered total is smaller than a full page.
 7. Provide the close control and Escape dismissal, trap modal focus, and restore
    focus to the invoking cell action on close. Count cells remain usable on touch
@@ -1103,7 +1303,7 @@ so that I can see when I explored new places or returned after a long absence.
 - Name/new/previous jumps use actual Map geometry or workout IDs, keep the main
   range unchanged and restore the report page. Out-of-range previous dates cannot
   navigate. Data-scope expiry followed by transient renewal failure recovers while
-  the user remains on Stats, with no blank rows or authentication reset.
+   the user remains on Stats, with no blank rows or authentication reset.
 
 ## Feature: Review Workout Details
 
@@ -1134,6 +1334,10 @@ As a user, I want to inspect one workout's available statistics without crowding
 - Given a mobile viewport, when the row is tapped again, then its details collapse.
 
 ## Feature: Use Workout Row Actions
+
+The shared Workout log/Task history ellipsis popup shifts 1px left and 5px away
+from its trigger: downward for bottom placement, upward for top placement.
+Reserve corresponding top/bottom edge clearance and retain menu keyboard/focus behavior.
 
 ### User story
 
@@ -1385,7 +1589,7 @@ compression-latency improvement and time-to-usable-render/capacity acceptance.
 Use the following map-rendered order **from bottom to top**, retaining current
 line widths, colors and geometry. Normal visible path geometry uses **90%
 per-layer opacity** in every mode and focus state; overlapping paths can still
-accumulate opacity. Existing provider labels are rendered once, above paths,
+accumulate opacity. Existing provider labels are rendered once, above paths and directional arrows,
 without an additional canvas or offscreen compositing pass. Preserve provider
 label filters, zoom visibility and relative ordering. Visible road-name/shield
 text and symbols use 100% paint opacity, subject to the renderer's normal symbol
@@ -1400,8 +1604,8 @@ placement/fade behavior.
 | 3 | Focused road/path and park-boundary Coverage | Production Coverage | 90%, above aggregate Coverage |
 | 3 | Diagnostic focused raw path, matched/ambiguous evidence and selected/hovered evidence portion | Diagnostic | 90%; selected evidence remains above other focused path geometry |
 | 3 — interaction only | Diagnostic wide hit-target path | Diagnostic | Always 0%; retains pointer lookup without visible paint |
-| 4 | Existing provider road names/shields and other base-map symbol/label layers | All modes | Road names/shields at 100%; other symbols retain provider styling/visibility |
-| 5 | Directional arrows | Routes and Diagnostic when focused route geometry/camera are ready | 95% while visible; existing hide/readiness transitions remain |
+| 4 | Directional arrows, directly above the focused path group | Routes and Diagnostic when focused route geometry/camera are ready | 95% while visible; existing hide/readiness transitions remain |
+| 5 | Existing provider road names/shields and other base-map symbol/label layers | All modes | Above directional arrows; road names/shields at 100%; other symbols retain provider styling/visibility |
 | 6 | Finish marker and start marker | Routes and Diagnostic when endpoint geometry is available/visible | 100%; preserve existing relative finish/start order for coincident endpoints |
 | 7 — top | Temporary white road/path/park selection blink | Production Coverage, while an explicit identity highlight is active | Attention exception: pulse between 100% and 0%, above labels, arrows and endpoints |
 
@@ -1870,6 +2074,30 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 16. Manual and Automated sync show the actual current ingest activity after file counters and results, whether zero, one or many files were processed. File-counter completion does not imply job completion. Source details show their own activity; the root repeats the single active source's activity or labels each active source separately when several are active. Cancellation and terminal status take precedence over the last recorded phase.
 17. Task history Operation and Status controls use the same spacing between controls as their top, bottom and right insets. Both selection panels share one anchor spanning the full filter row: Operation's left edge through Status's right edge, 12px below the row. Long lists scroll in place. Radio selection, arrow-key navigation, Escape dismissal and page-reset/filter semantics remain available.
 17a. Order the Operation choices as All operations, Manual sync, Automated sync, Coverage update, Workout deletion.
+17b. History rows match Workout log row height and use a right-aligned ellipsis
+   action cell of the same width. Redistribute the saved link width proportionally
+   among the other columns. Clicking a non-control part of the row or pressing
+   Enter/Space on its focus target performs View detail once. Menu interactions
+   must not activate the row. Mobile cards provide the same row/action choices.
+17c. Reuse Workout log's ellipsis button and popup sizing/alignment/offset. Always
+   put View detail first. Query authoritative parent details only when opening the
+   menu, then use the same action policy as Run detail for Cancel run, Retry run
+   or Retry deletion, including cancellation, supersession and retry-chain guards.
+   Pending/failed reads cannot enable stale commands. Commands capture the chosen
+   job ID, use session CSRF, refresh the relevant caches and cannot double-submit;
+   inactive/unmounted completions cannot redirect or focus another workspace.
+17d. Prepare authoritative menu choices before making the popup visible. Cached
+   commands or a loading-only partial menu must not flash during a refresh. Pending
+   preparation can be cancelled by outside interaction, Escape, blur or tab exit;
+   a late response cannot reopen it. Freeze prepared choices for that open menu.
+17e. On a requested run change, retain the accepted detail card at full size and
+   make it inert until the new complete response is ready, then swap content in
+   place. Do not erase it or insert an intermediate short loading panel. Pause old
+   artifacts during a cross-run handoff without turning Logs into automatic reads.
+   Once rendered, focus without native scroll; if the detail top is outside the
+   content viewport, position it at the viewport top plus the inter-panel gap,
+   clamping naturally when there is insufficient scrollable content. Background
+   polling, inactive tabs and superseded requests must not repeat this landing.
 
 ### Ingest Activity Messages
 

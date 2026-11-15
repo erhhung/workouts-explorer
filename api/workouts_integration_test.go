@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -89,7 +90,93 @@ func TestWorkoutOwnerReadsIntegration(t *testing.T) {
 		extentHeartRateErr != nil || extentHeartRate.Value != "123.5" || extentElevationGainErr != nil || extentElevationGain.Value != "42.75" {
 		t.Fatalf("column extents=%#v", list.ColumnExtents)
 	}
+	if list.FilterOptions.TotalItems != 3 || len(list.FilterOptions.Types) != 2 {
+		t.Fatalf("unfiltered choices=%#v", list.FilterOptions)
+	}
+	for _, test := range []struct {
+		name, filters string
+		count         int64
+		first         int
+	}{
+		{"weekday", `{"weekdays":[0]}`, 1, 1},
+		{"no weekdays", `{"weekdays":[]}`, 0, 0},
+		{"no types", `{"typeIds":[]}`, 0, 0},
+		{"type", `{"typeIds":["` + compactUUID(fixture.runningID) + `"]}`, 2, 2},
+		{"duration exclusive", `{"duration":{"operator":"gt","value":"240.125"}}`, 0, 0},
+		{"duration inclusive", `{"duration":{"operator":"gte","value":"240.125"}}`, 2, 2},
+		{"distance inclusive", `{"distance":{"operator":"lte","value":"3"}}`, 1, 1},
+		{"distance exclusive", `{"distance":{"operator":"lt","value":"3"}}`, 0, 0},
+		{"pace", `{"pace":{"operator":"lt","value":"0.7"}}`, 1, 1},
+		{"calories", `{"calories":{"operator":"gte","value":"300.25"}}`, 1, 0},
+		{"average heart rate", `{"heartRate":{"operator":"gte","value":"123.5"}}`, 1, 1},
+		{"elevation gain", `{"elevationGain":{"operator":"lte","value":"42.75"}}`, 1, 1},
+		{"all columns", `{"weekdays":[0],"typeIds":["` + list.FilterOptions.Types[0].Id + `"],"duration":{"operator":"gte","value":"120.125"},"distance":{"operator":"gte","value":"3"},"pace":{"operator":"lt","value":"0.7"},"calories":{"operator":"lte","value":"150.25"},"heartRate":{"operator":"gt","value":"123"},"elevationGain":{"operator":"gte","value":"42.75"}}`, 1, 1},
+	} {
+		t.Run("column filter "+test.name, func(t *testing.T) {
+			requestPath := "/api/workouts?startDate=2026-03-07&endDate=2026-03-09&pageSize=1&sort=date:desc&filters=" + url.QueryEscape(test.filters)
+			response := routeOwnerRead(handler, requestPath, bearer)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			validateRecordedResponse(t, http.MethodGet, requestPath, response)
+			var filtered generated.WorkoutList
+			if err := json.Unmarshal(response.Body.Bytes(), &filtered); err != nil {
+				t.Fatal(err)
+			}
+			if filtered.Pagination.TotalItems != test.count || filtered.Pagination.TotalPages != test.count ||
+				filtered.FilterOptions.TotalItems != 3 || len(filtered.FilterOptions.Types) != 2 {
+				t.Fatalf("filtered pagination/choices=%#v %#v", filtered.Pagination, filtered.FilterOptions)
+			}
+			if test.count > 0 && (len(filtered.Items) != 1 || filtered.Items[0].Id != compactUUID(workouts[test.first])) {
+				t.Fatalf("filter returned wrong workout: %#v", filtered.Items)
+			}
+			if test.count == 0 && len(filtered.Items) != 0 {
+				t.Fatal("empty filter returned workouts")
+			}
+			maximum, _ := filtered.ColumnExtents.Distance.Get()
+			if maximum.Value != "5.5" {
+				t.Fatal("filter changed the unfiltered slider maximum")
+			}
+		})
+	}
 	displayTimezone, _ := list.Items[0].DisplayTimezone.Get()
+	for _, unit := range []struct{ name, distance string }{{"s/km", "3"}, {"s/mi", "4.828032"}} {
+		t.Run("exact pace boundary "+unit.name, func(t *testing.T) {
+			tx, err := workerDB.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.account_id',$1,true)`, accountID.String()); err != nil {
+				t.Fatal(err)
+			}
+			var sourceID uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, fixture.jobID, fixture.childLease, database.SupportedSchemaVersion).Scan(&sourceID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `UPDATE app.workouts SET provider_duration=180 WHERE id=$1`, workouts[1]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `UPDATE app.workout_aggregates SET value=$2::numeric WHERE workout_id=$1 AND metric='distance' AND unit='km'`, workouts[1], unit.distance); err != nil {
+				t.Fatal(err)
+			}
+			for _, op := range []string{"gt", "gte", "lt", "lte"} {
+				raw := `{"typeIds":["` + list.FilterOptions.Types[0].Id + `"],"pace":{"operator":"` + op + `","value":"60","unit":"` + unit.name + `"}}`
+				filters, err := parseWorkoutFilters(&raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count, err := queryFilteredWorkoutCount(ctx, tx, resolvedRange{allTime: true}, filters)
+				want := int64(0)
+				if op == "gte" || op == "lte" {
+					want = 1
+				}
+				if err != nil || count != want {
+					t.Fatalf("%s %s: count=%d want=%d err=%v", unit.name, op, count, want, err)
+				}
+			}
+		})
+	}
 	if list.Items[0].Duration != "120.125" || list.Items[0].RoutePointCount != 2 || !list.Items[0].RouteAvailable || displayTimezone != "UTC-07:00" {
 		t.Fatalf("exact/fallback/route fields=%#v", list.Items[0])
 	}

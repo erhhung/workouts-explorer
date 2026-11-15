@@ -4700,8 +4700,8 @@ describe("MapPage", () => {
       expect(order.indexOf("provider-road-label")).toBeGreaterThan(
         order.indexOf("coverage-diagnostic-matched"),
       );
-      expect(order.indexOf("coverage-diagnostic-direction")).toBeGreaterThan(
-        order.indexOf("provider-road-label"),
+      expect(order.indexOf("coverage-diagnostic-direction")).toBe(
+        order.indexOf("provider-road-label") - 1,
       );
       expect(order.at(-1)).toBe("private-workout-route-start");
       view.rerender(<Harness enabled={false} />);

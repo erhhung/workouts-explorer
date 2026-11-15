@@ -133,6 +133,167 @@ function aggregatePointerTargets(card: HTMLElement) {
 }
 
 describe("Summary", () => {
+  test("a superseded column popup cannot restore focus over its replacement", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
+    );
+    renderSummary();
+    await screen.findByRole("navigation", { name: "Workout pages" });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Date" }), { key: "ArrowDown" });
+    expect(screen.getByRole("dialog", { name: "Show days of week" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Type" }), { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "Show workout types" })).toBeInTheDocument(),
+    );
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Type" })).toHaveFocus();
+  });
+
+  test("filters across pages only on Apply, combines columns and clears without changing sort", async () => {
+    const requests: URL[] = [];
+    let release!: (response: Response) => void;
+    let held = false;
+    const response = (url: URL) => {
+      const filters = JSON.parse(url.searchParams.get("filters") ?? "{}");
+      const active = Object.keys(filters).length > 0;
+      return {
+        ...workoutPage(Number(url.searchParams.get("page") ?? 1), [
+          {
+            ...workout,
+            type: { ...running, displayName: active ? "Filtered running" : "All running" },
+          },
+        ]),
+        filterOptions: {
+          totalItems: 26,
+          types: [running, { ...running, id: "D".repeat(32), displayName: "Walking" }],
+        },
+        pagination: {
+          page: Number(url.searchParams.get("page") ?? 1),
+          pageSize: 25,
+          totalItems: active ? 1 : 26,
+          totalPages: active ? 1 : 2,
+        },
+      };
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = new URL(String(input), "https://test");
+      if (url.pathname === "/api/summary") return Promise.resolve(json(summary));
+      requests.push(url);
+      if (held)
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      return Promise.resolve(json(response(url)));
+    });
+    renderSummary();
+    const user = userEvent.setup();
+    const nav = await screen.findByRole("navigation", { name: "Workout pages" });
+    await user.click(screen.getByRole("button", { name: "Distance" }));
+    await waitFor(() => expect(requests.at(-1)?.searchParams.get("sort")).toBe("distance:desc"));
+    await user.click(within(nav).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(nav).toHaveTextContent("Page 2 of 2"));
+    const table = document.querySelector(".workout-log-viewport .workout-table")!;
+    const row = table.querySelector("tbody tr");
+    const count = requests.length;
+    fireEvent.keyDown(screen.getByRole("button", { name: "Date" }), { key: "ArrowDown" });
+    await user.click(screen.getByRole("checkbox", { name: "Tuesday" }));
+    expect(requests).toHaveLength(count);
+    held = true;
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(requests).toHaveLength(count + 1));
+    expect(requests.at(-1)?.searchParams.get("page")).toBe("1");
+    expect(JSON.parse(requests.at(-1)!.searchParams.get("filters")!).weekdays).toEqual([
+      1, 3, 4, 5, 6, 0,
+    ]);
+    expect(table.querySelector("tbody tr")).toBe(row);
+    expect(row).toHaveTextContent("All running");
+    expect(table.querySelector("tbody")).toHaveAttribute("inert");
+    expect(table.closest(".dialog-table-frame")).toHaveStyle({ "--dialog-table-rows": "25" });
+    held = false;
+    release(json(response(requests.at(-1)!)));
+    await waitFor(() => expect(row).toHaveTextContent("Filtered running"));
+    expect(table.querySelector("tbody tr")).toBe(row);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Type" }), { key: " " });
+    await user.click(screen.getByRole("checkbox", { name: "Walking" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(JSON.parse(requests.at(-1)!.searchParams.get("filters")!).typeIds).toEqual([
+        running.id,
+      ]),
+    );
+    expect(JSON.parse(requests.at(-1)!.searchParams.get("filters")!).weekdays).not.toContain(2);
+    expect(document.querySelectorAll("th .workout-filter-indicator")).toHaveLength(2);
+    expect(document.querySelector(".aggregate-grid")).toHaveTextContent("2");
+    await user.click(screen.getByRole("button", { name: "Clear all filters" }));
+    await waitFor(() => expect(requests.at(-1)?.searchParams.has("filters")).toBe(false));
+    expect(requests.at(-1)?.searchParams.get("sort")).toBe("distance:desc");
+    expect(screen.getByRole("button", { name: "Clear all filters" })).toBeDisabled();
+  });
+
+  test("retains headers and the unfiltered table capacity after a no-match filter", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = new URL(String(input), "https://test");
+      if (url.pathname === "/api/summary") return Promise.resolve(json(summary));
+      const active = url.searchParams.has("filters");
+      return Promise.resolve(
+        json({
+          ...workoutPage(1, active ? [] : [workout]),
+          filterOptions: { totalItems: 26, types: [running] },
+          pagination: {
+            page: 1,
+            pageSize: 25,
+            totalItems: active ? 0 : 26,
+            totalPages: active ? 0 : 2,
+          },
+        }),
+      );
+    });
+    renderSummary();
+    await screen.findByRole("navigation", { name: "Workout pages" });
+    const table = document.querySelector(".workout-log-viewport .workout-table")!;
+    fireEvent.keyDown(screen.getByRole("button", { name: "Date" }), { key: "ArrowDown" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "None" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText("No workouts match these filters.")).toBeInTheDocument();
+    expect(document.querySelector(".workout-log-viewport .workout-table")).toBe(table);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(0);
+    expect(table.querySelectorAll("thead tr")).toHaveLength(1);
+    expect(table.closest(".dialog-table-frame")).toHaveStyle({ "--dialog-table-rows": "25" });
+    expect(screen.getByRole("navigation", { name: "Workout pages" })).toHaveTextContent(
+      "0 sessions",
+    );
+    await user.click(screen.getByRole("button", { name: "Clear all filters" }));
+    await waitFor(() => expect(table.querySelectorAll("tbody tr")).toHaveLength(1));
+  });
+
+  test("preserves compatible rows read-only after a filter request fails and recovers on Retry", async () => {
+    let fail = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = new URL(String(input), "https://test");
+      if (url.pathname === "/api/summary") return Promise.resolve(json(summary));
+      if (url.searchParams.has("filters") && fail)
+        return Promise.resolve(json({ title: "Unavailable", status: 503 }, 503));
+      return Promise.resolve(json(workoutPage()));
+    });
+    renderSummary();
+    await screen.findByRole("navigation", { name: "Workout pages" });
+    const row = document.querySelector(".workout-log-viewport tbody tr");
+    fireEvent.keyDown(screen.getByRole("button", { name: "Date" }), { key: "ArrowDown" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Monday" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText("Workouts are unavailable.");
+    expect(document.querySelector(".workout-log-viewport tbody tr")).toBe(row);
+    expect(row?.parentElement).toHaveAttribute("inert");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(row?.parentElement).not.toHaveAttribute("inert"));
+  });
+
   test("reuses page cells while closing actions for a replaced workout identity", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
@@ -359,10 +520,12 @@ describe("Summary", () => {
       );
     });
     const view = renderSummary();
-    expect(await screen.findByText("26 sessions | page 1 of 2")).toBeInTheDocument();
+    expect(await screen.findByText("26 sessions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear all filters" })).toBeDisabled();
+    expect(document.querySelector(".workout-log-actions")).not.toHaveTextContent("sessions");
     singular = true;
     view.rerenderPreferences({ dateRange: "thisMonth" });
-    expect(await screen.findByText("1 session | page 1 of 1")).toBeInTheDocument();
+    expect(await screen.findByText("1 session")).toBeInTheDocument();
   });
 
   test("rounds duration displays to the nearest whole minute", () => {

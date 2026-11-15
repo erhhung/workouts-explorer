@@ -4,7 +4,7 @@ export type Shortcut =
   | { kind: "tab"; path: "/" | "/map" | "/stats" | "/data-sync" }
   | { kind: "page"; delta: number }
   | { kind: "map"; action: "routes" | "coverage" | "fit" }
-  | { kind: "stats"; group: "month" | "year" };
+  | { kind: "stats"; group: "week" | "month" | "year" };
 
 type Registration = {
   kind: Shortcut["kind"];
@@ -36,6 +36,8 @@ export function shortcutForKey(event: KeyboardEvent): Shortcut | undefined {
       return { kind: "map", action: "fit" };
     case "m":
       return { kind: "stats", group: "month" };
+    case "w":
+      return { kind: "stats", group: "week" };
     case "y":
       return { kind: "stats", group: "year" };
   }

@@ -3116,6 +3116,7 @@ describe("DataSync", () => {
       await userEvent.click(screen.getByRole("checkbox", { name: "Show failures only" }));
       await screen.findByText("failed-files-page-1-row-0.json");
       view.rerenderJob(nextJob);
+      await screen.findByText(`Job ${nextJob.slice(0, 8)}`);
       const nextTrigger = await screen.findByRole("button", { name: /^Files/ });
       expect(nextTrigger).toHaveAttribute("aria-expanded", "false");
       await userEvent.click(nextTrigger);
@@ -5246,11 +5247,7 @@ describe("DataSync", () => {
     const view = renderDataSync(undefined, navigate);
     expect(await screen.findAllByText("Workout deletion")).toHaveLength(2);
     expect(screen.getAllByText("0 of 1 deleted")).toHaveLength(2);
-    await userEvent.click(
-      within(document.querySelector(".sync-history-table") as HTMLElement).getByRole("button", {
-        name: "View detail",
-      }),
-    );
+    await userEvent.click(document.querySelector(".sync-history-table tbody tr")!);
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${JOB_ID}`);
     view.rerenderJob(JOB_ID);
     expect(await screen.findByRole("button", { name: "Retry deletion" })).toBeInTheDocument();
@@ -5315,6 +5312,204 @@ describe("DataSync", () => {
       ),
     );
     expect(operationTrigger).toHaveTextContent("OperationAutomated syncv");
+  });
+
+  describe("Task history actions", () => {
+    const OTHER = "D".repeat(32),
+      NEXT = "F".repeat(32);
+    function rows(
+      target: JobDetail,
+      command?: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined,
+    ) {
+      const fetch = baseFetch((path, init) => {
+        const custom = command?.(path, init);
+        if (custom) return custom;
+        if (path.startsWith("/api/jobs?"))
+          return json({
+            pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1 },
+            items: [detail, target],
+          });
+        if (path === `/api/jobs/${OTHER}`) return json(target);
+        return undefined;
+      });
+      const view = renderDataSync(JOB_ID);
+      return { ...view, fetch, user: userEvent.setup() };
+    }
+    async function tableRows() {
+      await waitFor(() =>
+        expect(document.querySelectorAll(".sync-history-table tbody tr")).toHaveLength(2),
+      );
+      return [...document.querySelectorAll<HTMLTableRowElement>(".sync-history-table tbody tr")];
+    }
+    test("prepares fresh choices before opening, even when stale cached choices exist", async () => {
+      let release!: (response: Response) => void;
+      const target = { ...detail, id: OTHER, status: "succeeded" } as JobDetail;
+      const { client, user } = rows(target, (path) =>
+        path === `/api/jobs/${OTHER}`
+          ? new Promise<Response>((resolve) => (release = resolve))
+          : undefined,
+      );
+      client.setQueryData(["job", OTHER], { ...target, status: "running" });
+      const row = (await tableRows())[1];
+      const trigger = within(row).getByRole("button", { name: /Actions for/ });
+      await user.click(trigger);
+      expect(trigger).toHaveAttribute("aria-busy", "true");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      await act(async () => release(json(target)));
+      await screen.findByRole("menuitem", { name: "View detail" });
+      expect(screen.getAllByRole("menuitem").map((node) => node.textContent)).toEqual([
+        "View detail",
+      ]);
+      expect(screen.queryByText("Loading actions...")).not.toBeInTheDocument();
+    });
+    test("a dismissed pending menu cannot open when its read completes", async () => {
+      let release!: (response: Response) => void;
+      const target = { ...detail, id: OTHER } as JobDetail;
+      const { user } = rows(target, (path) =>
+        path === `/api/jobs/${OTHER}`
+          ? new Promise<Response>((resolve) => (release = resolve))
+          : undefined,
+      );
+      const row = (await tableRows())[1];
+      await user.click(within(row).getByRole("button", { name: /Actions for/ }));
+      await user.click(screen.getByRole("heading", { name: "Start a sync" }));
+      await act(async () => release(json(target)));
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+    test("keeps the accepted run mounted and inert until the next complete detail arrives", async () => {
+      let release!: (response: Response) => void;
+      const target = { ...detail, id: OTHER, failureSummary: "New selected run" } as JobDetail;
+      const view = rows(target, (path) =>
+        path === `/api/jobs/${OTHER}`
+          ? new Promise<Response>((resolve) => (release = resolve))
+          : undefined,
+      );
+      await screen.findByRole("button", { name: "Retry run" });
+      const retained = document.querySelector(".job-detail-card");
+      view.rerenderJob(OTHER);
+      expect(document.querySelector(".job-detail-card")).toBe(retained);
+      expect(retained).toHaveAttribute("inert");
+      expect(screen.queryByText("Loading run detail...")).not.toBeInTheDocument();
+      await act(async () => release(json(target)));
+      await screen.findByText("New selected run");
+      expect(document.querySelector(".job-detail-card")).toBe(retained);
+      expect(retained).not.toHaveAttribute("inert");
+    });
+    test.each([
+      ["active ingest", { operation: "data_sync", status: "running" }, "Cancel run", false],
+      ["failed ingest", { operation: "data_sync", status: "failed" }, "Retry run", false],
+      ["completed ingest", { operation: "data_sync", status: "succeeded" }, undefined, false],
+      [
+        "failed deletion",
+        { operation: "workout_deletion", status: "failed" },
+        "Retry deletion",
+        false,
+      ],
+      ["active deletion", { operation: "workout_deletion", status: "running" }, undefined, false],
+      [
+        "blocked coverage",
+        {
+          operation: "coverage_update",
+          status: "failed",
+          retryEligibility: {
+            ...eligibleCoverageRetry,
+            canRetry: false,
+            reason: "already_current",
+          },
+        },
+        "Retry run",
+        true,
+      ],
+      [
+        "eligible coverage",
+        { operation: "coverage_update", status: "failed", retryEligibility: eligibleCoverageRetry },
+        "Retry run",
+        false,
+      ],
+      [
+        "retried coverage",
+        {
+          operation: "coverage_update",
+          status: "failed",
+          latestRetryJobId: NEXT,
+          retryEligibility: eligibleCoverageRetry,
+        },
+        undefined,
+        false,
+      ],
+    ] as const)(
+      "offers the Run detail actions for %s without prefetching every history row",
+      async (_name, overrides, label, disabled) => {
+        const target = { ...detail, ...overrides, id: OTHER } as JobDetail;
+        const { fetch, user, navigate } = rows(target);
+        const row = (await tableRows())[1];
+        expect(
+          fetch.mock.calls.filter(([input]) => String(input) === `/api/jobs/${OTHER}`),
+        ).toHaveLength(0);
+        await user.click(within(row).getByRole("button", { name: /Actions for/ }));
+        await screen.findByRole("menuitem", { name: "View detail" });
+        await waitFor(() =>
+          expect(screen.queryByText("Loading actions...")).not.toBeInTheDocument(),
+        );
+        expect(navigate).not.toHaveBeenCalled();
+        if (label) {
+          const action = screen.getByRole("menuitem", { name: label });
+          if (disabled) expect(action).toHaveAttribute("data-disabled");
+          else expect(action).not.toHaveAttribute("data-disabled");
+        } else
+          expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+            "View detail",
+          ]);
+        await user.keyboard("{Escape}");
+        expect(within(row).getByRole("button", { name: /Actions for/ })).toHaveFocus();
+      },
+    );
+    test("row click and keyboard view detail once; the ellipsis/menu does not activate its row", async () => {
+      const { user, navigate } = rows({ ...detail, id: OTHER, status: "succeeded" });
+      const row = (await tableRows())[1];
+      await user.click(row);
+      expect(navigate).toHaveBeenCalledExactlyOnceWith(`/data-sync/jobs/${OTHER}`);
+      navigate.mockClear();
+      row.focus();
+      fireEvent.keyDown(row, { key: "Enter" });
+      expect(navigate).toHaveBeenCalledExactlyOnceWith(`/data-sync/jobs/${OTHER}`);
+      navigate.mockClear();
+      await user.click(within(row).getByRole("button", { name: /Actions for/ }));
+      expect(navigate).not.toHaveBeenCalled();
+      await user.click(await screen.findByRole("menuitem", { name: "View detail" }));
+      expect(navigate).toHaveBeenCalledExactlyOnceWith(`/data-sync/jobs/${OTHER}`);
+    });
+    test("cancels the menu's job rather than the currently selected run and retains CSRF", async () => {
+      const { user, navigate, fetch } = rows({ ...detail, id: OTHER, status: "running" }, (path) =>
+        path === `/api/jobs/${OTHER}/cancellation`
+          ? json({ ...detail, id: OTHER, status: "running", cancelRequested: true })
+          : undefined,
+      );
+      const row = (await tableRows())[1];
+      await user.click(within(row).getByRole("button", { name: /Actions for/ }));
+      await user.click(await screen.findByRole("menuitem", { name: "Cancel run" }));
+      await screen.findByText("Cancellation requested.");
+      const call = fetch.mock.calls.find(
+        ([input]) => String(input) === `/api/jobs/${OTHER}/cancellation`,
+      );
+      expect(call?.[1]).toMatchObject({ method: "POST", body: "{}" });
+      expect(new Headers(call?.[1]?.headers).get("X-CSRF-Token")).toBe("csrf-data-sync");
+      expect(navigate).not.toHaveBeenCalled();
+    });
+    test("retries the menu's parent job and selects the accepted retry", async () => {
+      const { user, navigate, fetch } = rows({ ...detail, id: OTHER, status: "failed" }, (path) =>
+        path === `/api/jobs/${OTHER}/retry`
+          ? json({ jobId: NEXT, status: "queued", reused: false }, 202)
+          : undefined,
+      );
+      const row = (await tableRows())[1];
+      await user.click(within(row).getByRole("button", { name: /Actions for/ }));
+      await user.click(await screen.findByRole("menuitem", { name: "Retry run" }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${NEXT}`));
+      expect(
+        fetch.mock.calls.some(([input]) => String(input) === `/api/jobs/${JOB_ID}/retry`),
+      ).toBe(false);
+    });
   });
 
   test("aborts an in-flight snapshot when the page unmounts", async () => {

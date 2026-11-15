@@ -34,7 +34,7 @@ function mapWith(layers: Layer[]) {
 }
 
 describe("map presentation", () => {
-  test("keeps provider symbols above paths, endpoints above arrows, and blink topmost", () => {
+  test("keeps arrows directly above focused paths, provider symbols above arrows, and blink topmost", () => {
     const layers = [
       { id: "terrain", type: "hillshade" },
       { id: "road-name", type: "symbol" },
@@ -61,9 +61,9 @@ describe("map presentation", () => {
       "focus",
       "diagnostic",
       "hit",
+      "arrows",
       "road-name",
       "shield",
-      "arrows",
       "finish",
       "start",
       "blink",
@@ -123,6 +123,7 @@ describe("map presentation", () => {
       { id: "road-name", type: "symbol" },
       { id: "focus", type: "line" },
       { id: "start", type: "circle" },
+      { id: "arrows", type: "symbol" },
     ];
     const { map, reconcile } = mapWith(layers);
     reconcile();

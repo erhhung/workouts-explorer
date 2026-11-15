@@ -31,6 +31,8 @@ export function Tooltip({
   offsetY = 0,
   keyboardFocusOnly = false,
   dismissOnPointerDown = false,
+  dismissOnPointerLeave = false,
+  followPointer = false,
 }: {
   id?: string;
   content: string;
@@ -45,6 +47,8 @@ export function Tooltip({
   offsetY?: number;
   keyboardFocusOnly?: boolean;
   dismissOnPointerDown?: boolean;
+  dismissOnPointerLeave?: boolean;
+  followPointer?: boolean;
 }) {
   const generatedId = useId();
   const tooltipId = id ?? generatedId;
@@ -58,8 +62,11 @@ export function Tooltip({
   }>({ hovered: false, focused: false, pointerDismissed: false });
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
+  const pointerFrame = useRef<number | undefined>(undefined);
 
   function close() {
+    if (pointerFrame.current !== undefined) cancelAnimationFrame(pointerFrame.current);
+    pointerFrame.current = undefined;
     if (activePortalTooltip?.id === tooltipId) activePortalTooltip = undefined;
     setOpen(false);
   }
@@ -128,24 +135,28 @@ export function Tooltip({
     }
     if (activePortalTooltip?.id !== tooltipId) activePortalTooltip?.close();
     activePortalTooltip = { id: tooltipId, close };
+    const pointer =
+      followPointer && interaction.current.hovered ? interaction.current.pointer : undefined;
+    const rootStyle = pointer ? getComputedStyle(document.documentElement) : undefined;
+    const gapValue = rootStyle?.getPropertyValue("--cursor-tooltip-gap").trim();
+    const gap = pointer
+      ? (parseFloat(gapValue ?? "") || 0.65) *
+        (gapValue?.endsWith("px") ? 1 : parseFloat(rootStyle?.fontSize ?? "") || 16)
+      : 6;
+    const center = pointer?.x ?? anchor.left + anchor.width / 2;
+    const above = (pointer?.y ?? anchor.top) - bubble.height - gap;
+    const below = (pointer?.y ?? anchor.bottom) + gap;
     setPosition({
-      left: Math.max(
-        8,
-        Math.min(
-          anchor.left + (anchor.width - bubble.width) / 2,
-          window.innerWidth - bubble.width - 8,
-        ),
-      ),
+      left: Math.max(8, Math.min(center - bubble.width / 2, window.innerWidth - bubble.width - 8)),
       top: Math.max(
         8,
-        Math.min(
-          anchor.top - bubble.height - 6 >= 8 ? anchor.top - bubble.height - 6 : anchor.bottom + 6,
-          window.innerHeight - bubble.height - 8,
-        ),
+        Math.min(above >= 8 ? above : below, window.innerHeight - bubble.height - 8),
       ),
     });
     setOpen(true);
   }
+  const latestPlace = useRef(place);
+  latestPlace.current = place;
 
   useEffect(() => {
     if (interaction.current.focused && !acceptsFocus(document.activeElement)) {
@@ -157,11 +168,21 @@ export function Tooltip({
       if (interaction.current.hovered) interaction.current.hovered = pointerInside();
       if (!activePortalTooltip || activePortalTooltip.id === tooltipId) place(!activePortalTooltip);
     }
-  }, [enabled, portal, content, singleLine, multiline, tooltipId, keyboardFocusOnly]);
+  }, [
+    enabled,
+    portal,
+    content,
+    singleLine,
+    multiline,
+    tooltipId,
+    keyboardFocusOnly,
+    followPointer,
+  ]);
 
   useEffect(
     () => () => {
       if (activePortalTooltip?.id === tooltipId) activePortalTooltip = undefined;
+      if (pointerFrame.current !== undefined) cancelAnimationFrame(pointerFrame.current);
     },
     [tooltipId],
   );
@@ -182,17 +203,24 @@ export function Tooltip({
         interaction.current.hovered = false;
       if (!interaction.current.hovered) close();
     }
+    function blur() {
+      interaction.current.hovered = false;
+      interaction.current.focused = false;
+      close();
+    }
     window.addEventListener("scroll", follow, true);
     window.addEventListener("resize", follow);
     window.addEventListener("keydown", escape);
     if (keyboardFocusOnly) window.addEventListener("pointerdown", pointerDown, true);
+    if (followPointer) window.addEventListener("blur", blur);
     return () => {
       window.removeEventListener("scroll", follow, true);
       window.removeEventListener("resize", follow);
       window.removeEventListener("keydown", escape);
       if (keyboardFocusOnly) window.removeEventListener("pointerdown", pointerDown, true);
+      if (followPointer) window.removeEventListener("blur", blur);
     };
-  }, [portal, enabled, open, keyboardFocusOnly]);
+  }, [portal, enabled, open, keyboardFocusOnly, followPointer]);
 
   const bubble = (
     <span
@@ -229,10 +257,25 @@ export function Tooltip({
                 interaction.current.focused = false;
                 close();
               },
-              onPointerMove: rememberPointer,
+              onPointerMove: (event: ReactPointerEvent<HTMLSpanElement>) => {
+                rememberPointer(event);
+                if (
+                  !followPointer ||
+                  !interaction.current.hovered ||
+                  activePortalTooltip?.id !== tooltipId ||
+                  pointerFrame.current !== undefined
+                )
+                  return;
+                pointerFrame.current = requestAnimationFrame(() => {
+                  pointerFrame.current = undefined;
+                  latestPlace.current();
+                });
+              },
               onPointerLeave: () => {
                 interaction.current.hovered = false;
+                if (dismissOnPointerLeave) interaction.current.focused = false;
                 if (!interaction.current.focused) close();
+                else if (followPointer) place();
               },
               onFocus: (event: FocusEvent<HTMLSpanElement>) => {
                 interaction.current.focused = acceptsFocus(event.target);

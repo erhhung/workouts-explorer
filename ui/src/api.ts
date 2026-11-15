@@ -88,6 +88,26 @@ export interface WorkoutSummary {
   byType: Array<{ type: WorkoutType; totals: SummaryTotals }>;
 }
 
+export type ConsistencyGrouping = "week" | "month";
+export interface ConsistencyBucket {
+  bucketStart: string;
+  workoutCount: number;
+  activeDays: number;
+  duration: string;
+  distance: ExactMetric | null;
+  calories: ExactMetric | null;
+  longestDuration: string | null;
+  longestDistance: ExactMetric | null;
+  highestCalories: ExactMetric | null;
+}
+export interface ConsistencyReport {
+  range: ResolvedDateRange;
+  groupBy: ConsistencyGrouping;
+  firstWeekday: Preferences["firstWeekday"];
+  undatedWorkoutCount: number;
+  buckets: ConsistencyBucket[];
+}
+
 export interface Workout {
   id: string;
   sourceId: string;
@@ -130,8 +150,21 @@ export interface WorkoutList {
     heartRate: ExactMetric | null;
     elevationGain: ExactMetric | null;
   };
+  filterOptions?: { totalItems: number; types: WorkoutType[] };
   items: Workout[];
 }
+
+export type WorkoutComparison = "gt" | "gte" | "lt" | "lte";
+export type WorkoutNumericColumn = Exclude<WorkoutColumn, "date" | "type">;
+export type WorkoutFilters = {
+  weekdays?: number[];
+  typeIds?: string[];
+} & Partial<
+  Record<
+    WorkoutNumericColumn,
+    { operator: WorkoutComparison; value: string; unit?: "s/km" | "s/mi" }
+  >
+>;
 
 export interface WorkoutProvenanceWarning {
   code: "incomplete_metric" | "unexpected_unit" | "invalid_optional_route_value";

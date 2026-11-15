@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import type { DateRangePreference, NewCoverageBucket, Preferences, StatsReportScope } from "./api";
-import { DEFAULT_STATS_STATE, StatsPage, statsBucketLabel, type StatsMapTarget } from "./StatsPage";
+import {
+  DEFAULT_STATS_STATE,
+  StatsPage,
+  statsBucketLabel,
+  type StatsMapTarget,
+  type StatsViewState,
+} from "./StatsPage";
 
 const preferences: Preferences = {
   theme: "dark",
@@ -142,7 +148,10 @@ function Harness({
   startingRange?: DateRangePreference;
 }) {
   const [range, setRange] = useState<DateRangePreference>(startingRange);
-  const [state, setState] = useState(DEFAULT_STATS_STATE);
+  const [state, setState] = useState<StatsViewState>({
+    ...DEFAULT_STATS_STATE,
+    activeReport: "new-coverage",
+  });
   const [visible, setVisible] = useState(true);
   const [recent, setRecent] = useState(preferences.recentCustomDateRanges);
   return (

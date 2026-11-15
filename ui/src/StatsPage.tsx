@@ -33,8 +33,18 @@ import { useRecentDateRanges } from "./RecentDateRanges";
 import { Tooltip } from "./Tooltip";
 import { PageNavigation } from "./PageNavigation";
 import { formatDateOnly } from "./date";
+import { ConsistencyReport } from "./ConsistencyReport";
+import { DEFAULT_CONSISTENCY_STATE, type ConsistencyViewState } from "./consistency";
+import {
+  captureContentScroll,
+  restoreContentScroll,
+  type ContentScrollPosition,
+} from "./contentScroll";
 
-export const STATS_REPORTS = [{ id: "new-coverage", title: "New Coverage" }] as const;
+export const STATS_REPORTS = [
+  { id: "consistency", title: "Consistency" },
+  { id: "new-coverage", title: "New Coverage" },
+] as const;
 type BucketField = "bucket" | "allTime" | "pastYear";
 type VisitField = "name" | "place" | "newVisit" | "previousVisit";
 interface Sort<F extends string> {
@@ -43,10 +53,12 @@ interface Sort<F extends string> {
 }
 export interface StatsViewState {
   activeReport: (typeof STATS_REPORTS)[number]["id"];
+  consistency: ConsistencyViewState;
   newCoverage: { rangeKey?: string; groupBy: StatsGrouping; sort: Sort<BucketField>; page: number };
 }
 export const DEFAULT_STATS_STATE: StatsViewState = {
-  activeReport: "new-coverage",
+  activeReport: "consistency",
+  consistency: DEFAULT_CONSISTENCY_STATE,
   newCoverage: { groupBy: "month", sort: { field: "bucket", direction: "desc" }, page: 1 },
 };
 const METRIC_LABELS: Record<NewCoverageMetric, string> = {
@@ -202,7 +214,7 @@ function PageSpacer({
 function usePagingScroll(value: unknown, pending: boolean, current: boolean) {
   const tabActive = useTabActive();
   const ref = useRef<HTMLDivElement>(null);
-  const position = useRef<{ x: number; y: number; top: number; left: number } | undefined>(
+  const position = useRef<(ContentScrollPosition & { top: number; left: number }) | undefined>(
     undefined,
   );
   useLayoutEffect(() => {
@@ -213,7 +225,7 @@ function usePagingScroll(value: unknown, pending: boolean, current: boolean) {
       ref.current.scrollTop = saved.top;
       ref.current.scrollLeft = saved.left;
     }
-    window.scrollTo(saved.x, saved.y);
+    restoreContentScroll(saved);
   }, [tabActive, value, pending, current]);
   return {
     ref,
@@ -223,8 +235,7 @@ function usePagingScroll(value: unknown, pending: boolean, current: boolean) {
     },
     capture() {
       position.current = {
-        x: window.scrollX,
-        y: window.scrollY,
+        ...captureContentScroll(ref.current),
         top: ref.current?.scrollTop ?? 0,
         left: ref.current?.scrollLeft ?? 0,
       };
@@ -553,14 +564,19 @@ export function StatsPage({
   onShowOnMap?: (target: StatsMapTarget) => void;
 }) {
   const tabActive = useTabActive();
+  const active =
+    STATS_REPORTS.find((report) => report.id === state.activeReport) ?? STATS_REPORTS[0];
+  const coverageSelected = active.id === "new-coverage";
+  const consistencyVisited = useRef(!coverageSelected);
+  if (!coverageSelected) consistencyVisited.current = true;
   const tabActiveRef = useRef(tabActive);
-  tabActiveRef.current = tabActive;
+  tabActiveRef.current = tabActive && coverageSelected;
   const recent = useRecentDateRanges(preferences, onRecentDateRangesSaved);
   const [customOpen, setCustomOpen] = useState(false);
   const [rangeError, setRangeError] = useState("");
   const rangeSaveChain = useRef(Promise.resolve());
   const rangeSaveSequence = useRef(0);
-  const rangeKey = `${dateRange}:${preferences.timezone}`;
+  const rangeKey = `${dateRange}:${preferences.timezone}:${preferences.firstWeekday}`;
   const scopeKey = `${accountKey}:${rangeKey}:${deletionRevision}`;
   const current =
     state.newCoverage.rangeKey === rangeKey
@@ -607,6 +623,15 @@ export function StatsPage({
     renewals.current = 0;
   }, [scopeKey]);
   useEffect(() => {
+    if (!coverageSelected) {
+      preparing.current = false;
+      setPrepared(undefined);
+      setPrepareError("");
+      setDialog(undefined);
+      window.clearTimeout(renewalTimer.current);
+      renewalTimer.current = undefined;
+      return;
+    }
     const controller = new AbortController();
     let owned: StatsReportScope | undefined;
     preparing.current = true;
@@ -650,9 +675,9 @@ export function StatsPage({
       preparing.current = false;
       if (owned) release(owned);
     };
-  }, [scopeKey, scopeAttempt, csrfToken]);
+  }, [scopeKey, scopeAttempt, csrfToken, coverageSelected]);
   useEffect(() => {
-    if (!tabActive) return;
+    if (!tabActive || !coverageSelected) return;
     const update = () => {
       if (document.visibilityState !== "hidden") refreshAction.current();
     };
@@ -669,7 +694,7 @@ export function StatsPage({
       window.removeEventListener("focus", update);
       window.removeEventListener("online", update);
     };
-  }, [tabActive, pollingIntervalSeconds]);
+  }, [tabActive, pollingIntervalSeconds, coverageSelected]);
   const wasInactive = useRef(false);
   useLayoutEffect(() => {
     if (tabActive) {
@@ -704,6 +729,7 @@ export function StatsPage({
     }, delay);
   }
   refreshAction.current = () => {
+    if (!tabActiveRef.current) return;
     if (preparing.current || renewalTimer.current != null) return;
     if (!scope) {
       renewals.current = 0;
@@ -720,7 +746,10 @@ export function StatsPage({
     page: String(current.page),
     pageSize: String(preferences.pageSize),
   });
-  const path = scope ? `/api/stats/report-scopes/${scope.id}/new-coverage?${params}` : undefined;
+  const path =
+    scope && coverageSelected
+      ? `/api/stats/report-scopes/${scope.id}/new-coverage?${params}`
+      : undefined;
   const result = useReportRead<NewCoverageBucketList>(scope, path, refresh, renewScope, scopeKey);
   const data = result.value;
   const displayedGroup = data?.groupBy ?? current.groupBy;
@@ -800,15 +829,13 @@ export function StatsPage({
     setDialog(undefined);
   }
   useKeyboardShortcut("stats", reportRef, (shortcut) => {
-    if (shortcut.kind !== "stats") return false;
+    if (!coverageSelected || shortcut.kind !== "stats" || shortcut.group === "week") return false;
     if (currentRef.current.groupBy !== shortcut.group) selectGrouping(shortcut.group);
     return true;
   });
-  const active =
-    STATS_REPORTS.find((report) => report.id === state.activeReport) ?? STATS_REPORTS[0];
   return (
     <main className="stats-page">
-      <aside className="stats-sidebar" aria-label="Stats controls">
+      <aside className="stats-sidebar" aria-label="Stats controls" data-app-scroll>
         <DateRangePicker
           range={dateRange}
           recent={recent.history}
@@ -822,174 +849,206 @@ export function StatsPage({
               key={report.id}
               type="button"
               aria-current={active.id === report.id ? "page" : undefined}
-              onClick={() => onStateChange((old) => ({ ...old, activeReport: report.id }))}
+              onClick={() => {
+                if (report.id === active.id) return;
+                setDialog(undefined);
+                setPrepared(undefined);
+                onStateChange((old) => ({ ...old, activeReport: report.id }));
+              }}
             >
               {report.title}
             </button>
           ))}
         </nav>
       </aside>
-      <section
-        ref={reportRef}
-        className="stats-report content-background"
-        data-app-content
-        tabIndex={-1}
-        aria-labelledby="stats-report-heading"
-      >
+      <div className="stats-report-viewport content-background">
         <ContentBackground />
-        <header className="stats-heading">
-          <h1 id="stats-report-heading" ref={heading} tabIndex={-1}>
-            {active.title}
-          </h1>
-        </header>
-        {rangeError && (
-          <div className="stats-message" role="status">
-            {rangeError}
-            <button className="secondary" onClick={() => setRangeError("")}>
-              Dismiss
-            </button>
-          </div>
-        )}
-        <div className="stats-table-frame" data-paging-region>
-          <fieldset className="stats-grouping">
-            <legend>Show new visits by</legend>
-            <div className="map-mode-controls stats-group-buttons">
-              {(["month", "year"] as const).map((group) => (
-                <button
-                  key={group}
-                  type="button"
-                  aria-pressed={current.groupBy === group}
-                  onClick={() => selectGrouping(group)}
-                >
-                  {group === "month" ? "Month" : "Year"}
-                </button>
-              ))}
+        <section
+          ref={reportRef}
+          className="stats-report"
+          data-app-content
+          data-app-scroll
+          tabIndex={-1}
+          aria-labelledby="stats-report-heading"
+        >
+          <header className="stats-heading">
+            <h1 id="stats-report-heading" ref={heading} tabIndex={-1}>
+              {active.title}
+            </h1>
+          </header>
+          {rangeError && (
+            <div className="stats-message" role="status">
+              {rangeError}
+              <button className="secondary" onClick={() => setRangeError("")}>
+                Dismiss
+              </button>
             </div>
-          </fieldset>
-          <div
-            ref={paging.ref}
-            className="workout-table-wrap stats-table-wrap"
-            aria-busy={(!scope && !prepareError) || result.pending}
-          >
-            <table className="workout-table stats-table">
-              <thead>
-                <tr>
-                  <SortHeader
-                    field="bucket"
-                    label={displayedGroup === "month" ? "Month" : "Year"}
-                    sort={current.sort}
-                    onSort={(field) =>
-                      updateReport({ sort: nextSort(current.sort, field), page: 1 })
-                    }
-                  />
-                  <SortHeader
-                    field="allTime"
-                    label={METRIC_LABELS.all_time}
-                    sort={current.sort}
-                    onSort={(field) =>
-                      updateReport({ sort: nextSort(current.sort, field), page: 1 })
-                    }
-                  />
-                  <SortHeader
-                    field="pastYear"
-                    label={METRIC_LABELS.past_year}
-                    help={"Includes first visits and return\nvisits after more than one year"}
-                    sort={current.sort}
-                    onSort={(field) =>
-                      updateReport({ sort: nextSort(current.sort, field), page: 1 })
-                    }
-                  />
-                </tr>
-              </thead>
-              <tbody>
-                {/* Positional rows stay mounted while grouping or paging replaces their values. */}
-                {data?.items.map((bucket, index) => (
-                  <tr key={index}>
-                    <td>{statsBucketLabel(bucket.bucketStart, displayedGroup)}</td>
-                    {(["all_time", "past_year"] as const).map((metric) => {
-                      const count = metric === "all_time" ? bucket.allTime : bucket.pastYear;
-                      return (
-                        <td key={metric} className={count ? "stats-count-cell" : undefined}>
-                          {count ? (
-                            <button
-                              type="button"
-                              className="stats-count-link"
-                              disabled={!scope || result.pending || !result.current}
-                              aria-label={`${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket.bucketStart, displayedGroup)}: ${count.toLocaleString()}`}
-                              onClick={(event) =>
-                                setDialog({
-                                  bucket: bucket.bucketStart,
-                                  metric,
-                                  count,
-                                  trigger: event.currentTarget,
-                                })
-                              }
-                            >
-                              {count.toLocaleString()}
-                            </button>
-                          ) : (
-                            <span className="stats-zero">0</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-                {data && (
-                  <PageSpacer pagination={data.pagination} items={data.items.length} columns={3} />
-                )}
-                {!data && (
-                  <tr className="stats-state-row">
-                    <td colSpan={3} role={prepareError || result.error ? undefined : "status"}>
-                      {prepareError || result.error
-                        ? "Report unavailable."
-                        : "Loading new coverage..."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {data && (
-            <PageNavigation
-              value={data.pagination}
-              label="New Coverage pages"
-              keyboardDefault
-              busy={result.pending || !result.current}
-              unavailable={Boolean(result.error) && !result.current}
-              onPage={(page) => {
-                paging.capture();
-                updateReport({ page });
-              }}
-            />
           )}
-        </div>
-        {visibleReportError && visibleReportError === reportError && (
-          <div className="map-banner stats-report-feedback" role="alert">
-            <span>{visibleReportError}</span>
-            <button
-              className="secondary"
-              onClick={() => {
-                if (prepareError) {
-                  renewals.current = 0;
-                  window.clearTimeout(renewalTimer.current);
-                  renewalTimer.current = undefined;
-                  setScopeAttempt((value) => value + 1);
-                } else setRefresh((value) => value + 1);
-              }}
+          {consistencyVisited.current && (
+            <div
+              hidden={coverageSelected}
+              inert={coverageSelected}
+              className="consistency-report-container"
             >
-              Retry
-            </button>
+              <ConsistencyReport
+                accountKey={accountKey}
+                preferences={preferences}
+                dateRange={dateRange}
+                deletionRevision={deletionRevision}
+                pollingIntervalSeconds={pollingIntervalSeconds}
+                active={!coverageSelected}
+                state={state.consistency}
+                onChange={(consistency) => onStateChange((old) => ({ ...old, consistency }))}
+              />
+            </div>
+          )}
+          <div hidden={!coverageSelected} inert={!coverageSelected} className="new-coverage-report">
+            <div className="stats-table-frame" data-paging-region>
+              <fieldset className="stats-grouping">
+                <legend>Show new visits by</legend>
+                <div className="map-mode-controls stats-group-buttons">
+                  {(["month", "year"] as const).map((group) => (
+                    <button
+                      key={group}
+                      type="button"
+                      aria-pressed={current.groupBy === group}
+                      onClick={() => selectGrouping(group)}
+                    >
+                      {group === "month" ? "Month" : "Year"}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+              <div
+                ref={paging.ref}
+                className="workout-table-wrap stats-table-wrap"
+                aria-busy={(!scope && !prepareError) || result.pending}
+              >
+                <table className="workout-table stats-table">
+                  <thead>
+                    <tr>
+                      <SortHeader
+                        field="bucket"
+                        label={displayedGroup === "month" ? "Month" : "Year"}
+                        sort={current.sort}
+                        onSort={(field) =>
+                          updateReport({ sort: nextSort(current.sort, field), page: 1 })
+                        }
+                      />
+                      <SortHeader
+                        field="allTime"
+                        label={METRIC_LABELS.all_time}
+                        sort={current.sort}
+                        onSort={(field) =>
+                          updateReport({ sort: nextSort(current.sort, field), page: 1 })
+                        }
+                      />
+                      <SortHeader
+                        field="pastYear"
+                        label={METRIC_LABELS.past_year}
+                        help={"Includes first visits and return\nvisits after more than one year"}
+                        sort={current.sort}
+                        onSort={(field) =>
+                          updateReport({ sort: nextSort(current.sort, field), page: 1 })
+                        }
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Positional rows stay mounted while grouping or paging replaces their values. */}
+                    {data?.items.map((bucket, index) => (
+                      <tr key={index}>
+                        <td>{statsBucketLabel(bucket.bucketStart, displayedGroup)}</td>
+                        {(["all_time", "past_year"] as const).map((metric) => {
+                          const count = metric === "all_time" ? bucket.allTime : bucket.pastYear;
+                          return (
+                            <td key={metric} className={count ? "stats-count-cell" : undefined}>
+                              {count ? (
+                                <button
+                                  type="button"
+                                  className="stats-count-link"
+                                  disabled={!scope || result.pending || !result.current}
+                                  aria-label={`${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket.bucketStart, displayedGroup)}: ${count.toLocaleString()}`}
+                                  onClick={(event) =>
+                                    setDialog({
+                                      bucket: bucket.bucketStart,
+                                      metric,
+                                      count,
+                                      trigger: event.currentTarget,
+                                    })
+                                  }
+                                >
+                                  {count.toLocaleString()}
+                                </button>
+                              ) : (
+                                <span className="stats-zero">0</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                    {data && (
+                      <PageSpacer
+                        pagination={data.pagination}
+                        items={data.items.length}
+                        columns={3}
+                      />
+                    )}
+                    {!data && (
+                      <tr className="stats-state-row">
+                        <td colSpan={3} role={prepareError || result.error ? undefined : "status"}>
+                          {prepareError || result.error
+                            ? "Report unavailable."
+                            : "Loading new coverage..."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {data && (
+                <PageNavigation
+                  value={data.pagination}
+                  label="New Coverage pages"
+                  keyboardDefault
+                  busy={result.pending || !result.current}
+                  unavailable={Boolean(result.error) && !result.current}
+                  onPage={(page) => {
+                    paging.capture();
+                    updateReport({ page });
+                  }}
+                />
+              )}
+            </div>
+            {visibleReportError && visibleReportError === reportError && (
+              <div className="map-banner stats-report-feedback" role="alert">
+                <span>{visibleReportError}</span>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    if (prepareError) {
+                      renewals.current = 0;
+                      window.clearTimeout(renewalTimer.current);
+                      renewalTimer.current = undefined;
+                      setScopeAttempt((value) => value + 1);
+                    } else setRefresh((value) => value + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </section>
+        </section>
+      </div>
       <CustomDateRangeDialog
         open={customOpen}
         onOpenChange={setCustomOpen}
         range={dateRange}
         onApply={(next) => void selectRange(next)}
       />
-      {dialog && scope && (
+      {dialog && scope && coverageSelected && (
         <NewVisitsDialog
           key={`${scope.id}:${dialog.bucket}:${dialog.metric}`}
           scope={scope}

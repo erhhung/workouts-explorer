@@ -1,6 +1,13 @@
 import * as Popover from "@radix-ui/react-popover";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTabActive } from "./RetainedTab";
+import {
+  captureContentScroll,
+  currentContentScroll,
+  restoreContentScroll,
+  type ContentScrollPosition,
+} from "./contentScroll";
 import type { MapWorkoutTarget } from "./routeNavigation";
 import {
   type CSSProperties,
@@ -64,6 +71,25 @@ const RETRY_EXPLANATIONS = {
 };
 
 type RetryUnavailableReason = keyof typeof RETRY_EXPLANATIONS;
+
+function jobActionPolicy(job: JobDetail, blockedReason?: RetryUnavailableReason) {
+  const deletion = job.operation === "workout_deletion",
+    coverage = job.operation === "coverage_update";
+  const superseded = coverage && job.displayStatus === "superseded";
+  return {
+    cancel: !deletion && ACTIVE_STATUSES.has(job.status),
+    retry:
+      RETRYABLE_STATUSES.has(job.status) &&
+      !job.latestRetryJobId &&
+      (!coverage || !job.parentJobId),
+    retryDisabled:
+      !deletion &&
+      (superseded ||
+        (RETRYABLE_STATUSES.has(job.status) &&
+          (job.retryEligibility?.canRetry === false || blockedReason !== undefined))),
+    retryLabel: deletion ? "Retry deletion" : "Retry run",
+  };
+}
 
 function retryBlockedReason(error: ApiError): RetryUnavailableReason | undefined {
   const prefix = "https://workouts-explorer.invalid/problems/coverage-retry/";
@@ -579,14 +605,16 @@ function ArtifactDisclosure({
   preferences,
   filesFailed = 0,
   jobStatus,
+  active = true,
 }: {
   jobId: string;
   kind: ArtifactKind;
   preferences: Preferences;
   filesFailed?: number;
   jobStatus?: JobStatus;
+  active?: boolean;
 }) {
-  const tabActive = useTabActive();
+  const tabActive = useTabActive() && active;
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -601,7 +629,7 @@ function ArtifactDisclosure({
   const paginationRef = useRef<HTMLElement>(null);
   const fullPageHeight = useRef(0);
   const pendingScroll = useRef<
-    { page: number; x: number; y: number; paginationTop?: number; restore: boolean } | undefined
+    (ContentScrollPosition & { page: number; paginationTop?: number; restore: boolean }) | undefined
   >(undefined);
   const [resultsMinHeight, setResultsMinHeight] = useState<number>();
   const label = kind[0].toUpperCase() + kind.slice(1);
@@ -690,8 +718,7 @@ function ArtifactDisclosure({
     const pagination = paginationRef.current?.getBoundingClientRect();
     pendingScroll.current = {
       page: nextPage,
-      x: window.scrollX,
-      y: window.scrollY,
+      ...captureContentScroll(resultsRef.current),
       paginationTop: pagination?.height ? pagination.top : undefined,
       restore: true,
     };
@@ -745,9 +772,9 @@ function ArtifactDisclosure({
       const pagination = paginationRef.current?.getBoundingClientRect();
       const y =
         pending.paginationTop !== undefined && pagination?.height
-          ? window.scrollY + pagination.top - pending.paginationTop
+          ? currentContentScroll(pending).y + pagination.top - pending.paginationTop
           : pending.y;
-      window.scrollTo(pending.x, y);
+      restoreContentScroll(pending, y);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
@@ -875,6 +902,167 @@ function ArtifactDisclosure({
   );
 }
 
+function JobHistoryActions({
+  job,
+  enabled,
+  busy,
+  blockedRetry,
+  onView,
+  onCancel,
+  onRetry,
+}: {
+  job: JobSummary;
+  enabled: boolean;
+  busy: boolean;
+  blockedRetry: { jobId: string; reason: RetryUnavailableReason; dataUpdateCount: number } | null;
+  onView: (id: string) => void;
+  onCancel: (job: JobDetail) => void;
+  onRetry: (job: JobDetail) => void;
+}) {
+  const [requested, setRequested] = useState(false),
+    [prepared, setPrepared] = useState<
+      { job: JobDetail; policy: ReturnType<typeof jobActionPolicy> } | { error: true }
+    >(),
+    trigger = useRef<HTMLButtonElement>(null),
+    client = useQueryClient();
+  const version = useRef(0),
+    available = useRef(enabled && !busy);
+  available.current = enabled && !busy;
+  function close() {
+    version.current++;
+    setRequested(false);
+    setPrepared(undefined);
+  }
+  async function prepare() {
+    if (!available.current) return;
+    const current = ++version.current;
+    setRequested(true);
+    setPrepared(undefined);
+    try {
+      const detail = await client.fetchQuery({
+        queryKey: ["job", job.id],
+        staleTime: 0,
+        retry: false,
+        queryFn: async ({ signal }) => {
+          const result = await api<JobDetail>(`/api/jobs/${encodeURIComponent(job.id)}`, {
+            signal,
+          });
+          if (result.id !== job.id) throw new Error("Run identity changed");
+          return result;
+        },
+      });
+      if (current !== version.current || !available.current) return;
+      const count = client.getQueryState(["job", job.id])?.dataUpdateCount ?? 0;
+      const blocked =
+        blockedRetry?.jobId === job.id &&
+        (!detail.retryEligibility || count <= blockedRetry.dataUpdateCount)
+          ? blockedRetry.reason
+          : undefined;
+      setPrepared({ job: detail, policy: jobActionPolicy(detail, blocked) });
+    } catch {
+      if (current === version.current && available.current) setPrepared({ error: true });
+    }
+  }
+  useEffect(() => {
+    if (!enabled || busy) close();
+  }, [enabled, busy]);
+  useEffect(
+    () => () => {
+      version.current++;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!requested || prepared) return;
+    const outside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && trigger.current?.contains(event.target))) close();
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("keydown", escape);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", close);
+    };
+  }, [requested, prepared]);
+  const action = prepared && "job" in prepared ? prepared : undefined;
+  return (
+    <span
+      className="history-action-control"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <DropdownMenu.Root
+        open={requested && enabled && Boolean(prepared)}
+        onOpenChange={(open) => {
+          if (open) void prepare();
+          else close();
+        }}
+      >
+        <DropdownMenu.Trigger
+          ref={trigger}
+          className="workout-action-trigger"
+          disabled={!enabled || busy}
+          aria-busy={requested && !prepared}
+          aria-label={`Actions for ${historyOperation(job)} ${job.id.slice(0, 8)} on ${job.startedAt ?? job.createdAt}`}
+        >
+          <span aria-hidden="true">...</span>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="menu-content workout-action-menu history-action-menu"
+            align="end"
+            sideOffset={6}
+            collisionPadding={{ left: 1, top: 5, bottom: 5 }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (trigger.current?.isConnected && enabled) {
+                const target = trigger.current.disabled
+                  ? trigger.current.closest<HTMLElement>(".history-job-row,.history-job-card")
+                  : trigger.current;
+                target?.focus({ preventScroll: true });
+              }
+            }}
+          >
+            <DropdownMenu.Item onSelect={() => onView(job.id)}>View detail</DropdownMenu.Item>
+            {prepared && "error" in prepared && (
+              <DropdownMenu.Item
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void prepare();
+                }}
+              >
+                Reload actions
+              </DropdownMenu.Item>
+            )}
+            {action?.policy.cancel && (
+              <DropdownMenu.Item
+                className="danger-item"
+                disabled={busy || action.job.cancelRequested}
+                onSelect={() => onCancel(action.job)}
+              >
+                {action.job.cancelRequested ? "Cancelling..." : "Cancel run"}
+              </DropdownMenu.Item>
+            )}
+            {action?.policy.retry && (
+              <DropdownMenu.Item
+                disabled={busy || action.policy.retryDisabled}
+                onSelect={() => onRetry(action.job)}
+              >
+                {action.policy.retryLabel}
+              </DropdownMenu.Item>
+            )}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </span>
+  );
+}
+
 function JobDetailCard({
   job,
   preferences,
@@ -883,6 +1071,9 @@ function JobDetailCard({
   onRetry,
   onSelectJob,
   blockedRetryReason,
+  commandPending = false,
+  readOnly = false,
+  suspendArtifacts = false,
   onShowWorkoutOnMap,
 }: {
   job: JobDetail;
@@ -892,23 +1083,24 @@ function JobDetailCard({
   onRetry: () => void;
   onSelectJob: (jobId: string) => void;
   blockedRetryReason?: RetryUnavailableReason;
+  commandPending?: boolean;
+  readOnly?: boolean;
+  suspendArtifacts?: boolean;
   onShowWorkoutOnMap: (target: MapWorkoutTarget) => void;
 }) {
   const deletion = job.operation === "workout_deletion";
   const coverage = job.operation === "coverage_update";
   const retryEligibility = coverage ? job.retryEligibility : undefined;
   const superseded = coverage && job.displayStatus === "superseded";
-  const retryBlocked =
-    superseded ||
-    (RETRYABLE_STATUSES.has(job.status) &&
-      (retryEligibility?.canRetry === false || blockedRetryReason !== undefined));
+  const policy = jobActionPolicy(job, blockedRetryReason);
+  const retryBlocked = policy.retryDisabled;
   const retryReason =
     blockedRetryReason ?? (superseded ? "already_current" : retryEligibility?.reason);
   const alreadyCurrent = retryReason === "already_current";
   const retryExplanationId = useId();
   const waitingAfterStart = coverage && job.status === "queued" && Boolean(job.startedAt);
   return (
-    <article className="sync-card job-detail-card">
+    <article className="sync-card job-detail-card" inert={readOnly}>
       <div className="sync-card-heading">
         <div>
           <p className="card-kicker">Job {job.id.slice(0, 8)}</p>
@@ -1166,38 +1358,29 @@ function JobDetailCard({
           ))}
         </section>
       )}
-      {!deletion && (ACTIVE_STATUSES.has(job.status) || RETRYABLE_STATUSES.has(job.status)) && (
+      {(policy.cancel || policy.retry) && (
         <div className="job-actions">
-          {ACTIVE_STATUSES.has(job.status) && (
+          {policy.cancel && (
             <button
               type="button"
               className="secondary danger-button"
-              disabled={busy !== null || job.cancelRequested}
+              disabled={commandPending || busy !== null || job.cancelRequested}
               onClick={onCancel}
             >
               {busy === "cancel" || job.cancelRequested ? "Cancelling..." : "Cancel run"}
             </button>
           )}
-          {RETRYABLE_STATUSES.has(job.status) &&
-            !job.latestRetryJobId &&
-            (!coverage || !job.parentJobId) && (
-              <button
-                type="button"
-                className="primary"
-                disabled={busy !== null || retryBlocked}
-                aria-describedby={retryBlocked ? retryExplanationId : undefined}
-                onClick={onRetry}
-              >
-                {busy === "retry" ? "Retrying..." : "Retry run"}
-              </button>
-            )}
-        </div>
-      )}
-      {deletion && RETRYABLE_STATUSES.has(job.status) && !job.latestRetryJobId && (
-        <div className="job-actions">
-          <button type="button" className="primary" disabled={busy !== null} onClick={onRetry}>
-            {busy === "retry" ? "Retrying..." : "Retry deletion"}
-          </button>
+          {policy.retry && (
+            <button
+              type="button"
+              className="primary"
+              disabled={commandPending || busy !== null || retryBlocked}
+              aria-describedby={retryBlocked ? retryExplanationId : undefined}
+              onClick={onRetry}
+            >
+              {busy === "retry" ? "Retrying..." : policy.retryLabel}
+            </button>
+          )}
         </div>
       )}
       {!deletion && (
@@ -1209,6 +1392,7 @@ function JobDetailCard({
               kind="files"
               preferences={preferences}
               filesFailed={job.progress.filesFailed}
+              active={!suspendArtifacts}
               jobStatus={job.status}
             />
           )}
@@ -1216,12 +1400,14 @@ function JobDetailCard({
             key={`${job.id}-events`}
             jobId={job.id}
             kind="events"
+            active={!suspendArtifacts}
             preferences={preferences}
           />
           <ArtifactDisclosure
             key={`${job.id}-logs`}
             jobId={job.id}
             kind="logs"
+            active={!suspendArtifacts}
             preferences={preferences}
           />
         </div>
@@ -1338,6 +1524,13 @@ export function DataSync({
   const tabActive = useTabActive();
   const tabActiveRef = useRef(tabActive);
   tabActiveRef.current = tabActive;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const queryClient = useQueryClient();
   const [historyPage, setHistoryPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
@@ -1350,8 +1543,10 @@ export function DataSync({
   const [formErrorArea, setFormErrorArea] = useState<"sources" | "dates" | "request" | null>(null);
   const formErrorRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
+  const [detailRequest, setDetailRequest] = useState<{ id: string } | undefined>();
+  const acceptedDetail = useRef<JobDetail | undefined>(undefined);
   const historyResultsRef = useRef<HTMLDivElement>(null);
-  const pendingHistoryPageScroll = useRef<{ x: number; y: number } | undefined>(undefined);
+  const pendingHistoryPageScroll = useRef<ContentScrollPosition | undefined>(undefined);
   const [historyResultsMinHeight, setHistoryResultsMinHeight] = useState<number>();
   const [announcement, setAnnouncement] = useState("");
   const [blockedRetry, setBlockedRetry] = useState<{
@@ -1407,6 +1602,8 @@ export function DataSync({
         : false,
     refetchIntervalInBackground: false,
   });
+  if (detail.isSuccess && !detail.isFetching && detail.data?.id === effectiveJobId)
+    acceptedDetail.current = detail.data;
   const detailUpdateCount =
     queryClient.getQueryState(["job", effectiveJobId])?.dataUpdateCount ?? 0;
   const previousDetailUpdate = useRef<{ jobId: string; count: number } | undefined>(undefined);
@@ -1459,6 +1656,36 @@ export function DataSync({
     detail.data?.retryEligibility?.canRetry,
   ]);
   const detailNotFound = detail.error instanceof ApiError && detail.error.status === 404;
+  if (detailNotFound) acceptedDetail.current = undefined;
+  const displayedDetail = effectiveJobId && !detailNotFound ? acceptedDetail.current : undefined;
+  const detailReadOnly =
+    displayedDetail?.id !== effectiveJobId || Boolean(detail.error) || detail.isPending;
+  useLayoutEffect(() => {
+    if (
+      !tabActive ||
+      !detailRequest ||
+      displayedDetail?.id !== detailRequest.id ||
+      detailReadOnly ||
+      detail.isFetching
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      const element = detailRef.current;
+      if (!mounted.current || !tabActiveRef.current || !element) return;
+      element.focus({ preventScroll: true });
+      const position = captureContentScroll(element),
+        bounds = element.getBoundingClientRect(),
+        owner = position.owner;
+      const top = owner ? owner.getBoundingClientRect().top + owner.clientTop : 0,
+        bottom = owner ? top + owner.clientHeight : innerHeight;
+      if (bounds.height > 0 && (bounds.top < top || bounds.top >= bottom)) {
+        const gap = parseFloat(getComputedStyle(element).marginTop) || 0;
+        restoreContentScroll(position, position.y + bounds.top - top - gap);
+      }
+      setDetailRequest(undefined);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [tabActive, detailRequest, displayedDetail?.id, detailReadOnly, detail.isFetching]);
   useEffect(() => {
     if (tabActive && selectedJobId && detailNotFound) navigate("/data-sync", true);
   }, [tabActive, selectedJobId, detailNotFound, navigate]);
@@ -1495,7 +1722,7 @@ export function DataSync({
   });
 
   function changeHistoryPage(nextPage: number) {
-    pendingHistoryPageScroll.current = { x: window.scrollX, y: window.scrollY };
+    pendingHistoryPageScroll.current = captureContentScroll(historyResultsRef.current);
     const currentHeight = historyResultsRef.current?.getBoundingClientRect().height;
     if (currentHeight) setHistoryResultsMinHeight((height) => Math.max(height ?? 0, currentHeight));
     setHistoryPage(nextPage);
@@ -1518,21 +1745,23 @@ export function DataSync({
       return;
     const position = pendingHistoryPageScroll.current;
     pendingHistoryPageScroll.current = undefined;
-    const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+    const frame = window.requestAnimationFrame(() => restoreContentScroll(position));
     return () => window.cancelAnimationFrame(frame);
   }, [tabActive, jobs.dataUpdatedAt, jobs.isFetching, jobs.isPlaceholderData, jobs.isSuccess]);
 
   function selectJob(jobId: string, command?: string) {
-    if (tabActiveRef.current) navigate(`/data-sync/jobs/${jobId}`);
+    if (!mounted.current) return;
+    if (tabActiveRef.current) {
+      setDetailRequest({ id: jobId });
+      navigate(`/data-sync/jobs/${jobId}`);
+    }
     if (command) setAnnouncement(command);
     void queryClient.invalidateQueries({ queryKey: ["data-sync"] });
     void queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    setTimeout(() => {
-      if (tabActiveRef.current) detailRef.current?.focus();
-    });
   }
 
   async function refreshOperations(jobId?: string) {
+    if (!mounted.current) return;
     const refreshes = [
       queryClient.invalidateQueries({ queryKey: ["data-sync"] }),
       queryClient.invalidateQueries({ queryKey: ["jobs"] }),
@@ -1546,6 +1775,7 @@ export function DataSync({
       api<IngestAccepted>("/api/ingest", { method: "POST", body: JSON.stringify(body) }, csrfToken),
     onMutate: () => setAnnouncement("Starting sync..."),
     onSuccess: async (accepted) => {
+      if (!mounted.current) return;
       selectJob(
         accepted.jobId,
         accepted.reused
@@ -1594,65 +1824,85 @@ export function DataSync({
     queryClient,
   ]);
   const [commandBusy, setCommandBusy] = useState<"cancel" | "retry" | null>(null);
-  async function cancel() {
-    if (!detail.data) return;
+  const [commandJobId, setCommandJobId] = useState<string>();
+  const commandLock = useRef(false);
+  async function cancel(target: JobDetail | undefined = detail.data) {
+    if (!target || commandLock.current || !jobActionPolicy(target).cancel) return;
+    commandLock.current = true;
+    setCommandJobId(target.id);
     setCommandBusy("cancel");
     try {
       const updated = await api<JobDetail>(
-        `/api/jobs/${encodeURIComponent(detail.data.id)}/cancellation`,
+        `/api/jobs/${encodeURIComponent(target.id)}/cancellation`,
         { method: "POST", body: "{}" },
         csrfToken,
       );
-      queryClient.setQueryData(["job", detail.data.id], updated);
+      if (!mounted.current) return;
+      queryClient.setQueryData(["job", target.id], updated);
       setAnnouncement(
         ACTIVE_STATUSES.has(updated.status)
           ? "Cancellation requested."
           : `Run ${STATUS_LABELS[updated.status].toLowerCase()}.`,
       );
-      await refreshOperations(detail.data.id);
+      await refreshOperations(target.id);
     } catch (error) {
-      await refreshOperations(detail.data.id);
+      if (!mounted.current) return;
+      await refreshOperations(target.id);
       setAnnouncement(
         error instanceof ApiError && error.status === 409
           ? "The run changed before cancellation could be requested."
           : "Cancellation could not be requested.",
       );
     } finally {
+      commandLock.current = false;
       setCommandBusy(null);
+      setCommandJobId(undefined);
     }
   }
-  async function retry() {
+  async function retry(target: JobDetail | undefined = detail.data) {
+    const cached = target ? queryClient.getQueryState<JobDetail>(["job", target.id]) : undefined;
+    const blockedReason =
+      target &&
+      blockedRetry?.jobId === target.id &&
+      (!cached?.data?.retryEligibility ||
+        cached.error ||
+        (cached.dataUpdateCount ?? 0) <= blockedRetry.dataUpdateCount)
+        ? blockedRetry.reason
+        : undefined;
     if (
-      !detail.data ||
-      (detail.data.operation === "coverage_update" &&
-        (detail.data.displayStatus === "superseded" ||
-          detail.data.retryEligibility?.canRetry === false ||
-          blockedRetry?.jobId === detail.data.id))
+      !target ||
+      commandLock.current ||
+      !jobActionPolicy(target).retry ||
+      jobActionPolicy(target, blockedReason).retryDisabled
     )
       return;
+    commandLock.current = true;
+    setCommandJobId(target.id);
     setCommandBusy("retry");
     try {
       const accepted = await api<IngestAccepted>(
-        `/api/jobs/${encodeURIComponent(detail.data.id)}/retry`,
+        `/api/jobs/${encodeURIComponent(target.id)}/retry`,
         { method: "POST", body: "{}" },
         csrfToken,
       );
+      if (!mounted.current) return;
       selectJob(accepted.jobId, accepted.reused ? "Existing retry selected." : "Retry accepted.");
-      await refreshOperations(detail.data.id);
+      await refreshOperations(target.id);
     } catch (error) {
-      const updateCount = queryClient.getQueryState(["job", detail.data.id])?.dataUpdateCount ?? 0;
+      if (!mounted.current) return;
+      const updateCount = queryClient.getQueryState(["job", target.id])?.dataUpdateCount ?? 0;
       const reason =
         error instanceof ApiError && error.status === 409 ? retryBlockedReason(error) : undefined;
       if (error instanceof ApiError && error.status === 409) {
         if (reason)
           setBlockedRetry({
-            jobId: detail.data.id,
+            jobId: target.id,
             reason,
             dataUpdateCount: updateCount,
           });
       }
-      await refreshOperations(detail.data.id);
-      const refreshed = queryClient.getQueryState<JobDetail>(["job", detail.data.id]);
+      await refreshOperations(target.id);
+      const refreshed = queryClient.getQueryState<JobDetail>(["job", target.id]);
       setAnnouncement(
         reason &&
           !refreshed?.error &&
@@ -1664,7 +1914,9 @@ export function DataSync({
             : "The retry could not be started.",
       );
     } finally {
+      commandLock.current = false;
       setCommandBusy(null);
+      setCommandJobId(undefined);
     }
   }
 
@@ -1723,6 +1975,43 @@ export function DataSync({
 
   const connected = snapshot.data?.sources.filter((source) => source.status === "connected") ?? [];
   const notifications = snapshot.data?.notifications ?? [];
+  const historyReadonly =
+    !tabActive || jobs.isPlaceholderData || jobs.isPending || Boolean(jobs.error);
+  const rowClick = (event: React.MouseEvent<HTMLElement>, job: JobSummary) => {
+    if (
+      historyReadonly ||
+      event.defaultPrevented ||
+      (event.target instanceof Element && event.target.closest("button,a,[role='menuitem']"))
+    )
+      return;
+    selectJob(job.id);
+  };
+  const rowKey = (event: KeyboardEvent<HTMLElement>, job: JobSummary) => {
+    if (
+      historyReadonly ||
+      event.target !== event.currentTarget ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing ||
+      !["Enter", " "].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectJob(job.id);
+  };
+  const historyActions = (job: JobSummary) => (
+    <JobHistoryActions
+      job={job}
+      enabled={!historyReadonly}
+      busy={commandBusy !== null}
+      blockedRetry={blockedRetry}
+      onView={(id) => selectJob(id)}
+      onCancel={(job) => void cancel(job)}
+      onRetry={(job) => void retry(job)}
+    />
+  );
   return (
     <main className="data-sync-page content-background" data-app-content tabIndex={-1}>
       <ContentBackground />
@@ -2050,7 +2339,7 @@ export function DataSync({
           aria-label="Selected run"
           aria-busy={detail.isFetching}
         >
-          {detail.isPending && (
+          {detail.isPending && !displayedDetail && (
             <div className="sync-card">
               <p role="status">Loading run detail...</p>
             </div>
@@ -2060,13 +2349,25 @@ export function DataSync({
               <QueryError copy="Run detail is unavailable." retry={() => void detail.refetch()} />
             </div>
           )}
-          {detail.data && (
+          {detail.isPending && displayedDetail && (
+            <span className="visually-hidden" role="status">
+              Loading selected run...
+            </span>
+          )}
+          {displayedDetail && (
             <JobDetailCard
-              job={detail.data}
+              job={displayedDetail}
               preferences={preferences}
-              busy={commandBusy}
-              onCancel={() => void cancel()}
-              onRetry={() => void retry()}
+              busy={commandJobId === displayedDetail.id ? commandBusy : null}
+              commandPending={commandBusy !== null || detailReadOnly}
+              readOnly={detailReadOnly}
+              suspendArtifacts={displayedDetail.id !== effectiveJobId}
+              onCancel={() => {
+                if (!detailReadOnly) void cancel(displayedDetail);
+              }}
+              onRetry={() => {
+                if (!detailReadOnly) void retry(displayedDetail);
+              }}
               onSelectJob={selectJob}
               onShowWorkoutOnMap={(target) =>
                 onShowWorkoutOnMap
@@ -2074,7 +2375,7 @@ export function DataSync({
                   : navigate(`/map?workoutId=${encodeURIComponent(target.workoutId)}`)
               }
               blockedRetryReason={
-                blockedRetry && blockedRetry.jobId === detail.data.id
+                blockedRetry && blockedRetry.jobId === displayedDetail.id
                   ? blockedRetry.reason
                   : undefined
               }
@@ -2150,24 +2451,23 @@ export function DataSync({
                     </th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody inert={historyReadonly}>
                   {jobs.data.items.map((job) => (
-                    <tr key={job.id}>
+                    <tr
+                      key={job.id}
+                      className="history-job-row"
+                      tabIndex={historyReadonly ? -1 : 0}
+                      aria-label={`View detail for ${historyOperation(job)} on ${job.startedAt ?? job.createdAt}`}
+                      onClick={(event) => rowClick(event, job)}
+                      onKeyDown={(event) => rowKey(event, job)}
+                    >
                       <td>{dateTime(job.startedAt ?? job.createdAt, preferences)}</td>
                       <td>{historyOperation(job)}</td>
                       <td>{historyResults(job)}</td>
                       <td>
                         <StatusText status={job.displayStatus ?? job.status} />
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="detail-link"
-                          onClick={() => selectJob(job.id)}
-                        >
-                          View detail
-                        </button>
-                      </td>
+                      <td className="history-actions-cell">{historyActions(job)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2175,10 +2475,17 @@ export function DataSync({
             </div>
             <div className="sync-history-cards">
               {jobs.data.items.map((job) => (
-                <article key={job.id}>
+                <article
+                  key={job.id}
+                  className="history-job-card"
+                  tabIndex={historyReadonly ? -1 : 0}
+                  onClick={(event) => rowClick(event, job)}
+                  onKeyDown={(event) => rowKey(event, job)}
+                >
                   <div>
                     <time>{dateTime(job.startedAt ?? job.createdAt, preferences)}</time>
                     <StatusText status={job.displayStatus ?? job.status} />
+                    {historyActions(job)}
                   </div>
                   <dl>
                     <div>
@@ -2190,9 +2497,6 @@ export function DataSync({
                       <dd>{historyResults(job)}</dd>
                     </div>
                   </dl>
-                  <button type="button" className="detail-link" onClick={() => selectJob(job.id)}>
-                    View detail
-                  </button>
                 </article>
               ))}
             </div>

@@ -65,14 +65,15 @@ test("restores tab scroll without capturing another tab's position", () => {
       <p>Summary</p>
     </RetainedTab>,
   );
-  vi.spyOn(window, "scrollY", "get").mockReturnValue(700);
-  fireEvent.scroll(window);
+  const owner = view.container.querySelector<HTMLElement>("[data-app-scroll]")!;
+  owner.scrollTop = 700;
+  fireEvent.scroll(owner);
   view.rerender(
     <RetainedTab id="/" active={false}>
       <p>Summary</p>
     </RetainedTab>,
   );
-  vi.spyOn(window, "scrollY", "get").mockReturnValue(120);
+  owner.scrollTop = 0;
   fireEvent.scroll(window);
   scroll.mockClear();
   view.rerender(
@@ -80,5 +81,41 @@ test("restores tab scroll without capturing another tab's position", () => {
       <p>Summary</p>
     </RetainedTab>,
   );
-  expect(scroll).toHaveBeenLastCalledWith(0, 700);
+  expect(owner.scrollTop).toBe(700);
+  expect(scroll).not.toHaveBeenCalled();
+});
+
+test("restores independent Stats content and sidebar scroll owners", () => {
+  function Content() {
+    return (
+      <>
+        <aside data-app-scroll>Controls</aside>
+        <main data-app-scroll>Report</main>
+      </>
+    );
+  }
+  const view = render(
+    <RetainedTab id="/stats" active>
+      <Content />
+    </RetainedTab>,
+  );
+  const [sidebar, report] = [...view.container.querySelectorAll<HTMLElement>("[data-app-scroll]")];
+  sidebar.scrollTop = 80;
+  report.scrollTop = 900;
+  fireEvent.scroll(sidebar);
+  fireEvent.scroll(report);
+  view.rerender(
+    <RetainedTab id="/stats" active={false}>
+      <Content />
+    </RetainedTab>,
+  );
+  sidebar.scrollTop = 0;
+  report.scrollTop = 0;
+  view.rerender(
+    <RetainedTab id="/stats" active>
+      <Content />
+    </RetainedTab>,
+  );
+  expect(sidebar.scrollTop).toBe(80);
+  expect(report.scrollTop).toBe(900);
 });

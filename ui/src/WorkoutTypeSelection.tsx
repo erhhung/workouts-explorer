@@ -2,6 +2,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { MapSelectionWorkout } from "./api";
 import { Tooltip } from "./Tooltip";
+import { LONG_PRESS_DELAY } from "./interaction";
 
 const CHECKBOX_HELP =
   "Toggle checkboxes to show or hide all routes;\nclick and hold to filter routes by workout types\n(use space and down keys in keyboard mode)";
@@ -122,7 +123,7 @@ export function WorkoutTypeSelection({
                 pressTimer.current = undefined;
                 suppressClick.current = true;
                 openPicker();
-              }, 500);
+              }, LONG_PRESS_DELAY);
             }}
             onPointerLeave={cancelPress}
             onChange={() => {

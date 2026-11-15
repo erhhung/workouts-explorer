@@ -8,6 +8,11 @@ import {
   type ReactNode,
 } from "react";
 import { dismissActivePortalTooltip } from "./Tooltip";
+import {
+  captureContentScroll,
+  restoreContentScroll,
+  type ContentScrollPosition,
+} from "./contentScroll";
 
 const TabActivity = createContext(true);
 
@@ -26,23 +31,39 @@ export const RetainedTab = memo(
     children: ReactNode;
   }) {
     const [visited, setVisited] = useState(active);
-    const scroll = useRef({ x: 0, y: 0 });
+    const root = useRef<HTMLDivElement>(null);
+    const scroll = useRef(new Map<HTMLElement, ContentScrollPosition>());
     if (active && !visited) setVisited(true);
     useLayoutEffect(() => {
-      if (!active) return;
-      window.scrollTo(scroll.current.x, scroll.current.y);
-      const remember = () => {
-        scroll.current = { x: window.scrollX, y: window.scrollY };
+      const element = root.current;
+      if (!active || !element) return;
+      for (const position of scroll.current.values()) restoreContentScroll(position);
+      const remember = (event: Event) => {
+        const owner = event.target;
+        if (
+          element.hidden ||
+          !(owner instanceof HTMLElement) ||
+          !owner.matches("[data-app-scroll]")
+        )
+          return;
+        scroll.current.set(owner, captureContentScroll(owner));
       };
-      window.addEventListener("scroll", remember, { passive: true });
+      element.addEventListener("scroll", remember, { passive: true, capture: true });
       return () => {
-        window.removeEventListener("scroll", remember);
+        element.removeEventListener("scroll", remember, true);
         dismissActivePortalTooltip();
       };
     }, [active]);
     if (!visited && !active) return null;
     return (
-      <div className="tab-workspace" data-app-tab={id} hidden={!active} inert={!active}>
+      <div
+        ref={root}
+        className="tab-workspace"
+        data-app-tab={id}
+        data-app-scroll={id !== "/map" && id !== "/stats" ? "" : undefined}
+        hidden={!active}
+        inert={!active}
+      >
         <TabActivity.Provider value={active}>{children}</TabActivity.Provider>
       </div>
     );

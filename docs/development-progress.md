@@ -24,12 +24,12 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Park/education boundary correction | OSM generation 62, derivation 21 active; both account campaigns complete; the three former graph-layer failures are recovered with current generation-62 evidence |
 | Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity/Stats in 030 and the complete tile pipeline in 031 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
-| UI follow-up | Summary hover preserves standalone Alt/Command/Ctrl while live pointer and actual focus/visibility changes recover stale previews; Shift-held breakdowns, single ownership and retained tabs remain intact |
+| UI follow-up | Shared row menus use placement-aware vertical offsets: down below the trigger and up above it, preserving horizontal alignment and edge clearance |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Helm 129 rolls only UI to preserve standalone modifier hover; rebuilt API/shared-worker/OSM references, Martin, four unrelated pods and all 18 configuration tuples preserved |
+| Chart semantics | Helm 152 rolls only UI for placement-aware row-menu offsets; API/worker/OSM/Martin references, four unrelated pods and all 18 configuration tuples preserved |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 129, Summary standalone modifier hover preservation; canonical dev-20261111 tags match deployed pins; all five deployments healthy |
+| Release | Helm 152, placement-aware row-menu offsets; canonical dev-20261111 tags match deployed pins; all five deployments healthy |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
 | Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
@@ -46,8 +46,26 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [modifier-hover follow-up](#standalone-modifier-hover) owns current deployment
-status. The [window-restore follow-up](#aggregate-window-restore-recovery) retains
+The [placement-aware menu update](#placement-aware-row-menus) owns current deployment
+status. The [star and global-focus update](#smaller-stars-and-global-surface-focus-policy)
+retains its Helm-151 checkpoint. The [job/detail and chart-track update](#stable-job-details-and-linked-charts)
+retains its Helm-150 checkpoint. The [cursor/period/history update](#cursor-help-current-periods-and-history-actions)
+retains its Helm-149 checkpoint. The [fixed workspace update](#fixed-navigation-and-content-scrolling)
+retains its Helm-148 checkpoint. The [tight-scale/table-message update](#tight-scales-and-table-messages)
+retains its Helm-147 checkpoint. The [baseline correction](#consistency-zero-baseline) retains
+its Helm-146 checkpoint. The [spacing refinements](#consistency-chart-spacing) retain
+their Helm-145 checkpoint. The [chart refinements](#consistency-chart-refinements) retain
+their Helm-144 checkpoint. The [Consistency report](#consistency-report) retains its
+Helm-142/143 checkpoints. The
+[map symbol priority update](#map-text-and-symbol-priority) retains its Helm-141
+checkpoint. The [disabled-control and menu refinements](#disabled-dropdowns-and-row-menu-refinements)
+retain their Helm-139/140 checkpoints. The [Range totals refresh fade](#range-totals-refresh-fade)
+retains its Helm-137/138 checkpoints. The [heading-link hit-area correction](#workout-log-popup-link-hit-areas)
+retains its Helm-135/136 checkpoints. The [popup refinements](#workout-log-popup-and-link-hover-refinements)
+retain their Helm-133/134 checkpoints. The [height correction](#workout-log-table-height-correction)
+retains its Helm-132 checkpoint. The [filtering follow-up](#workout-log-column-filters) retains
+its Helm-130/131 checkpoints. The [modifier-hover follow-up](#standalone-modifier-hover)
+retains its Helm-129 checkpoint. The [window-restore follow-up](#aggregate-window-restore-recovery) retains
 its Helm-128 checkpoint. The [aggregate preview follow-up](#shift-held-aggregate-previews)
 retains its Helm-127 checkpoint. The [retained workspace follow-up](#retained-tab-workspaces)
 retains its Helm-126 checkpoint. The [map presentation/focus follow-up](#map-layer-presentation-and-preferences-focus)
@@ -98,6 +116,499 @@ that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
 
+## Placement-Aware Row Menus
+
+**Helm 152** keeps shared row-menu translation at **-1px/5px** below the trigger
+and uses **-1px/-5px** when Radix collision handling places it above. Matching
+top/bottom clearance prevents the visual shift from clipping the viewport edge.
+Chromium dark and WebKit light verify both placements in Summary and Task history,
+roughly 11px trigger/menu gaps within fractional-pixel rounding, unchanged horizontal
+alignment, viewport containment and normal dismissal. Build and CSS/CSP checks
+pass; the existing 967-test baseline is not a newly rerun full-suite claim.
+
+Only UI rolls. All five deployments are healthy, four other pods and all 18
+configuration tuples are preserved, both strict-TLS origins serve reviewed assets,
+and canonical **dev-20261111** tags match deployed pins. Protected receipts retain
+the four-placement matrix and build/deployment proofs.
+
+## Smaller Stars And Global Surface Focus Policy
+
+**Helm 151** fixes monthly calendar-award stars at **22px**, recalculating equal
+top/left/right margins from each bar's actual width (10px in the current 42px bar).
+The app-wide keyboard focus rule now targets native/ARIA controls and intentional
+interactive row/value targets rather than every focusable node. Large panel/card,
+section/content and dialog containers keep real programmatic focus without a huge
+outline. The standalone Run detail outline rule is removed, and the global
+container/control distinction is documented in the UI style guide.
+
+**246 focused tests**, type/build and CSS/CSP checks pass. Chromium dark and
+WebKit light verify exact star geometry, context-menu View detail landing with
+actual focus/no panel outline, preserved 3px keyboard rings on a child control,
+and no outlines on unclassified large native/ARIA container types. This is a
+focused follow-up to the 967-test full-suite baseline, not a new full-suite claim.
+
+Only UI rolls. All five deployments are healthy, four other pods and all 18
+configuration tuples are unchanged, both strict-TLS origins serve reviewed assets,
+and canonical **dev-20261111** tags match deployed pins. API/schema and job/chart
+data are unchanged. Protected receipts retain geometry/focus and rollout proofs.
+
+## Stable Job Details And Linked Charts
+
+**Helm 150** prepares fresh authoritative history-menu choices before revealing
+the popup; stale cached commands and transient loading menus never appear first.
+Pending preparation is cancellable and a completed old read cannot reopen it.
+Prepared choices remain stable for that opening, with existing command/CSRF rules.
+
+Run detail retains its accepted full-size content while another target loads,
+including stale-cache handoffs. The old card is inert, then updates in place after
+a fresh complete response. Old artifacts pause during cross-run handoffs, while
+same-job poll errors preserve manual-only Logs behavior. A selection intent lands
+the rendered detail at its content owner's top plus the panel gap when its top is
+not already visible, with native clamping on short content and no poll/tab hijack.
+
+Consistency keeps variable-width Y axes/grid origins, but compensates bar/date
+tracks to a common origin. A shared native-scroll coordinator locks every chart's
+period columns during dragging, wheel/programmatic and keyboard movement, without
+per-pixel report state. Grouping resets to the latest period; hidden sections
+rejoin the current offset. Maxima titles now use **per workout per week/month**.
+Monthly active days alone awards a calendar-perfect month with a gold star using
+two-thirds bar width and equal one-sixth top/side margins, including leap/century
+calendar rules. Current partial and weekly periods are not awarded.
+
+All **967 UI tests** pass, including prepared-menu, retained-card, shared-scroll,
+axis-padding and calendar-award regressions, plus existing artifact polling and
+request isolation. Type/build, CSS/CSP and formatting checks pass. Chromium dark
+and WebKit light measure aligned bar/label X positions and scroll offsets despite
+different axis widths, then verify shared drag/scroll, narrow layouts and 28px stars
+inside 42px bars with 7px margins. Deferred 20-to-60-to-5-route selections retain
+their old panel height until admitted, then land at the expected scroller offset.
+Menu preparation is held deliberately to prove no popup appears prematurely.
+
+Only UI rolls. All five deployments are healthy, four other pods and all 18
+configuration tuples are unchanged, both strict-TLS origins serve reviewed assets,
+and canonical **dev-20261111** tags match deployed pins. API/schema and workout
+data are unchanged. Protected receipts retain deferred-load, alignment/star,
+continuity/landing and build/deployment proofs.
+
+## Cursor Help, Current Periods And History Actions
+
+**Helm 149** completes three owner refinements. Consistency opts into the shared
+tooltip's pointer-following mode: standard initial delay, the Summary hint's
+**0.65rem** offset, coalesced position updates, no auto-hide, and immediate context/
+hover cleanup. Keyboard focus retains element anchoring. Summary's existing
+two-second mode-hint dismissal is unchanged.
+
+The Consistency API resolves range and cutoff from the same request instant,
+then bounds source dates and calendar generation to today in the resolved time
+zone. Current partial periods remain; future periods do not. The original shared
+range remains in response metadata, entirely future ranges return no buckets, and
+All time cannot bypass the date cutoff for future-dated workouts. No migration or
+historical workout rewrite is required.
+
+Task history rows/cards now support direct detail selection and keyboard entry.
+Right-aligned ellipsis controls reuse Workout log sizing, offsets and focus rules;
+table rows measure the same **53px**. A narrow action column redistributes saved
+space across the other columns. Menus lazily query the chosen parent's details and
+share Run detail's action policy, including disabled/suppressed retry and deletion
+rules. Immutable command targets, CSRF, duplicate-command fencing, cache refresh,
+and inactive/unmounted navigation guards protect asynchronous transitions. Menu
+events cannot activate the enclosing row.
+
+All **960 UI tests** pass, including eleven history-action cases, pointer-follow/
+cleanup tests and the prior scope/scroll suite. Go tests/vet, generated bindings,
+format/type/build and CSS/CSP checks pass. Disposable PostgreSQL verifies local-day
+and month/week boundaries across time zones, original-range retention, future-only
+results, and All time future-row exclusion; owned resources are cleaned afterward.
+Chromium dark and WebKit light verify actual cursor tracking and persistence,
+This year ending at the current week/month, exact row sizing, lazy command reads,
+correct-job Cancel/Retry and CSRF, and responsive menu containment with synthetic
+private APIs. No actual-account browser E2E or new capacity claim is made.
+
+Only API/UI roll. All five deployments are healthy; three other pods and all 18
+configuration tuples are unchanged. Both strict-TLS origins serve reviewed assets,
+the API binary matches its frozen build, and canonical **dev-20261111** tags match
+deployed pins. Source/schema/minimum runtime remain **31/31/31**, baseline **27**,
+ledger **0-31**. Protected receipts retain native tests, pointer/period/row geometry,
+mutations, frozen builds and rollout proofs.
+
+## Fixed Navigation And Content Scrolling
+
+**Helm 148** bounds the authenticated shell to the viewport. Header/navigation
+stays in place while Summary and Data Sync scroll their retained workspaces.
+Stats independently scrolls its report under fixed sidebar controls, with a fixed
+background surface and capped stacked controls on narrow/short screens. Map follows
+the available workspace row, retaining its renderer, camera and list behavior.
+
+Scroll surfaces are explicitly owned. RetainedTab remembers active content and
+sidebar positions independently; hidden events cannot overwrite them. The shared
+capture/restore helper retargets Summary filtering/paging, Stats tables and Data
+Sync history/artifacts from document coordinates to their nearest content owner,
+retaining the standalone window fallback. Partial-page anchor arithmetic uses the
+current owner offset, and disconnected owners cannot scroll another context.
+Task history bottom padding is **20px**, matching the outer section gap while
+retaining device safe-area accommodation.
+
+All **947 UI tests** pass, including new owner-isolation/restoration tests and the
+existing pagination, focus and resource-retention suite. Type/build and CSS/CSP
+checks pass. Chromium dark and WebKit light exercise real MapLibre/provider styles
+with synthetic private data: window scroll remains zero, the header/sidebar bounds
+stay fixed, content scroll restores across tabs, Summary/history/Files paging stays
+anchored, and the Map canvas fills its remaining viewport without camera changes.
+Short and narrow layouts remain contained. Measured history bottom spacing is
+20px within native fractional-scroll rounding, equal to its upper panel gap.
+
+Only UI rolls. All five deployments are healthy; four unrelated pods and all 18
+configuration tuples are unchanged. Both strict-TLS origins serve reviewed assets
+and canonical **dev-20261111** tags match deployed pins. Protected receipts retain
+document/content geometry, camera/scroll checks and build/deployment evidence.
+
+## Tight Scales And Table Messages
+
+**Helm 147** reduces the shared date-slot gap from 16px to **12px**, including
+measurement/virtualization arithmetic. Active days keeps its calendar bounds but
+shows only **2/4/6** weekly labels/lines and **7/14/21/28** monthly labels/lines;
+unlabeled top lines at 7/8 or 31 are not drawn.
+
+Other charts choose four equal intervals whose highest non-outlier value reaches
+**75%-100%** of the labeled maximum. Coarse steps and the former extra padding no
+longer inflate headroom. Round numeric/time steps are preferred only within that
+bound; finer second/sub-unit labels prevent zero or duplicate tick text for small
+values. Outlier screening/caps and exact zero baselines remain intact. Parameterized
+tests cover small, large, fractional and boundary peaks across all six metrics.
+
+The shared centered-table-message token is **1.1rem**, 10% larger than the prior
+dialog message font. Road Coverage and New visits loading/empty states inherit it
+through the shared viewport, and report/loading-row messages use the same token.
+This changes typography without changing frozen table capacity.
+
+**76 focused tests**, type/build, CSS/CSP and formatting checks pass. Chromium dark
+and WebKit light verify both period views: exact slot gaps, active-day lines,
+quarter-position metric lines, normal peak heights, and shared zero baselines.
+Actual New visits/report loading states and Road Coverage message-style probes
+all compute **17.6px**. The 940-test full-suite baseline is not a new rerun claim.
+Only UI rolls: all five services are healthy, four other pods and all 18
+configuration tuples remain unchanged, both strict-TLS origins serve the reviewed
+assets, and canonical **dev-20261111** tags match deployed pins. Protected receipts
+retain the scale/geometry/font matrix and rollout evidence.
+
+## Consistency Zero Baseline
+
+**Helm 146** corrects a visual defect reported for small weekly Distance bars.
+The generic `.tooltip` rule occurred later than the equally specific bar wrapper
+rule and restored `inline-flex`. Short bars then participated in a text line box:
+the prior live renderer reproduces a **10px** downward shift below the zero line.
+Scoping the chart wrapper rule under its bar target restores block layout with
+higher specificity; sums, values and scale calculations are unchanged.
+
+Chromium dark and WebKit light measure the numeric zero line, target, wrapper and
+painted fill for zero, tiny, ordinary, missing and capped values in all seven charts
+and both period groupings. Every corrected bottom matches zero within subpixel
+tolerance. The old failing baseline is retained with the corrected geometry in
+protected review storage. Build and CSS/CSP checks pass; this CSS-only fix uses
+real-renderer geometry rather than claiming a new component/full-suite run.
+
+Only UI rolls. All five deployments are healthy, four other pods and all 18
+configuration tuples are preserved, both strict-TLS origins serve the reviewed
+assets, and canonical **dev-20261111** tags match deployed pins. API/schema and
+workout data are unchanged.
+
+## Consistency Chart Spacing
+
+**Helm 145** removes the overflow-cap caption and all space reserved for it.
+Chromium dark and WebKit light measure the chart-to-panel bottom inset against
+the actual panel padding, matching the side padding in every section. The tooltip
+separator becomes one heavy dash with a regular/nonbreaking space pair on each
+side; raw accessible text verifies that spacing rather than collapsed rendering.
+Top corners become **3px**, and the gradient starts at **70%** opacity, ending at
+100%. Existing colors, caps, latest-period defaults, dragging and keyboard
+exploration remain intact.
+
+**14 focused tests**, type/build and CSS/CSP checks pass. Both browser/theme suites
+verify geometry, separator text, computed gradient/radius and existing timeline
+behavior, including narrow containment. The 940-test full-suite baseline is not a
+new rerun claim. Only UI rolls; all five deployments are healthy, four other pods
+and all 18 configuration tuples are preserved, both strict-TLS origins serve the
+reviewed assets, and canonical **dev-20261111** tags match deployed pins. Protected
+receipts retain computed styles, insets and build/deployment proofs.
+
+## Consistency Chart Refinements
+
+**Helm 144** implements the nine owner-requested chart refinements. Panel-title
+dividers are removed and disclosure markers enlarged. Bars use **#bc067a**, rounded
+top corners and a 75%-to-100% bottom/top opacity gradient; overflow caps use
+**#d70d0d**. Week/month bars share a common measured date-label slot and width.
+Weekly labels are unpadded **M/D/YY**; tooltip dates expand to unpadded four-digit
+years or full month names, separated from values by the requested heavy rule.
+
+Every chart initializes at its latest period and resets to the right edge when
+accepted grouping changes. Font/viewport measurements finish before releasing
+initial placement, including sections opened after being hidden. Later tab/report
+returns preserve manual panning. Native scrollbars are hidden in both styling
+families; a hand cursor and captured pointer drag scroll the timeline without
+selecting text or revealing stale help. Cancellation/blur releases the gesture;
+touch retains vertical scrolling/pinch zoom and keyboard Home/End/arrows remain.
+
+**75 focused tests** pass, including new latest-position, grouping-reset,
+drag/blur and retained-pan regressions. Type/build, CSS/CSP and formatting checks
+pass. The prior 940-test full-suite baseline is not a new rerun claim. Candidate
+Chromium dark and WebKit light verify all seven latest-position defaults, equal
+42px week/month bars, no native scrollbar gutters, exact colors/gradient/radii,
+hover text, drag behavior, scroll retention, overflow caps and narrow containment.
+
+Only UI rolls. All five deployments are healthy; four other pods and all 18
+configuration tuples are unchanged. Both strict-TLS origins serve reviewed assets
+and canonical **dev-20261111** tags match deployed pins. API/schema and workout
+data are unchanged; detailed browser/style/geometry and image/deploy receipts
+remain in protected review storage.
+
+## Consistency Report
+
+**Helm 142** implements the post-M9 Consistency report and API. **Helm 143** keeps
+browser/modifier/composition ownership in the period controls. Consistency is
+first/default above New Coverage, with Week/Month grouping, guarded W/M shortcuts,
+seven open-by-default disclosure panels and the shared open/close-all link style.
+New Coverage retains M/Y, its state, paging and Map handoffs, and prepares a
+Coverage scope only when explicitly selected.
+
+The seven charts show active days, duration/distance/calorie totals and their
+per-workout maxima. Sections share Summary's maximum content width and Data Sync
+panel composition; chart height follows the responsive Range totals card token.
+Fixed day axes and four nonzero metric ticks use Workout log formatting/units.
+Robust typical-value scales show extreme overflow as red caps while keeping full
+tooltip values. Chronological date labels, native horizontal scrolling, bounded
+bar windows and roving keyboard exploration preserve long timelines without DOM
+growth proportional to the full archive. Hidden tabs/reports pause reads/help;
+scope fences, compatible continuity and Retry retain existing privacy/UX rules.
+
+`GET /api/stats/consistency` uses one repeatable-read owner snapshot for exact
+aggregates and zero-filled local-date calendar buckets. Partial edges are range
+filtered before grouping; active days deduplicate same-date workouts. Missing
+metrics are unavailable, empty totals zero, and undated All time workouts are
+reported separately. It does not create map/Coverage capabilities or change
+schema. Extreme response ranges receive bounded 422 errors rather than truncation.
+
+Verification includes **940 passing UI tests**, Go tests/vet, generated bindings,
+type/build, CSS/CSP and formatting checks. Fresh disposable PostgreSQL tests prove
+exact sums/maxima, weekly/monthly boundaries, preferred weekday, DST-local dates,
+partial/empty buckets, missing units, undated-workout treatment, owner isolation
+and response limits. The owned database/proxy were removed and the cluster stopped.
+Final keyboard refinements pass **39 targeted tests** against that full-suite
+baseline. Candidate Chromium dark/WebKit light review verifies seven 1440px panels
+and 204px chart viewports against 136px Summary cards, required ticks, bar widths,
+red caps, delayed help, final-period scrolling, report/tab retention, preferred
+units and narrow containment using synthetic private APIs. No actual-account E2E
+or new capacity-certification claim is made.
+
+All five deployments are healthy. The initial release rolls only API/UI and
+preserves three unrelated pods; the keyboard follow-up rolls only UI and preserves
+four. All 18 configuration tuples stay unchanged. Both strict-TLS origins serve
+reviewed assets; the API binary matches its frozen build; canonical
+**dev-20261111** tags match deployed pins with no review aliases. Source/schema/
+minimum runtime remain **31/31/31**, baseline **27**, ledger **0-31**. Protected
+receipts retain native tests, browser geometry, frozen builds and rollout proofs.
+
+## Map Text And Symbol Priority
+
+**Helm 141** updates the shared style-transform/live-reconciliation policy after
+owner review: provider geometry, background paths, focused paths, directional
+markers, provider text/symbols, endpoints, then the temporary blink (bottom-to-top).
+Directions now directly follow focused geometry; existing provider symbol order,
+label styling/visibility, path/marker opacity and endpoint/blink priority remain
+intact. Reconciliation remains a no-op for an already-correct stack.
+
+All **308 focused map tests** pass, including the revised diagnostic-transition
+and shared ordering expectations. Type/build, Map CSS and CSP checks pass.
+Chromium dark and WebKit light use real MapLibre/provider styles with synthetic
+private data to verify all three configured families, Routes, focused production
+Coverage, diagnostics, style reload, Space, endpoint order and topmost blink.
+Each browser records nine layer snapshots; camera state remains unchanged across
+style/mode transitions and narrow containment still passes. This does not claim
+actual-account browser E2E or a new full UI-suite run.
+
+Only UI rolls. All five deployments are healthy; four other pods and all 18
+configuration tuples are preserved. Both strict-TLS origins serve the reviewed
+assets and canonical **dev-20261111** tags match deployed pins. API/schema and
+workout data are unchanged. Detailed renderer snapshots, source/image proofs and
+deployment receipts remain in protected review storage.
+
+## Disabled Dropdowns And Row Menu Refinements
+
+**Helm 139** first moves the Workout log ellipsis popup down 3px, preserving
+keyboard dismissal/focus return and viewport collision handling. **Helm 140**
+adds another 2px down and 1px left: total translation is 5px down/1px left, with
+corresponding edge clearance. Chromium dark and WebKit light verify both ordinary
+and above-trigger placement, including the exact horizontal shift.
+
+Helm 140 also shares disabled-chevron colors across range, account, preference
+and native-select dropdown styles. Native, ARIA and headless-widget disabled states
+mute their indicators and use a default cursor; enabled colors restore unchanged.
+All six numeric Workout log filters now mute their minimum/maximum slider labels
+alongside the existing disabled controls and current value. Both browser/theme
+checks exercise disable/enable/disable, the three real dropdown trigger families,
+and native select styling. Type/build, CSS/CSP, formatting and asset checks pass.
+No new full-suite run is claimed for these focused visual refinements.
+
+Both releases roll only UI. All five deployments are healthy, four other pods and
+all 18 configuration tuples are preserved, and both strict-TLS origins serve the
+reviewed assets. Canonical **dev-20261111** tags match deployed pins. Protected
+receipts retain the state-color matrix, exact menu geometry and deployment proofs.
+
+## Range Totals Refresh Fade
+
+**Current: Helm 138**, after owner clarification. Range totals starts at **30%
+opacity** and reaches full opacity over **500ms** using `steps(10, end)`: one
+seven-percentage-point increase every **50ms**. Chromium dark and WebKit light
+verify the declared duration/step function and quantized, monotonic intermediate
+frame samples on a real tab return with a controlled synthetic Summary response.
+Reduced motion still sets duration to zero. Build, CSS/CSP and deployed-asset
+checks pass; this is a UI-only rollout with all five services healthy, four other
+pods and all 18 configuration tuples preserved, and canonical tags matching pins.
+
+Initially deployed **11/12/2026 at Helm 137** after owner review of the existing Summary
+refresh effect. Its former 120ms transition from 58% opacity becomes **360ms with
+ease-in-out timing from 88% opacity**, so the cards begin only slightly dimmed and
+settle more gently. The opacity state is scoped to the aggregate grid. Existing
+refresh ownership, retained-tab behavior and interactions are unchanged, and the
+reduced-motion preference makes the transition immediate.
+
+Chromium dark and WebKit light verify an actual Data Sync-to-Summary return with
+a held synthetic Summary response: busy opacity settles at 88%, response release
+produces continuous monotonically increasing intermediate opacity samples, and
+the final opacity is 100%. Both browsers report a 0.36s ease-in-out transition and
+0s duration after enabling reduced motion. Build, CSS/CSP and deployed-asset checks
+pass. This CSS-only follow-up does not rerun or claim a new full component suite.
+
+Only UI rolls. All five deployments are healthy; four unrelated pods and all 18
+configuration tuples are preserved. Both strict-TLS origins serve the reviewed
+assets and canonical **dev-20261111** tags match deployed pins. Protected receipts
+retain timing and frame samples; API/schema and workout data are unchanged.
+
+## Workout Log Popup Link Hit Areas
+
+Deployed **11/12/2026 at Helm 135** after owner review. All/None and Enable/Disable
+buttons now have a **3rem by 1rem** click target with right-aligned text on the
+title's unchanged baseline. Their tooltip wrappers use block layout and match
+the button bounds exactly, removing the inherited help-cursor area around them.
+
+**Helm 136** removes the separate Clear all filters hover-underline rule. Candidate
+Chromium dark and WebKit light verify no decoration, a pointer cursor, successful
+clearing and the unchanged disabled state. Build, CSS/CSP and deployed-asset checks
+pass; this follow-up is CSS-only and preserves all other rollout settings.
+
+Prior live browser measurements show a 21px tooltip wrapper around the old 17px
+button, with a help cursor above/below its clickable area. Corrected Chromium dark
+and WebKit light measure **48px by 16px** for each button and both wrappers. Text
+position and baseline offsets match the prior UI for every label. Edge hit tests
+reach the button with a pointer cursor, surrounding points do not use the help
+cursor, and hover-leave dismissal remains intact. Production build and CSS/CSP
+checks pass. This CSS-only change uses real-browser geometry verification; the
+prior 128 focused tests and historical 926-test full-suite baseline are not new
+rerun claims.
+
+Only UI rolls. All five deployments are healthy; four unrelated pods and all 18
+configuration tuples remain unchanged. Both strict-TLS origins serve the reviewed
+assets, and canonical **dev-20261111** tags match deployed pins. Protected review
+receipts retain prior and corrected geometry for all four labels in both themes.
+
+## Workout Log Popup And Link Hover Refinements
+
+Deployed **11/12/2026**, following owner review:
+
+- **Helm 133** moves each Workout log column popup 0.7rem down/right, makes weekday
+  and equal-width workout-type checkbox columns at least 16rem wide, and presents
+  inclusive comparisons using the single-character mathematical symbols. The
+  native HTML range input retains its keyboard/touch/snapping behavior while CSS
+  gives it an unfilled neutral track and a rounded rectangular handle.
+- **Helm 134** removes underlining from the All/None and Enable/Disable links and
+  corrects their sticky help. Popup autofocus no longer counts as mouse-independent
+  keyboard intent. Pointer exit dismisses the help even when the button keeps
+  focus; a genuine keyboard-only focus still provides help. Other tooltip surfaces
+  keep their existing default focus/hover-overlap behavior.
+- **128 focused tests** pass across Summary, column filters and shared tooltips.
+  The new autofocus/hover regression fails on the prior behavior and passes after
+  correction, including both link labels and retained keyboard focus. The existing
+  926-test full-suite baseline is historical, not a newly rerun full-suite claim.
+  Production build, CSS/CSP, type/format and documentation checks pass.
+- Candidate Chromium dark and WebKit light verify exact popup translation, equal
+  minimum-width columns, native slider keyboard behavior with no filled-progress
+  styling, and all four link hover/leave cases without an intervening click. Full,
+  partial and zero-result table capacity, explicit Apply/Cancel, failures/retry and
+  narrow containment continue to pass with synthetic private APIs.
+
+Both rollouts change only UI. All five deployments are healthy; four unrelated
+pods and all 18 configuration tuples are preserved. Canonical **dev-20261111** tags
+match deployed pins, both strict-TLS origins serve reviewed assets, and application
+schema/minimum runtime remain **31/31** with no API or data changes. Detailed
+browser, image-publication and deployment receipts remain in protected review
+storage.
+
+## Workout Log Table Height Correction
+
+Owner review identified excess blank space below a full 25-row Workout log page.
+The hidden measurement cell's padding rule had equal specificity to a later generic
+table-cell rule, so the cascade measured **69px** per row instead of the real
+**53px**. Twenty-five slots consequently reserved **400px** of excess height.
+The correction scopes measurement padding under `.workout-table`, retaining the
+normal action-cell padding and existing frozen-capacity behavior.
+
+Chromium reproduces the old mismatch. Corrected Chromium dark and WebKit light
+verify matching 53px sample/actual rows and a **1374px** frame around the **1371px** natural table
+(borders/last-row allowance only). Full, partial and zero-result filtering retains
+that correctly sized frame; the existing interaction suite also passes in both
+themes and narrow layouts. Production build, CSS/CSP and documentation checks
+pass. The existing 926-test UI baseline is retained; this CSS-only follow-up uses
+real-browser geometry checks rather than rerunning unrelated component tests.
+
+Deployed **11/12/2026 at Helm 132**, rolling only UI. All five deployments are
+healthy; the four other pods and all 18 configuration tuples are unchanged. Both
+strict-TLS origins serve the reviewed assets, and canonical **dev-20261111** tags
+match deployed pins. No API, schema or workout-data changes are required. Protected
+review receipts retain the failing baseline and corrected geometry measurements.
+
+## Workout Log Column Filters
+
+Implemented and deployed **11/12/2026** as a post-M9 Summary extension.
+
+- All eight Workout log columns have long-press filters, sharing the Map type
+  picker's 500ms duration and transactional Apply/Cancel composition. Only one
+  popup owns focus; Space/Arrow Down opens it, while click/Enter retains sorting.
+  Outside/Escape/tab exit discards drafts, including superseded-popup focus races.
+- Weekday choices follow First weekday. Alphabetical type choices come from the
+  complete unfiltered range and use at most eight rows per column. Numeric filters
+  have the specified operator order, preferred units, snap intervals, caps and
+  20rem desktop slider area. Enable/Disable remains a draft until Apply.
+- API filters intersect under account RLS before count/sort/pagination, with bound
+  parameters and strict input validation. Unfiltered type choices, maxima and
+  count remain available independently of the current filter/page. Exact pace
+  seconds-per-km/mi comparisons cross-multiply before division; native tests prove
+  equal boundaries for all four operators in both unit systems.
+- Applied filters have themed blue Font Awesome indicators. Clear all filters
+  replaces the redundant heading count and preserves sort. Paging shows filtered
+  sessions; Range totals remains range-wide. Compatible updates retain rows at
+  full opacity, freeze the unfiltered table capacity and fence old actions. Empty
+  results retain headers, centered feedback and pager placement; errors retain
+  compatible rows read-only with Retry. Narrow controls reuse the existing cards.
+- Breakdown rows now use the same subtle themed hover mixture as Workout log rows.
+
+Verification: **926 UI tests** pass; the final focused Summary/filter suite has
+**112 passing tests**. Go tests, vet, generated bindings, formatting, CSS/CSP,
+type/build and documentation checks pass. A fresh disposable PostgreSQL schema
+verifies owner reads, every column, combined/empty filters, exact comparisons and
+unfiltered metadata. Candidate Chromium dark and WebKit light exercise desktop
+and narrow layouts with synthetic private APIs, held responses and real browser
+focus/layout behavior. These checks do not claim actual-account browser E2E or
+capacity certification. The owned test database/proxy were removed and the native
+cluster stopped afterward.
+
+**Helm 130** introduced the feature; **Helm 131** adds exact displayed-unit pace
+boundaries. Both roll only API/UI. All five deployments are healthy, the other
+three pods and all **18 configuration tuples** are preserved, the deployed API
+binary matches the reviewed build, and both strict-TLS origins serve the reviewed
+assets. Canonical **dev-20261111** tags match deployed pins, with no review aliases.
+Application source/schema/minimum runtime remain **31/31/31**, baseline **27**,
+ledger **0-31**; no migration or historical workout rewrite is needed. Detailed
+browser/build/publication/deployment receipts remain in protected review storage.
+
 ## Milestone 9 Closeout
 
 **Complete and accepted 11/12/2026**, following owner review of Stats/New Coverage
@@ -134,7 +645,7 @@ and history boundaries, deduplication, count/detail/workout-target parity,
 foreign/stale scopes and the 394-query oracle across two ranges. Their original
 test counts, timings and deployment revisions remain historical checkpoints.
 
-The current [UI follow-up](#standalone-modifier-hover) has **907 passing UI tests**,
+The accepted [UI follow-up](#standalone-modifier-hover) has **907 passing UI tests**,
 successful type/build/CSS/CSP/format checks and candidate/deployed Chromium dark
 and WebKit light checks. The [retained workspace record](#retained-tab-workspaces)
 adds six-return, 500-synthetic-workout comparisons and verifies renderer/source/

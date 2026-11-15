@@ -2,6 +2,9 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+if (!document.elementFromPoint)
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
+
 Object.defineProperty(Element.prototype, "hasPointerCapture", {
   configurable: true,
   value: () => false,

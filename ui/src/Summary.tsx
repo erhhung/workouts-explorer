@@ -32,6 +32,7 @@ import {
   type WorkoutProvenanceWarning,
   type WorkoutSortDirection,
   type WorkoutSummary,
+  type WorkoutType,
 } from "./api";
 import {
   instantZone,
@@ -49,20 +50,22 @@ import { FittedAggregateValue } from "./FittedAggregateValue";
 import { PageNavigation } from "./PageNavigation";
 import { ContentBackground } from "./ContentBackground";
 import { dateTimeFormatter, numberFormatter } from "./formatters";
-
-const COLUMN_LABELS: Record<WorkoutColumn, string> = {
-  date: "Date",
-  type: "Type",
-  duration: "Duration",
-  distance: "Distance",
-  pace: "Pace",
-  calories: "Calories",
-  heartRate: "Heart rate",
-  elevationGain: "Elev gain",
-};
+import { DialogTableViewport } from "./DialogTableViewport";
+import {
+  captureContentScroll,
+  restoreContentScroll,
+  type ContentScrollPosition,
+} from "./contentScroll";
+import { WorkoutColumnFilter } from "./WorkoutColumnFilter";
+import {
+  WORKOUT_COLUMN_LABELS as COLUMN_LABELS,
+  columnFilterEnabled,
+  workoutFilterParams,
+  type ColumnFilters,
+  type NumericFilter,
+} from "./workoutFilters";
 
 const CANONICAL_COLUMNS = Object.keys(COLUMN_LABELS) as WorkoutColumn[];
-const SORTABLE_COLUMNS = new Set<WorkoutColumn>(CANONICAL_COLUMNS);
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
 
 function isDateRangeEnum(value: string): value is DateRangeEnum {
@@ -208,6 +211,8 @@ function metric(
   const display = numberFormatter(undefined, { maximumFractionDigits }).format(value);
   return includeUnit ? `${display} ${label}` : display;
 }
+
+export { metric as formatWorkoutMetric };
 
 function convertedElevation(metricValue: ExactMetric, units: Preferences["units"]) {
   let value = Number(metricValue.value);
@@ -537,6 +542,7 @@ function QueryError({ message, retry }: { message: string; retry: () => void }) 
 
 function WorkoutActions({
   workout,
+  enabled = true,
   onShowOnMap,
   onViewProvenance,
   onExportGeoJSON,
@@ -544,6 +550,7 @@ function WorkoutActions({
   onDelete,
 }: {
   workout: Workout;
+  enabled?: boolean;
   onShowOnMap?: (workoutId: string) => void;
   onViewProvenance: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
   onExportGeoJSON: (workout: Workout) => void;
@@ -551,11 +558,16 @@ function WorkoutActions({
   onDelete: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!enabled) setOpen(false);
+  }, [enabled]);
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root open={open && enabled} onOpenChange={setOpen}>
       <DropdownMenu.Trigger
         ref={triggerRef}
         className="workout-action-trigger"
+        disabled={!enabled}
         aria-label={`Actions for ${workout.type.displayName} on ${workout.localStartDate ?? "unknown date"}`}
       >
         <span aria-hidden="true">...</span>
@@ -565,6 +577,7 @@ function WorkoutActions({
           className="menu-content workout-action-menu"
           align="end"
           sideOffset={6}
+          collisionPadding={{ left: 1, top: 5, bottom: 5 }}
         >
           {workout.routePointCount >= 2 && onShowOnMap && (
             <DropdownMenu.Item onSelect={() => onShowOnMap(workout.id)}>
@@ -1099,6 +1112,11 @@ function AggregateCard({
 function WorkoutTable({
   data,
   loading = false,
+  busy,
+  filters,
+  onFilter,
+  types,
+  unfilteredTotal,
   preferences,
   sort,
   onSort,
@@ -1110,6 +1128,11 @@ function WorkoutTable({
 }: {
   data?: WorkoutList;
   loading?: boolean;
+  busy: boolean;
+  filters: ColumnFilters;
+  onFilter: (column: WorkoutColumn, filter: string[] | NumericFilter | undefined) => void;
+  types: WorkoutType[];
+  unfilteredTotal: number;
   preferences: Preferences;
   sort: { field: WorkoutColumn; direction: WorkoutSortDirection };
   onSort: (field: WorkoutColumn) => void;
@@ -1119,11 +1142,21 @@ function WorkoutTable({
   onExportPoints: (workout: Workout) => void;
   onDelete: (workout: Workout, returnFocus: HTMLButtonElement | null) => void;
 }) {
+  const tabActive = useTabActive();
+  const [openFilter, setOpenFilter] = useState<string>();
+  const tableScroll = useRef<HTMLDivElement>(null);
+  const rowPool = useRef<Workout[]>([]);
+  useEffect(() => {
+    if (!tabActive) setOpenFilter(undefined);
+  }, [tabActive]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const selectedColumns = new Set<unknown>(
     Array.isArray(preferences.workoutColumns) ? preferences.workoutColumns : [],
   );
   const workouts = data?.items ?? [];
+  if (workouts.length > 0)
+    rowPool.current = workouts.concat(rowPool.current.slice(workouts.length));
+  const rows = workouts.length > 0 ? rowPool.current : [];
   const filteredColumns = CANONICAL_COLUMNS.filter((column) => selectedColumns.has(column));
   const columns = filteredColumns.length
     ? filteredColumns
@@ -1147,105 +1180,139 @@ function WorkoutTable({
       data ? workoutColumnExtent(column, data, preferences) : undefined,
     ]),
   );
+  const header = (column: WorkoutColumn, placement: string) => {
+    const owner = `${placement}-${column}`;
+    return (
+      <WorkoutColumnFilter
+        column={column}
+        mobile={placement === "mobile"}
+        filters={filters}
+        extents={data?.columnExtents}
+        types={types}
+        preferences={preferences}
+        direction={sort.field === column ? sort.direction : undefined}
+        open={openFilter === owner}
+        canRestoreFocus={openFilter === undefined || openFilter === owner}
+        onOpenChange={(open) =>
+          setOpenFilter((current) => (open ? owner : current === owner ? undefined : current))
+        }
+        onSort={() => onSort(column)}
+        onApply={(filter) => onFilter(column, filter)}
+      />
+    );
+  };
   return (
     <>
-      <div className={`workout-table-wrap${loading ? " is-loading" : ""}`}>
-        <table className="workout-table">
-          <colgroup>
-            {columns.map((column, index) => (
-              <col key={column} style={{ width: `${columnWidths[index]}%` }} />
-            ))}
-            <col className="workout-actions-col" />
-          </colgroup>
-          <thead>
-            <tr>
-              {columns.map((column) => {
-                const selected = sort.field === column;
-                return (
-                  <th
-                    key={column}
-                    aria-sort={
-                      selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"
-                    }
-                    scope="col"
-                  >
-                    <button onClick={() => onSort(column)} disabled={!SORTABLE_COLUMNS.has(column)}>
-                      <span className="column-label">{COLUMN_LABELS[column]}</span>
-                      <span className="sort-indicator" aria-hidden="true">
-                        {selected ? (
-                          sort.direction === "asc" ? (
-                            <>&#9650;</>
-                          ) : (
-                            <>&#9660;</>
-                          )
-                        ) : (
-                          <>&#9650; &#9660;</>
-                        )}
-                      </span>
-                    </button>
-                  </th>
-                );
-              })}
-              <th className="workout-actions-heading" scope="col">
-                <span className="visually-hidden">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* Reuse page cells, but reset action menus when the workout identity changes. */}
-            {loading ? (
-              <tr className="workout-loading-row">
-                <td colSpan={columns.length + 1} role="status">
-                  Loading workouts...
-                </td>
+      <div className="mobile-workout-filters" aria-label="Workout columns">
+        {columns.map((column) => (
+          <div key={column}>{header(column, "mobile")}</div>
+        ))}
+      </div>
+      <div className="workout-log-viewport">
+        <DialogTableViewport
+          className={`workout-table-wrap${loading ? " is-loading" : ""}`}
+          rowSlots={Math.max(1, Math.min(unfilteredTotal, preferences.pageSize))}
+          scrollRef={tableScroll}
+          rowClassName="workout-row-measure"
+          rowSample={<span className="workout-row-sample">Sample workout</span>}
+          message={
+            !loading && data && workouts.length === 0
+              ? CANONICAL_COLUMNS.some((column) => columnFilterEnabled(filters, column))
+                ? "No workouts match these filters."
+                : "No workouts in this range."
+              : undefined
+          }
+          busy={busy}
+        >
+          <table className="workout-table">
+            <colgroup>
+              {columns.map((column, index) => (
+                <col key={column} style={{ width: `${columnWidths[index]}%` }} />
+              ))}
+              <col className="workout-actions-col" />
+            </colgroup>
+            <thead>
+              <tr>
+                {columns.map((column) => {
+                  const selected = sort.field === column;
+                  return (
+                    <th
+                      key={column}
+                      aria-sort={
+                        selected ? (sort.direction === "asc" ? "ascending" : "descending") : "none"
+                      }
+                      scope="col"
+                    >
+                      {header(column, "table")}
+                    </th>
+                  );
+                })}
+                <th className="workout-actions-heading" scope="col">
+                  <span className="visually-hidden">Actions</span>
+                </th>
               </tr>
-            ) : (
-              workouts.map((workout, index) => (
-                <tr key={index}>
-                  {columns.map((column) => {
-                    const hasValue = workoutHasColumnValue(column, workout);
-                    const value =
-                      isWorkoutMetricColumn(column) && !hasValue ? (
-                        <span className="workout-table-na">n/a</span>
-                      ) : (
-                        columnValue(column, workout, preferences)
-                      );
-                    const extent = columnExtents.get(column);
-                    return (
-                      <td key={column}>
-                        <div className={`workout-cell workout-cell--${column}`}>
-                          {isWorkoutMetricColumn(column) ? (
-                            <span
-                              className="workout-value-lane"
-                              data-width-sample={extent ?? "n/a"}
-                            >
-                              <span className="workout-value-content">{value}</span>
-                            </span>
-                          ) : (
-                            value
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="workout-actions-cell">
-                    <WorkoutActions
-                      key={workout.id}
-                      workout={workout}
-                      onShowOnMap={onShowOnMap}
-                      onViewProvenance={onViewProvenance}
-                      onExportGeoJSON={onExportGeoJSON}
-                      onExportPoints={onExportPoints}
-                      onDelete={onDelete}
-                    />
+            </thead>
+            <tbody inert={busy}>
+              {/* Reuse page cells, but reset action menus when the workout identity changes. */}
+              {loading ? (
+                <tr className="workout-loading-row">
+                  <td colSpan={columns.length + 1} role="status">
+                    Loading workouts...
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                rows.map((workout, index) => (
+                  <tr
+                    key={index}
+                    hidden={index >= workouts.length}
+                    inert={index >= workouts.length}
+                  >
+                    {columns.map((column) => {
+                      const hasValue = workoutHasColumnValue(column, workout);
+                      const value =
+                        isWorkoutMetricColumn(column) && !hasValue ? (
+                          <span className="workout-table-na">n/a</span>
+                        ) : (
+                          columnValue(column, workout, preferences)
+                        );
+                      const extent = columnExtents.get(column);
+                      return (
+                        <td key={column}>
+                          <div className={`workout-cell workout-cell--${column}`}>
+                            {isWorkoutMetricColumn(column) ? (
+                              <span
+                                className="workout-value-lane"
+                                data-width-sample={extent ?? "n/a"}
+                              >
+                                <span className="workout-value-content">{value}</span>
+                              </span>
+                            ) : (
+                              value
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="workout-actions-cell">
+                      <WorkoutActions
+                        key={workout.id}
+                        workout={workout}
+                        enabled={!busy}
+                        onShowOnMap={onShowOnMap}
+                        onViewProvenance={onViewProvenance}
+                        onExportGeoJSON={onExportGeoJSON}
+                        onExportPoints={onExportPoints}
+                        onDelete={onDelete}
+                      />
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </DialogTableViewport>
       </div>
-      <div className="mobile-workouts">
+      <div className="mobile-workouts" inert={busy}>
         {!loading &&
           workouts.map((workout) => {
             const isExpanded = expanded.has(workout.id);
@@ -1281,6 +1348,7 @@ function WorkoutTable({
                   </button>
                   <WorkoutActions
                     workout={workout}
+                    enabled={!busy}
                     onShowOnMap={onShowOnMap}
                     onViewProvenance={onViewProvenance}
                     onExportGeoJSON={onExportGeoJSON}
@@ -1393,6 +1461,19 @@ export function Summary({
   const page = pageState.pageSize === preferences.pageSize ? pageState.page : 1;
   const [localSort, setLocalSort] = useState<WorkoutSort>(DEFAULT_WORKOUT_SORT);
   const sort = selectedSort ?? localSort;
+  const filterScope = `${range}:${preferences.timezone}:${preferences.firstWeekday}`;
+  const [filterState, setFilterState] = useState<{ scope: string; value: ColumnFilters }>({
+    scope: filterScope,
+    value: {},
+  });
+  const filters = filterState.scope === filterScope ? filterState.value : {};
+  const filterParams = JSON.stringify(workoutFilterParams(filters));
+  const filtersEnabled = CANONICAL_COLUMNS.some((column) => columnFilterEnabled(filters, column));
+  useEffect(() => {
+    setFilterState((current) =>
+      current.scope === filterScope ? current : { scope: filterScope, value: {} },
+    );
+  }, [filterScope]);
   const [sortActivity, setSortActivity] = useState<{
     field: WorkoutColumn;
     direction: WorkoutSortDirection;
@@ -1421,7 +1502,7 @@ export function Summary({
   }, [tabActive]);
   const [showWorkoutLoading, setShowWorkoutLoading] = useState(false);
   const workoutResultsRef = useRef<HTMLDivElement>(null);
-  const pendingPageScroll = useRef<{ x: number; y: number } | undefined>(undefined);
+  const pendingPageScroll = useRef<ContentScrollPosition | undefined>(undefined);
   const [workoutResultsMinHeight, setWorkoutResultsMinHeight] = useState<number>();
   const rangeDeletionCancelRef = useRef<HTMLButtonElement>(null);
   const rangeDeletionErrorRef = useRef<HTMLParagraphElement>(null);
@@ -1511,7 +1592,7 @@ export function Summary({
     page,
     preferences.pageSize,
   ] as const;
-  const workoutQueryKey = [...workoutBaseKey, sort.field, sort.direction] as const;
+  const workoutQueryKey = [...workoutBaseKey, sort.field, sort.direction, filterParams] as const;
   const workoutsQuery = useQuery({
     enabled: tabActive,
     queryKey: workoutQueryKey,
@@ -1520,6 +1601,7 @@ export function Summary({
       params.set("page", String(page));
       params.set("pageSize", String(preferences.pageSize));
       params.set("sort", `${sort.field}:${sort.direction}`);
+      if (filterParams !== "{}") params.set("filters", filterParams);
       return api<WorkoutList>(`/api/workouts?${params}`, { signal });
     },
     placeholderData: (previousData, previousQuery) => {
@@ -1531,10 +1613,7 @@ export function Summary({
         previousKey[2] === preferences.timezone &&
         previousKey[3] === preferences.firstWeekday &&
         previousKey[5] === preferences.pageSize;
-      const sortChanged =
-        previousKey?.[workoutBaseKey.length] !== sort.field ||
-        previousKey?.[workoutBaseKey.length + 1] !== sort.direction;
-      return sameFilter && (sortChanged || previousKey?.[4] !== page) ? previousData : undefined;
+      return sameFilter ? previousData : undefined;
     },
   });
   const provenanceQuery = useQuery({
@@ -1728,14 +1807,32 @@ export function Summary({
     setPageState({ page: 1, pageSize: preferences.pageSize });
   };
   const changeWorkoutPage = (nextPage: number) => {
-    pendingPageScroll.current = { x: window.scrollX, y: window.scrollY };
+    pendingPageScroll.current = captureContentScroll(workoutResultsRef.current);
     const currentHeight = workoutResultsRef.current?.getBoundingClientRect().height;
     if (currentHeight) setWorkoutResultsMinHeight((height) => Math.max(height ?? 0, currentHeight));
     setPageState({ page: nextPage, pageSize: preferences.pageSize });
   };
+  function applyFilters(next: ColumnFilters) {
+    pendingPageScroll.current = captureContentScroll(workoutResultsRef.current);
+    const currentHeight = workoutResultsRef.current?.getBoundingClientRect().height;
+    if (currentHeight) setWorkoutResultsMinHeight((height) => Math.max(height ?? 0, currentHeight));
+    setFilterState({ scope: filterScope, value: next });
+    setPageState({ page: 1, pageSize: preferences.pageSize });
+  }
+  function updateFilter(column: WorkoutColumn, filter: string[] | NumericFilter | undefined) {
+    applyFilters({ ...filters, [column]: filter });
+  }
   const summary = summaryQuery.data;
-  const workouts = workoutsQuery.data;
+  const acceptedWorkouts = useRef<{ scope: string; data: WorkoutList } | undefined>(undefined);
+  if (workoutsQuery.isSuccess && !workoutsQuery.isPlaceholderData)
+    acceptedWorkouts.current = { scope: filterScope, data: workoutsQuery.data };
+  const workouts =
+    workoutsQuery.data ??
+    (workoutsQuery.isError && acceptedWorkouts.current?.scope === filterScope
+      ? acceptedWorkouts.current.data
+      : undefined);
   const pageNeedsCorrection = Boolean(
+    !workoutsQuery.isPlaceholderData &&
     workouts &&
     workouts.pagination.totalItems > 0 &&
     (workouts.pagination.page > workouts.pagination.totalPages || workouts.items.length === 0),
@@ -1781,7 +1878,7 @@ export function Summary({
       return;
     const position = pendingPageScroll.current;
     pendingPageScroll.current = undefined;
-    const frame = window.requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+    const frame = window.requestAnimationFrame(() => restoreContentScroll(position));
     return () => window.cancelAnimationFrame(frame);
   }, [
     tabActive,
@@ -1807,6 +1904,18 @@ export function Summary({
     setTimeout(() => provenanceReturnFocus.current?.focus());
   }, [provenanceQuery.error, provenanceWorkout]);
   const displayedWorkouts = pageNeedsCorrection ? undefined : workouts;
+  const unfilteredTotal =
+    displayedWorkouts?.filterOptions?.totalItems ??
+    Math.max(summary?.totals.count ?? 0, displayedWorkouts?.pagination.totalItems ?? 0);
+  useEffect(() => {
+    const types = displayedWorkouts?.filterOptions?.types;
+    if (filters.type && types?.length && types.every((type) => filters.type!.includes(type.id)))
+      setFilterState((current) =>
+        current.scope === filterScope
+          ? { ...current, value: { ...current.value, type: undefined } }
+          : current,
+      );
+  }, [displayedWorkouts?.filterOptions?.types, filters.type, filterScope]);
   const workoutLoadPending = workoutsQuery.isPending || pageNeedsCorrection;
   useEffect(() => {
     if (!workoutLoadPending) {
@@ -2295,7 +2404,7 @@ export function Summary({
             Workout log
           </h2>
           <div className="workout-log-actions">
-            {explicit && displayedWorkouts && displayedWorkouts.pagination.totalItems > 0 && (
+            {explicit && displayedWorkouts && unfilteredTotal > 0 && (
               <Tooltip
                 content="Delete workouts in this range"
                 portal
@@ -2325,14 +2434,14 @@ export function Summary({
                 </button>
               </Tooltip>
             )}
-            {displayedWorkouts && (
-              <span>
-                {displayedWorkouts.pagination.totalItems}{" "}
-                {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"} | page{" "}
-                {displayedWorkouts.pagination.page} of{" "}
-                {Math.max(1, displayedWorkouts.pagination.totalPages)}
-              </span>
-            )}
+            <button
+              type="button"
+              className="text-action workout-clear-filters"
+              disabled={!filtersEnabled}
+              onClick={() => applyFilters({})}
+            >
+              Clear all filters
+            </button>
           </div>
         </div>
         {workoutsQuery.isError && (
@@ -2340,12 +2449,6 @@ export function Summary({
             message="Workouts are unavailable."
             retry={() => void workoutsQuery.refetch()}
           />
-        )}
-        {displayedWorkouts && displayedWorkouts.items.length === 0 && (
-          <div className="summary-empty">
-            <strong>No workouts in this range.</strong>
-            <span>Choose another date range to continue tracing your archive.</span>
-          </div>
         )}
         {sortActivity?.state === "sorting" && (
           <p className="visually-hidden workout-sort-status" role="status">
@@ -2357,7 +2460,7 @@ export function Summary({
             Sorted by {sortActivityLabel}.
           </span>
         )}
-        {(showWorkoutLoading || (displayedWorkouts && displayedWorkouts.items.length > 0)) && (
+        {(showWorkoutLoading || displayedWorkouts) && (
           <div
             ref={workoutResultsRef}
             className="workout-results"
@@ -2365,8 +2468,22 @@ export function Summary({
             aria-busy={workoutsQuery.isFetching}
           >
             <WorkoutTable
+              key={filterScope + ":" + preferences.pageSize}
               data={displayedWorkouts}
               loading={showWorkoutLoading}
+              busy={
+                workoutsQuery.isFetching || workoutsQuery.isPlaceholderData || workoutsQuery.isError
+              }
+              filters={filters}
+              onFilter={updateFilter}
+              types={
+                displayedWorkouts?.filterOptions?.types ??
+                summary?.byType
+                  .map((entry) => entry.type)
+                  .sort((left, right) => left.displayName.localeCompare(right.displayName)) ??
+                []
+              }
+              unfilteredTotal={unfilteredTotal}
               preferences={preferences}
               sort={sort}
               onSort={updateSort}
@@ -2378,14 +2495,23 @@ export function Summary({
             />
           </div>
         )}
-        {displayedWorkouts && displayedWorkouts.pagination.totalPages > 0 && (
+        {displayedWorkouts && (
           <PageNavigation
             value={displayedWorkouts.pagination}
             label="Workout pages"
             keyboardDefault
-            busy={workoutsQuery.isFetching}
+            busy={workoutsQuery.isFetching || workoutsQuery.isError}
+            reserveTotalPages={Math.ceil(
+              (displayedWorkouts.filterOptions?.totalItems ??
+                displayedWorkouts.pagination.totalItems) / preferences.pageSize,
+            )}
             onPage={changeWorkoutPage}
-          />
+          >
+            <span>
+              {displayedWorkouts.pagination.totalItems}{" "}
+              {displayedWorkouts.pagination.totalItems === 1 ? "session" : "sessions"}
+            </span>
+          </PageNavigation>
         )}
       </section>
     </main>

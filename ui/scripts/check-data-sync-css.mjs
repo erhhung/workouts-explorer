@@ -94,8 +94,8 @@ const checks = [
       /\.artifact-group\s*\{[^}]+margin-top: var\(--space-8\)/.test(styles),
   ],
   [
-    "compact history rows",
-    /\.sync-history-table td\s*\{[^}]+height: 2\.75rem[^}]+padding-block: 0/.test(styles),
+    "Workout log-sized history rows",
+    /\.sync-history-table td\s*\{[^}]+height: 3\.25rem[^}]+padding-block: 0\.25rem/.test(styles),
   ],
   [
     "tracked history headers",
@@ -106,7 +106,10 @@ const checks = [
   [
     "compact orange filter trigger",
     /\.history-filter-trigger\.range-trigger\s*\{[^}]+min-height: 2\.75rem/.test(styles) &&
-      /\.range-trigger > span:last-child\s*\{[^}]+color: var\(--accent\)/.test(styles) &&
+      /\.range-trigger > span:last-child\s*\{[^}]+color: var\(--dropdown-chevron-color, var\(--accent\)\)/.test(
+        styles,
+      ) &&
+      styles.includes("--dropdown-chevron-color: var(--disabled)") &&
       styles.includes("--radius: 0.3rem"),
   ],
 ];

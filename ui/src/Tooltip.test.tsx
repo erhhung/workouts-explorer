@@ -24,14 +24,14 @@ function rect(x: number, y: number, width: number, height: number) {
   };
 }
 
-function setup(anchor = rect(140, 120, 20, 20)) {
+function setup(anchor = rect(140, 120, 20, 20), followPointer = false) {
   let currentAnchor = anchor;
   let bounds = rect(0, 0, 320, 240);
   vi.spyOn(window, "innerWidth", "get").mockReturnValue(320);
   vi.spyOn(window, "innerHeight", "get").mockReturnValue(240);
   const result = render(
     <div data-testid="scroller" style={{ overflow: "auto" }}>
-      <Tooltip portal content="Route readiness" label="Route status">
+      <Tooltip portal followPointer={followPointer} content="Route readiness" label="Route status">
         Ready
       </Tooltip>
     </div>,
@@ -57,6 +57,53 @@ function setup(anchor = rect(140, 120, 20, 20)) {
 }
 
 describe("Tooltip", () => {
+  test("cursor help follows with the shared card offset without auto-hiding or restarting ownership", () => {
+    vi.useFakeTimers();
+    const { trigger, bubble } = setup(undefined, true);
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
+    );
+    expect(bubble).toHaveClass("is-open");
+    expect(bubble).toHaveStyle({ left: "100px", top: "79.6px" });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 155, clientY: 135 }),
+    );
+    act(() => vi.advanceTimersByTime(20));
+    expect(bubble).toHaveStyle({ left: "105px", top: "84.6px" });
+    act(() => vi.advanceTimersByTime(6000));
+    expect(bubble).toHaveClass("is-open");
+    fireEvent.pointerLeave(trigger);
+    expect(bubble).not.toHaveClass("is-open");
+  });
+  test("cursor help keeps keyboard placement and cancels pending motion on blur or unmount", () => {
+    vi.useFakeTimers();
+    const { trigger, bubble, unmount } = setup(undefined, true);
+    fireEvent.focus(trigger);
+    expect(bubble).toHaveStyle({ left: "100px", top: "74px" });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
+    );
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 155, clientY: 135 }),
+    );
+    fireEvent(window, new Event("blur"));
+    act(() => vi.advanceTimersByTime(20));
+    expect(bubble).not.toHaveClass("is-open");
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
+    );
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 155, clientY: 135 }),
+    );
+    unmount();
+    act(() => vi.advanceTimersByTime(20));
+  });
   test("keeps default markup inline and leaves interaction to CSS", () => {
     const add = vi.spyOn(window, "addEventListener");
     const { container } = render(

@@ -109,13 +109,31 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		writeWorkoutFieldError(w, r, "sort", err.Error())
 		return
 	}
+	filters, err := parseWorkoutFilters(params.Filters)
+	if err != nil {
+		writeWorkoutFieldError(w, r, "filters", err.Error())
+		return
+	}
 
-	total, columnExtents, err := queryWorkoutColumnExtents(r.Context(), tx, resolved)
+	unfilteredTotal, columnExtents, err := queryWorkoutColumnExtents(r.Context(), tx, resolved)
 	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
 	}
-	items, err := queryWorkouts(r.Context(), tx, resolved, page, pageSize, sorts)
+	types, err := queryWorkoutFilterTypes(r.Context(), tx, resolved)
+	if err != nil {
+		writeWorkoutUnavailable(w, r)
+		return
+	}
+	total := unfilteredTotal
+	if filters.active() {
+		total, err = queryFilteredWorkoutCount(r.Context(), tx, resolved, filters)
+		if err != nil {
+			writeWorkoutUnavailable(w, r)
+			return
+		}
+	}
+	items, err := queryWorkouts(r.Context(), tx, resolved, page, pageSize, sorts, filters)
 	if err != nil {
 		writeWorkoutUnavailable(w, r)
 		return
@@ -128,6 +146,7 @@ func (s *Server) ListWorkouts(w http.ResponseWriter, r *http.Request, params gen
 		Range:         rangeResponse(resolved),
 		Pagination:    generated.Pagination{Page: page, PageSize: pageSize, TotalItems: total, TotalPages: totalPages},
 		ColumnExtents: columnExtents,
+		FilterOptions: generated.WorkoutFilterOptions{TotalItems: unfilteredTotal, Types: types},
 		Items:         items,
 	})
 }
@@ -651,8 +670,9 @@ const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_lab
 	 CASE WHEN route.maximum_altitude IS NOT NULL THEN 'm' END,
 	 trim_scale(route.fastest_kilometer_split_seconds::numeric)::text,trim_scale(route.slowest_kilometer_split_seconds::numeric)::text,
 	 trim_scale(route.fastest_mile_split_seconds::numeric)::text,trim_scale(route.slowest_mile_split_seconds::numeric)::text,
-	 COALESCE(route.point_count,0)::integer
- FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
+	 COALESCE(route.point_count,0)::integer ` + workoutFrom
+
+const workoutFrom = `FROM app.workouts w JOIN app.workout_types wt ON wt.id=w.workout_type_id
  LEFT JOIN LATERAL (SELECT
    max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
 	 max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS total_energy_value,max(unit) FILTER (WHERE metric='total_energy' AND unit='kcal') AS total_energy_unit,
@@ -663,9 +683,13 @@ const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_lab
   FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=w.id) metrics ON true
  LEFT JOIN app.workout_routes route ON route.workout_id=w.id AND route.account_id=w.account_id`
 
-func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page, pageSize int, sorts []workoutSort) ([]generated.Workout, error) {
+func queryWorkouts(ctx context.Context, tx pgx.Tx, dateRange resolvedRange, page, pageSize int, sorts []workoutSort, columnFilters ...workoutFilters) ([]generated.Workout, error) {
 	order := workoutOrderExpressions(sorts)
-	filter, arguments := dateRange.filter("w.local_start_date", 1)
+	filters := workoutFilters{}
+	if len(columnFilters) > 0 {
+		filters = columnFilters[0]
+	}
+	filter, arguments := workoutWhere(dateRange, filters)
 	query := workoutSelect + filter + ` ORDER BY ` + strings.Join(order, ",") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(arguments)+1, len(arguments)+2)
 	arguments = append(arguments, pageSize, (page-1)*pageSize)
 	rows, err := tx.Query(ctx, query, arguments...)

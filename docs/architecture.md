@@ -646,8 +646,8 @@ segments matched** tooltip. Raw-mode access and diagnostic review remain separat
 Map path presentation uses a shared 90% opacity constant and deterministic
 layer-group order, specified in the functional specification's
 [layer table](functional-spec.md#map-layer-stack-and-opacity). Provider geometry
-stays below private background/focused paths; existing provider symbols remain
-above paths, followed by arrows and endpoints, with the temporary blink last.
+stays below private background/focused paths; arrows sit directly above focused
+paths, followed by existing provider symbols and endpoints, with the temporary blink last.
 The policy preserves symbol ordering and avoids duplicate labels. Public
 `getLayersOrder`/`getLayer` APIs reconcile only misplaced layers, without style
 serialization or an extra rendering pass. Style transformation also applies the
@@ -666,8 +666,8 @@ After first activation, each keeps its React tree and DOM until the private Shel
 is disposed. Inactive workspaces are hidden and inert; their memo boundary admits
 new parent props on reveal rather than reconciling offscreen tables on every
 shell update. A lightweight activity context controls background work without
-unmounting effects that own expensive resources. Document scroll is remembered
-only by the active tab. Shell focus lookup is scoped to the active workspace;
+unmounting effects that own expensive resources. Owned content/sidebar scroll is
+remembered only by the active tab. Shell focus lookup is scoped to the active workspace;
 Map's existing canvas-readiness handoff remains the content target.
 
 MapLibre's instance, WebGL canvas, workers, images, provider resources, private
@@ -693,11 +693,55 @@ explicit-entry rule and returns to Routes on tab exit.
 Summary and Data Sync disable inactive query observers, including artifact-page
 reads; Stats pauses polling/retry timers and revalidates its retained response on
 return. Compatible rows remain mounted, with actions fenced during refresh.
-Background responses cannot move another tab's document scroll or focus, and
+Background responses cannot move another tab's owned content scroll or focus, and
 inactive Data Sync completion cannot redirect the active tab. Closing transient
 dialogs/tooltips does not clear durable tab controls, pages or disclosures.
 Confirmed logout, expiration or identity/session replacement disposes every
 workspace and MapLibre instance; no retained tab state is persisted to storage.
+
+### Viewport Shell And Scroll Ownership
+
+The authenticated shell is viewport-fixed, with an intrinsic-height header and a
+bounded remaining workspace row. The document does not scroll. Summary/Data Sync
+use their retained workspace as the content scroller; Stats keeps its sidebar
+independently bounded and scrolls the report inside a fixed background viewport.
+Narrow Stats stacks fixed controls over the scrolling report, capping controls on
+short screens. Map's stage follows the actual available row, preserving the
+renderer/camera and existing independently scrolling route controls.
+
+`data-app-scroll` identifies owned scroll surfaces. RetainedTab records their
+positions before hidden layout can reset them and restores only connected owners
+on reveal. `contentScroll` captures/restores the nearest owner for Summary paging,
+filtering, Stats paging and Data Sync history/artifacts; standalone surfaces retain
+the document fallback. Artifact partial-page anchoring uses current owner scroll
+plus the measured pager delta. Delayed replies cannot reposition inactive tabs.
+Data Sync bottom padding uses the same section-gap token as Task history's upper
+spacing, preserving safe-area accommodation.
+
+### Task History Action Ownership
+
+History uses Workout log action sizing/placement and a fixed-width action column;
+remaining column widths retain their proportions. Pointer row selection and
+Enter/Space share the detail handler, while nested menu events are isolated.
+`JobHistoryActions` fetches authoritative job detail after an open request, but
+does not show its popup until the choices are fully prepared. A request generation
+fences cancellation/context changes; the prepared snapshot keeps the visible menu
+stable. This does not require one request per row. Errors cannot offer stale commands. The same policy
+drives the selected Run detail footer and table/card menus.
+
+Cancel/Retry capture a specific parent object instead of consulting later selected
+detail, retain CSRF and server conflict handling, serialize competing commands and
+refresh the relevant caches. Accepted retries select their returned run through
+the existing navigation path. Inactive tabs cannot be focused/redirected, and
+unmounted sessions cannot apply later mutation results to the replacement shell.
+
+The detail view retains its accepted object while another selected ID is loading,
+including when that ID has stale cached data. Old content becomes inert and old
+artifact activity pauses until a fresh complete target can be admitted. Same-job
+poll errors do not toggle artifact observers or cause Logs to refetch. A deferred,
+versioned selection intent focuses the accepted detail without native scrolling,
+then anchors its top within the owning scroller at the panel gap only if needed.
+Native bounds handle short pages; ordinary polls do not create landing intents.
 
 ### Summary Aggregate Preview Ownership
 
@@ -778,6 +822,44 @@ record. The closed Preferences dialog does not enumerate and format every time
 zone during Shell page-state updates. Its options are prepared on open and
 recomputed on reopening so current-offset labels remain meaningful.
 
+### Workout Log Column Filters
+
+`WorkoutColumnFilter` reuses Radix Popover and the Map type picker's composition;
+the numeric operator menu uses the existing single-value filter menu styles and
+Radix keyboard ownership. Map and Summary share `LONG_PRESS_DELAY`. Summary owns
+one popup identity, with latest focus-return permission preventing a superseded
+popup from refocusing its header over a new popup. Draft checkbox/comparison
+state stays local until Apply. `workoutFilters` defines snap domains, preferred
+unit conversion, filter indicators and canonical API serialization.
+
+`GET /api/workouts` accepts a bounded JSON `filters` query following WorkoutFilters
+in OpenAPI. The server rejects unknown fields, invalid IDs/weekdays/operators and
+nondecimal thresholds. Comparisons use allowlisted expressions and bound numeric,
+integer-array or UUID-array parameters. They intersect with the owner/date scope
+before the identical count/page predicates, within the existing repeatable-read
+account transaction. Missing/unsupported metrics remain SQL NULL, not zero. The
+recorded local start date defines weekday filtering.
+Pace from the slider carries exact seconds per km/mi; SQL cross-multiplies duration
+and distance using the exact mile factor before division, so inclusive comparisons
+do not lose an equal-boundary workout to a rounded reciprocal conversion. The
+client retains its physical threshold across unit preference changes.
+
+`columnExtents` remains unfiltered; `filterOptions` adds the complete date-range
+type choices and unfiltered count. Neither depends on other column filters or the
+current page. Summary aggregates stay date-range-wide. No schema migration or
+database rollup change is required. Old clients can ignore the additive metadata;
+the UI retains a range-summary fallback during the API/UI rollout.
+
+Committed filters participate in the React Query key, so obsolete requests cannot
+install another filter's rows. Compatible changes retain page cells and disable
+old actions; open row menus close before pending replacement. A scoped accepted
+response is retained read-only on failure with Retry. Date/time-zone/weekday scope
+changes clear private continuity and filter state. Retained tab return preserves
+committed filters but closes drafts. `DialogTableViewport` reserves the unfiltered
+page capacity; surplus row slots hide and a zero result has a truly empty tbody,
+retained headers and a centered message. Both aggregate and table rows share the
+same themed row-hover mixture.
+
 ### Stats Reports And New Coverage (M9)
 
 This is the technical specification for the completed
@@ -794,7 +876,7 @@ GitHub publication (M13) and production hardening (M14).
 - Add Stats to the primary Summary/Map/Stats/Data Sync tab order. Reuse the Map
   sidebar frame and existing Date range picker, then a Reports navigation list.
   Report descriptors have stable IDs, displayed titles and content components;
-  `new-coverage` is the initial/default ID. Future table/chart reports register
+  `consistency` is first/default, followed by `new-coverage`. Further reports register
   here without replacing the tab shell or storing selection inside one report.
 - The signed-in parent UI frame owns active report ID and per-report state.
   New Coverage state includes Month/Year grouping, sort and page. Transient dialog
@@ -803,6 +885,9 @@ GitHub publication (M13) and production hardening (M14).
   Unknown report IDs fall back to the default; signout/account replacement clears
   private report state and cached data. Cross-session persistence of report choice
   is not required by the current feature; existing date preferences still persist.
+- Consistency owns Week/Month grouping and closed-section IDs in the frame. Its
+  mounted charts retain scroll across report switches while hidden reads/help
+  pause. Coverage scopes are created only when New Coverage is selected.
 - Summary, Map and Stats consume the same selected/resolved range and recent
   custom-range behavior. A range/grouping change resets affected report paging
   and bucket-descending sort, closes obsolete detail state and cancels requests.
@@ -834,7 +919,7 @@ GitHub publication (M13) and production hardening (M14).
   replaces cell values in place. Obsolete responses are aborted/fenced; row
   actions are blocked without native-disabled text flashing during pending work.
   Action nodes retain record-specific keys while row/cell positions are reused.
-- Shared Summary content-width tokens define Stats' centered desktop one-half-width table.
+- Shared Summary content-width tokens define New Coverage's centered desktop one-half-width table.
   Narrow layouts use the available report width so sorting-header focus targets
   fit inside the scrolling frame. Focus rings in clipped route/header controls
   are inset; sortable headers share that same treatment across all tabs/dialogs.
@@ -913,6 +998,58 @@ can turn the canonical predicate into a join filter and repeatedly scan its whol
 identity set. The native plan regression requires canonical identity in the
 metadata index condition. Live never-before-built contexts validate this cold
 path separately from warm-context or restored-database timing.
+
+#### Consistency Workout Report
+
+`GET /api/stats/consistency` reads all seven workout statistics in one owner-scoped,
+read-only repeatable-read transaction. It resolves the shared range with saved or
+explicit first-weekday semantics, filters workout-local dates before aggregation,
+and zero-fills aligned week/month buckets. Data and generated periods
+stop at today in the resolved preferred time zone, including the current partial
+period. Calendar generation and source workouts share that cutoff, including All
+time; the requested range in the response remains intact and a future-only range
+has no buckets. Supported normalized km/kcal values
+match Workout log; exact decimal sums/maxima stay strings. Undated workouts are
+excluded with an All time count; missing metrics stay null. No Coverage context,
+map selection, geometry, matcher or schema migration is involved. Responses are
+bounded to 20000 buckets and 4 MiB without silently truncating the archive.
+
+The client query key fences account/session, range, time zone, first weekday,
+deletion revision and grouping. Compatible grouping/refetches retain accepted
+charts; incompatible scopes clear them. Hidden views stop polling. Calendar
+labels, unit conversion and metric formatting are shared with established helpers.
+Chart dimensions reuse Summary content/card tokens and Data Sync panel styles.
+
+Bar windows are virtualized around the horizontal viewport with bounded overscan
+and one retained roving keyboard bar. The complete timeline still determines
+scroll width and scale. Four nonzero ticks use nice numeric/time intervals;
+median/MAD screening identifies isolated extremes before choosing the typical
+domain. Red caps preserve overflow meaning while tooltips retain uncapped values.
+Four equal metric intervals keep the highest typical value within the top quarter
+of the labeled domain. Nice steps are chosen inside that bound; finer time/sub-unit
+labels prevent duplicate or zero text when the range is small. Active-day charts
+draw only their requested labeled lines, without an extra unlabeled maximum line.
+
+A per-dataset timeline coordinator measures independent axis widths and inserts
+leading space only into bar/date tracks. Shared measured label width plus an
+integer common scroll extent avoids drift despite fractional axis metrics. Native
+scroll offsets synchronize imperatively with expected-event suppression, so drag,
+wheel and keyboard movement do not require report-wide per-pixel React updates.
+Hidden charts rejoin the current offset; grouping/range replacement resets the
+coordinator. Perfect-month markers use actual Gregorian month lengths and belong
+only to the monthly active-day chart, with accessible perfect-month wording.
+Active-day axes keep their fixed weekly/monthly limits. W/M reuse the guarded
+shortcut registry; New Coverage alone handles Y. Native/modifier/widget ownership
+is preserved in the period controls and chart navigation.
+
+Consistency chart viewports initialize at the newest period after font/width
+measurement and reset there for a new accepted grouping. A shared month/compact-
+week measurement gives both views equal bar widths. Captured pointer panning
+suppresses tooltip ownership and text selection, while hidden native scrollbars
+leave trackpad/touch and roving keyboard exploration available. Gesture cleanup
+handles cancellation, lost capture, blur and inactive views. Subsequent tab/report
+returns preserve manually chosen positions. Presentation colors, gradients,
+rounding and date/help formats are specified in the Consistency feature contract.
 
 #### Report API And Consistency
 

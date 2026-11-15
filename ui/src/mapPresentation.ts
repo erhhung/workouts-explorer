@@ -20,8 +20,8 @@ export function orderedMapLayerIds(layers: readonly Layer[], groups: MapLayerGro
     ...base.filter((layer) => layer.type !== "symbol").map((layer) => layer.id),
     ...present(groups.background),
     ...present(groups.focused),
-    ...base.filter((layer) => layer.type === "symbol").map((layer) => layer.id),
     ...present(groups.directions),
+    ...base.filter((layer) => layer.type === "symbol").map((layer) => layer.id),
     ...present(groups.endpoints),
     ...present(groups.attention),
   ];

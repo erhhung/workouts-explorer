@@ -186,6 +186,14 @@ function authenticatedFetch(
     if (path === "/api/me/preferences" && method === "GET") return json(preferences);
     if (path.startsWith("/api/summary?") && method === "GET") return json(emptySummary);
     if (path.startsWith("/api/workouts?") && method === "GET") return json(emptyWorkouts);
+    if (path.startsWith("/api/stats/consistency?") && method === "GET")
+      return json({
+        range: emptySummary.range,
+        groupBy: new URL(path, "https://test").searchParams.get("groupBy"),
+        firstWeekday: preferences.firstWeekday,
+        undatedWorkoutCount: 0,
+        buckets: [],
+      });
     if (path === "/api/data-sync" && method === "GET") return json(dataSync);
     if (path.startsWith("/api/jobs?") && method === "GET") return json(emptyJobs);
     throw new Error(`Unhandled authenticated fetch: ${method} ${path}`);
@@ -813,6 +821,7 @@ describe("authenticated shell", () => {
           }),
         );
       }
+      await user.click(await screen.findByRole("button", { name: "New Coverage" }));
       await screen.findByText("August 2026");
       await user.click(
         within(screen.getByRole("columnheader", { name: "Month" })).getByRole("button"),
@@ -956,6 +965,7 @@ describe("authenticated shell", () => {
       return undefined as unknown as Response;
     });
     renderApp("/stats");
+    await userEvent.click(await screen.findByRole("button", { name: "New Coverage" }));
     await screen.findByText("November 2026");
     const navigation = screen.getByRole("navigation", { name: "Primary" });
     expect(
@@ -2507,10 +2517,10 @@ describe("authenticated shell", () => {
     const link = within(primary).getByRole("link", { name: "Summary" });
     link.focus();
     fireEvent.keyDown(link, { key: "3" });
-    await screen.findByRole("heading", { name: "New Coverage" });
+    await screen.findByRole("heading", { name: "Consistency" });
     expect(document.querySelector(".stats-report")).toHaveFocus();
-    fireEvent.keyDown(document.activeElement!, { key: "y" });
-    expect(screen.getByRole("button", { name: "Year", pressed: true })).toHaveAttribute(
+    fireEvent.keyDown(document.activeElement!, { key: "m" });
+    expect(screen.getByRole("button", { name: "Month", pressed: true })).toHaveAttribute(
       "aria-pressed",
       "true",
     );

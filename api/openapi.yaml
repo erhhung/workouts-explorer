@@ -552,6 +552,38 @@ paths:
         '413': {$ref: '#/components/responses/Problem'}
         '415': {$ref: '#/components/responses/Problem'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/stats/consistency:
+    get:
+      operationId: getConsistencyReport
+      description: >-
+        Returns ascending zero-filled calendar week/month workout aggregates for the
+        complete selected date range, independently of Workout log filters or paging.
+        Future weeks/months are omitted: calendar generation and workout dates stop
+        at today in the resolved time zone, including the current partial period.
+        The returned selected range is not changed; entirely future ranges have no
+        buckets. Active days use distinct recorded workout-local start dates. Partial edge
+        buckets contain only in-range workouts. Weeks follow firstWeekday or the
+        saved preference. Undated workouts are excluded and counted separately for
+        All time. Missing measurements remain null, while empty bucket totals are
+        zero. All seven metrics share one owner-scoped repeatable-read snapshot.
+        At most 20000 buckets and 4 MiB are returned; larger ranges receive 422
+        without truncation. No Coverage scope or geometry is prepared.
+      tags: [stats]
+      security: [{bearerAuth: []}, {cookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/StartDate'}
+        - {$ref: '#/components/parameters/EndDate'}
+        - {$ref: '#/components/parameters/DateRangeEnum'}
+        - {$ref: '#/components/parameters/Timezone'}
+        - {name: groupBy, in: query, schema: {$ref: '#/components/schemas/ConsistencyGrouping'}}
+        - {name: firstWeekday, in: query, schema: {type: string, enum: [monday, sunday]}}
+      responses:
+        '200': {description: Consistency aggregates for the entire range, content: {application/json: {schema: {$ref: '#/components/schemas/ConsistencyReport'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /api/stats/report-scopes:
     post:
       operationId: createStatsReportScope
@@ -826,7 +858,7 @@ paths:
     get:
       operationId: listWorkouts
       description: >-
-        Lists paginated, non-hidden owned workouts in an inclusive local-start-date range. A date selector is required: supply either both `startDate` and `endDate` or `dateRangeEnum`, never both forms; optional `tz`, `page`, `pageSize`, and allowlisted `sort` terms refine the result.
+        Lists paginated, non-hidden owned workouts in an inclusive local-start-date range. A date selector is required: supply either both `startDate` and `endDate` or `dateRangeEnum`, never both forms; optional `tz`, `page`, `pageSize`, and allowlisted `sort` terms refine the result. Column filters are ANDed before counting, sorting and pagination. Filter choices, maxima and unfiltered count always describe the complete selected date range.
       tags: [workouts]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters:
@@ -837,6 +869,18 @@ paths:
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: pageSize, in: query, schema: {type: integer, minimum: 1}}
         - {name: sort, in: query, style: form, explode: true, schema: {type: array, maxItems: 8, items: {type: string, pattern: '^(date|type|duration|distance|pace|calories|heartRate|elevationGain):(asc|desc)$'}}}
+        - name: filters
+          in: query
+          description: >-
+            JSON-encoded WorkoutFilters object. Omitted properties are unrestricted;
+            empty weekdays or typeIds arrays match no workouts. Weekdays use the
+            recorded local start date (Sunday=0). Numeric thresholds use seconds
+            for duration, km for distance, min/km for pace, kcal for calories,
+            count/min for average heart rate and m for elevation gain. Pace can
+            instead specify unit s/km or s/mi for exact displayed-unit comparisons
+            without a rounded reciprocal conversion. Missing
+            measurements never satisfy an enabled comparison.
+          schema: {type: string, minLength: 2, maxLength: 16384}
       responses:
         '200': {description: Account workouts in the resolved date range, content: {application/json: {schema: {$ref: '#/components/schemas/WorkoutList'}}}}
         '400': {$ref: '#/components/responses/Problem'}
@@ -1128,6 +1172,34 @@ components:
         Retry-After: {required: true, schema: {type: integer, minimum: 1}}
       content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
   schemas:
+    ConsistencyGrouping:
+      type: string
+      enum: [week, month]
+      x-enum-varnames: [ConsistencyGroupingWeek, ConsistencyGroupingMonth]
+    ConsistencyBucket:
+      type: object
+      additionalProperties: false
+      required: [bucketStart, workoutCount, activeDays, duration, distance, calories, longestDuration, longestDistance, highestCalories]
+      properties:
+        bucketStart: {type: string, format: date}
+        workoutCount: {type: integer, format: int64, minimum: 0}
+        activeDays: {type: integer, minimum: 0, maximum: 31}
+        duration: {type: string, description: Exact total provider duration in seconds.}
+        distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        longestDuration: {type: string, nullable: true, description: Exact maximum provider duration in seconds.}
+        longestDistance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        highestCalories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+    ConsistencyReport:
+      type: object
+      additionalProperties: false
+      required: [range, groupBy, firstWeekday, undatedWorkoutCount, buckets]
+      properties:
+        range: {$ref: '#/components/schemas/ResolvedDateRange'}
+        groupBy: {$ref: '#/components/schemas/ConsistencyGrouping'}
+        firstWeekday: {type: string, enum: [monday, sunday]}
+        undatedWorkoutCount: {type: integer, format: int64, minimum: 0}
+        buckets: {type: array, maxItems: 20000, items: {$ref: '#/components/schemas/ConsistencyBucket'}}
     PublicConfig:
       type: object
       additionalProperties: false
@@ -2146,12 +2218,40 @@ components:
     WorkoutList:
       type: object
       additionalProperties: false
-      required: [range, pagination, columnExtents, items]
+      required: [range, pagination, columnExtents, filterOptions, items]
       properties:
         range: {$ref: '#/components/schemas/ResolvedDateRange'}
         pagination: {$ref: '#/components/schemas/Pagination'}
         columnExtents: {$ref: '#/components/schemas/WorkoutColumnExtents'}
+        filterOptions: {$ref: '#/components/schemas/WorkoutFilterOptions'}
         items: {type: array, items: {$ref: '#/components/schemas/Workout'}}
+    WorkoutFilterOptions:
+      type: object
+      additionalProperties: false
+      required: [totalItems, types]
+      properties:
+        totalItems: {type: integer, format: int64, minimum: 0, description: Count before column filters within the selected date range.}
+        types: {type: array, items: {$ref: '#/components/schemas/WorkoutType'}}
+    WorkoutNumericFilter:
+      type: object
+      additionalProperties: false
+      required: [operator, value]
+      properties:
+        operator: {type: string, enum: [gt, gte, lt, lte]}
+        value: {type: string, maxLength: 64, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
+        unit: {type: string, enum: [s/km, s/mi], description: Optional for pace only; value is seconds per selected distance unit.}
+    WorkoutFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        weekdays: {type: array, maxItems: 7, uniqueItems: true, items: {type: integer, minimum: 0, maximum: 6}}
+        typeIds: {type: array, maxItems: 256, uniqueItems: true, items: {$ref: '#/components/schemas/CompactUUID'}}
+        duration: {$ref: '#/components/schemas/WorkoutNumericFilter'}
+        distance: {$ref: '#/components/schemas/WorkoutNumericFilter'}
+        pace: {$ref: '#/components/schemas/WorkoutNumericFilter'}
+        calories: {$ref: '#/components/schemas/WorkoutNumericFilter'}
+        heartRate: {$ref: '#/components/schemas/WorkoutNumericFilter'}
+        elevationGain: {$ref: '#/components/schemas/WorkoutNumericFilter'}
     WorkoutProvenanceWarning:
       type: object
       additionalProperties: false

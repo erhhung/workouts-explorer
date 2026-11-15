@@ -83,7 +83,11 @@ patterns in both themes; see the [UI style guide](ui-style-guide.md).
 2. A Map-style left panel starts with the shared Date range picker, followed by
    **Reports** and selectable report titles. The current report has the existing
    magenta selection border and remains selected across tab switches.
-3. The initial **New Coverage** report offers **Show new visits by** Month or Year
+3. **Consistency** is the default report, with seven collapsible Week/Month bar
+   charts for active days, duration, distance, calories and per-workout maxima.
+   W/M changes grouping. Robust scales highlight overflow in red without losing
+   actual tooltip values; timeline scrolling and preferred units remain available.
+   **New Coverage** follows it and offers **Show new visits by** Month or Year
    and a sortable, preference-paginated table styled like Summary's Workout log.
 4. Each intersecting calendar month/year appears, newest first, including zero
    buckets. Only visits on inclusive selected dates contribute to boundary buckets.
@@ -97,7 +101,7 @@ patterns in both themes; see the [UI style guide](ui-style-guide.md).
    first-ever visits display grayed-out **n/a**, matching missing Distance values
    in the Summary Workout log. Escape closes the dialog.
 7. Reports is an extensible home for future workout, route and Coverage tables
-   and charts; New Coverage is the first report rather than a fixed one-off layout.
+   and charts; Consistency and New Coverage share the report registry.
 8. Identity-name actions switch to Map and blink the exact road/path/park group.
    In-range visit-date actions focus the actual workout and scroll it into view;
    out-of-range previous dates stay plain text. Returning restores the report's
@@ -248,6 +252,8 @@ closeout after its browser gate.
 - Primary tab order: Summary, Map, Stats, Data Sync
 - Map-style sidebar with the shared date picker above an extensible Reports list
 - Active report and report controls retained in the parent UI frame across tabs
+- Default Consistency report: seven collapsible week/month charts, complete-range
+  aggregates, preferred units, outlier caps, bounded rendering and W/M shortcuts
 - Monthly/yearly New Coverage table with sortable columns and preference page size
 - Named identities and eligibility consistent with Road Coverage, including named
   parks and education identities, deduplicated across canonical source members
