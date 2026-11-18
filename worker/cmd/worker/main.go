@@ -108,6 +108,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer osmDB.Close()
+	checksRoot := filepath.Join(cfg.StagingRoot, "connection-checks")
+	if err := workerapp.ScavengeStaging(checksRoot); err != nil {
+		return errors.New("prepare connection-check staging")
+	}
 	if err := workerapp.ConfigureFileSlotLimits(workerCtx, db, cfg.AccountConcurrency, cfg.GlobalConcurrency); err != nil {
 		return err
 	}
@@ -125,11 +129,16 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		CoverageBatchSize:          cfg.CoverageBatchSize,
 		StagingRoot:                stagingRoot,
 	})
+	checks := workerapp.NewRunnerWithOptions(db, logger, keys, cfg.LocalSourceRoots, workerapp.RunnerOptions{
+		ConnectionChecksOnly: true,
+		StagingRoot:          checksRoot,
+	})
+	deletions := workerapp.NewAccountDeletionRunner(db, logger)
 	healthHandler := workerapp.NewHandler(db, osmDB, logger)
 	server := &http.Server{
 		Addr: cfg.ListenAddress,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			if request.URL.Path == "/health/ready" && runner.StagingCleanupPending() {
+			if request.URL.Path == "/health/ready" && (runner.StagingCleanupPending() || checks.StagingCleanupPending()) {
 				http.Error(w, "Worker staging cleanup is pending.", http.StatusServiceUnavailable)
 				return
 			}
@@ -151,6 +160,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		supervisedComponent{name: "job runner", run: func(ctx context.Context) error {
 			return runner.Run(ctx)
 		}},
+		supervisedComponent{name: "source connection checks", run: func(ctx context.Context) error {
+			return checks.Run(ctx)
+		}},
+		supervisedComponent{name: "account deletions", run: deletions.Run},
 		supervisedComponent{name: "sync scheduler", run: func(ctx context.Context) error {
 			return scheduler.Run(ctx)
 		}},

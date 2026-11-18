@@ -138,7 +138,7 @@ func TestAdminPasswordIntegration(t *testing.T) {
 	if err := os.WriteFile(passwordFile, []byte(adminPassword), 0o600); err != nil {
 		t.Fatal("write synthetic private bootstrap fixture")
 	}
-	bootstrap := BootstrapAdminOptions{Username: "syntheticadmin", Email: "syntheticadmin@example.test", PasswordFile: passwordFile, PasswordMin: 12}
+	bootstrap := BootstrapAdminOptions{Username: "admin", Email: "syntheticadmin@example.test", PasswordFile: passwordFile, PasswordMin: 12}
 	if err := BootstrapAdmin(ctx, adminDB, bootstrap); err != nil {
 		t.Fatal("bootstrap synthetic administrator: ", err)
 	}
@@ -226,7 +226,12 @@ func TestAdminPasswordIntegration(t *testing.T) {
 						denied = callCookieEndpoint(http.MethodPost, "/api/admin/invitations", `{}`, token)
 					}
 					server.CreateInvitation(denied.recorder, denied.request, generated.CreateInvitationParams{})
-					if denied.recorder.Code != http.StatusForbidden {
+					wantDenial := http.StatusForbidden
+					if kind == "cookie" {
+						// Admin endpoints never consult the owner's independent cookie.
+						wantDenial = http.StatusUnauthorized
+					}
+					if denied.recorder.Code != wantDenial {
 						t.Fatal("target session acquired administrator privileges")
 					}
 					tx, err := server.accountTransaction(ctx, *session.accountID)
@@ -335,7 +340,7 @@ func TestAdminPasswordIntegration(t *testing.T) {
 		targets := []targetFixture{
 			{"active", username, false},
 			{"unknown", "unknownuser", true},
-			{"administrator", "syntheticadmin", false},
+			{"administrator", "admin", false},
 		}
 		// Create inactive fixtures once; login attempts never mutate their state.
 		for _, state := range []string{"disabled", "deleting", "deleted"} {
@@ -433,7 +438,7 @@ func TestAdminPasswordIntegration(t *testing.T) {
 			t.Run(kind+"/admin own password ignores shared exhaustion", func(t *testing.T) {
 				clearLimits()
 				exhaustShared(t)
-				call := signin(server, kind, "syntheticadmin", adminPassword)
+				call := signin(server, kind, "admin", adminPassword)
 				checkStatus(call, http.StatusCreated)
 				var session generated.TokenSession
 				if err := json.Unmarshal(call.recorder.Body.Bytes(), &session); err != nil || session.Identity.Id != compactUUID(adminID) || session.Identity.Role != "administrator" {
@@ -555,7 +560,8 @@ func TestAdminPasswordIntegration(t *testing.T) {
 		t.Run("issuance recheck/"+change, func(t *testing.T) {
 			reset()
 			rotatedHash := adminPasswordLegacyHash(rotatedPassword)
-			tracer := &adminPasswordQueryHook{match: "SELECT\n\t\t\t\tEXISTS", run: func() {
+			// Inject before the issuance fence acquires account/principal locks.
+			tracer := &adminPasswordQueryHook{match: "SELECT app.lock_signin_principal", run: func() {
 				switch change {
 				case "target disabled":
 					exec(`UPDATE app.authentication_principals SET disabled_at=transaction_timestamp() WHERE id=$1`, principal)
@@ -581,7 +587,7 @@ func TestAdminPasswordIntegration(t *testing.T) {
 		})
 	}
 
-	for _, stage := range []string{"SELECT id,password_hash", "app.consume_rate_limit('signin','subject'", "SELECT\n\t\t\t\tEXISTS", "INSERT INTO app.sessions", "authentication.admin_password_signin", "commit"} {
+	for _, stage := range []string{"SELECT id,password_hash", "app.consume_rate_limit('signin','subject'", "SELECT app.lock_signin_principal", "SELECT\n\t\t\t\tEXISTS", "INSERT INTO app.sessions", "authentication.admin_password_signin", "commit"} {
 		t.Run("database failure/"+stage, func(t *testing.T) {
 			reset()
 			tracer := &adminPasswordQueryHook{match: stage, cancel: true}

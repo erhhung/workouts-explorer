@@ -34,10 +34,10 @@ func canonicalDisplayFunctions(source string) [][]string {
 }
 
 func TestCanonicalCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 31 {
-		t.Fatalf("supported schema=%d, want 31", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 32 {
+		t.Fatalf("supported schema=%d, want 32", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("Ready must compose all previous contracts and the version-gated canonical contract")
 	}
@@ -141,7 +141,7 @@ func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 					}
 				}
 			}
-			want := fmt.Sprintf("%x", md5.Sum([]byte(body)))
+			want := fmt.Sprintf("%x", md5.Sum([]byte(accountPurgeBodyForFunction(function[1], body))))
 			var got string
 			for _, fingerprint := range fingerprints {
 				if fingerprint[1] == function[1] {

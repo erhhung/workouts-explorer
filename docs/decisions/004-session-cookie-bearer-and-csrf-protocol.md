@@ -30,8 +30,10 @@ API-token operations in the OpenAPI contract:
 | Operation | Purpose | Credential result |
 |---|---|---|
 | `POST /api/session` | Sign in a browser | Sets the session cookie and returns session metadata plus the CSRF token |
-| `GET /api/session` | Read the current session | Returns session metadata and, for cookie authentication, the CSRF token |
-| `DELETE /api/session` | Sign out the current session | Revokes the current session and clears its cookie when cookie-authenticated |
+| `GET /api/session` | Read the current owner session | Returns session metadata and, for cookie authentication, the CSRF token |
+| `DELETE /api/session` | Sign out the current owner session | Revokes the current owner session and clears its cookie when cookie-authenticated |
+| `GET /api/admin/session` | Read the current administrator session | Returns independent admin session metadata/CSRF under M10 role authorization |
+| `DELETE /api/admin/session` | Sign out the current administrator session | Revokes only that admin session and clears only its cookie |
 | `POST /api/session-tokens` | Sign in an API or Swagger client | Returns one bearer token plus session metadata and sets no cookie |
 
 - Browser signin sets a Secure, HTTP-only session cookie and returns session
@@ -85,6 +87,30 @@ configuration. Local development may disable only `Secure`; it retains
 `HttpOnly`, `SameSite=Lax`, host-only scope, and the `/` path. Production cookie
 behavior derives from validated public URL configuration rather than untrusted
 forwarded headers.
+
+### Administrator Session Separation (M10)
+
+The [admin UI decision](../admin-ui-spec.md#login-identity-and-session-separation),
+accepted 11/15/2026 and deployed in the Helm-153 foundation, extends this protocol
+without creating a second login screen or exposing browser bearer tokens:
+
+- The shared browser signin operation sets the cookie appropriate to the
+  authenticated server role: existing `workouts_session` for owners and distinct
+  `workouts_admin_session` for the reserved bootstrap administrator. It does not
+  overwrite the other role's cookie. Both retain the cookie policy above.
+- Owner current-session/signout uses `/api/session`; admin current-session/signout
+  uses `/api/admin/session`. Middleware chooses the required role's cookie
+  deterministically, including when both are sent. OpenAPI and integration tests
+  cover independent cookies, role denial, CSRF and sign-out behavior.
+- Each session has its own CSRF token. Wrong-role cookies/tokens never authenticate
+  the other surface. Explicit bearer precedence and invalid-bearer no-fallback
+  continue to apply, with authorization by the actual bearer identity's role.
+- Expiry/signout clears only the affected identity's caches and credential;
+  password change/reset revokes that identity's sessions. Concurrent personal and
+  administrative browser tabs do not share role-specific application state.
+- Successful administrator login routes to `/admin`; owner login routes to the
+  explorer. Return paths are validated for that role, and URL/username alone is
+  never authority. Shared signin remains accessible while the other role is active.
 
 ### CSRF policy
 

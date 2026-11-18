@@ -576,6 +576,18 @@ export type CoverageDiagnosticRun = Omit<CoverageDiagnosticRunThroughV60, "pathP
 };
 
 export type SourceStatus = "checking-connection" | "connected" | "connection-failed";
+export type SourceType = "health-auto-export-icloud" | "health-auto-export-local";
+export interface Source {
+  id: string;
+  displayName: string;
+  type: SourceType;
+  autoSyncEnabled: boolean;
+  status: SourceStatus;
+  generation: number;
+  config: { version: 1; path: string; clientId?: string };
+  statusCode?: string | null;
+  statusSummary?: string | null;
+}
 export type JobStatus =
   "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
 export type JobDisplayStatus = JobStatus | "superseded";
@@ -863,10 +875,12 @@ export class ApiError extends Error {
 }
 
 export const SESSION_EXPIRED_EVENT = "workouts-explorer:session-expired";
+export const ADMIN_SESSION_EXPIRED_EVENT = "workouts-explorer:admin-session-expired";
 
 function isPublicRequest(pathname: string, method: string) {
   if (pathname === "/api/config") return method === "GET";
   if (pathname === "/api/session") return method === "GET" || method === "POST";
+  if (pathname === "/api/admin/session") return method === "GET";
   if (pathname === "/api/session-tokens") return method === "POST";
   if (/^\/api\/invitations\/[^/]+$/.test(pathname)) return method === "GET";
   return (
@@ -893,7 +907,11 @@ async function request(
   const response = await fetch(path, { ...init, credentials: "same-origin", headers });
   if (!response.ok) {
     if (response.status === 401 && !isPublicRequest(pathname, method)) {
-      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+      window.dispatchEvent(
+        new Event(
+          pathname.startsWith("/api/admin/") ? ADMIN_SESSION_EXPIRED_EVENT : SESSION_EXPIRED_EVENT,
+        ),
+      );
     }
     let problem: ApiProblem = {};
     try {

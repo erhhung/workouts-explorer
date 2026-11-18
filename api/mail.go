@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"net"
 	"net/smtp"
 	"net/textproto"
@@ -87,7 +88,9 @@ func (s *smtpSender) Send(ctx context.Context, recipient, subject, body string) 
 	if err := writer.Close(); err != nil {
 		return err
 	}
-	return client.Quit()
+	// DATA has been acknowledged: a failed QUIT cannot un-send the message.
+	_ = client.Quit()
+	return nil
 }
 
 type unavailableMailSender struct{}
@@ -169,7 +172,7 @@ func (s *deliveryService) worker() {
 			}
 			if work.done != nil {
 				if !work.done(category) && category == "" {
-					category = "interrupted"
+					slog.Error("SMTP accepted email but delivery-state recording failed")
 				}
 			}
 			if work.result != nil {

@@ -9,8 +9,8 @@ import (
 )
 
 func TestDeferredGenerationRuntimeReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 31 {
-		t.Fatalf("runtime version = %d, want 31", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 32 {
+		t.Fatalf("runtime version = %d, want 32", SupportedSchemaVersion)
 	}
 	if !strings.HasPrefix(runtimeFullReadinessSQL, "SELECT ("+runtimeReadinessSQL+") AND ("+runtimeDeferredReadinessSQL+") AND ("+runtimeCohortReadinessSQL+")") {
 		t.Fatal("full readiness must require base, deferred generation and eligible-cohort contracts")
@@ -63,7 +63,7 @@ func TestDeferredGenerationReadinessProtectedBodies(t *testing.T) {
 			t.Fatalf("missing %s body", fixture.function)
 		}
 		compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
-		if compact(body[1]) != compact(bodies[i][1]) {
+		if compact(accountPurgeBodyForFunction(fixture.function, body[1])) != compact(bodies[i][1]) {
 			t.Errorf("readiness fingerprint differs from %s", fixture.function)
 		}
 	}

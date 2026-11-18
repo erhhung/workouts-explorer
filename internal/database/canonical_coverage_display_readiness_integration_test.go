@@ -50,9 +50,9 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 		pg_try_advisory_lock(330033,hashtext(current_database())) FROM pg_roles WHERE rolname=current_user`, config.ConnConfig.Database).Scan(&safe, &locked); err != nil || !safe || !locked {
 		t.Fatalf("scratch superuser and exclusive mutation harness required: safe=%t locked=%t err=%v", safe, locked, err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT schema_version=31 AND minimum_runtime_version=31 AND migration_baseline=27
+	if err := admin.QueryRow(ctx, `SELECT schema_version=32 AND minimum_runtime_version=32 AND migration_baseline=27
 		FROM app.schema_metadata WHERE singleton`).Scan(&safe); err != nil || !safe {
-		t.Fatalf("mutation harness requires fully migrated schema31/min31 metadata: %v", err)
+		t.Fatalf("mutation harness requires fully migrated schema32/min32 metadata: %v", err)
 	}
 	if err := admin.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM app.accounts account
 		LEFT JOIN app.coverage_display_revisions revision ON revision.account_id=account.id
@@ -113,8 +113,8 @@ func TestCanonicalCoverageDisplayReadinessPostgreSQL(t *testing.T) {
 
 	type mutation struct{ name, sql, restore string }
 	mutations := []mutation{
-		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=31 WHERE singleton`},
-		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=31,minimum_runtime_version=31 WHERE singleton`},
+		{"minimum runtime lowered", `UPDATE app.schema_metadata SET minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET minimum_runtime_version=32 WHERE singleton`},
+		{"partial schema metadata", `UPDATE app.schema_metadata SET schema_version=29,minimum_runtime_version=29 WHERE singleton`, `UPDATE app.schema_metadata SET schema_version=32,minimum_runtime_version=32 WHERE singleton`},
 		{"selection context nullable", `UPDATE pg_attribute SET attnotnull=true WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`, `UPDATE pg_attribute SET attnotnull=false WHERE attrelid='app.map_selections'::regclass AND attname='coverage_display_context_id'`},
 		{"selection context default", `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id SET DEFAULT gen_random_uuid()`, `ALTER TABLE app.map_selections ALTER COLUMN coverage_display_context_id DROP DEFAULT`},
 		{"selection all-time nullable", `ALTER TABLE app.map_selections ALTER COLUMN all_time DROP NOT NULL`, `ALTER TABLE app.map_selections ALTER COLUMN all_time SET NOT NULL`},

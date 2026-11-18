@@ -684,7 +684,32 @@ SET
     schema_version = 3,
     minimum_runtime_version = 1;
 
+-- Deferred call targets the check-only admission routine installed by 004.
+-- Checks have their own serial execution lane and private staging root so a
+-- long import cannot hold an interactive source save behind file processing.
+-- +goose StatementBegin
+CREATE FUNCTION app.claim_next_source_check(claiming_worker text,new_lease_token uuid,
+    lease_duration interval,runtime_version integer)
+RETURNS TABLE(job_id uuid,account_id uuid,kind text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM app.schema_metadata metadata WHERE metadata.singleton
+        AND runtime_version>=32 AND runtime_version>=metadata.minimum_runtime_version) THEN RETURN; END IF;
+    RETURN QUERY SELECT claimed.job_id,claimed.account_id,claimed.kind
+    FROM app.claim_next_worker_job_internal(claiming_worker,new_lease_token,lease_duration,false) claimed;
+END;
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.claim_next_source_check(text,uuid,interval,integer) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.claim_next_source_check(text,uuid,interval,integer)
+FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+GRANT EXECUTE ON FUNCTION app.claim_next_source_check(text,uuid,interval,integer) TO workouts_worker;
+
+
 -- +goose Down
+DROP FUNCTION app.claim_next_source_check(text,uuid,interval,integer);
 UPDATE app.schema_metadata
 SET
     schema_version = 2,

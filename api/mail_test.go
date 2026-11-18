@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/config"
 )
@@ -50,7 +51,35 @@ func TestDeliveryQueueFullIsBoundedAndRecorded(t *testing.T) {
 	}
 }
 
-func startPlainSMTPServer(t *testing.T) (string, func() string) {
+func TestSMTPAcknowledgementSurvivesQuitFailure(t *testing.T) {
+	address, transcript := startPlainSMTPServer(t, true)
+	sender := &smtpSender{config: config.SMTP{Address: address, FromAddress: "sender@example.test", AllowInsecureLocal: true}}
+	if err := sender.Send(context.Background(), "recipient@example.test", "Subject", "Body"); err != nil {
+		t.Fatal("accepted message was reported as failed: ", err)
+	}
+	if !strings.Contains(transcript(), "QUIT") {
+		t.Fatal("SMTP session was not closed")
+	}
+}
+
+func TestAcceptedDeliveryDoesNotBecomeSendFailureWhenRecordingFails(t *testing.T) {
+	service := newDeliveryService(&recordingSender{})
+	defer service.close()
+	result := make(chan string, 1)
+	if !service.enqueue(deliveryWork{to: "recipient@example.test", subject: "Subject", body: "Body", done: func(string) bool { return false }, result: result}) {
+		t.Fatal("delivery was not queued")
+	}
+	select {
+	case category := <-result:
+		if category != "" {
+			t.Fatal("accepted SMTP delivery became a send failure: ", category)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("delivery acknowledgement deadline")
+	}
+}
+
+func startPlainSMTPServer(t *testing.T, dropQuit ...bool) (string, func() string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -93,6 +122,9 @@ func startPlainSMTPServer(t *testing.T) (string, func() string) {
 				inData = true
 				_, _ = connection.Write([]byte("354 End data\r\n"))
 			case trimmed == "QUIT":
+				if len(dropQuit) > 0 && dropQuit[0] {
+					return
+				}
 				_, _ = connection.Write([]byte("221 Bye\r\n"))
 				return
 			default:

@@ -551,7 +551,7 @@ func TestCoverageTileLocalInputCardinalityPostgreSQL(t *testing.T) {
 	if !reflect.DeepEqual(before, canonicalDisplayRows(t, db, f, s)) {
 		t.Fatal("tile geometry optimization changed canonical counts or metadata")
 	}
-	if database.SupportedSchemaVersion != 31 {
+	if database.SupportedSchemaVersion != 32 {
 		t.Fatal("tile test requires the current tile rendering contract")
 	}
 }

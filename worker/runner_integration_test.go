@@ -34,6 +34,66 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("dedicated check lane is runnable independently of the ingest runner", func(t *testing.T) {
+		fixture := insertConnectionFixture(t, setupDB, keys, root, validPath)
+		parent, child, lease := uuid.New(), uuid.New(), uuid.New()
+		tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer tx.Rollback(ctx)
+		for _, statement := range []struct {
+			query string
+			args  []any
+		}{
+			{`UPDATE app.sources SET status='connected' WHERE id=$1`, []any{fixture.sourceID}},
+			{`INSERT INTO app.jobs(id,account_id,kind,priority) VALUES($1,$2,'manual_ingest',80)`, []any{parent, fixture.accountID}},
+			{`INSERT INTO app.jobs(id,account_id,parent_job_id,kind,priority,parameters) VALUES($1,$2,$3,'manual_ingest_source',80,jsonb_build_object('sourceId',upper(replace($4::uuid::text,'-','')),'generation',1,'mode','incremental'))`, []any{child, fixture.accountID, parent, fixture.sourceID}},
+			{`INSERT INTO app.job_config_snapshots(job_id,account_id,source_id,source_generation,config_envelope) VALUES($1,$2,$3,1,$4)`, []any{child, fixture.accountID, fixture.sourceID, fixture.envelope}},
+		} {
+			if _, err := tx.Exec(ctx, statement.query, statement.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.claim_job($1,'occupied-ingest-runner',$2,interval '5 minutes')`, child, lease) {
+			t.Fatal("could not simulate an occupied ingest runner")
+		}
+		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.checksOnly = true
+		worked, err := runner.RunOnce(ctx)
+		if err != nil || !worked {
+			t.Fatalf("dedicated check worked=%t err=%v", worked, err)
+		}
+		assertWorkerState(t, setupDB, fixture, "connected", 1, "succeeded", 0)
+		if worked, err = runner.RunOnce(ctx); worked || err != nil {
+			t.Fatalf("idle check lane worked=%t err=%v", worked, err)
+		}
+		cleanup := beginWorkerTestAccount(t, setupDB, fixture.accountID)
+		defer cleanup.Rollback(ctx)
+		if _, err := cleanup.Exec(ctx, `SELECT app.request_job_cancellation($1,(SELECT principal_id FROM app.users WHERE account_id=$2))`, parent, fixture.accountID); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanup.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,'occupied-ingest-runner',$2,'cancelled')`, child, lease) {
+			t.Fatal("could not clean up simulated ingest")
+		}
+	})
+	t.Run("operation deadline produces terminal failure and snapshot cleanup", func(t *testing.T) {
+		fixture := insertConnectionFixture(t, setupDB, keys, root, validPath)
+		runner := testRunner(workerDB, keys, root, io.Discard)
+		runner.checksOnly = true
+		runner.connectionCheckTimeout = time.Nanosecond
+		worked, err := runner.RunOnce(ctx)
+		if err != nil || !worked {
+			t.Fatalf("timed check worked=%t err=%v", worked, err)
+		}
+		status, _, jobStatus, snapshots, code, _ := readWorkerState(t, setupDB, fixture)
+		if status != "connection-failed" || jobStatus != "failed" || snapshots != 0 || code != "source-check-timeout" {
+			t.Fatalf("timeout state %s/%s snapshots=%d code=%s", status, jobStatus, snapshots, code)
+		}
+	})
 	t.Run("success and snapshot cleanup", func(t *testing.T) {
 		fixture := insertConnectionFixture(t, setupDB, keys, root, validPath)
 		var logs bytes.Buffer

@@ -17,6 +17,7 @@ type BootstrapAdminOptions struct {
 	PasswordFile           string
 	PasswordMin            int
 	RotateExistingPassword bool
+	AdoptAdminUsername     bool
 }
 
 func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdminOptions) error {
@@ -24,8 +25,12 @@ func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdmi
 		return errors.New("bootstrap password minimum is invalid")
 	}
 	username, canonicalUsernameValue, err := canonicalUsername(options.Username)
-	if err != nil {
+	if err != nil || canonicalUsernameValue != adminUsername {
 		return errors.New("bootstrap administrator input is invalid")
+	}
+	username = adminUsername
+	if options.AdoptAdminUsername && options.RotateExistingPassword {
+		return errors.New("identity adoption and password rotation must be separate operations")
 	}
 	email, canonicalEmailValue, err := canonicalEmail(options.Email)
 	if err != nil {
@@ -74,7 +79,7 @@ func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdmi
 		return errors.New("bootstrap administrator could not be created")
 	}
 	if len(existing) == 1 {
-		if !existing[0].active || existing[0].username != canonicalUsernameValue || existing[0].email != canonicalEmailValue {
+		if !existing[0].active || (existing[0].username != canonicalUsernameValue && !options.AdoptAdminUsername) || existing[0].email != canonicalEmailValue {
 			return errors.New("bootstrap administrator does not match existing state")
 		}
 		verified, _, verifyErr := hasher.verify(ctx, string(password), existing[0].hash)
@@ -83,6 +88,18 @@ func BootstrapAdmin(ctx context.Context, db *pgxpool.Pool, options BootstrapAdmi
 		}
 		if !verified && !options.RotateExistingPassword {
 			return errors.New("bootstrap administrator does not match existing state")
+		}
+		if existing[0].username != canonicalUsernameValue {
+			result, err := tx.Exec(ctx, `UPDATE app.authentication_principals SET username='admin',canonical_username='admin',updated_at=transaction_timestamp() WHERE id=$1 AND password_hash=$2 AND disabled_at IS NULL`, existing[0].id, existing[0].hash)
+			if err != nil || result.RowsAffected() != 1 {
+				return errors.New("administrator identity transition failed; check for a reserved-name collision")
+			}
+			if _, err := tx.Exec(ctx, `UPDATE app.sessions SET revoked_at=transaction_timestamp() WHERE principal_id=$1 AND revoked_at IS NULL`, existing[0].id); err != nil {
+				return errors.New("administrator identity sessions could not be revoked")
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO app.audit_records(id,actor_principal_id,action,target_type,target_id) VALUES($1,$2,'administrator.username_reserved','administrator',$2)`, uuid.Must(uuid.NewV7()), existing[0].id); err != nil {
+				return errors.New("administrator identity transition could not be audited")
+			}
 		}
 		if !verified {
 			if _, err = tx.Exec(ctx, `UPDATE app.authentication_principals SET password_hash=$1,updated_at=transaction_timestamp() WHERE id=$2`, hash, existing[0].id); err != nil {

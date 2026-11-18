@@ -57,6 +57,10 @@ type Runner struct {
 	pollInterval               time.Duration
 	leaseDuration              time.Duration
 	heartbeatInterval          time.Duration
+	checksOnly                 bool
+	podName                    string
+	podUID                     string
+	connectionCheckTimeout     time.Duration
 	outcomeReader              func(context.Context, claimedJob) (jobOutcome, error)
 	beforeProcessFile          func(sourceFile)
 	fileSlots                  chan struct{}
@@ -79,7 +83,8 @@ type claimedJob struct {
 }
 
 type RunnerOptions struct {
-	RcloneBinary string
+	RcloneBinary         string
+	ConnectionChecksOnly bool
 	// StagingRoot must be private to this serial runner, never shared by pods.
 	StagingRoot                string
 	FileConcurrency            int
@@ -142,6 +147,10 @@ func NewRunnerWithOptions(db *pgxpool.Pool, logger *slog.Logger, keys *sourcecry
 		pollInterval:               defaultPollInterval,
 		leaseDuration:              defaultLease,
 		heartbeatInterval:          defaultHeartbeat,
+		checksOnly:                 options.ConnectionChecksOnly,
+		podName:                    executionPodName(),
+		podUID:                     executionPodUID(),
+		connectionCheckTimeout:     25 * time.Second,
 		fileSlots:                  make(chan struct{}, options.FileConcurrency),
 	}
 }
@@ -172,6 +181,14 @@ func ConfigureCoverageBatchSize(ctx context.Context, db *pgxpool.Pool, size int)
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	if r.podUID != "" {
+		if err := ScavengeStaging(r.stagingRoot); err != nil {
+			return errPrivateCleanup
+		}
+		if _, err := r.db.Exec(ctx, `SELECT app.ack_private_staging_root($1,$2,$3)`, r.podName, r.podUID, r.stagingKind()); err != nil {
+			return err
+		}
+	}
 	for {
 		worked, err := r.RunOnce(ctx)
 		r.logCycleFailure(ctx, err)
@@ -207,6 +224,11 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if r.podUID != "" {
+		if _, err := r.db.Exec(ctx, `SELECT app.clear_private_execution($1,NULL,NULL)`, r.workerID); err != nil {
+			return false, err
+		}
+	}
 	job, err := r.claimNext(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -214,8 +236,30 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if r.podUID != "" {
+		var registered bool
+		if err = r.db.QueryRow(ctx, `SELECT app.register_private_execution($1,$2,$3,$4,$5,$6)`, job.id, r.workerID, job.lease, r.podName, r.podUID, r.stagingKind()).Scan(&registered); err != nil || !registered {
+			return false, errors.New("private execution registration failed")
+		}
+		defer func() {
+			if !r.StagingCleanupPending() {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+				defer cancel()
+				if _, err := r.db.Exec(cleanupCtx, `SELECT app.clear_private_execution($1,$2,$3)`, r.workerID, job.id, job.lease); err != nil {
+					r.stagingDirty.Store(true)
+				}
+			}
+		}()
+	}
 	r.loadJobLogContext(ctx, &job)
 	return true, r.executeLogged(ctx, job, r.execute)
+}
+
+func (r *Runner) stagingKind() string {
+	if r.checksOnly {
+		return "connection-checks"
+	}
+	return "private"
 }
 
 // StagingCleanupPending is safe to read from the runtime readiness handler.
@@ -344,6 +388,14 @@ func (r *Runner) claimNext(ctx context.Context) (claimedJob, error) {
 	}
 	defer tx.Rollback(ctx)
 	var job claimedJob
+	if r.checksOnly {
+		err = tx.QueryRow(ctx, `SELECT job_id,account_id,kind FROM app.claim_next_source_check($1,$2,$3,$4)`, r.workerID, lease, r.leaseDuration, database.SupportedSchemaVersion).Scan(&job.id, &job.accountID, &job.kind)
+		if err != nil {
+			return claimedJob{}, err
+		}
+		job.lease = lease
+		return job, tx.Commit(ctx)
+	}
 	err = tx.QueryRow(ctx, `SELECT job_id,account_id,kind
 		FROM app.claim_next_workout_deletion($1,$2,$3,$4)`, r.workerID, lease, r.leaseDuration,
 		database.SupportedSchemaVersion).Scan(&job.id, &job.accountID, &job.kind)
@@ -510,7 +562,7 @@ func (r *Runner) finishWorkoutDeletion(ctx context.Context, job claimedJob, stat
 }
 
 func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) error {
-	opCtx, cancelOperation := context.WithCancel(ctx)
+	opCtx, cancelOperation := context.WithTimeout(ctx, r.connectionCheckTimeout)
 	heartbeatDone := make(chan error, 1)
 	go r.runHeartbeat(opCtx, cancelOperation, job, heartbeatDone)
 
@@ -534,6 +586,10 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 	}
 	if errors.Is(err, errLeaseLost) || errors.Is(heartbeatErr, errLeaseLost) {
 		return errJobInterrupted
+	}
+	if errors.Is(opCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil && !errors.Is(heartbeatErr, errCancellationRequested) {
+		err, heartbeatErr = nil, nil
+		result = connectionFailed("source-check-timeout", "Source connection check timed out.")
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
 		if errors.Is(heartbeatErr, errCancellationRequested) {

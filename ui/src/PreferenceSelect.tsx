@@ -7,12 +7,18 @@ export function PreferenceSelect({
   name,
   defaultValue,
   options,
+  value,
+  onValueChange,
+  disabled,
 }: {
   label: string;
   id: string;
   name: string;
   defaultValue: string;
   options: Array<{ value: string; label: string }>;
+  value?: string;
+  onValueChange?: (value: string) => void;
+  disabled?: boolean;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [height, setHeight] = useState(0);
@@ -24,6 +30,9 @@ export function PreferenceSelect({
       <Select.Root
         name={name}
         defaultValue={defaultValue}
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
         onOpenChange={(open) => {
           if (open) setHeight(trigger.current?.getBoundingClientRect().height ?? 0);
         }}

@@ -61,8 +61,12 @@ does not create profiles, change live source configuration or start imports.
 The 10/11/2026 decisions select metadata-based incremental skipping and a
 job-scoped native **rclone 1.75.2** CLI, not a daemon, RC service or embedded
 rclone library. Local/NFS remains the supported fallback. Source management is
-owner-authenticated Swagger/REST only; source CRUD UI and in-app Apple 2FA are
-outside the MVP.
+available through owner-authenticated Swagger/REST and the **Data Sources** profile
+menu dialog (Helm 167). Apple authorization/2FA remains external. Editing uses
+blank write-only inputs with **existing value retained unless provided** placeholders;
+omitted values preserve current credentials. UI limits
+for cookies (4000) and trust token (250) are narrower than the API's storage limits;
+existing longer stored values remain retained when omitted.
 
 ## Replacing An Existing Source
 

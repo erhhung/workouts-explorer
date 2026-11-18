@@ -393,8 +393,11 @@ All three variables are required. The script prints their effective values
 before contacting Kubernetes so the operator can verify the target cluster,
 image, and region. It exits before creating a Job when any value is absent.
 
-Human operators should normally use this CLI rather than constructing container
-commands. It probes state through a temporary Kubernetes Job, displays the
+Today, human operators should use this CLI rather than constructing container
+commands. The accepted [M10 admin UI](admin-ui-spec.md#osm-maps) will make routine
+post-installation operations available through OSM Maps while retaining the CLI
+for operator recovery. It reuses this lifecycle rather than introducing a second
+importer. The CLI probes state through a temporary Kubernetes Job, displays the
 current stage and block reason, and launches the selected follow-up Job with the
 correct generation and audit fields. After storage remediation, choose
 `unblock`, provide a note, then choose `resume`; these remain separate so
@@ -414,6 +417,13 @@ namespace and waits for their owned pods to disappear. This includes completed
 and failed historical Jobs and prevents updater Jobs from accumulating or
 running concurrently. Temporary probe/action Jobs are already deleted after
 their output is captured.
+
+The planned [internal OSM job controller](admin-ui-spec.md#dedicated-osm-job-controller)
+must use durable task/Job reconciliation and delete only its own executions; the
+CLI's broad historical updater-Job cleanup is not its cleanup algorithm. Both
+paths must honor the same catalog ownership and database-wide lock so an operator
+cannot unknowingly race a controller execution. Controller and Kubernetes RBAC/
+template changes are M10 implementation work, not present behavior claimed here.
 
 ## Automatic Region Preparation
 

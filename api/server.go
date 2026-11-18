@@ -135,7 +135,7 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 
 func requireValidJSONSyntax(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch && r.Method != http.MethodPut {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -160,7 +160,7 @@ func requireValidJSONSyntax(next http.Handler) http.Handler {
 
 func requireJSONContentType(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost || r.Method == http.MethodPatch {
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut {
 			mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if err != nil || mediaType != "application/json" {
 				writeProblem(w, r, http.StatusUnsupportedMediaType, "Unsupported Media Type", "request body must use application/json")

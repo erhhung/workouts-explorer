@@ -15,7 +15,8 @@ It prescribes no CSS values, dimensions, colors or timing constants. Obtain thos
 from the shared implementation and the applicable feature contract. An old
 screenshot, a historical rollout or a known inconsistency is not a new precedent.
 
-The [functional specification](functional-spec.md) owns feature-specific labels,
+The [functional specification](functional-spec.md) and planned
+[admin workspace specification](admin-ui-spec.md) own feature-specific labels,
 availability and behavior. [Architecture](architecture.md) and the
 [UI foundation decision](decisions/006-ui-foundation.md) own implementation
 boundaries. This guide consolidates their reusable presentation principles;
@@ -29,6 +30,7 @@ feature requirements and accepted exceptions remain in their original documents.
 | Dense searchable dialogs, clickable identity/date cells, focus and fit | Road Coverage in [MapPage](../ui/src/MapPage.tsx) |
 | Map path opacity and provider/private overlay stacking | [mapPresentation](../ui/src/mapPresentation.ts) and the [layer contract](functional-spec.md#map-layer-stack-and-opacity) |
 | Report sidebar, grouped table replacement and table-to-Map navigation | [StatsPage](../ui/src/StatsPage.tsx) |
+| Administrator tab/category hierarchy | Reuse [StatsPage](../ui/src/StatsPage.tsx) left navigation and shared shell/workspace behavior; feature contracts live in the [admin UI specification](admin-ui-spec.md) |
 | Timeline bar charts, outlier scales and report disclosures | [ConsistencyReport](../ui/src/ConsistencyReport.tsx), [chart helpers](../ui/src/consistency.ts) and the [Consistency contract](functional-spec.md#consistency-report) |
 | Session-owned tab retention, visibility and scroll ownership | [RetainedTab](../ui/src/RetainedTab.tsx) and the [workspace contract](functional-spec.md#feature-retain-tab-workspaces) |
 | Shared first/last, single-step and multi-page navigation | [PageNavigation](../ui/src/PageNavigation.tsx) |
@@ -38,6 +40,7 @@ feature requirements and accepted exceptions remain in their original documents.
 | Transactional long-press column filters, checkbox columns and numeric comparisons | [WorkoutColumnFilter](../ui/src/WorkoutColumnFilter.tsx), [filter scales](../ui/src/workoutFilters.ts), [Map type selection](../ui/src/WorkoutTypeSelection.tsx) and the [column-filter contract](functional-spec.md#feature-filter-workout-log-columns) |
 | Shared period selection and custom-range editing | [DateRangePicker](../ui/src/DateRangePicker.tsx), [CustomDateRangeDialog](../ui/src/CustomDateRangeDialog.tsx), [RecentDateRanges](../ui/src/RecentDateRanges.tsx) |
 | Styled selection controls and menus | [PreferenceSelect](../ui/src/PreferenceSelect.tsx) and existing action/filter menus |
+| Owner source configuration | [DataSourcesDialog](../ui/src/DataSourcesDialog.tsx): Preferences frame, admin Users table/menus, typed fields and delayed input help |
 | Delayed help and truncated table values | [Tooltip](../ui/src/Tooltip.tsx), [CoverageTableCell](../ui/src/CoverageTableCell.tsx) |
 | Independently fitted aggregate value lines | [FittedAggregateValue](../ui/src/FittedAggregateValue.tsx), used for every Range totals value and both paired counts |
 | Frozen table viewport and centered empty/loading feedback | [DialogTableViewport](../ui/src/DialogTableViewport.tsx) |
@@ -100,6 +103,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   fields retain their editing cursor; unavailable controls must not falsely
   advertise an available action. Shared paging follows the
   [no-flash pending-state contract](functional-spec.md#feature-navigate-table-pages).
+- Disabled controls and menu items use the blocked circle-slash cursor. Keep them
+  under the pointer so that cursor remains visible, while native/widget disabled
+  semantics prevent activation. Disabled danger actions use the shared unavailable
+  color rather than their enabled danger treatment.
 - Make the padded target clickable, not just a small number or a short label.
   Use a real button for an action and a real link for navigation, with an
   accessible name and a single intentional keyboard stop.
@@ -261,9 +268,18 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Match Road Coverage's compact content insets for comparable Summary/custom-range
   dialogs. Keep outer content padding, spacing above/below footer dividers,
   bottom/right action insets and gaps between peer buttons visually consistent.
+- Preferences reuses the shared compact-dialog inset for its header, scrolling
+  form body and Cancel/Save footer. Retain fixed header/actions and independent
+  body scrolling; its title does not need a redundant explanatory subheading.
+- **Data Sources alone is explicitly content-sized.** Its table-only frame is
+  compact and grows/shrinks to the visible Add/Edit fields, with standard divider
+  insets and body scrolling only at the viewport cap. This exception does not
+  revise frozen sizing for Preferences, report dialogs or other workflows.
 - Keep headers and controls usable with long content. Assign scroll ownership
   deliberately, avoid unwanted nested scrolling, and prevent sticky headers from
   obscuring borders or focused content.
+- Portaled table menus opened inside dialogs use the dialog-control layer, like
+  shared styled selects, so the modal overlay cannot obscure or intercept them.
 - Size a dialog to its columns/content, not to an unrelated full-width table.
   A short unfiltered set can establish less height initially. Apply the generic
   frozen table-dialog rule during filtering, paging and restored-state review.
@@ -281,6 +297,9 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Destructive confirmation names the actual target/scope and initially focuses
   the least destructive action. Preserve required confirmation text, pending
   guards, error handling and acceptance semantics while restyling it.
+- A second-level modal over an existing dimmed dialog uses the transparent nested
+  overlay modifier, preserving interception/focus isolation without stacking a
+  second dimming backdrop over the already-dimmed base content.
 
 ## Dropdowns, Pickers And Forms
 
@@ -305,6 +324,9 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   established Apply/Cancel behavior; dismissing must not commit an unfinished draft.
 - Use visible labels, fieldsets/legends, field errors and accessible error
   summaries. Keep submission and date validation behavior when replacing controls.
+- Source configuration values retain their fixed-width size, including Password.
+  Source retention placeholders alone use the shorter proportional italic hint;
+  its scoped italic face must not change entered values or other application text.
 - Reuse the shared long-press duration. Sorting and filtering share one header
   target without a held press also sorting. Only one draft popup owns focus;
   closing an old popup must not refocus it over its replacement. Unfiltered choices

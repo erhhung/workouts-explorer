@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 31
+const SupportedSchemaVersion = 32
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)
@@ -58,7 +58,7 @@ func newTracer(options ...otelpgx.Option) *otelpgx.Tracer {
 }
 
 // Only the current schema and exact object/privilege contract are accepted.
-const runtimeReadinessSQL = `
+const runtimeBaseReadinessSQL = `
 		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) = $1
 		   AND to_regclass('app.schema_metadata') IS NOT NULL
 		   AND (SELECT schema_version = $1 FROM app.schema_metadata WHERE singleton)
@@ -1199,6 +1199,8 @@ const runtimeReadinessSQL = `
 		   )
 		FROM public.goose_db_version`
 
+const runtimeReadinessSQL = `SELECT (` + runtimeBaseReadinessSQL + `) AND (` + runtimeAdminAccountsReadinessSQL + `)`
+
 // Deferred invalidation is part of runtime 28, not an optional later migration.
 const runtimeDeferredReadinessSQL = `
 	SELECT NOT EXISTS (
@@ -1236,6 +1238,11 @@ const runtimeDeferredReadinessSQL = `
 			('app.advance_account_data_generation()',false,'trigger',$body$
 DECLARE old_account uuid; new_account uuid;
 BEGIN
+    IF app.account_purge_active() THEN
+        IF TG_LEVEL='STATEMENT' THEN RETURN NULL; END IF;
+        IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
         RETURN NEW;
     END IF;
@@ -1507,9 +1514,9 @@ const runtimeCoverageDisplayReadinessSQL = `
 				('app.flush_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
 					ARRAY['search_path=pg_catalog, app'],'1a724480f69901dc05a310b9603e489f'),
 				('app.mark_coverage_display_dirty()','plpgsql','v',false,0,'trigger',
-					ARRAY['search_path=pg_catalog, app'],'4e1c86a9fcd6b98e1212ea7c3ee62321'),
+					ARRAY['search_path=pg_catalog, app'],'a2248186ce67f2d668341a260903e46f'),
 				('app.flush_coverage_display_dirty_account()','plpgsql','v',false,0,'trigger',
-					ARRAY['search_path=pg_catalog, app'],'161cdfcbdf66983795719394c6b48c67'),
+					ARRAY['search_path=pg_catalog, app'],'e5985945523c1da38d36a11f734591e2'),
 				('app.map_selection_coverage_entities(uuid,uuid,uuid,bigint,text)','plpgsql','s',true,1,
 					'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision)',
 					ARRAY['search_path=pg_catalog, app','jit=off'],'d243719d05988f76a2d7ab6d345ba0aa'),
@@ -1613,14 +1620,14 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'TABLE(source_kind text, source_id uuid, workout_id uuid, local_start_date date, started_at timestamp with time zone, broad_class text, name text, locality_name text, region_id text, region_name text, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, range_minimum_longitude double precision, range_minimum_latitude double precision, range_maximum_longitude double precision, range_maximum_latitude double precision)',
 				ARRAY['search_path=pg_catalog, app','jit=off'],false,false,'4963e05686bdde44b6c3ba5b278f3acd'),
 			('app.enqueue_coverage_display_invalidations(uuid[])','sql','v',true,false,'u',false,0,'void',ARRAY['search_path=pg_catalog, app'],false,false,'1ef60d0526acf6d35d98e1c37042cbd4'),
-			('app.advance_account_data_generation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'e23dd0a699cdeef1541efa1fa9920bfa'),
-			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'4e1c86a9fcd6b98e1212ea7c3ee62321'),
-			('app.queue_coverage_display_source_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'fa05dcd935285a1265b9633fc1edc9ae'),
-			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'2254b7798bfb3ddce49202a0c60783ef'),
-			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c06ee64c7a96972646b33c0133ef6e31'),
+			('app.advance_account_data_generation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'f7685748d0f942fb835b3ed22af46599'),
+			('app.mark_coverage_display_dirty()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'a2248186ce67f2d668341a260903e46f'),
+			('app.queue_coverage_display_source_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'d4b68fed41730857f2626f5978c0eb54'),
+			('app.queue_coverage_display_metadata_invalidation()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'31ca82625a8fcbad0a70d7ebcca45d42'),
+			('app.flush_coverage_display_invalidations()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'1767a5e12fc13b16d7f9e1df05250b48'),
 			('app.seed_coverage_display_revision()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'eebad7997cf527699c48dade43c3e348'),
-			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'8a84db8e9eedf7085e96bbb565085148'),
-			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'c49333eb85ccb0292f3c9383e491b9de'),
+			('app.validate_map_selection()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'5ae114239f9183fe5b38d66b9eb620e5'),
+			('app.validate_map_selection_focus()','plpgsql','v',true,false,'u',false,0,'trigger',ARRAY['search_path=pg_catalog, app'],false,false,'158e211dfb7bc449b4363feeb09439c9'),
 			('app.coverage_display_selection_scope(uuid,uuid,uuid,bigint)','sql','s',true,false,'u',true,0,
 				'TABLE(start_date date, end_date date, revision bigint, bound_context_id uuid)',ARRAY['search_path=pg_catalog, app'],false,false,'9371cd17c0320f9edfe3515e787cc6dd'),
 			('app.coverage_display_authorized_context(uuid,uuid,uuid,bigint)','plpgsql','s',true,false,'u',false,0,'uuid',ARRAY['search_path=pg_catalog, app'],false,false,'75773f460785303cb025b4d3686e5cd8'),
@@ -1818,7 +1825,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			WHERE (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid=to_regprocedure(expected.signature))<>expected.callbacks)
 	)`
 
-const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeTileReadinessSQL + `) AND (` + runtimeTileLODReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `) AND (` + runtimeRouteGapReadinessSQL + `)`
+const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeTileReadinessSQL + `) AND (` + runtimeTileLODReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `) AND (` + runtimeSourceCheckReadinessSQL + `) AND (` + runtimeAccountDeletionReadinessSQL + `) AND (` + runtimeRouteGapReadinessSQL + `)`
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool

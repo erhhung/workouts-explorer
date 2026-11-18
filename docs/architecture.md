@@ -64,6 +64,12 @@ The `workouts-explorer` repository contains three independently deployable compo
 | API | `api/` | `workouts-api` | REST API, authentication, authorization, queries, commands, notifications, private tile proxy, static/public runtime config |
 | Worker | `worker/` | `workouts-worker` | General job runner and separate Coverage runner: source checks, ingest, workout deletion, matching, reconciliation and aggregates |
 
+**M10 extension:** the isolated `/admin` workspace is deployed in the existing UI
+image. The [admin UI specification](admin-ui-spec.md) also plans a separate internal
+OSM job-controller Deployment. That controller will reuse worker/OSM code/images
+where practical and alone receive namespace-scoped Job-launching authority. The
+controller remains a future process boundary, not a deployed component.
+
 API and worker are separate Go binaries and Kubernetes Deployments. They may share Go domain packages and generated OpenAPI types from the same repository, but they have independent processes, resource limits, health checks, and scaling.
 
 General and Coverage workers are separate Deployments from the same worker image.
@@ -134,6 +140,60 @@ Browser    --> public base-map tiles
 - Never receives source credentials, database topology, or the internal tile-server URL.
 - Exposes nginx `stub_status` only on `127.0.0.1:8083/nginx_status` for its local native receiver; no public status/metrics route or API proxy is added.
 
+### Administrator Workspace (Planned M10)
+
+The accepted 11/15/2026 design supersedes the original no-admin-UI assumption.
+The authentication/workspace foundation, initial directory/invitation sending and
+read-only effective configuration are deployed at Helm 153. The remaining lifecycle
+and controller descriptions here are target architecture, not implemented services;
+see [feature status](admin-ui-spec.md#implementation-status).
+Reuse the existing login screen and UI image, with reserved canonical username
+`admin` authenticating the separate bootstrap administrator and routing to
+`/admin`. The four tabs are Accounts, OSM Maps, Operations and Settings; use
+Stats-style left navigation for their second-level categories. Keep normal
+explorer components, owner queries, caches, notifications and retained state out
+of the admin workspace. See the [complete contract](admin-ui-spec.md).
+
+Maintain independent owner/admin cookies and CSRF values, with role-specific
+session lookup/sign-out and server authorization of all endpoints. A validated
+identity determines routing; neither an `admin` string nor a URL grants a role.
+New bootstrap configuration reserves `admin`; existing identity transitions are
+explicit, audited, collision-checked and preserve the administrator principal
+and current hash. No automatic startup rename/reset or normal-product
+impersonation is introduced.
+
+Admin APIs under `/api/admin` use narrow identity/lifecycle projections. Planned
+operational functions remain sanitized. Future account purge executes its lifecycle
+without giving the administrator general access to private tables. OSM commands record
+durable work rather than spawning shell commands from HTTP handlers.
+
+Schema 032 additionally permits the explicit
+[registered-date/usage projection](admin-ui-spec.md#registered-and-view-usage):
+principal registration time, durable last login, workout/route counts and latest
+local workout date. The fixed definer validates the administrator session and
+restores its temporary logical scope on both success and exception; neither API
+RLS privileges nor owner capabilities expand. Invitation resend/revoke are
+transactional, audited commands, with fresh token expiration and real SMTP delivery.
+
+The planned internal OSM controller claims approved requests and creates/reconciles
+deployment-selected updater Jobs using dedicated namespace-scoped RBAC. The
+public API, UI and general/Coverage workers have no Job-creation authority. Job
+templates restrict image, service account, Secret/mount references and pod security;
+RBAC alone cannot constrain an embedded Job pod specification, so verify the
+supported admission restrictions as well. Updater execution reuses database-wide
+writer ownership, regional coalescing, checkpoints, storage gates, validation and
+atomic promotion. Controller recovery must discover an ambiguously created Job
+instead of duplicating it, retain durable outcomes and delete only its own Jobs.
+
+Future Settings mutations affect only administrator console/access data. The
+implemented effective-configuration view is curated and read-only;
+Helm/GitOps/Secrets remain the sole
+authority for infrastructure settings. Catalog region preparation and account/
+announcement actions are domain state, not shadow Helm values. The implemented
+owner-profile Data Sources UI remains separate from administrator permissions.
+It composes existing private source APIs and bounded generation-specific checks;
+write-only credential values are never loaded back into the browser.
+
 ### API
 
 - Implements the design-first OpenAPI contract under `/api`.
@@ -161,6 +221,23 @@ Browser    --> public base-map tiles
 - Removes staged files and clears encrypted snapshots at every terminal outcome.
 - Updates derived timezone, elevation, attribution, and aggregate data.
 - The general runner executes source checks, source-child ingest and workout deletion. The dedicated Coverage runner executes route matching and reconciliation. OSM import/refresh uses the operator Job workflow described below, not general-runner dispatch.
+- The general worker also supervises an admin-owned durable account-deletion runner.
+  It admits irreversible lifecycle changes through a fixed administrator-session
+  function, waits for cancellation/lease recovery and private staging receipts,
+  then commits dependency-ordered account batches. An exact transaction capability,
+  not a client-set GUC, authorizes that purge path; FK constraints remain enforced.
+  Inventory drift blocks completion. Identity keys are released only after every
+  private scope is empty. Only sanitized admin task/audit metadata survives.
+- The general worker also supervises a separate source-check-only serial runner,
+  with a sibling private staging root. Its versioned restricted claim ABI excludes
+  ingest/deletion work, allowing interactive checks while the main runner imports.
+  Checks have a 25-second operation deadline; the owner form waits at most 30 seconds.
+  Separate staging ownership prevents one runner's scavenger from touching another's files.
+- General/check execution registers private cleanup receipts before work. A terminal
+  job alone is insufficient proof of cleanup. Pod/root restart scavenging clears
+  acknowledged receipts; get-pods permission in the current namespace permits only
+  verification of disposed/replaced chart-owned emptyDir UIDs. Live/unknown roots
+  keep deletion waiting. No Kubernetes workload/Secret mutation permission is added.
 - Emits safe structured logs, job events, OTel metrics, and traces.
 
 ### Martin (`workouts-explorer-tiles`)
@@ -2179,7 +2256,15 @@ purge history, merge ambiguous records or bypass a live owner.
 ### Authorization
 
 - Administrator and data-owner roles are separate identities.
-- Administrators can create invitations. User-management completion, announcements, account purge and administrator OSM status/refresh remain planned; none grants access to private workout data.
+- Administrators can currently manage invitations, read the identity directory and
+  bounded usage, disable/enable personal accounts, revoke their active sessions,
+  initiate durable account purges and inspect read-only effective
+  configuration in `/admin`. Suspension revokes sessions and uses the existing job
+  cancellation engines; reactivation resumes normal scheduling without reviving
+  cancelled jobs or old sessions. Password recovery stays self-service rather than
+  an administrator-triggered reset email. Remaining M10 announcements and OSM
+  workflows are planned; none grants access to
+  private workout data. See [role/session separation](admin-ui-spec.md#login-identity-and-session-separation).
 - Administrators cannot access workout records, routes, source configuration, private tiles, user notifications, or user job logs.
 - Data owners can access only their personal account.
 - Account identity is derived from the authenticated session, never trusted from client parameters.

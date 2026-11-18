@@ -15,7 +15,7 @@ func TestCoverageMetadataNativeBodiesPinned(t *testing.T) {
 	functions := regexp.MustCompile(`CREATE (?:OR REPLACE )?FUNCTION app\.([a-z_]+)\(`).FindAllStringSubmatch(feature, -1)
 	for _, function := range functions {
 		body := metadataFunction(t, feature, function[1])
-		expected := fmt.Sprintf("('%s','%x')", function[1], md5.Sum([]byte(body)))
+		expected := fmt.Sprintf("('%s','%x')", function[1], md5.Sum([]byte(accountPurgeBodyForFunction(function[1], body))))
 		if !strings.Contains(runtimeCoverageMetadataReadinessSQL, expected) {
 			t.Errorf("missing exact native function body fingerprint: %s", expected)
 		}
@@ -54,7 +54,7 @@ func metadataFunction(t *testing.T, feature, name string) string {
 }
 
 func TestCoverageMetadataReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 31 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
+	if SupportedSchemaVersion != 32 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
 		t.Fatal("runtime30 must require the dedicated metadata feature readiness contract")
 	}
 	for _, required := range []string{"SELECT $1 < 29 OR (", "migration_baseline=27", "coverage_route_changes_dirty_idx",

@@ -89,11 +89,11 @@ const runtimeCoverageMetadataReadinessSQL = `
 							AND NOT (expected.coverage AND acl.grantee='workouts_coverage_worker'::regrole::oid))))
 		AND NOT EXISTS (
 			SELECT 1 FROM (VALUES
-				('wake_coverage_reconciliation','81b3e5e86ba0696a04c43959a9faf403'),
+				('wake_coverage_reconciliation','0f864db6c36ffcda74e50d93fe2952a6'),
 				('coverage_matching_descriptor','34490d61ae8f9402e3d0894437f191e3'),
-				('capture_coverage_matching_descriptor','885740b2cb0af88be7815828b3f09765'),
-				('stamp_coverage_applied_match_proof','f4440cbb918850021c855f3c74a411d3'),
-				('dirty_coverage_route_inputs','a84a3a9685b89a67ce923fd6e962769c'),
+				('capture_coverage_matching_descriptor','20a7152f5f9e77ba73fc13fdedd28bed'),
+				('stamp_coverage_applied_match_proof','1ffdcef8a0031c6240c6d5c3e9caa8f3'),
+				('dirty_coverage_route_inputs','02f6a0bd1a49ec6a06d02d5674b286b3'),
 				('coverage_applied_target_current','8110deeeb2690e0a8feb58536095f5a7'),
 				('coverage_verified_route_digest','90d8a0b61f91324a2d8709542a988eb1'),
 				('read_coverage_catalog_observation','441766201a9467b4fa10d23f094d660e'),

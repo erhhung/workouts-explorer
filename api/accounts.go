@@ -22,7 +22,18 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const sessionCookieName = "workouts_session"
+const (
+	sessionCookieName      = "workouts_session"
+	adminSessionCookieName = "workouts_admin_session"
+	adminUsername          = "admin"
+)
+
+func sessionCookieForRole(role string) string {
+	if role == "administrator" {
+		return adminSessionCookieName
+	}
+	return sessionCookieName
+}
 
 var errUnauthenticated = errors.New("authentication is required")
 
@@ -153,7 +164,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 	tx, err := s.db.Begin(r.Context())
 	if err == nil {
 		defer tx.Rollback(r.Context())
-		if authenticatingAdmin != uuid.Nil {
+		var access string
+		err = tx.QueryRow(r.Context(), `SELECT app.lock_signin_principal($1,$2)`, principal.principalID, passwordHash).Scan(&access)
+		if err == nil && access != "active" {
+			if verified && access == "disabled" {
+				detail := "Your account has been disabled."
+				w.Header().Set("Content-Type", "application/problem+json")
+				writeJSON(w, http.StatusUnauthorized, generated.Problem{Type: "urn:workouts-explorer:problem:account-disabled", Title: "Unauthorized", Status: http.StatusUnauthorized, Detail: &detail, RequestId: requestIDFrom(r.Context())})
+			} else {
+				writeProblem(w, r, http.StatusUnauthorized, "Unauthorized", "invalid username or password")
+			}
+			return
+		}
+		if err == nil && authenticatingAdmin != uuid.Nil {
 			var eligible bool
 			err = tx.QueryRow(r.Context(), `SELECT
 				EXISTS(SELECT 1 FROM app.authentication_principals p JOIN app.users u ON u.principal_id=p.id JOIN app.accounts a ON a.id=u.account_id WHERE p.id=$1 AND p.role='user' AND p.disabled_at IS NULL AND u.account_id=$2 AND a.state='active')
@@ -188,7 +211,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 	}
 	metadata := sessionMetadata(sessionID, principal, expiresAt)
 	if kind == "cookie" {
-		http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: credential, Path: "/", HttpOnly: true, Secure: s.secureCookie(), SameSite: http.SameSiteLaxMode, Expires: expiresAt})
+		http.SetCookie(w, &http.Cookie{Name: sessionCookieForRole(principal.role), Value: credential, Path: "/", HttpOnly: true, Secure: s.secureCookie(), SameSite: http.SameSiteLaxMode, Expires: expiresAt})
 		writeJSON(w, http.StatusCreated, generated.BrowserSession{Id: metadata.Id, Identity: metadata.Identity, ExpiresAt: expiresAt, CsrfToken: *csrf})
 		return
 	}
@@ -196,7 +219,16 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, kind stri
 }
 
 func (s *Server) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r, "")
+	s.readCurrentSession(w, r, "user")
+}
+
+func (s *Server) GetAdminSession(w http.ResponseWriter, r *http.Request) {
+	s.readCurrentSession(w, r, "administrator")
+}
+
+func (s *Server) readCurrentSession(w http.ResponseWriter, r *http.Request, role string) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	session, ok := s.requireSession(w, r, role)
 	if !ok {
 		return
 	}
@@ -209,8 +241,16 @@ func (s *Server) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) DeleteCurrentSession(w http.ResponseWriter, r *http.Request, params generated.DeleteCurrentSessionParams) {
-	session, ok := s.requireSession(w, r, "")
-	if !ok || !requireCSRF(w, r, session, params.XCSRFToken) {
+	s.deleteCurrentSession(w, r, "user", params.XCSRFToken)
+}
+
+func (s *Server) DeleteAdminSession(w http.ResponseWriter, r *http.Request, params generated.DeleteAdminSessionParams) {
+	s.deleteCurrentSession(w, r, "administrator", params.XCSRFToken)
+}
+
+func (s *Server) deleteCurrentSession(w http.ResponseWriter, r *http.Request, role string, csrf *string) {
+	session, ok := s.requireSession(w, r, role)
+	if !ok || !requireCSRF(w, r, session, csrf) {
 		return
 	}
 	if _, err := s.db.Exec(r.Context(), `UPDATE app.sessions SET revoked_at=transaction_timestamp() WHERE id=$1 AND revoked_at IS NULL`, session.sessionID); err != nil {
@@ -218,7 +258,7 @@ func (s *Server) DeleteCurrentSession(w http.ResponseWriter, r *http.Request, pa
 		return
 	}
 	if session.kind == "cookie" {
-		http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Path: "/", HttpOnly: true, Secure: s.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0)})
+		http.SetCookie(w, &http.Cookie{Name: sessionCookieForRole(role), Path: "/", HttpOnly: true, Secure: s.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0)})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -274,6 +314,10 @@ func (s *Server) CreateInvitation(w http.ResponseWriter, r *http.Request, params
 		}
 		return
 	}
+	s.sendInvitation(w, r, id, email, token, verifier, issuedAt, expiresAt, http.StatusCreated)
+}
+
+func (s *Server) sendInvitation(w http.ResponseWriter, r *http.Request, id uuid.UUID, email, token string, verifier []byte, issuedAt, expiresAt time.Time, status int) {
 	result := make(chan string, 1)
 	work := deliveryWork{
 		to: email, subject: "Your Workouts Explorer invitation", body: "Register at " + strings.TrimRight(s.config.PublicURL, "/") + "/register?token=" + url.QueryEscape(token), result: result,
@@ -293,7 +337,7 @@ func (s *Server) CreateInvitation(w http.ResponseWriter, r *http.Request, params
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "invitation remains retryable because email delivery is unavailable")
 		return
 	}
-	writeJSON(w, http.StatusCreated, generated.Invitation{Id: compactUUID(id), Email: email, State: generated.InvitationState("pending"), DeliveryState: generated.InvitationDeliveryState("delivered"), IssuedAt: issuedAt, ExpiresAt: expiresAt})
+	writeJSON(w, status, generated.Invitation{Id: compactUUID(id), Email: email, State: generated.InvitationState("pending"), DeliveryState: generated.InvitationDeliveryState("delivered"), IssuedAt: issuedAt, ExpiresAt: expiresAt})
 }
 
 func (s *Server) GetInvitation(w http.ResponseWriter, r *http.Request, token generated.Token) {
@@ -329,6 +373,10 @@ func (s *Server) CreateRegistration(w http.ResponseWriter, r *http.Request) {
 	username, canonicalUsernameValue, err := canonicalUsername(input.Username)
 	if err != nil {
 		writeFieldError(w, r, "username", "invalid", "username is invalid")
+		return
+	}
+	if canonicalUsernameValue == adminUsername {
+		writeFieldError(w, r, "username", "reserved", "username is reserved")
 		return
 	}
 	fullName := trimUnicode15Whitespace(input.FullName)
@@ -369,7 +417,7 @@ func (s *Server) CreateRegistration(w http.ResponseWriter, r *http.Request) {
 			_, err = tx.Exec(r.Context(), `SELECT set_config('app.account_id',$1,true)`, accountID.String())
 		}
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO app.preferences(account_id) VALUES($1)`, accountID)
+			_, err = tx.Exec(r.Context(), `INSERT INTO app.preferences(account_id,workout_columns) VALUES($1,ARRAY['date','type','duration','distance','calories'])`, accountID)
 		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE app.invitation_tokens SET used_at=transaction_timestamp() WHERE verifier=$1`, verifier)
@@ -596,12 +644,16 @@ func (s *Server) GetMyAvatar(w http.ResponseWriter, r *http.Request, params gene
 func (s *Server) authenticate(ctx context.Context, r *http.Request) (authenticatedSession, error) {
 	credential := ""
 	kind := ""
+	cookieName := sessionCookieName
+	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
+		cookieName = adminSessionCookieName
+	}
 	if values, present := r.Header["Authorization"]; present {
 		if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") || strings.Contains(strings.TrimPrefix(values[0], "Bearer "), " ") {
 			return authenticatedSession{}, errUnauthenticated
 		}
 		kind, credential = "bearer", strings.TrimPrefix(values[0], "Bearer ")
-	} else if cookie, err := r.Cookie(sessionCookieName); err == nil {
+	} else if cookie, err := r.Cookie(cookieName); err == nil {
 		kind, credential = "cookie", cookie.Value
 	} else {
 		return authenticatedSession{}, errUnauthenticated
@@ -682,7 +734,7 @@ func (s *Server) findPrincipalForSignin(ctx context.Context, canonical string, e
 	}
 	var principal authenticatedSession
 	var hash string
-	err := s.db.QueryRow(ctx, `SELECT p.id,u.account_id,p.role,p.username,p.email,p.canonical_email,p.full_name,p.password_hash FROM app.authentication_principals p LEFT JOIN app.users u ON u.principal_id=p.id LEFT JOIN app.accounts a ON a.id=u.account_id WHERE p.`+column+`=$1 AND p.disabled_at IS NULL AND (p.role='administrator' OR a.state='active')`, canonical).Scan(&principal.principalID, &principal.accountID, &principal.role, &principal.username, &principal.email, &principal.canonicalEmail, &principal.fullName, &hash)
+	err := s.db.QueryRow(ctx, `SELECT p.id,u.account_id,p.role,p.username,p.email,p.canonical_email,p.full_name,p.password_hash FROM app.authentication_principals p LEFT JOIN app.users u ON u.principal_id=p.id LEFT JOIN app.accounts a ON a.id=u.account_id WHERE p.`+column+`=$1 AND ((p.role='user' AND a.state IN ('active','disabled')) OR (p.role='administrator' AND p.disabled_at IS NULL AND NOT $2 AND p.canonical_username='admin'))`, canonical, email).Scan(&principal.principalID, &principal.accountID, &principal.role, &principal.username, &principal.email, &principal.canonicalEmail, &principal.fullName, &hash)
 	return principal, hash, err
 }
 

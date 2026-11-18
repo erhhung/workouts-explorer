@@ -8,7 +8,7 @@ SELECT $1 < 31 OR (
         ('app.project_route_lod(geometry)','TABLE(zoom_band integer, component integer, piece integer, geom geometry)','sql','i',false,true,'s',true,0,
             ARRAY['search_path=pg_catalog, public'],false,'c6cce11de27bde21cb3d7ce9b5cf893f'),
         ('app.maintain_raw_route_lod_chunks()','trigger','plpgsql','v',true,false,'u',false,0,
-            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,'179d3b83117cac37eb15d5f1ea25d0e1'),
+            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,'322f75b43b2ef31ce2de6fbb9d41e93a'),
         ('app.tile_scope(json,boolean)','TABLE(account_id uuid, selection_id uuid, context_id uuid, start_date date, end_date date, all_time boolean)','plpgsql','s',false,false,'u',true,0,
             ARRAY['search_path=pg_catalog, app'],false,'6716407995444f19da4f9c935a791cad'),
         ('app.raw_route_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,0,

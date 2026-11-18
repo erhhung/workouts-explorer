@@ -11,7 +11,7 @@ import (
 )
 
 func TestTileReadinessContract(t *testing.T) {
-	if SupportedSchemaVersion != 31 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileReadinessSQL+")") {
+	if SupportedSchemaVersion != 32 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileReadinessSQL+")") {
 		t.Fatal("current runtime must enforce the tile contract")
 	}
 	for _, required := range []string{"SELECT $1 < 31 OR (", "minimum_runtime_version >= 31", "migration_baseline = 27",
@@ -43,7 +43,7 @@ func TestTileReadinessExactBodies(t *testing.T) {
 	}
 	checked := 0
 	for _, function := range functions {
-		want := fmt.Sprintf("%x", md5.Sum([]byte(function[4])))
+		want := fmt.Sprintf("%x", md5.Sum([]byte(accountPurgeBodyForFunction(function[1], function[4]))))
 		for _, fingerprint := range fingerprints {
 			if fingerprint[1] == function[1] {
 				checked++

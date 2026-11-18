@@ -19,6 +19,18 @@ transport, configured-origin, cookie, CSRF, and generic-error behavior.
 
 ## Decision
 
+### Credential-Verified Account Suspension
+
+The accepted M10 suspension workflow denies browser and bearer issuance for a
+disabled owner. Incorrect/unknown credentials retain the generic sign-in response.
+Only after verifying the owner's password may the API return the fixed
+`urn:workouts-explorer:problem:account-disabled` 401 and the login form show
+**Your account has been disabled.** below its fields. This reveals no suspension
+state to a caller without valid owner credentials and does not reactivate through
+password recovery. Session issuance retains the account/principal lifecycle fence
+through commit; re-enabling never restores revoked sessions. See the
+[account-access contract](../admin-ui-spec.md#disable-and-enable).
+
 ### Canonical identities
 
 Username and email display values are the submitted values after trimming only
@@ -71,6 +83,15 @@ runtime roles receive only the specific lookup and mutation privileges they
 need. A Unicode or IDNA table upgrade requires a reviewed data migration that
 recomputes every canonical value and aborts on a collision. Runtime code never
 recanonicalizes persisted identities opportunistically.
+
+**M10 extension, accepted 11/15/2026 and deployed at Helm 153:** canonical username
+`admin` is reserved exclusively for the bootstrap administrator. Owner registration rejects
+all canonical equivalents using this same normalization policy. The shared login
+screen authenticates that identity and opens `/admin`; the database role, not
+the submitted spelling, authorizes access. See the
+[admin identity transition](../admin-ui-spec.md#shared-login-and-reserved-username).
+The explicit adoption command preserves the principal/password hash, revokes
+administrator sessions and audits the transition; unresolved collisions fail.
 
 ### Password profile
 
@@ -261,6 +282,16 @@ not rotate credentials or re-enable accounts. Rotation is a separate explicit
 operator action with its own sanitized audit and is not implemented as bootstrap
 idempotence. The bootstrap Job and its Secret are removed after success; keeping
 plaintext bootstrap credentials in a long-lived Deployment is prohibited.
+
+The [M10 administrator workspace](../admin-ui-spec.md) fixes the bootstrap
+username to `admin`. Before adopting that contract, explicitly transition an
+existing differently named administrator with audit, collision checks and session
+revocation, preserving its principal ID and password hash and aligning bootstrap
+configuration. An owner-name collision requires reviewed resolution, never an
+automatic owner conversion/rename. Normal startup/bootstrap idempotence must not
+perform this transition or silently reset an in-app changed password. Administrator
+console password change is identity state, not a Helm/Secret write-back; explicit
+operator rotation remains available for recovery under its existing safeguards.
 
 ## Alternatives Considered
 

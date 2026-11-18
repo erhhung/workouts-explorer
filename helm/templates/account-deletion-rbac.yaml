@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "workouts.fullname" . }}-worker
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "workouts.fullname" . }}-staging-disposal
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "workouts.fullname" . }}-staging-disposal
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "workouts.fullname" . }}-worker
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "workouts.fullname" . }}-staging-disposal

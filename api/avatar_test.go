@@ -12,7 +12,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
-func TestAvatarProxyPrivacyCachingAndSizeLimit(t *testing.T) {
+func TestAvatarProxyPrivacyNoIdentityRetentionAndSizeLimit(t *testing.T) {
 	requests := 0
 	service := newAvatarService()
 	service.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -24,7 +24,7 @@ func TestAvatarProxyPrivacyCachingAndSizeLimit(t *testing.T) {
 	})
 	first := service.get(context.Background(), "owner@example.test", "Owner")
 	second := service.get(context.Background(), "owner@example.test", "Owner")
-	if first.contentType != "image/png" || first.cacheControl != "private, max-age=3600" || second.etag != first.etag || requests != 1 {
+	if first.contentType != "image/png" || first.cacheControl != "private, max-age=3600" || second.etag != first.etag || requests != 2 {
 		t.Fatalf("avatar cache content=%q requests=%d", first.contentType, requests)
 	}
 

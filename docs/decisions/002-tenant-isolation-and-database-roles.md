@@ -105,6 +105,14 @@ account lifecycle and sanitized operational records. Account deletion invokes
 explicit orchestration and purge operations rather than granting an
 administrator general private-data access.
 
+**M10 extension, 11/15/2026:** the expressly requested
+[View usage summary](../admin-ui-spec.md#registered-and-view-usage) is a bounded
+administrative exception: last-login timestamp, workout/route counts and latest
+workout local date, plus identity name. A fixed active-admin-session-checked
+definer reads only that projection and restores logical tenant/session settings
+on success/error. It returns no workout rows/IDs, geometry, source configuration,
+logs or owner capability. Direct cross-account RLS permissions remain denied.
+
 ### Verification
 
 Database integration tests must cover:

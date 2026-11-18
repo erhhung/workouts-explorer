@@ -8,11 +8,11 @@ import (
 	"github.com/erhhung/workouts-explorer/api/migrations"
 )
 
-// The approved raw-route foundations are included in this source snapshot.
+// Approved foundations, including the explicitly requested lifecycle/source folds into 002/003.
 func TestFoundationMigrationPrefix(t *testing.T) {
 	const expected = `61f2557c2a3d20427c6e1c8c67862e0a864d488201122e096b437c4069982a20
-3a045da9b30e5e67c9de58c3080780025a8ba77bbe912cd5d8679e0bd6abf651
-62e29791ba3f44b235aeb7b8c282861160fba0c1d4ed002f3ae2da33d555787e
+79acc4ee8f2c493a2856d51d3c2f91090280e393f6991969adc20aa79037bad6
+abbf57857360fe0ca6847a2ea8abee3733caa0c6830fe63aeacc55f2e81716bf
 5d488eca902f1c9d8f9504f29460bdd7cfb0a82215b7bfb7b235f8ae62003934
 5489164c112086822abe7db10b7abc395a8dc6c6320e85b6be48fb50e3cd201a
 c845bbc1ab20f48cb7eca4f26b7db4ff6d2541d6442b3aaf247d174f1aeb38ac

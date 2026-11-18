@@ -254,7 +254,7 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 	envelope := record.configEnvelope
 	var jobID uuid.UUID
 	var snapshotEnvelope []byte
-	if configChanged {
+	if configChanged || (params.CheckConnection != nil && *params.CheckConnection) {
 		if generation == int64(^uint64(0)>>1) {
 			writeSourceUnavailable(w, r)
 			return
@@ -272,7 +272,7 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 		}
 	}
 	err = tx.QueryRow(r.Context(), `UPDATE app.sources SET display_name=$1,canonical_display_name=$2,auto_sync_enabled=$3,status=$4,generation=$5,config_envelope=$6,status_code=$7,status_summary=$8,checked_at=$9 WHERE id=$10 RETURNING updated_at`, display, canonical, autoSync, status, generation, envelope, statusCode, statusSummary, checkedAt, id).Scan(&record.updatedAt)
-	if err == nil && configChanged {
+	if err == nil && jobID != uuid.Nil {
 		err = enqueueSourceConnectionCheck(r.Context(), tx, *session.accountID, id, generation, jobID, snapshotEnvelope, requestIDFrom(r.Context()))
 	}
 	if err == nil {

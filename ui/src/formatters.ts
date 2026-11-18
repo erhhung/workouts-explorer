@@ -46,3 +46,10 @@ export function numberFormatter(locales?: Locales, options: Intl.NumberFormatOpt
     () => new Intl.NumberFormat(locales, options),
   );
 }
+
+export function autoSyncIntervalLabel(seconds: number) {
+  if (seconds === 86400) return "Once a day";
+  if (seconds === 43200) return "Twice a day";
+  const hours = seconds / 3600;
+  return `Every ${numberFormatter(undefined, { maximumFractionDigits: 6 }).format(hours)} ${hours === 1 ? "hour" : "hours"}`;
+}

@@ -11,10 +11,10 @@ import (
 )
 
 func TestCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 31 {
-		t.Fatalf("supported schema = %d, want 31", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 32 {
+		t.Fatalf("supported schema = %d, want 32", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("full readiness must compose the version-gated display contract with all existing contracts")
 	}
@@ -117,7 +117,7 @@ func TestCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 					hash = fingerprint[2]
 				}
 			}
-			want := fmt.Sprintf("%x", md5.Sum([]byte(body)))
+			want := fmt.Sprintf("%x", md5.Sum([]byte(accountPurgeBodyForFunction(name, body))))
 			if hash != want {
 				t.Fatalf("readiness fingerprint = %q, current embedded migration body = %q", hash, want)
 			}

@@ -75,7 +75,7 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	sender := &recordingSender{}
 	server := integrationServer(t, db, sender)
 	suffix := strings.ToLower(strings.ReplaceAll(uuid.NewString(), "-", ""))[:10]
-	adminUsername, adminEmail := "admin"+suffix, "admin"+suffix+"@example.test"
+	adminUsername, adminEmail := "admin", "admin"+suffix+"@example.test"
 	passwordFile := t.TempDir() + "/password"
 	if err := os.WriteFile(passwordFile, []byte("administrator password"), 0o600); err != nil {
 		t.Fatal(err)
@@ -187,12 +187,12 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	}
 	if initialPreferences.Initialized || initialPreferences.CoverageDiagnosticsEnabled || initialPreferences.Theme != "dark" || initialPreferences.Units != "imperial" || initialPreferences.Timezone != "UTC" ||
 		initialPreferences.FirstWeekday != "monday" || initialPreferences.ClockFormat != "12h" || initialPreferences.PageSize != 25 ||
-		len(initialPreferences.WorkoutColumns) != 4 || initialPreferences.WorkoutColumns[0] != "date" || initialPreferences.WorkoutColumns[1] != "type" ||
-		initialPreferences.WorkoutColumns[2] != "duration" || initialPreferences.WorkoutColumns[3] != "distance" {
+		len(initialPreferences.WorkoutColumns) != 5 || initialPreferences.WorkoutColumns[0] != "date" || initialPreferences.WorkoutColumns[1] != "type" ||
+		initialPreferences.WorkoutColumns[2] != "duration" || initialPreferences.WorkoutColumns[3] != "distance" || initialPreferences.WorkoutColumns[4] != "calories" {
 		t.Fatalf("new account preferences are not uninitialized defaults: %+v", initialPreferences)
 	}
 	initializeOnly := true
-	initialize := callEndpoint(http.MethodPatch, "/api/me/preferences?initializeOnly=true", `{"theme":"dark","units":"imperial","timezone":"America/Denver","firstWeekday":"monday","clockFormat":"12h","workoutColumns":["date","type","duration","distance"],"pageSize":25}`, userToken, "")
+	initialize := callEndpoint(http.MethodPatch, "/api/me/preferences?initializeOnly=true", `{"theme":"dark","units":"imperial","timezone":"America/Denver","firstWeekday":"monday","clockFormat":"12h","workoutColumns":["date","type","duration","distance","calories"],"pageSize":25}`, userToken, "")
 	server.UpdateMyPreferences(initialize.recorder, initialize.request, generated.UpdateMyPreferencesParams{InitializeOnly: &initializeOnly})
 	if initialize.recorder.Code != http.StatusOK {
 		t.Fatalf("preference initialization: %d %s", initialize.recorder.Code, initialize.recorder.Body.String())

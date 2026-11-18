@@ -17,6 +17,84 @@ This specification describes observable MVP behavior. Implementation structure b
 - API IDs accept dashed or compact UUIDs in either case and return compact uppercase UUIDs.
 - API errors use RFC 9457 `application/problem+json`.
 
+## Feature: Use The Administrator Workspace (Planned M10)
+
+### Decision And User Story
+
+As the bootstrap administrator, I want post-installation account, OSM and
+operational workflows in a dedicated UI rather than a series of manual API/CLI
+calls. **Accepted 11/15/2026**, this replaces the original no-admin-UI assumption.
+The [admin UI specification](admin-ui-spec.md) owns the complete tab/category,
+authentication, permission, task, Settings and verification contracts. The first
+authentication/workspace slice is deployed; the full behavior below remains the
+M10 target. See [implementation status](admin-ui-spec.md#implementation-status)
+for the directory/invitation/configuration screens and remaining workflows.
+
+### Behavior
+
+1. Use the existing login screen. Reserved canonical username **admin** and the
+   bootstrap administrator's password authenticate its separate stored identity;
+   server-confirmed role routes it to **/admin**. Normal username/email sign-in
+   routes data owners to the explorer. Never authorize by username or URL alone.
+2. Reserve every canonical equivalent of **admin** from owner registration and
+   provide an explicit audited transition for an existing differently named
+   administrator. Unresolved owner-name collisions block transition rather than
+   converting or silently renaming a private account. The current password hash
+   remains authoritative; deployment startup does not reset it from a Secret.
+3. Keep admin/user cookie sessions, CSRF tokens, caches and retained workspaces
+   independent. Expiry/sign-out affects only the appropriate role. Cross-role
+   return targets cannot grant access, and a shared login remains reachable while
+   the other role is signed in.
+4. Present **Accounts, OSM Maps, Operations, Settings**, in that order, with guarded
+   **1/2/3/4** shortcuts and a
+   Stats-style left navigation panel for each tab's second-level categories.
+   Reuse existing themes, tables, menus, dialogs, paging, focus and scroll behavior.
+5. Accounts combines users and persisted invitations in the sortable, unpaged
+   **Users** table, reusing Workout log at 80% width. Its same-line **Invite a user**
+   action opens the validated Cancel/Send email dialog; successful invitations
+   appear as yellow bold **Invited** rows and become green **Active** owners after
+   signup. There is no separate Invitations category, search field or pager.
+   Registered dates and the bounded View usage dialog use local dates/time.
+   Resend grants a fresh seven-day period; normal-style Revoke removes the row and
+   permits re-invitation. Successful email delivery shows no extra message; title
+   and error gaps are balanced. See the [Users composition](admin-ui-spec.md#users) for status/actions and
+    fetch/sort/focus behavior. Disable/Enable is implemented with session revocation,
+     cancellation without revival and retained user data. Accounts also provides
+     delivery recovery, conditional Revoke sessions before Disable user, and asynchronous
+    account deletion/progress/retry. Password recovery is the self-service login flow,
+    not an administrator action. Suspension is reversible; accepted deletion
+   cannot be undone or reactivated.
+6. OSM Maps provides supported-region selection and initial preparation, refresh,
+   stage/history/readiness, resume/retry, storage inspection/unblock, candidate
+   abort and cleanup recovery through the existing resumable updater.
+7. Operations provides health, administrative tasks/diagnostics, privacy-safe
+   incidents/queue summaries, announcements, sanitized audit and recovery guidance.
+   Administrator access never includes a private cross-account job/log browser.
+8. Settings provides independent administrator theme/time-zone/clock/page-size
+   preferences, password/session access controls and a sanitized **read-only**
+   effective-configuration view. Helm/GitOps/Secrets own deployment configuration;
+   the UI cannot shadow or write back those settings.
+9. A separate internal OSM job controller launches approved updater Jobs with
+   narrow namespace-scoped permissions and template/admission restrictions. The
+   UI/public API and existing workers receive no Job-launching authority.
+10. The owner-profile **Data Sources** action provides private source
+    add/edit/check/delete workflows, separately delivered from administration.
+    It does not grant administrators source access or add in-app iCloud 2FA.
+
+### Acceptance Criteria
+
+- Required routine post-installation journeys are operable through the UI; REST,
+  CLI and runbooks remain automation/recovery interfaces under the same rules.
+- The administrator cannot read owner workout/route rows, source configuration,
+  credentials, notifications, job logs/files, exports, reports or private tiles.
+- The expressly approved [usage projection](admin-ui-spec.md#registered-and-view-usage)
+  exposes only last login, account workout/route counts and latest local workout
+  date, never an owner data capability.
+- Settings has no editable deployment fields or hidden infrastructure overrides;
+  Helm upgrade/GitOps reconciliation preserves the documented ownership model.
+- Account purge, OSM interruption/storage/promotion and controller restart flows
+  pass the detailed [admin acceptance matrix](admin-ui-spec.md#acceptance-and-verification).
+
 ## Feature: Invite And Register A User
 
 ### User story
@@ -36,6 +114,8 @@ As an administrator, I want to invite a person by email so that accounts cannot 
 
 - Email and username are globally unique, compared case-insensitively.
 - Username, full name, password, and matching confirmation are required.
+- M10 reservation rejects canonical **admin** for owner signup; only the
+  separate bootstrap administrator can own that username.
 - Password meets the configured policy.
 - The invitation token must be valid, unused, unexpired, and resolve to the invitation's stored email.
 
@@ -79,6 +159,15 @@ As a user, I want secure signin and password recovery so that I can access my ac
 ### Failure cases
 
 - Invalid signin returns a generic error that does not reveal whether the account exists.
+- Correct owner credentials for a disabled account return the fixed account-disabled
+  problem and display **Your account has been disabled.** below the login fields.
+  Wrong credentials remain generic; no session is created in either case.
+- Shared form-error summaries use heading **Well, this is a dead end... 🙁**.
+  Generic sign-in feedback is **Sign-in failed. Check your details and try again.**;
+  registration uses **Create account failed. Review the fields and try again.**;
+  recovery/reset uses **Request failed. Please try again later.**. Preferences uses
+  **Choose one of the available page sizes.** and **Choose how many date ranges to
+  remember (1-5).** for its corresponding validation failures.
 - Expired sessions require signin again.
 - SMTP failure reports a safe error without revealing account existence or SMTP details.
 
@@ -105,6 +194,8 @@ As a user, I want display preferences to persist so that the product matches how
 7. Summary, Map and Stats show those ranges immediately below **Custom...**, without another divider, formatted like **Jan 1, 2022 to Nov 1, 2026**. Selecting the already applied range does nothing. For any explicit range, only **Custom...** carries the checkmark and remains available for editing.
 8. Focus outlines follow keyboard navigation (Tab/Shift+Tab and navigation keys), not pointer clicks or text editing after a pointer click. Preferences uses accessible styled selects with the list aligned to the control's left and top edges and the same width; long lists scroll within the available viewport. Form submission, time zone ordering and keyboard selection retain their existing behavior.
 9. Summary, Map and Stats date menus and the Map base-map menu match their trigger's width, align to its left edge, and open 12px below it. Lists scroll within available space rather than shifting the requested anchor.
+10. Preferences reuses standard compact-dialog spacing around its header, scrolling body and Cancel/Save footer, including the action gap. Its header contains the title and close control without the explanatory subheading. Header/actions remain fixed while only the body scrolls; Save/Cancel and content-focus return retain their existing behavior.
+11. Newly registered personal accounts start with Workout log columns **Date, Type, Duration, Distance, Calories**, in that order. Registration explicitly seeds these preferences; first browser initialization preserves them. Existing saved column selections are not backfilled or reset.
 
 ### Validation
 
@@ -167,6 +258,32 @@ As an administrator, I want to delete an account without gaining access to its p
 7. Failed cancellation or purge remains retryable and never re-enables the account.
 8. A minimal sanitized audit records who requested deletion, when, and its final outcome.
 9. Backup and WAL removal follows infrastructure retention and is not immediate physical erasure.
+10. Users immediately shows accepted deletions as yellow **Deleting**. Active
+    periodic polling accelerates to at most 10 seconds while pending, preserving
+    table rows in place; completion removes only the deleted user from the list.
+11. Delete all historical owner jobs/logs/events, source tombstones/inventories,
+    raw/derived/tile/LOD route data, matching/display/diagnostic/retry/outbox state,
+    private report/map capabilities, preferences/notifications/schedules, and
+    identity/session/reset/invitation state. Release username/email and create new
+    principal/account UUIDs on re-registration. Old suppression/checksum state must
+    not prevent fresh imports under the new account.
+12. Completion retains only an admin-owned task and sanitized audit with opaque old
+    IDs, counts, requester and timestamps. Detach obsolete foreign-key references;
+    retain no private workout/source/job detail. API instances retain no identity-
+    keyed avatar memory cache. Existing owner browser/session caches follow the
+    established confirmed-expiry/identity-change clearing protocol.
+13. Source exports on operator server paths/iCloud and shared public OSM data are
+    not account-owned application storage and are not deleted. Account deletion is
+    not source deletion or workout deletion: historical tombstones are purged too.
+14. A checked schema inventory and bounded durable batches make progress monotonic;
+    interruption rolls back only its current batch and resumes without recreating
+    deleted data. FK enforcement stays enabled. API mutations admitted just before
+    revocation serialize against lifecycle state so they cannot recreate purge data.
+15. Worker execution/staging receipts block purge independently of job terminal
+    status. Clean Close/scavenging or verified disposal of the exact per-pod
+    emptyDir is required; a live pod, denied metadata request or cleanup error is
+    not cleanup evidence. The worker has namespace get-pods only, no pod mutation
+    or Secret access. Progress reports only safe retry-needed codes.
 
 ### Validation
 
@@ -190,7 +307,7 @@ As an administrator, I want to delete an account without gaining access to its p
 
 ### User story
 
-As a data owner, I want to configure source adapters through Swagger or REST so that my archived workouts can be synchronized.
+As a data owner, I want to configure source adapters through the app or REST API so that my archived workouts can be synchronized.
 
 ### Behavior
 
@@ -199,13 +316,89 @@ As a data owner, I want to configure source adapters through Swagger or REST so 
    `health-auto-export-icloud`; Milestone 3 introduces local/NFS and Milestone 8
    adds iCloud to the discriminated API union.
 3. OpenAPI selects and validates the correct config schema from `type`.
-4. Creation or a canonical config change encrypts the complete adapter config, sets `checking-connection`, and enqueues a high-priority connection check. Metadata-only or identical-config updates do not enqueue another check.
+4. Creation or a canonical config change encrypts the complete adapter config, sets `checking-connection`, and enqueues a high-priority connection check. Metadata-only or identical-config updates do not enqueue another check unless the owner explicitly requests `checkConnection=true`; that request increments generation and snapshots a fresh check even for unchanged configuration.
 5. A successful check sets `connected`.
 6. A failed check sets `connection-failed` and creates an error notification.
 7. A failed source cannot be selected for ingest until its config passes a later check.
 8. Partial updates retain omitted settings and write-only secrets.
 9. Required secret values cannot be cleared with `null` or an empty string.
-10. iCloud setup is external and owner-operated; the product never imports a host rclone config automatically or asks for 2FA in-app. Source-management UI remains outside the MVP.
+10. iCloud setup is external and owner-operated; the product never imports a host
+    rclone config automatically or asks for 2FA in-app. Source configuration is
+    also available through **Data Sources** below **Preferences** in the owner
+    profile menu. It uses the same private APIs and supersedes the earlier
+    permanent source-UI exclusion, separately from M10 administration. It never
+    authorizes administrator source access.
+
+### Owner Data Sources Dialog
+
+- Title **Data Sources**; reuse Preferences' compact insets, fixed header/actions
+  and independently scrolling body, but opt into content-sized height: the table-
+  only view is compact, Add/Edit fits visible fields, and only viewport overflow
+  scrolls. This exception does not change standard dialog sizing. The **Sources** section
+  reuses the admin Users/Workout log table, sorting, ellipsis menu and empty-state
+  typography, without pagination. Columns are **Name**, **Type**, **Auto Sync**,
+  **Status** and row actions. Status labels are **Connecting**, **Connected** and
+  **Connection failed**; API status values are unchanged. Empty copy is
+  **No data sources configured.**.
+- **Add a source** appears opposite Sources. Row actions are **Edit source**, then
+  a divider and red **Delete source**. Deletion names the selected source in a
+  compact confirmation; failed deletion retains the row. Imported workouts remain.
+  Its prompt is **Delete <source-name>? Its connection credentials will be deleted
+  and its active sync jobs cancelled. Imported workouts will be retained.**. A
+  transparent second-level backdrop avoids dimming the base content twice.
+- The editor is initially hidden. Add/Edit reveals **New source / Edit source**.
+  Type choices, in order, are **Health Auto Export — iCloud Drive** and **Health
+  Auto Export — Server Path**, using the shared Preferences select. Type is locked
+  once persisted. Default names are **Health Auto Export iCloud Drive** and
+  **Health Auto Export Server Path**; changing type updates an untouched default
+  name, while retaining a custom name. Cancel clears and hides the editor.
+- Name is limited to 200 characters. Path is full-width in New/Edit for both types,
+  limited to 250 and fixed-width. Server Path styled help is exactly two lines:
+  **Path in ingest worker container containing** and
+  **HealthAutoExport-YYYY-MM-DD.json files**. iCloud path help retains its wording.
+- iCloud additionally has write-only **Apple ID** (320), masked **Password** (4096),
+  **Cookies** (4000), **Trust token** (250). All entered configuration values,
+  including masked Password, use fixed-width text at the existing size. Styled
+  input help identifies `apple_id`, `password`, `cookies`
+  or `trust_token` from `rclone config show`. No native title tooltip or in-app
+  Apple authentication is introduced.
+- On iCloud forms, Path spans the form; Apple ID and Password share the next row;
+  Cookies is a full-width three-visible-line textarea; Trust token is a full-width
+  single-line input. All input help uses the shared styled cursor-follow tooltip,
+  never native `title` attributes. The last visible fields and footer actions have
+  equal standard spacing above/below the divider, without a blank reserved area.
+- Editing leaves every write-only input empty with dimmed placeholder exactly
+  **existing value retained unless provided**. Only placeholder glyphs use scoped
+  proportional italic text; entered values stay normal fixed-width at unchanged
+  size. Omit empty
+  credential fields from PATCH, preserving their encrypted values and optional
+  client identity. Do not return stored credentials or copy drafts into persistent
+  storage, query-cache mutation variables, diagnostics or raw error output.
+- A divider precedes Cancel/Save. Save waits in the dialog for the saved source
+  generation's connection result, with a 30-second UI deadline and pending guards.
+  Success hides/clears the editor and refreshes Sources/Data Sync. Failure retains
+  the editor with a small **Connection check failed** frame and safe actionable
+  copy. A newer generation cannot satisfy an older Save. A persisted new source
+  keeps its identity for retries, using PATCH rather than duplicate POST.
+- The existing API persists submitted configuration before asynchronous checking;
+  a failed check retains that configuration and blocks ingest. Cancel discards
+  the editor, not an already accepted server mutation. Submitted write-only values
+  are cleared after acknowledgement. New UI-created sources default to Auto Sync disabled;
+  edits load the stored flag. The last field, below Path or Trust token, is
+  **Enable automated sync (<interval>)**. It uses the same shared cadence formatter
+  and schedule response as the Data Sync Automated card, lowercased (for example,
+  **once a day**). It maps directly to `autoSyncEnabled` on POST/PATCH and retains
+  the chosen value while changing new-source type or retrying. No source-type
+  mutation is exposed.
+- Rclone credential inputs have source-specific names, form-level autocomplete
+  suppression, Password's `new-password` hint, and password-manager ignore hints
+  for Apple ID/Password. These are browser hints, not a guarantee against a browser
+  extension that overrides them. No hidden decoys or read-only/focus tricks are used.
+- Checks use an independent serial worker lane and sibling private staging root,
+  so an active ingest does not occupy the check executor. Worker operations have
+  a 25-second deadline and ordinary fenced completion/snapshot cleanup. API work
+  remains authorization/schema validation and enqueueing; no remote I/O runs in
+  an HTTP handler. The browser polls the accepted source generation for its result.
 
 ### iCloud Contract (M8 Owner Review)
 
@@ -349,7 +542,7 @@ As a data owner, I want to synchronize selected sources and historical periods o
 
 1. Manual Sync is available from the avatar menu.
 2. The dialog lists all current sources.
-3. Auto-sync sources are checked by default; the user may change the selection.
+3. On initial load, select the sole Connected source, regardless of source type or automated-sync setting. If zero or multiple sources are Connected, leave all sources unselected. Apply this default once; subsequent refreshes preserve the user's selection. Disconnected sources cannot be selected.
 4. New data only is the default mode.
 5. Specific date range requires inclusive start and end dates.
 6. New-data mode discovers new or changed files and stale ownership-blocked files under the contract requiring 26.

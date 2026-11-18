@@ -947,7 +947,7 @@ describe("DataSync", () => {
     expect(screen.queryByText("Loading schedule...")).not.toBeInTheDocument();
   });
 
-  test("defaults once to connected automatic sources and posts the exact incremental body with CSRF", async () => {
+  test("leaves multiple connected sources unselected and posts the explicit manual selection with CSRF", async () => {
     let request: { body: unknown; csrf: string | null } | undefined;
     baseFetch((path, init) => {
       if (path === "/api/ingest" && init?.method === "POST") {
@@ -960,15 +960,88 @@ describe("DataSync", () => {
       return undefined;
     });
     const { navigate } = renderDataSync();
-    expect(await screen.findByRole("checkbox", { name: /Phone exports/ })).toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: /Phone exports/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Watch archive/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Old folder/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     await waitFor(() =>
       expect(request).toEqual({ body: { sourceIds: [SOURCE_A] }, csrf: "csrf-data-sync" }),
     );
     expect(navigate).toHaveBeenCalledWith(`/data-sync/jobs/${JOB_ID}`);
     expect(await screen.findByText("Existing run selected.")).toBeInTheDocument();
+  });
+
+  test.each([
+    ["health-auto-export-local", false],
+    ["health-auto-export-local", true],
+    ["health-auto-export-icloud", false],
+    ["health-auto-export-icloud", true],
+  ] as const)(
+    "selects the sole connected %s source with automated sync %s",
+    async (type, autoSyncEnabled) => {
+      baseFetch((path) =>
+        path === "/api/data-sync"
+          ? json({
+              ...snapshot,
+              sources: [{ ...snapshot.sources[0], type, autoSyncEnabled }, snapshot.sources[2]],
+            })
+          : undefined,
+      );
+      renderDataSync();
+      const source = await screen.findByRole("checkbox", { name: /Phone exports/ });
+      expect(source).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /Old folder/ })).toBeDisabled();
+      await userEvent.click(source);
+      expect(source).not.toBeChecked();
+    },
+  );
+
+  test("selects the only configured source without automated sync", async () => {
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            sources: [{ ...snapshot.sources[1] }],
+          })
+        : undefined,
+    );
+    const { client } = renderDataSync();
+    const source = await screen.findByRole("checkbox", { name: /Watch archive/ });
+    expect(source).toBeChecked();
+    await userEvent.click(source);
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["data-sync"] });
+    });
+    expect(source).not.toBeChecked();
+  });
+
+  test("leaves all disconnected sources unselected", async () => {
+    baseFetch((path) =>
+      path === "/api/data-sync" ? json({ ...snapshot, sources: [snapshot.sources[2]] }) : undefined,
+    );
+    renderDataSync();
+    const source = await screen.findByRole("checkbox", { name: /Old folder/ });
+    expect(source).not.toBeChecked();
+    expect(source).toBeDisabled();
+  });
+
+  test("leaves multiple connected automatic sources unselected", async () => {
+    baseFetch((path) =>
+      path === "/api/data-sync"
+        ? json({
+            ...snapshot,
+            sources: snapshot.sources.map((source) => ({ ...source, autoSyncEnabled: true })),
+          })
+        : undefined,
+    );
+    renderDataSync();
+    expect(await screen.findByRole("checkbox", { name: /Phone exports/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Watch archive/ })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Select all connected" }));
+    expect(screen.getByRole("checkbox", { name: /Phone exports/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Watch archive/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Old folder/ })).not.toBeChecked();
   });
 
   test("shows an unchecked reprocess option only between bounded date inputs and submit", async () => {
@@ -1020,6 +1093,7 @@ describe("DataSync", () => {
       renderDataSync();
       const user = userEvent.setup();
       await screen.findByRole("checkbox", { name: /Phone exports/ });
+      await user.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
       await user.click(screen.getByRole("checkbox", { name: /Watch archive/ }));
       await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
       fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-08-01" } });
@@ -1057,6 +1131,7 @@ describe("DataSync", () => {
     await screen.findByRole("checkbox", { name: /Phone exports/ });
     const bounded = screen.getByRole("radio", { name: /Specific date range/ });
     const incremental = screen.getByRole("radio", { name: /New data only/ });
+    await user.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     const name = "Reprocess all files in this date range";
     await user.click(bounded);
     await user.click(screen.getByRole("checkbox", { name }));
@@ -1122,6 +1197,7 @@ describe("DataSync", () => {
     renderDataSync();
     const user = userEvent.setup();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await user.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
     await user.click(
       screen.getByRole("checkbox", { name: "Reprocess all files in this date range" }),
@@ -1147,6 +1223,7 @@ describe("DataSync", () => {
     renderDataSync();
     const user = userEvent.setup();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await user.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await user.click(screen.getByRole("radio", { name: /Specific date range/ }));
     const start = screen.getByLabelText("Start date");
     const end = screen.getByLabelText("End date");
@@ -1220,6 +1297,7 @@ describe("DataSync", () => {
     });
     renderDataSync();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("radio", { name: /Specific date range/ }));
     await userEvent.type(screen.getByLabelText("Start date"), "2026-02-28");
     await userEvent.click(screen.getByLabelText("End date"));
@@ -1281,6 +1359,7 @@ describe("DataSync", () => {
       });
       const view = renderDataSync();
       await screen.findByRole("checkbox", { name: /Phone exports/ });
+      await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
       await userEvent.click(screen.getByRole("radio", { name: /Specific date range/ }));
       await userEvent.type(screen.getByLabelText("Start date"), "2022-01-01");
       await userEvent.click(screen.getByLabelText("End date"));
@@ -1362,6 +1441,7 @@ describe("DataSync", () => {
     });
     const view = renderDataSync();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     const feedback = screen.getByRole("status", { name: "Sync feedback" });
     await within(feedback).findByText("Manual sync job has been queued.");
@@ -1411,6 +1491,7 @@ describe("DataSync", () => {
     const view = renderDataSync(previousJobId);
     await screen.findByText("Running", { selector: ".sync-status" });
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     const feedback = screen.getByRole("status", { name: "Sync feedback" });
     act(() => {
@@ -1452,6 +1533,7 @@ describe("DataSync", () => {
     });
     const view = renderDataSync();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     const feedback = screen.getByRole("status", { name: "Sync feedback" });
     await waitFor(() => expect(feedback).toHaveTextContent("Manual sync job has been queued."));
@@ -1488,6 +1570,7 @@ describe("DataSync", () => {
     });
     renderDataSync();
     await screen.findByRole("checkbox", { name: /Phone exports/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Phone exports/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     const error = await screen.findByText("The sync could not be started. Please try again.");
     await waitFor(() => expect(error).toHaveFocus());
@@ -1526,8 +1609,9 @@ describe("DataSync", () => {
     renderDataSync();
     const cloud = await screen.findByRole("checkbox", { name: /Phone exports/ });
     expect(cloud).toHaveAccessibleName(/Health Auto Export — iCloud Drive/);
-    expect(cloud).toBeChecked();
+    expect(cloud).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Old folder/ })).toBeDisabled();
+    await userEvent.click(cloud);
     await userEvent.click(screen.getByRole("checkbox", { name: /Watch archive/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start sync" }));
     await waitFor(() => expect(body).toEqual({ sourceIds: [SOURCE_A, SOURCE_B] }));
@@ -4150,7 +4234,6 @@ describe("DataSync", () => {
     const { client } = renderDataSync();
     const first = await screen.findByRole("checkbox", { name: /Phone exports/ });
     const second = screen.getByRole("checkbox", { name: /Watch archive/ });
-    await userEvent.click(first);
     await userEvent.click(second);
     await client.refetchQueries({ queryKey: ["data-sync"] });
     await waitFor(() => expect(snapshotCalls).toBe(2));

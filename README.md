@@ -11,7 +11,8 @@ the initial implementation supports only Apple Watch workouts exported
 from Apple Fitness.
 
 The app currently supports secure invited accounts, profile preferences,
-and local or network Health Auto Export imports. Imported workouts appear
+owner-managed Data Sources, and local, network or iCloud Drive Health Auto Export
+imports. Imported workouts appear
 in a responsive summary with consistent details while repeat imports avoid
 duplicates.
 
@@ -44,7 +45,7 @@ For development status, see [Development Progress](docs/development-progress.md)
 | ✅ | 7  | Visited road and trail coverage; distinct workout counts; sortable path coverage table |
 | ✅ | [8](docs/development-progress.md#milestone-8-closeout) | Private iCloud setup; remote workout imports; clear prompts when access expires |
 | ✅ | [9](docs/development-progress.md#milestone-9-closeout) | Stats tab: monthly/yearly New Coverage; searchable visit details and Map actions; fast, state-preserving tab navigation and shortcuts |
-| 🔳 | 10 | User and invitation management; announcements; account deletion; OSM administration; operational monitoring and recovery guidance |
+| 🚧 | [10](docs/admin-ui-spec.md) | /admin deployed: isolated login, invitations, bounded usage, disable/enable and durable account deletion; remaining account/OSM/Operations workflows in progress |
 | 🔳 | 11 | Tablet-focused UI/UX for iPad-sized devices and larger; touch, orientation, keyboard, zoom, and accessibility; no iPhone-sized development |
 | 🔳 | 12 | Typical/stress and large-history benchmarks; mixed-workload responsiveness; failure recovery; functional verification and release readiness |
 | 🔳 | [13](docs/implementation-plan.md#milestone-13-github-project-publication) | Public 1.0.0 release; GitHub Actions CI; GHCR images; user/admin docs on GitHub Pages; Helm repository and OCI charts with optional PostgreSQL |

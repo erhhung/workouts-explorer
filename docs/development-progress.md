@@ -14,22 +14,22 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Area | Status |
 |---|---|
 | M8 source implementation | Complete and accepted; iCloud ingest, available-map Coverage recovery and final live browser gate verified; see [closeout](#milestone-8-closeout) |
-| Milestone plan | M9 Stats/New Coverage complete and accepted; M10 administration is next planned, followed by M11 tablet, M12 verification, M13 GitHub publication and M14 production; see [M9 closeout](#milestone-9-closeout) and [publication](#github-publication-plan-update-1152026) |
+| Milestone plan | M9 complete; M10 foundation deployed, full administration in progress; shared login/reserved admin, isolated sessions and four-tab shell with initial Accounts/Settings workflows; M11-M14 retain scope; see [foundation](#milestone-10-foundation) |
 | Committed-route Coverage pipeline | Folded-028 contract introduced at Helm revision 29 remains deployed; exact eligible cohorts and mixed-failure automatic recovery active |
 | Metadata-driven Coverage reconciliation | Deployed at Helm 62; initialization complete; selected real PostgreSQL matrix and three live unchanged cycles PASS with no GPS/ROI, new jobs or changed rows |
 | Concurrent coverage and reader coordination | Deployed and focused verification complete; one coverage pod runs two jobs with shared least-active reader assignment |
-| Application database | Live source/schema/minimum runtime 31/31/31, baseline 27, ledger 0-31; fresh current catalog matched, retained history and sequence high-water preserved |
+| Application database | Live source/schema/minimum runtime 32/32/32, baseline 27, ledger 0-32; Helm-174 lifecycle/source-check fold rehearsed on a verified full backup; original 0-32 rows/timestamps and sequence high-water preserved |
 | Historical database checkpoints | Superseded; detailed historical source/catalog receipts are private and do not define current compatibility |
 | OSM database | Native OSM 010 Up completed on actual PG17; schema/minimum runtime 10/10 verified on primary and two standbys; isolated matrix used PG18.6 |
 | Park/education boundary correction | OSM generation 62, derivation 21 active; both account campaigns complete; the three former graph-layer failures are recovered with current generation-62 evidence |
-| Source layout | Raw continuity in 009/010, committed pipeline in 028, status/reconciliation in 029, display identity/Stats in 030 and the complete tile pipeline in 031 |
+| Source layout | Account access/purge foundation 002, source-check lane 003; continuity 009/010, pipeline 028, status 029, display/Stats 030, tiles 031, admin metadata and late purge fences/grants 032 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
-| UI follow-up | Shared row menus use placement-aware vertical offsets: down below the trigger and up above it, preserving horizontal alignment and edge clearance |
+| UI follow-up | Owner Data Sources dialog delivers source table, add/edit/delete, typed settings, write-only retention placeholders and bounded connection-check feedback; Preferences fixes retained |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Helm 152 rolls only UI for placement-aware row-menu offsets; API/worker/OSM/Martin references, four unrelated pods and all 18 configuration tuples preserved |
+| Chart semantics | Helm 180 rolls UI only; existing namespace get-pods-only staging verification retained; API, workers, Martin and all 18 configuration tuples preserved |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 152, placement-aware row-menu offsets; canonical dev-20261111 tags match deployed pins; all five deployments healthy |
+| Release | Helm 180, Users menu order refined and admin reset-email action dropped from scope; canonical dev-20261111 tags match deployed pins; all five deployments healthy; schema/minimum runtime 32/32 |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
 | Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
@@ -46,8 +46,27 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [placement-aware menu update](#placement-aware-row-menus) owns current deployment
-status. The [star and global-focus update](#smaller-stars-and-global-surface-focus-policy)
+The [Users menu/recovery-scope update](#users-menu-order-and-recovery-scope) owns current deployment status.
+The [Accounts/source follow-ups](#accounts-and-source-follow-ups-through-helm-179) retain their Helm-179 checkpoint.
+The [account-deletion update](#account-deletion-and-in-place-users-refresh) retains its historical Helm-173 checkpoint.
+The [account/source-default update](#account-and-source-defaults) retains Helm 172.
+The [Data Sources field-hint and automation update](#data-sources-field-hints-and-automation) retains Helm 171.
+The [Data Sources dialog-polish update](#data-sources-dialog-polish) retains Helm 170.
+The [Data Sources column-width update](#data-sources-column-widths) retains Helm 169.
+The [owner Data Sources update](#owner-data-sources) retains Helm 167-168.
+The [Preferences Diagnostics-help update](#preferences-diagnostics-help) retains Helm 166.
+The [Preferences Diagnostics-width update](#preferences-diagnostics-width) retains Helm 165.
+The [Preferences dialog-height update](#preferences-dialog-height) retains Helm 164.
+The [Preferences dialog-spacing update](#preferences-dialog-spacing) retains Helm 163.
+The [Enable user dialog-copy update](#enable-user-dialog-copy) retains Helm 161-162.
+The [shared error-copy update](#shared-error-copy) retains Helm 160.
+The [account disable/enable update](#admin-account-disable-and-enable) retains Helm 159.
+The [disabled-action/usage-dialog update](#admin-disabled-actions-and-usage-dialog)
+retains Helm 158. The [invitation/date/usage update](#admin-invitations-dates-and-usage)
+retains Helm 155-157. The [admin Users review](#admin-users-review) retains Helm 154.
+The [M10 foundation](#milestone-10-foundation) retains Helm 153.
+The [placement-aware menu update](#placement-aware-row-menus) retains Helm 152.
+The [star and global-focus update](#smaller-stars-and-global-surface-focus-policy)
 retains its Helm-151 checkpoint. The [job/detail and chart-track update](#stable-job-details-and-linked-charts)
 retains its Helm-150 checkpoint. The [cursor/period/history update](#cursor-help-current-periods-and-history-actions)
 retains its Helm-149 checkpoint. The [fixed workspace update](#fixed-navigation-and-content-scrolling)
@@ -115,6 +134,609 @@ superseded earlier undeployed, pending-repair and old-live-contract wording at
 that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Users Menu Order And Recovery Scope
+
+**Deployed 11/17/2026, Helm 180.** Registered-user menu order is **View usage**,
+conditional **Revoke sessions**, **Disable user / Enable user**, then the existing
+divider and **Delete user**. Session availability, expiry, authorization and
+revocation behavior retain the Helm-179 contract.
+
+The owner explicitly drops the planned administrator-triggered password reset
+email. Self-service **Forgot password?** remains the recovery path. Product,
+functional, admin, architecture and milestone documents reflect that decision.
+
+All 30 administrator UI tests, production build and candidate/deployed Chromium
+dark/WebKit light checks pass, including exact menu order and desktop/tablet/
+narrow containment. Only UI rolls; API, workers, Martin, schema/minimum 32/32 and
+18 configuration tuples remain intact. All five deployments are healthy and
+Harbor's existing tag matches the deployed UI pin. Protected rollout/browser
+receipts remain under `deploy-internal/admin-session-menu-order`.
+
+## Accounts And Source Follow-Ups Through Helm 179
+
+**Deployed 11/17/2026, Helm 179.** Accounts now offers **Revoke sessions** only when
+an active user has an unrevoked, unexpired browser or bearer credential. This is
+usable-token state, not online presence. The directory returns only the latest
+valid expiry. Refresh it on menu open and hide the action until authoritative
+availability returns; an expiry timer also removes it from an already-open menu.
+The CSRF-protected administrator command serializes with sign-in, revokes all
+valid sessions and audits atomically, without changing password/account state,
+cancelling jobs or blocking on an ingest account lock. Repeating after revocation
+is a no-op; future sign-in is permitted. Another owner/admin session is unaffected.
+
+The rollout changes only API/UI pins, retains schema/minimum **32/32** and all
+18 configuration tuples, and verifies all five deployments healthy. Existing
+`dev-20261111` Harbor tags match deployed references. Go tests, generated/format/vet
+checks, 30 administrator UI tests, native PostgreSQL session/CSRF/isolation/audit/
+sign-in-serialization checks and candidate/deployed Chromium dark/WebKit light
+browser checks pass. The browser matrix includes hidden sessionless/expired/
+invitation actions, refresh races, live expiry, failure feedback, focus return
+and desktop/tablet/narrow containment. Protected evidence is retained under
+`deploy-internal/admin-revoke-sessions`.
+
+Earlier follow-ups retain their own evidence:
+
+- Helm 174 reconciles the separately rehearsed lifecycle/source-check fold into
+  canonical 001-032. Function catalogs match fresh source; structural catalogs
+  match the unchanged live before-image. Original Goose 0-32 rows/timestamps,
+  sequence high-water, relation identities and private application data survive.
+- Helm 175 deploys the requested account-deletion confirmation copy.
+- Helm 176 defaults Manual sync only to the sole Connected source, independently
+  of automated sync. Multiple Connected sources start unselected; manual choices
+  survive refresh/tab return. All 1,007 UI tests at that checkpoint pass.
+- Helm 177 adds bounded acceptance-lock retries and keyboard-accessible clickable
+  user rows for usage. Investigation confirms two three-second PostgreSQL account
+  lock timeouts, not stale admin authentication. Read-only verification of the
+  completed live @foo purge finds zero rows across 79 account-scoped tables,
+  no identity/session/reset/invitation/staging residuals and empty private roots;
+  the retained task reports 166,537 purged rows, 53 workouts, 24 routes and one source.
+- Helm 178 removes the separate Account deletions navigation/placeholder. Old
+  deletion-category links redirect to Users; deletion/progress remain row actions.
+
+Richer lifecycle history/detail remains pending. Administrator-triggered password
+recovery was dropped on 11/17/2026; self-service Forgot password is implemented. OSM Maps and
+Operations are still navigation placeholders, not completed M10 workflows.
+
+## Account Deletion And In-Place Users Refresh
+
+**Deployed 11/17/2026, Helm 173.** The owner's complete private-purge/fresh-
+registration expectations are accepted as the implementation goal. **Delete user**
+now opens the shared irreversible confirmation for the selected username, focusing
+Cancel first and guarding duplicate/late submissions. Acceptance revokes sessions,
+sets the account Deleting, blocks API work admitted just before that transition,
+cancels queued work and requests cooperative cancellation of running work.
+
+Users immediately retains the accepted row as yellow **Deleting**. Active polling
+uses configured cadence and accelerates to at most **10 seconds** while deleting.
+Compatible pending refreshes retain existing row nodes and sort/scroll; authoritative
+completion removes only the target row. Inactive views pause. **View deletion**
+shows sanitized phase/counts and retry-needed state; Retry nudges the same task.
+Closing progress never cancels an accepted purge, and reactivation is rejected.
+
+The admin-owned task survives all owner-job deletion. A checked dependency-ordered
+inventory covers **78 purge relations**, including the new private staging receipt
+scope and indirect retry attempts. Batches remove at most 5000 ordinary rows, retain
+monotonic progress across interruption and verify no account rows remain before
+releasing identity. Sources/credentials/tombstones, source inventory/checksums,
+workouts/raw points/routes, provenance, Coverage/display/diagnostics/tiles/LOD,
+private jobs/logs/events/progress/retries/candidates, schedules/notifications/
+preferences/report/map state and capabilities are purged. Identity/session/reset/
+invitation state is removed; old username/email can register new UUIDs and empty
+activity/defaults. Only sanitized admin task/audit IDs, counts and timestamps remain.
+The API no longer retains identity-keyed avatar memory cache entries.
+
+Foreign keys remain enforced. An unforgeable backend/transaction capability gates
+the precise purge-only trigger path; normal guards stay pinned outside it. API
+write triggers serialize with lifecycle state. Worker receipts are registered before
+execution and retained through private cleanup; terminal jobs alone are insufficient.
+Same-pod/root startup scavenging or verified disposal/replacement of the exact
+chart-owned emptyDir UID acknowledges abandoned receipts. Live/unverified roots
+block purge. The worker's namespace-only Role permits **get pods**, not Secret
+reads or pod mutation; live authorization checks confirm that restriction.
+
+034 raises schema/minimum runtime to **34/34**, retaining baseline **27** and every
+original **0-33** Goose row/timestamp before appending 34. Old writers were drained
+before the fence. Up passed under the restricted migration login on a complete
+SHA-256-verified restored live backup. An isolated purge of the restored @foo's
+**35 workouts / 15 routes** verified every private scope zero and unchanged other-
+account counts. **Live @foo remains active and untouched** for the owner's test.
+External Local/iCloud export archives, public OSM, backups/WAL and physical lost-
+volume media remain within their documented operator/infrastructure boundaries.
+
+Verification: Go suite, generated/format/vet and chart checks pass; all **1000 UI
+tests** pass. Native synthetic cases exercise active ingest and staging drain,
+coalescing/authorization/CSRF, no re-enable, injected failure with committed-batch
+resume, zero scoped leftovers and same-name/email re-registration with fresh IDs.
+Disable/enable and exact readiness/grant regressions pass. Candidate/deployed
+Chromium dark/WebKit light verify confirmation, warning color, real accelerated
+poll timing, stable in-place nodes, sanitized progress and authoritative target-only
+removal at desktop/iPad sizes. Browser private APIs are synthetic. All five
+deployments are healthy; binaries and both origins' asset hashes match the reviewed
+artifacts; Martin, 18 configuration tuples and canonical tags are preserved.
+Protected migration, backup/restore/purge and matching rollback receipts remain
+private; deployment does not execute a live deletion test for the user.
+
+## Account And Source Defaults
+
+**Deployed 11/17/2026, Helm 172.** New local/iCloud sources start with automated
+sync **unchecked/false**; existing stored true/false values are retained in Edit.
+Explicit opt-in still submits true. The Data Sources table shortens only the
+pending label to **Connecting**; Connected/Connection failed and API enum values
+retain their prior meaning.
+
+Registration explicitly creates new personal preferences with columns **Date,
+Type, Duration, Distance, Calories** in that order. The first UI initialization
+persists that server-provided selection. Existing preferences are untouched.
+This is an application creation default, not a schema/history rewrite: the
+historical DDL default remains historical, and no migration/backfill runs.
+
+API tests and the native PostgreSQL account lifecycle pass, including concurrent
+registration, the five-column uninitialized defaults, initialization and later
+custom preferences. Source/App checks pass (119 focused cases, with the corrected
+async header assertion rerun independently), as do build, generated, formatting
+and vet checks. Candidate/deployed Chromium dark/WebKit light use synthetic APIs
+to verify exact initialization payload/header order, default-false sources for
+both types, explicit enable, saved flags and the Connecting status, retaining the
+prior field/modal/CRUD/focus matrix. Both origins serve verified assets and all
+five deployments are healthy. Only API/UI roll; both workers, Martin, all 18
+configuration tuples, canonical image tags and the exact 33/32 database metadata/
+ledger are preserved. No real owner account/source was created for acceptance.
+
+## Data Sources Field Hints And Automation
+
+**Deployed 11/17/2026, Helm 171.** Path spans the full form for both types and both
+New/Edit modes. Server Path's styled tooltip has two exact lines: **Path in ingest
+worker container containing** / **HealthAutoExport-YYYY-MM-DD.json files**.
+Password joins the existing fixed-width configuration font; entered text remains
+at its prior **16px** size. Retention placeholders alone are proportional italic
+and read **existing value retained unless provided**, fitting half-width Apple ID
+and Password. A scoped real italic face is bundled without changing other text.
+
+Apple ID/Password use Rclone-specific field names, form autocomplete suppression,
+Password's `new-password` token and 1Password/LastPass/Bitwarden ignore hints. Browser
+extensions can override these hints; no hidden decoys or focus/read-only tricks
+are introduced. Stored credentials remain write-only and blank edits retain them.
+
+The last field is **Enable automated sync (<interval>)**, after Path for Server
+Path or Trust token for iCloud. It reuses the Data Sync Automated card's cadence
+formatter and schedule response, lowercased. New sources default enabled; Edit
+loads the stored flag and POST/PATCH send the actual checked value. Cancelling
+discards a changed checkbox. Once-a-day/twice-a-day labels and disabling new local/
+iCloud sources or enabling an existing source are verified.
+
+All **252 focused Source/Data Sync/formatter tests**, formatting and build pass.
+Candidate/deployed Chromium dark/WebKit light verify full-width local/iCloud paths,
+the two-line tooltip, autofill attributes, real italic placeholder loading/fit,
+unchanged entered font size, checkbox label/order/payload and cancellation at four
+desktop/iPad sizes, retaining existing CRUD/check/retry, dimming and focus checks.
+Browser private APIs are synthetic. Both public origins serve all verified assets,
+including the scoped italic font. All five deployments are healthy; only UI rolls,
+preserving four other pods, 18 configuration tuples, canonical tags and schema/
+minimum runtime 33/32. Earlier full-suite receipts retain their original scope.
+
+## Data Sources Dialog Polish
+
+**Deployed 11/17/2026, Helm 170.** Data Sources now has an explicit, isolated
+content-size exception: empty/one/two-source views have only standard bottom
+insets, while Add/Edit grows to its visible fields. The viewport cap retains
+fixed header/actions and body scrolling. Preferences keeps its unchanged fixed
+height, and all other dialog sizing contracts remain unchanged.
+
+The iCloud editor has full-width Path, paired Apple ID/Password, a full-width
+three-visible-line Cookies textarea and full-width single-line Trust token.
+The final control/body and footer actions have matching **20px** divider insets
+without reserved blank space. Field help uses the shared styled cursor-follow
+tooltip, with no native `title` attributes. Write-only retention, limits and
+opaque credential submission are retained.
+
+Delete source uses a transparent nested overlay so the already-dimmed base page
+does not darken again. Its exact prompt is **Delete <source-name>? Its connection
+credentials will be deleted and its active sync jobs cancelled. Imported workouts
+will be retained.** Name loses 5% of its prior width and Auto Sync receives it:
+**31.73% / 32.4% / 19.67% / 16.2%**, with Type/Status/actions otherwise unchanged.
+
+All **116 focused App/source tests**, production build and formatting pass.
+Candidate/deployed Chromium dark/WebKit light checks verify every field tooltip,
+paired/full-width geometry, actual three-line textarea content height, equal
+divider gaps, one-layer dimming, exact copy, empty/one/two-source and editor heights,
+viewport scrolling, unchanged Preferences height, and create/check/fail/retry/delete/
+CSRF/focus behavior at desktop/iPad sizes. Browser private APIs are synthetic.
+Both public origins serve the verified hashes. All five deployments are healthy;
+only UI rolls, preserving four other pods, 18 configuration tuples, canonical tags
+and schema/minimum runtime 33/32. Prior full-suite receipts retain their scope.
+
+## Data Sources Column Widths
+
+**Deployed 11/17/2026, Helm 169.** Type, Auto Sync and Status each lose 10% of
+their prior relative width, transferred to Name: **33.4% / 32.4% / 18% / 16.2%**,
+with the fixed actions column retained. Standard default source names now fit
+without ellipsis at the reviewed desktop size. Nine source tests, formatting and
+build pass; candidate/deployed Chromium dark/WebKit light confirm the allocation,
+readable Auto Sync headers, overflow behavior and source workflows at four sizes.
+Only UI rolls; four other pods, 18 configuration tuples, schema/minimum runtime
+33/32 and canonical tags remain preserved. Both origins serve the reviewed assets
+and all five deployments are healthy. The 994-test full-suite receipt retains its
+original scope.
+
+## Owner Data Sources
+
+**Deployed 11/16/2026, Helm 167-168.** Normal users have **Data Sources** directly
+below Preferences in the account menu. The Preferences-style dialog retains compact
+insets, tall containment, a fixed header/action footer and a scrolling body. Its
+unpaged **Sources** table reuses admin Users styling, sort headers, ellipsis menus
+and empty feedback, with Name, Type, Auto Sync and Status columns. Add/Edit shows
+the conditional typed editor; Delete names the source in a compact confirmation
+and preserves imported workouts through the existing tombstone/cancellation API.
+
+Type labels/default names, field limits, monospace fields and styled tooltips match
+the owner contract. Type locks after persistence. Apple ID/password/cookies/trust
+token are never loaded from stored credentials. Edit placeholders read exactly
+**the existing value is retained unless a new value is provided**; empty fields
+are omitted from PATCH, retaining secrets and optional provider client identity.
+Accepted credentials are cleared from draft state. New sources enable Auto Sync;
+edits preserve its stored flag. Cancel clears/hides the editor.
+
+Save requests a fresh generation-specific check, waits at most 30 seconds and
+closes the editor only on that generation's success. Failures show **Connection
+check failed** and safe actionable copy. A persisted new source retries with PATCH,
+not a duplicate POST. Explicit `checkConnection=true` rechecks unchanged config;
+ordinary metadata-only REST updates retain their previous no-check behavior.
+Failed checks retain the submitted server configuration, as the source API already
+specifies. Session/identity-scoped caches and admission/late-response guards prevent
+stale work from restoring cleared or replacement-owner state, even under the same
+advertised session ID. Portaled source row menus use the shared dialog-control layer.
+
+The worker supervises an independent check-only serial runner with its own sibling
+private staging root. A 25-second operation deadline produces safe terminal failure
+and ordinary snapshot cleanup; an active ingest does not occupy this lane. Additive
+`033_source_check_lane.sql` installs a restricted versioned claim helper. Source/
+schema advance to **33**, minimum runtime stays **32**, baseline stays **27**, and
+Goose appends only **33**. The original **0-32** rows/timestamps and every existing
+function remain unchanged. This is distinct from the earlier account-access fold
+into 002. A complete SHA-256-verified live backup was restored and migrated with
+the exact deployed binary under the restricted migration login before live Up
+through the chart-derived Job. The live migration and four-image rollout passed.
+
+Verification: **994 UI tests**, production build, formatting, generated and vet
+checks pass; the Go suite passes. Native PostgreSQL verifies local/iCloud source
+lifecycle, explicit rechecks without resetting Auto Sync, private claim privileges,
+readiness/overgrant rejection, checks while an ingest is running, deadline failure,
+cancellation/lease/generation fencing and snapshot cleanup. Chromium dark/WebKit
+light verify candidate/deployed empty/add/edit/fail/retry/delete workflows, exact
+placeholders, tooltips, safe error copy, owner CSRF and focus at desktop/iPad sizes,
+including full Auto Sync headings and contained horizontal table scrolling.
+Browser private APIs are synthetic; no real owner source or Apple session was
+created/edited/deleted for acceptance. Both public origins serve the verified UI
+hashes. All five deployments are healthy; Martin and configuration are preserved.
+Helm 168 adds the final principal-aware cache fence without changing API/worker
+pods or the 033 database contract. Protected backup, migration, preimage, browser
+and rollback receipts remain private.
+
+## Preferences Diagnostics Help
+
+**Deployed 11/16/2026, Helm 166.** The Diagnostics checkbox keeps its ordinary
+field width while its explanation spans both grid columns with the normal field
+hint gap: **Show the matcher review tool for the focused route instead of aggregate
+coverage.** All 107 App tests, formatting and build pass. Candidate/deployed
+Chromium dark/WebKit light checks verify the text, full-width hint, narrower
+clickable frame and keyboard interaction at four desktop/tablet sizes. Both
+origins serve verified assets; all five deployments are healthy. Four non-UI
+pods, 18 configuration tuples, canonical tags and schema/minimum runtime 32/32
+remain preserved.
+
+## Preferences Diagnostics Width
+
+**Deployed 11/16/2026, Helm 165.** Enable coverage diagnostics uses one ordinary
+settings-grid column, matching Username and Full name instead of spanning both
+columns. The label's complete padded frame remains clickable and keyboard Space
+toggles its checkbox. Existing responsive grid, tall dialog and compact spacing
+remain intact. All 107 App tests, formatting and production build pass. Candidate
+and deployed Chromium dark/WebKit light checks compare the three field widths
+and exercise frame-edge clicks, keyboard toggling and Save/Cancel at four
+desktop/tablet sizes. Both public origins serve the verified assets; all five
+deployments are healthy. Four non-UI pods, 18 configuration tuples, canonical
+tags and schema/minimum runtime 32/32 remain preserved.
+
+## Preferences Dialog Height
+
+**Deployed 11/16/2026, Helm 164.** Preferences uses the exact requested
+`height: min(64.5rem, calc(100dvh - 1rem))`, retaining shared compact insets and
+the fixed header/footer. Production build and formatting pass. Candidate/deployed
+Chromium dark and WebKit light verify the computed height at 1440x1200, 1440x1000,
+1024x768 and 768x1024, including the tall-screen cap, viewport containment, body
+scrolling where needed, 20px insets and Save/Cancel/close/Escape behavior. Browser
+APIs are synthetic. Both public origins serve the verified UI asset hashes; all
+five deployments are healthy. Four other pods, configuration tuples, canonical
+tags and schema/minimum runtime 32/32 remain intact. Prior test-suite receipts
+retain their original scope.
+
+## Preferences Dialog Spacing
+
+**Deployed 11/16/2026, Helm 163.** User Preferences now reuses `compact-dialog`
+and its shared `--dialog-inset`: the header, scrolling body and Cancel/Save footer
+have the same **20px** insets as Custom date range and the established confirmation
+dialogs. Footer button gaps also reuse that inset; button widths remain unchanged.
+The redundant **Set how your routes, dates, and profile appear.** subheading is
+removed, with the dialog title retained and no dangling description reference.
+The fixed header/footer, independently scrolling body, safe-area footer treatment,
+saved preferences and content-focus return remain intact.
+
+All 107 App tests, Prettier and the production build pass. Candidate and deployed
+Chromium dark/WebKit light checks compare computed Preferences spacing with a
+real Custom date range dialog at **1440x1000, 1024x768 and 768x1024**. Header/body
+padding, footer insets and button gap match; body scrolling leaves header/actions
+fixed, content fits horizontally, and Save/Cancel/close/Escape retain state, CSRF
+and focus behavior. Review uses synthetic private APIs. Both public origins serve
+the verified UI asset hashes. All five deployments are healthy; four other pods,
+18 configuration tuples, canonical tags and schema/minimum runtime 32/32 are preserved.
+
+## Enable User Dialog Copy
+
+**Deployed 11/16/2026, Helm 162**, correcting the first-word typo from Helm 161.
+The Enable user confirmation uses the owner's corrected wording, with the selected
+username interpolated in bold:
+
+> Enable @user? The user will be able to sign in again and automatic sync will
+> resume on schedule. Revoked sessions and cancelled jobs will not be restored.
+
+All 15 administrator component tests, Prettier and the production build pass.
+Candidate and deployed Chromium dark/WebKit light review verifies the exact text,
+desktop/tablet containment, confirmation focus and existing command behavior with
+synthetic private APIs. Both public origins serve the verified UI assets. Four
+other pods, all 18 configuration tuples, canonical tags and schema/minimum runtime
+32/32 are preserved; all five deployments remain healthy.
+
+## Shared Error Copy
+
+**Deployed 11/16/2026, Helm 160.** The shared `ErrorSummary` heading now reads
+**Well, this is a dead end... 🙁** across sign-in, registration, recovery/reset and
+Preferences. The accepted shorter messages are:
+
+- **Sign-in failed. Check your details and try again.**
+- **Create account failed. Review the fields and try again.**
+- **Request failed. Please try again later.**
+- **Choose one of the available page sizes.**
+- **Choose how many date ranges to remember (1-5).**
+
+The credential-verified **Your account has been disabled.** detail and existing
+validation, safe-error mapping and alert markup remain intact. This is a copy-only
+UI rollout. All 107 App tests, Prettier checks and the production build pass.
+Candidate and deployed assets pass targeted Chromium dark/WebKit light review of
+sign-in, disabled-account, recovery and registration summaries at desktop/tablet
+sizes, using synthetic API responses. Both public origins serve the verified asset
+hashes. Four non-UI pods, all 18 configuration tuples, canonical image tags and
+schema/minimum runtime 32/32 are preserved; all five deployments are healthy.
+
+## Admin Account Disable And Enable
+
+**Deployed 11/16/2026, Helm 159.** Accounts / Users now implements **Disable user**
+and **Enable user** through the shared compact confirmation composition. Both
+name the selected username and focus Cancel first. Requests use administrator
+CSRF, serialize submission, retain failures in place and preserve selected identity
+and focus across refreshes. Deleting accounts cannot be enabled.
+
+Disable atomically denies authentication, revokes cookie/bearer sessions,
+invalidates outstanding scheduler admission and cancels queued account jobs or
+requests cooperative cancellation of running work. Workers retain their ordinary
+cleanup/terminalization duties. Workouts, routes, source configuration/credentials,
+preferences and valid Coverage remain retained. Enable requires a new sign-in and
+resumes normal next-due scheduling without reviving sessions or cancelled jobs,
+regardless of unused automatic-retry allowance. The UI uses existing API-401
+confirmation/redirect handling, without adding session polling.
+
+Only verified owner credentials disclose suspension. The login summary below
+Username/Password says **Your account has been disabled.**; wrong credentials
+remain generic. Sign-in and suspension serialize at session issuance.
+
+The owner explicitly requested folding the proposed 033 into
+`002_account_lifecycle.sql`. The active sequence remains **001-032**, runtime and
+minimum **32/32**, baseline **27**, with the exact **0-32** ledger unchanged.
+The private guarded upgrade was rehearsed on a complete restored live backup
+under `workouts_migration`; helper bodies/ownership/ACLs match fresh source and
+existing function definitions, data counts/relations and principal hashes remain
+unchanged. A truncated exec-stream backup was rejected before use; the accepted
+archive matches the completed remote file's SHA-256 and passes a full read/restore.
+Recovery evidence and the protected backup remain private. Ordinary Goose does
+not replay 002; this is the explicitly approved development-only consolidation.
+
+Verification: Go suite, generated/format/vet checks and UI production build pass;
+all **985 UI tests** pass. Native restricted-role cases cover cookie/bearer
+revocation, authorization/CSRF, incorrect versus correct disabled credentials,
+queued cancellation, running ingest/Coverage cancellation completion, retained
+data, reactivation without revival, deletion conflict and sign-in serialization.
+The native administrator-password regression matrix also passes with its race
+injections before the new issuance fence. Candidate and deployed assets pass
+Chromium dark/WebKit light review at desktop/iPad-class sizes, using synthetic
+private API responses. Both public origins serve the verified asset hashes; all
+five deployments are healthy. No real owner account was disabled for acceptance.
+At this historical checkpoint, full account purge, standalone session controls,
+OSM and Operations acceptance remained M10 work. Later checkpoints deliver purge
+and session revocation; admin-triggered recovery is dropped in favor of self-service.
+
+## Admin Disabled Actions And Usage Dialog
+
+**11/15/2026, Helm 158:** Delete user remains non-operative and disabled; its
+danger class no longer overrides the shared gray disabled treatment. Disabled
+menu items retain pointer hit-testing and show the blocked circle-slash cursor,
+while Radix prevents selection. Shared unavailable filter/select/input/slider
+controls use that same cursor. Enabled danger actions retain their red treatment.
+
+The usage title is **2rem**. Its close button now exactly reuses the Provenance
+dialog's icon-button and multiplication-sign glyph, replacing the baseline-offset
+SVG. Escape, the X and return focus keep their existing behavior.
+
+**176 focused UI tests**, production build and UI artifact checks pass. Chromium
+dark and WebKit light candidate/deployed-assets checks verify gray colors,
+not-allowed cursor, actual hit-testing and no-op clicks, shared disabled controls,
+32px title, identical Provenance close-button styles and desktop/iPad containment.
+Only UI rolls; all five deployments are healthy, four other pods and all 18
+configuration tuples are preserved. Source/schema/minimum runtime stays
+**32/32/32**, both strict-TLS origins serve reviewed assets and canonical
+**dev-20261111** tags match pins. Protected receipts retain the evidence.
+
+## Admin Invitations Dates And Usage
+
+**11/15/2026, Helm 155-157:** Users now uses **80%** of Workout log width and a
+sortable **Registered** column between Email and Status, formatted without time in
+the browser's local time zone. **View usage** is first for registered users and
+opens an X-only compact dialog showing local last login, workout/route counts and
+latest local workout date. It is an explicitly authorized bounded projection,
+not private workout/route/source access or owner-capability issuance.
+
+Invite title and error gaps are equal above/below. Successful sending closes the
+dialog without a message. Real Resend rotates the token, grants a fresh full
+seven-day period and sends email; normal-style Revoke removes the row, invalidates
+tokens and permits a later new invitation. Revoke has no danger styling/divider;
+registered Delete remains a danger item below a divider, disabled pending its
+backend. The placeholder menu note is removed.
+
+The SMTP path already existed; two recent sends failed because Mailpit kept
+serving a certificate that expired November 8 despite its renewed Secret. A
+Mailpit restart loaded the renewed certificate; verification remained strict and
+no SMTP/infrastructure setting was weakened or changed through the app.
+
+Forward migration **032** adds immutable-registration read access, persistent
+last-login tracking, narrow invitation updates and the active-admin-fenced usage
+function. It restores logical tenant/session scope on success/error, preserves
+RLS, and exposes no private rows. The ingest phase writer's literal runtime fence
+advances to 32; the existing 001-031 history is unchanged. Source/schema/minimum
+runtime is **32/32/32**, baseline **27**, ledger **0-32**.
+
+Running work drained before the API/general/Coverage quiet window. A protected
+**1,642,617,013-byte** custom-format database backup was created and its TOC/hash
+verified before migration. The migration ran under the configured migration role;
+private-table counts and relation identities plus principal credential/identity
+hashes matched afterward. The temporary migration Job was removed. API, both
+worker processes and UI rolled at 155; Martin and all 18 app configuration tuples
+were preserved. All five deployments are healthy.
+
+Live checks caught an empty-body Resend POST rejected by JSON middleware. Helm
+**156** supplies/requires `{}` and changes API/UI only, preserving both workers and
+Martin. The final real SMTP flow acknowledged create, resend and re-invite, with
+durable delivered states, fresh expiry, old-token revocation and row removal
+verified; owned verification invitations and sessions were revoked. Mailpit inbox
+contents were not read through its separately authenticated UI/API.
+
+Helm **157** is an API-only correction: successful SMTP DATA acknowledgement
+remains success if QUIT subsequently fails, or if recording that accepted delivery
+fails. The latter logs a sanitized persistence error instead of falsely telling
+the user that email was unsent. Dedicated transport/recording regression tests
+pass; live create/resend/re-invite acknowledges three real SMTP messages again.
+Both workers, UI and Martin remain on the same pods at this follow-up.
+
+Verification includes the **980-test UI baseline**, Go suite, native32 lifecycle/
+readiness/privacy suites and final focused resend/JSON retests. The final focused
+UI retest disables Node 26's conflicting experimental Web Storage implementation;
+this is a harness setting, not a product change. Chromium dark/WebKit light pass
+candidate and deployed-assets checks at desktop/iPad sizes, including midnight
+localization, exact 1152px desktop width, title/error gaps, usage fields and normal
+revoke menus. Actual strict-TLS API usage/privacy and SMTP acknowledgements also
+pass. Backup/native/browser/image/deployment receipts remain protected. Full M10
+account disable/delete, administration details and OSM/Operations remain pending.
+
+## Admin Users Review
+
+**11/15/2026, Helm 154:** admin tabs now support shared guarded **1/2/3/4**
+shortcuts and focus handoff. Sign out uses scoped compact padding and pale-red
+danger hover, retains its label/appearance while pending, and prevents duplicate
+requests without the previous Signing out flash.
+
+Accounts / Users reuses Workout log at **60% width** (864px on the reviewed
+desktop), with its uppercase heading, right-aligned Invite a user link, sortable
+headers, 53px rows, shared hover/truncation help and ellipsis menus. No page-level
+heading pair, search, pager or separate Invitations category remains. Old category
+links resolve to Users. The compact invitation dialog validates email, has a
+non-bold prompt and Cancel/Send, and immediately inserts a successful persisted
+**Invited** row. Bold status treatments use green Active, yellow Invited and red
+disabled/deletion/expiry/revocation states. Lifecycle row commands are visibly
+unavailable until their remaining M10 backend work is complete.
+
+The new bounded unpaged directory endpoint combines identity/lifecycle data with
+unaccepted invitation metadata in one statement. Registration replaces the
+invitation without duplicating the email; expired/revoked invitations are correctly
+classified. It excludes token/verifier/private data and fails above its bound rather
+than truncating. Existing paginated user APIs remain available for automation.
+
+**978 UI tests**, API/native restricted-role directory/registration/privacy tests,
+typecheck/build/CSP/CSS/generated/format checks pass. Chromium dark and WebKit light
+verify candidate and deployed assets at desktop/iPad sizes, including exact width,
+row height, shortcuts and guards, dialog validation/focus, persistent fixture rows,
+status colors and stable pending sign-out. Actual strict-TLS admin directory reads
+and owner-profile denial also pass; the verification session was revoked.
+
+Only API/UI roll, preserving three other pods and all 18 configuration tuples.
+All five deployments are healthy; schema/minimum runtime stays **31/31**. Both
+origins serve reviewed assets and canonical **dev-20261111** tags match pins.
+Owned native test resources were cleaned and the rehearsal cluster stopped.
+Protected browser/source/image/deployment receipts retain the evidence. Full M10
+remains in progress; see [feature status](admin-ui-spec.md#implementation-status).
+
+## Milestone 10 Foundation
+
+**11/15/2026, Helm 153:** first usable admin slice deployed. Existing login routes
+the reserved **admin** identity to **/admin**; separate cookies, CSRF/session
+checks, expiry events and query clients isolate it from the owner explorer.
+The four tabs and Stats-style category navigation work with deep links and retained
+selection. Initial workflows are a searchable/paginated user identity directory,
+invitation sending and sanitized read-only effective configuration. Other categories
+say they are planned; M10 is in progress, not complete.
+
+The live bootstrap administrator had a different username. An explicit short-lived
+bootstrap adoption Job verified existing credentials, preserved principal ID,
+password hash and email, revoked old admin sessions and recorded audit. Only the
+bootstrap Secret's username changed to **admin**; its UID/password/email were
+preserved. A first attempt rejected a projected symlink before any mutation; the
+successful execution copied it to a private regular file. After DB adoption, a
+failed stdin-file Secret patch was reconciled by verifying the preserved identity
+and applying a resource-version-guarded file patch. The owned Job was removed.
+
+Only API/UI image references changed in the subsequent rollout, preserving all
+18 post-transition configuration tuples and the three worker/Coverage/Martin pods.
+All five deployments are healthy; schema/minimum runtime remains **31/31** with
+no new migration. API's bootstrap executable is updated alongside its runtime;
+migration/role-provisioning binaries and unrelated images remain unchanged.
+
+Verification: **974 UI tests**, build/typecheck/CSP/CSS/generated/format checks and
+native restricted-role M10, existing account lifecycle and development debug-auth
+regression suites pass. Owned native DB/proxy resources were removed and the
+local rehearsal cluster stopped. Chromium dark and WebKit light verify candidate
+and deployed assets at desktop/iPad sizes with synthetic private APIs. Separately,
+actual strict-TLS bootstrap login, admin session/directory/config reads, owner
+profile denial and verification-session revocation pass. Both public origins serve
+the reviewed assets. Protected receipts retain source/image/browser/identity and
+rollout proofs; no private identity data is recorded here.
+
+Next: invitation history/resend/revoke and account controls, then durable purge,
+the OSM controller/lifecycle and Operations; remaining Settings preferences/access
+controls follow the [delivery plan](implementation-plan.md#milestone-10-administration-and-operational-completion).
+See [feature status](admin-ui-spec.md#implementation-status) for precise boundaries.
+
+## Milestone 10 Admin UI Decision
+
+**11/15/2026:** accepted a dedicated **/admin** workspace after the account, OSM
+and operational task inventory outgrew the original Swagger/CLI-only assumption.
+The [admin UI specification](admin-ui-spec.md) now owns detailed requirements and
+the [M10 implementation plan](implementation-plan.md#milestone-10-administration-and-operational-completion)
+defines delivery and acceptance. This design-only checkpoint preceded the
+[foundation rollout](#milestone-10-foundation); Helm 152 was the runtime status
+when the design was accepted. It does not claim the remaining M10 work complete.
+
+- Four tabs: **Accounts, OSM Maps, Operations, Settings**. Each uses Stats-style
+  left navigation for second-level categories and existing shared UI behavior.
+- Reuse the existing login screen with reserved canonical **admin** and the
+  bootstrap administrator's current password. Define audited existing-identity
+  transition, independent owner/admin sessions and strict private-data denial.
+- Accounts includes invitation/user lifecycle, suspension/reactivation, session
+  revocation/recovery email and durable cancellation/drain/purge workflows.
+- OSM Maps reuses the existing updater and checkpoints; a separate internal
+  controller launches approved Kubernetes Jobs under bounded RBAC/template rules.
+- Operations includes system tasks, incidents, announcements, audit and recovery.
+  Settings contains admin preferences/access and read-only effective configuration;
+  Helm/GitOps/Secrets have no competing UI editor or override layer.
+- Initial base-map/MapTiler and other Helm installation guidance remains M13.
+  Owner **Data Sources** is planned in the normal profile menu and separately
+  scheduled; it grants no administrator access to private sources or credentials.
 
 ## Placement-Aware Row Menus
 

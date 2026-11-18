@@ -47,6 +47,7 @@ import { InfoTip, instantZone, ZoneBadge } from "./Tooltip";
 import { completeDateRangeOnBlur } from "./dateRange";
 import { PageNavigation } from "./PageNavigation";
 import { ContentBackground } from "./ContentBackground";
+import { autoSyncIntervalLabel } from "./formatters";
 
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "running"]);
 const ACTIVITY_LABELS: Record<IngestActivity["phase"], string> = {
@@ -175,13 +176,6 @@ function staleSourceMessage(source: DataSyncSource, includeSourceName: boolean) 
   return source.freshness.lastNewExportDate
     ? `No new export has been discovered${subject} since ${calendarDate(source.freshness.lastNewExportDate)}.`
     : `No recent export has been discovered${subject}.`;
-}
-
-function interval(seconds: number) {
-  if (seconds === 86400) return "Once a day";
-  if (seconds === 43200) return "Twice a day";
-  const hours = seconds / 3600;
-  return `Every ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(hours)} ${hours === 1 ? "hour" : "hours"}`;
 }
 
 function historyOperation(job: JobSummary) {
@@ -1567,13 +1561,8 @@ export function DataSync({
   useEffect(() => {
     if (!snapshot.data || selectionInitialized.current) return;
     selectionInitialized.current = true;
-    setSelectedSources(
-      new Set(
-        snapshot.data.sources
-          .filter((source) => source.status === "connected" && source.autoSyncEnabled)
-          .map((source) => source.id),
-      ),
-    );
+    const connected = snapshot.data.sources.filter((source) => source.status === "connected");
+    setSelectedSources(new Set(connected.length === 1 ? [connected[0].id] : []));
   }, [snapshot.data]);
 
   const effectiveJobId =
@@ -2258,7 +2247,7 @@ export function DataSync({
                       content="Automatically run a sync job on this interval"
                     />
                   </dt>
-                  <dd>{interval(snapshot.data.schedule.cadenceSeconds)}</dd>
+                  <dd>{autoSyncIntervalLabel(snapshot.data.schedule.cadenceSeconds)}</dd>
                 </div>
                 <div>
                   <dt>

@@ -1,0 +1,14 @@
+package database
+
+import "strings"
+
+// Apply only the explicit folded-032 transaction-capability guard when comparing the
+// final runtime ABI with original migration bodies. All other bytes stay pinned.
+func accountPurgeBodyForFunction(name, body string) string {
+	guarded := map[string]bool{"advance_account_data_generation": true, "advance_workout_ownership_epoch": true, "attribute_workout_segment_to_park": true, "capture_coverage_matching_descriptor": true, "clear_ingest_write_capability": true, "clear_workout_deletion_capability": true, "clear_workout_timezone_write_capability": true, "create_legacy_ingest_read_models": true, "create_source_sync_state": true, "decrement_coverage_path_rollups": true, "decrement_park_rollups": true, "dirty_coverage_route_inputs": true, "enforce_ingest_child_parameters": true, "enforce_ingest_identity": true, "enforce_ingest_retry_lineage": true, "enforce_job_hierarchy": true, "enforce_job_snapshot_consistency": true, "enforce_job_write": true, "enforce_principal_role_consistency": true, "enforce_source_write": true, "enforce_workout_deletion_target_lifecycle": true, "enroll_coverage_retry_failure": true, "flush_coverage_display_dirty_account": true, "flush_coverage_display_invalidations": true, "increment_coverage_path_rollups": true, "increment_park_rollups": true, "invalidate_workout_route_summary": true, "maintain_coverage_tile_chunks": true, "maintain_raw_route_lod_chunks": true, "maintain_raw_route_tile_chunks": true, "mark_coverage_display_dirty": true, "notify_failed_workout_deletion": true, "notify_terminal_ingest_parent": true, "prune_unreferenced_coverage_copies": true, "prune_unreferenced_coverage_path": true, "queue_coverage_display_metadata_invalidation": true, "queue_coverage_display_source_invalidation": true, "record_adopted_coverage_origin": true, "record_ingest_coverage_handoff": true, "reject_immutable_read_model_write": true, "reject_ingest_child_coalescing": true, "reject_job_snapshot_update": true, "reject_workout_import_event_mutation": true, "remove_workout_segment_park_attribution": true, "require_active_job_account": true, "require_ingest_write_capability": true, "set_coverage_attribution_visit_date": true, "stamp_coverage_applied_match_proof": true, "stamp_ingest_source_file_receipt": true, "sync_coverage_matcher_slot_lease": true, "sync_coverage_route_job_state": true, "track_source_sync_job": true, "validate_map_selection": true, "validate_map_selection_focus": true, "validate_map_selection_workout": true, "wake_coverage_reconciliation": true}
+	if !guarded[name] {
+		return body
+	}
+	guard := "BEGIN\n    IF app.account_purge_active() THEN\n        IF TG_LEVEL='STATEMENT' THEN RETURN NULL; END IF;\n        IF TG_OP='DELETE' THEN RETURN OLD; END IF;\n        RETURN NEW;\n    END IF;"
+	return strings.Replace(body, "BEGIN", guard, 1)
+}

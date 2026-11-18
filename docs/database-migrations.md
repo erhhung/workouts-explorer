@@ -1,7 +1,7 @@
 # Application Database Migrations
 
-The canonical source sequence is **001-031**, with **SupportedSchemaVersion=31**,
-minimum runtime **31**, recovery baseline **27**, and ledger **0-31**. The raw-route
+The canonical source sequence is **001-032**, with **SupportedSchemaVersion=32**,
+minimum runtime **32**, recovery baseline **27**, and ledger **0-32**. The raw-route
 spatial policy belongs to [009](#raw-route-continuity-009), and the complete private
 tile pipeline belongs to [031](#tile-rendering-031). There is one current runtime
 and function contract; no alternate migration profile or tile-function alias is
@@ -36,17 +36,127 @@ repair results, and is rehearsed together with guarded checkpoint recovery.
 | Source | Contract |
 |---|---|
 | 001-008 | Account, job, source, ingest and deletion foundations |
+| [002](../api/migrations/sql/002_account_lifecycle.sql) | Account access, durable account purge, private cleanup receipts and transaction-bound purge capabilities |
+| [003](../api/migrations/sql/003_sources_and_job_snapshots.sql) | Source/job snapshots and runtime-versioned interactive source-check claim |
 | [009](../api/migrations/sql/009_raw_route_map.sql) and [010](../api/migrations/sql/010_segment_route_geometry.sql) | Raw route capabilities, spatial continuity and timestamp segmentation |
 | 011-027 | Splits, time zones, Coverage, provider identity and recovery baseline |
 | [028](../api/migrations/sql/028_ingest_coverage_pipeline.sql) | Committed-route pipeline and bounded eligible cohorts |
 | [029](../api/migrations/sql/029_ingest_status_reporting.sql) | Ingest outcomes, file filtering, reprocessing, activity and metadata reconciliation |
 | [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters, exact detail, independent Coverage bounds and Stats report scopes/history reads |
 | [031](../api/migrations/sql/031_tile_rendering.sql) | Exact/LOD storage, authorization and optimized current MVT functions |
+| [032](../api/migrations/sql/032_admin_accounts.sql) | Registration/login metadata, invitation lifecycle permissions, bounded administrator usage and late-dependent purge grants/trigger guards/API write fences |
 
 The approved route foundations and tile file are consolidated source. Other
 foundation definitions retain their established behavior. Current readiness is
 catalog-only, validates exact function/privilege contracts and rejects an
 unrecognized schema/history rather than implementing migration compatibility.
+
+## Lifecycle And Source-Check Fold (Helm 174)
+
+The approved 11/17/2026 consolidation folds former 034's account-deletion
+foundation into 002 and former 033's source-check wrapper into 003. Installation
+that depends on 004-031 remains in 032. Neither 033 nor 034 is shipped; all final
+runtime fences and readiness checks use 32.
+
+A full protected live backup was restored and the exact reconciliation rehearsed
+under the migration role. The quiet-writer live reconciliation changes only the
+three version-gated function bodies, schema/minimum metadata and superseded Goose
+33/34 rows. Original Goose 0-32 rows/timestamps, sequence high-water, application
+data and relation identities remain intact. Function definitions match a fresh
+001-032 installation; table/constraint/policy and trigger catalogs match the live
+before-image. Pre-existing structural differences from fresh are not repaired.
+
+Helm 174 rolled API/general/Coverage workers with hooks disabled, preserving UI,
+Martin and deployment settings. The folded migrator accepts the history and normal
+Up is a no-op. Protected before-images, verified backup, rehearsal and rollout
+receipts remain the recovery authority. Historical 033/034 installation and
+rollback descriptions below are not the current deployment contract.
+
+## Account Access Fold (002)
+
+The owner's explicit 11/16/2026 development-only consolidation folds the proposed
+`033_account_access.sql` into `002_account_lifecycle.sql`; that proposed account
+migration is not shipped. The later independent source-check 033 was subsequently
+folded into 003 at Helm 174 and does not reverse this account-access fold.
+002 adds account state `disabled`, narrowly privileged access/issuance functions
+and a job-insertion lifecycle fence. Its suspension command reuses the source and
+Coverage cancellation engines introduced later; those PL/pgSQL calls resolve
+when invoked against the complete schema. This fold's deployment checkpoint was
+schema/minimum runtime 32/32 and ledger 0-32; historical source-check 033 later
+advanced the schema/ledger before the Helm-174 consolidation restored 32/32.
+
+An existing installation does not replay applied 002. The live catalog upgrade
+was independently backed up, restored and rehearsed under the migration role,
+then applied in a quiet writer window. New helper bodies, owners and grants match
+fresh source; comparisons normalize role names rather than database-specific role
+OIDs. The exact Goose rows/timestamps, schema metadata, existing functions,
+private-data counts/relations and identity hashes remain unchanged. New runtime
+readiness rejects a pre-fold catalog even when it has the same numeric version.
+See [deployment evidence](development-progress.md#admin-account-disable-and-enable).
+
+Keep the protected pre-upgrade backup, catalog/preimage evidence and matching
+old image pins for rollback. A generic Goose Up/Down or ordinary Helm rollback
+does not reverse this approved source fold. Do not reconstruct an old account
+constraint over newly disabled rows; recover the matching database/images through
+the retained procedure. This exception does not authorize rewriting other applied
+migrations or historical test receipts.
+
+## Account Deletion (034)
+
+This subsection records the historical Helm-173 checkpoint, superseded by the
+Helm-174 fold above. 034 is not a current source migration.
+
+034 advances schema/minimum runtime to 34/34, appending only Goose 34. Drain old
+API/general/Coverage writers before applying this fence. The exact 0-33 ledger is
+preserved. Its runtime adds sanitized admin-owned deletion tasks, private execution
+receipts and transaction-bound purge capabilities, plus narrowly granted functions.
+Runtime roles never receive raw purge-table DELETE/capability-table access.
+
+Only a fixed, lease-validated task can create a full purge capability. Original
+account-table trigger bodies gain an exact capability guard so append-only checks
+and maintenance callbacks are skipped only during that transaction; their prior
+behavior remains pinned otherwise. Readiness verifies the guarded bodies, grants,
+inventory and API write triggers. Foreign keys are never disabled. Batches commit
+monotonic progress and verify all private scopes before releasing identity keys.
+The literal ingest-phase fence advances to runtime34 in the same migration.
+
+Migration Up was rehearsed under the actual migration role on a complete restored
+live backup; an isolated purge of restored @foo verified zero private scopes and
+unchanged other-account counts. That does not delete the live account. Native
+synthetic cases additionally cover active ingest/staging drain, interruption and
+same-name/email fresh registration. Matching backup/images/receipts remain private.
+
+Rollback is not an old-image-only operation because minimum34 excludes old writers.
+Keep services quiescent and recover a matching database/runtime pair through the
+protected procedure, accounting for deletion work accepted after the backup. Never
+rewrite Goose rows or silently resurrect purged account data as a deployment fix.
+
+## Source Check Lane (033)
+
+The compatibility/rollback notes in this subsection describe the historical
+Helm-167 checkpoint only. Both 033 and later 034 were folded at Helm 174; use the
+current 001-032 contract and retained reconciliation recovery receipts.
+
+033 adds `app.claim_next_source_check(text,uuid,interval,integer)`, owned by
+`workouts_security_owner` and executable only by `workouts_worker`. The helper
+checks the runtime fence and uses the existing check-only admission path; the
+legacy unversioned entry point remains disabled. Readiness verifies its exact body,
+signature, ownership and ACLs. No existing function ABI or private data row changes.
+
+This additive migration advances schema/runtime source to 33, keeps minimum runtime
+32 and appends only Goose version 33. The original 0-32 ledger rows/timestamps are
+preserved. Old runtime32 remains compatible with the prior claim paths; the literal
+ingest-phase writer fence remains valid against minimum32 and is not rewritten.
+Live Up was rehearsed using the deployed migration binary and restricted migration
+login on a complete restored live backup, then run through a chart-derived Job.
+Both migration and application rollout are verified at Helm 167.
+
+For an application rollback, retain the additive 033 catalog and roll matching old
+runtime32 images with migration hooks disabled; an old embedded migrator does not
+own the newer ledger. Match Harbor's current tags to the restored pins. Do not
+rewrite original Goose rows or run an old migration hook against the new ledger.
+Any schema rollback requires an explicit proper Goose/recovery procedure using
+the retained protected backup and migration receipts.
 
 ## Custom Date Ranges (002)
 

@@ -447,12 +447,41 @@ describe("public authentication", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     const alert = await screen.findByRole("alert");
     await waitFor(() => expect(alert).toHaveFocus());
-    expect(alert).toHaveTextContent("We couldn't sign you in");
+    expect(alert).toHaveTextContent("Sign-in failed.");
     expect(alert).not.toHaveTextContent("secret backend detail");
     expect(location.pathname).toBe("/login");
     expect(expired).not.toHaveBeenCalled();
     window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
   });
+
+  test.each([
+    [401, "urn:workouts-explorer:problem:account-disabled", "Your account has been disabled."],
+    [401, "about:blank", "Sign-in failed."],
+    [503, "urn:workouts-explorer:problem:account-disabled", "Sign-in failed."],
+  ])(
+    "sign-in selects trusted feedback for status %s and type %s",
+    async (status, type, message) => {
+      routeFetch((path, method) =>
+        path === "/api/session" && method === "POST"
+          ? json({ type, title: "Unauthorized", detail: "untrusted detail" }, status)
+          : (undefined as never),
+      );
+      renderApp("/login");
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText("Username"), "trailrunner");
+      const password = screen.getByLabelText("Password");
+      await user.type(password, "synthetic password");
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(message);
+      expect(alert).not.toHaveTextContent("untrusted detail");
+      expect(
+        password.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      await waitFor(() => expect(alert).toHaveFocus());
+      expect(location.pathname).toBe("/login");
+    },
+  );
 
   test("forgot recovery sends username and always presents generic accepted copy", async () => {
     let requestBody: unknown;
@@ -3219,9 +3248,8 @@ describe("authenticated shell", () => {
     const header = dialog.querySelector(".preferences-header");
     const body = dialog.querySelector(".preferences-body");
     const footer = dialog.querySelector(".dialog-actions");
-    expect(header).toContainElement(
-      screen.getByText("Set how your routes, dates, and profile appear."),
-    );
+    expect(header).toContainElement(screen.getByRole("heading", { name: "Preferences" }));
+    expect(screen.queryByText("Set how your routes, dates, and profile appear.")).toBeNull();
     expect(header).toContainElement(screen.getByRole("button", { name: "Close Preferences" }));
     expect(body).toContainElement(screen.getByRole("group", { name: "Display" }));
     expect(body).not.toContainElement(screen.getByRole("button", { name: "Save" }));
@@ -3234,6 +3262,10 @@ describe("authenticated shell", () => {
   });
 
   test("persists every displayed default with the browser time zone before rendering a new account", async () => {
+    const newAccountPreferences = {
+      ...preferences,
+      workoutColumns: ["date", "type", "duration", "distance", "calories"],
+    };
     vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
       locale: "en-US",
       calendar: "gregory",
@@ -3243,13 +3275,17 @@ describe("authenticated shell", () => {
     let initialization: { body: unknown; csrf: string | null } | undefined;
     authenticatedFetch((path, method, init) => {
       if (path === "/api/me/preferences" && method === "GET")
-        return json({ ...preferences, timezone: "UTC", initialized: false });
+        return json({ ...newAccountPreferences, timezone: "UTC", initialized: false });
       if (path === "/api/me/preferences?initializeOnly=true" && method === "PATCH") {
         initialization = {
           body: JSON.parse(String(init?.body)),
           csrf: new Headers(init?.headers).get("X-CSRF-Token"),
         };
-        return json({ ...preferences, timezone: "America/Los_Angeles", initialized: true });
+        return json({
+          ...newAccountPreferences,
+          timezone: "America/Los_Angeles",
+          initialized: true,
+        });
       }
       return undefined as never;
     });
@@ -3262,12 +3298,17 @@ describe("authenticated shell", () => {
         timezone: "America/Los_Angeles",
         firstWeekday: "monday",
         clockFormat: "12h",
-        workoutColumns: ["date", "type", "distance", "duration"],
+        workoutColumns: ["date", "type", "duration", "distance", "calories"],
         pageSize: 25,
         coverageDiagnosticsEnabled: false,
       },
       csrf: session.csrfToken,
     });
+    expect(
+      (await screen.findAllByRole("columnheader"))
+        .map((header) => header.querySelector(".column-label")?.textContent)
+        .filter(Boolean),
+    ).toEqual(["Date", "Type", "Duration", "Distance", "Calories"]);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /Open account menu/ }));
     await user.click(screen.getByRole("menuitem", { name: "Preferences" }));
@@ -3408,6 +3449,7 @@ describe("authenticated shell", () => {
     expect(menu).not.toHaveTextContent("Avery Stone");
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
       "Preferences",
+      "Data Sources",
       "Switch to light theme",
       "About Workouts Explorer",
       "Sign out",

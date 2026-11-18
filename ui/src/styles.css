@@ -7,6 +7,16 @@
     format("woff2-variations");
 }
 
+/* Keep real italic glyphs scoped to source hints; other application faces are unchanged. */
+@font-face {
+  font-family: "Atkinson Source Placeholder";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url("@fontsource-variable/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-wght-italic.woff2")
+    format("woff2-variations");
+}
+
 :root {
   --compact-action-height: 2rem;
   --summary-inline-inset: var(--space-4);
@@ -156,12 +166,14 @@ body {
 }
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
 button,
 a,
 input,
+textarea,
 select {
   -webkit-tap-highlight-color: transparent;
 }
@@ -374,6 +386,7 @@ h2 {
   letter-spacing: 0.025em;
 }
 .field input,
+.field textarea,
 .field select,
 .preference-select-trigger {
   width: 100%;
@@ -412,11 +425,13 @@ h2 {
   opacity: 1;
 }
 .field input:hover,
+.field textarea:hover,
 .field select:hover,
 .preference-select-trigger:hover {
   border-color: var(--accent);
 }
 :root[data-input-modality="keyboard"] .field input:focus-visible,
+:root[data-input-modality="keyboard"] .field textarea:focus-visible,
 :root[data-input-modality="keyboard"] .field select:focus-visible,
 :root[data-input-modality="keyboard"] .preference-select-trigger:focus-visible {
   border-color: var(--focus);
@@ -428,7 +443,8 @@ h2 {
   background: var(--canvas-deep);
   cursor: not-allowed;
 }
-.field input[aria-invalid="true"] {
+.field input[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
   border-color: var(--error);
 }
 .preference-select-trigger {
@@ -458,7 +474,7 @@ h2 {
 ),
 .select-control:has(select:disabled) {
   --dropdown-chevron-color: var(--disabled);
-  cursor: default;
+  cursor: not-allowed;
 }
 .preference-select-content {
   z-index: 60;
@@ -568,6 +584,20 @@ h2 {
   color: var(--text-muted);
   background: var(--surface-soft);
   opacity: 1;
+  cursor: not-allowed;
+}
+:is(
+  button,
+  input,
+  select,
+  textarea,
+  [role="button"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="menuitemcheckbox"],
+  [role="option"],
+  [role="combobox"]
+):is(:disabled, [aria-disabled="true"], [data-disabled]) {
   cursor: not-allowed;
 }
 .link-button {
@@ -882,13 +912,16 @@ h2 {
 .preference-select-option[data-disabled],
 .preference-select-option[aria-disabled="true"] {
   color: var(--disabled);
-  cursor: default;
-  pointer-events: none;
+  cursor: not-allowed;
 }
-.menu-content [role="menuitem"].danger-item {
+.menu-content
+  [role="menuitem"].danger-item:not(:is(:disabled, [data-disabled], [aria-disabled="true"])) {
   color: var(--error);
 }
-.menu-content [role="menuitem"].danger-item[data-highlighted] {
+.menu-content
+  [role="menuitem"].danger-item:not(
+    :is(:disabled, [data-disabled], [aria-disabled="true"])
+  )[data-highlighted] {
   color: var(--surface-elevated);
   background: var(--error);
 }
@@ -916,6 +949,10 @@ h2 {
   z-index: 50;
   background: rgb(2 8 7 / 74%);
   animation: fade-in var(--motion-dialog) var(--ease);
+}
+.dialog-overlay--nested {
+  background: transparent;
+  animation: none;
 }
 .dialog-content {
   position: fixed;
@@ -978,17 +1015,24 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-.preferences-dialog {
+.preferences-dialog.compact-dialog,
+.data-sources-dialog.compact-dialog {
   width: min(52rem, calc(100vw - 1rem));
-  height: min(46rem, calc(100dvh - 1rem));
-  max-height: none;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   padding: 0;
 }
+.preferences-dialog.compact-dialog {
+  height: min(64.5rem, calc(100dvh - 1rem));
+  max-height: none;
+}
+.data-sources-dialog.compact-dialog {
+  height: auto;
+  max-height: calc(100dvh - 1rem);
+}
 .preferences-header {
-  padding: clamp(1.25rem, 5vw, 2rem);
+  padding: var(--dialog-inset);
   border-bottom: 1px solid var(--border);
 }
 .preferences-form {
@@ -1005,7 +1049,7 @@ h2 {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: clamp(1.25rem, 5vw, 2rem);
+  padding: var(--dialog-inset);
 }
 .preferences-form fieldset {
   margin: 0;
@@ -1023,6 +1067,57 @@ h2 {
 .settings-grid {
   display: grid;
   gap: var(--space-5);
+}
+.diagnostics-settings {
+  row-gap: var(--space-2);
+}
+.data-sources-table {
+  min-width: 48rem;
+}
+.data-sources-dialog .preferences-body > section {
+  min-width: 0;
+}
+.dialog-menu-content {
+  z-index: 60;
+}
+.data-sources-dialog .section-line h3 {
+  margin: 0;
+}
+.source-config-input {
+  font-family: ui-monospace, monospace;
+}
+.source-input-tooltip,
+.source-input-tooltip > .tooltip-trigger {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.source-input-tooltip input,
+.source-input-tooltip textarea {
+  display: block;
+}
+.data-source-editor input::placeholder,
+.data-source-editor textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+  font-family: "Atkinson Source Placeholder", var(--font);
+  font-style: italic;
+}
+.data-source-editor textarea {
+  line-height: 1.4;
+  resize: vertical;
+}
+.data-source-editor > .error-summary {
+  margin-top: var(--dialog-inset);
+}
+.source-status--connected {
+  color: var(--route-ride);
+}
+.source-status--checking-connection {
+  color: var(--warning);
+}
+.source-status--connection-failed {
+  color: var(--error);
 }
 .checkbox-list {
   display: grid;
@@ -1141,6 +1236,120 @@ h2 {
 }
 .stats-sidebar .range-trigger {
   width: 100%;
+}
+.admin-page .stats-report-nav {
+  margin-top: 0;
+}
+.admin-section,
+.admin-planned {
+  position: relative;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+.admin-section > form,
+.admin-config {
+  display: grid;
+  gap: var(--space-4);
+}
+.admin-signout.secondary {
+  min-height: 0;
+  padding: 0.5rem 0.75rem;
+  margin-inline-end: 0.25rem;
+}
+.admin-signout.secondary:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+.workouts-section.admin-users-section {
+  width: min(
+    100%,
+    calc(min(var(--summary-section-max-width), calc(100vw - 2 * var(--summary-inline-inset))) * 0.8)
+  );
+  margin-top: 0;
+}
+.workout-table-wrap.admin-users-wrap {
+  display: block;
+  overflow-x: auto;
+}
+.admin-users {
+  min-width: 51rem;
+}
+.admin-user-row {
+  cursor: pointer;
+}
+.admin-user-usage-trigger {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.admin-user-usage-trigger:hover {
+  color: var(--link);
+}
+.admin-users-message {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-muted);
+}
+.admin-user-status--active {
+  color: var(--route-ride);
+}
+.admin-user-status--invited,
+.admin-user-status--deleting {
+  color: var(--warning);
+}
+.admin-user-status--disabled,
+.admin-user-status--deleted,
+.admin-user-status--expired,
+.admin-user-status--revoked {
+  color: var(--error);
+}
+.admin-invite-dialog .range-confirmation label {
+  font-weight: 400;
+}
+.admin-invite-dialog .dialog-heading {
+  margin-bottom: var(--dialog-inset);
+}
+.admin-invite-dialog .range-confirmation {
+  padding-bottom: 0;
+}
+.admin-invite-dialog > .error-summary {
+  margin: var(--dialog-inset) 0 0;
+}
+.admin-invite-dialog > .dialog-actions {
+  margin-top: var(--dialog-inset);
+}
+.admin-usage-dialog {
+  width: min(35rem, calc(100vw - 1rem));
+}
+.admin-usage-dialog .dialog-heading h2 {
+  font-size: 2rem;
+}
+.admin-usage-fields {
+  margin: var(--dialog-inset) 0 0;
+}
+.admin-config > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+.admin-usage-fields > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.admin-config dd {
+  margin: 0;
+}
+.admin-section a {
+  color: var(--accent);
 }
 .stats-report-nav {
   display: grid;
@@ -2405,7 +2614,7 @@ h2 {
 }
 .workout-clear-filters:disabled {
   color: var(--disabled);
-  cursor: default;
+  cursor: not-allowed;
   text-decoration: none;
 }
 .workout-filter-columns {
@@ -2452,7 +2661,7 @@ h2 {
 }
 .workout-numeric-controls .workout-filter-operator:disabled {
   color: var(--disabled);
-  cursor: default;
+  cursor: not-allowed;
 }
 .workout-comparison-menu {
   z-index: 48;
@@ -2526,7 +2735,7 @@ h2 {
 .workout-filter-slider input:disabled {
   --range-track: var(--border);
   --range-thumb: var(--disabled);
-  cursor: default;
+  cursor: not-allowed;
 }
 .workout-column-help,
 .workout-column-help > .tooltip-trigger {
@@ -3064,6 +3273,7 @@ h2 {
   margin: 0;
 }
 .section-line h2,
+.data-sources-dialog .section-line h3,
 .stats-report-nav h2 {
   font-size: 0.78rem;
   font-weight: 780;

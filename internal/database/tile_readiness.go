@@ -17,9 +17,9 @@ SELECT $1 < 31 OR (
         ('app.tile_display_geometry(geometry,integer)','geometry','sql','i',false,true,'s',false,0,
             ARRAY['search_path=pg_catalog, public'],false,false,'c222ba2b36cd72e51de406cea383fce7'),
         ('app.maintain_raw_route_tile_chunks()','trigger','plpgsql','v',true,false,'u',false,0,
-            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,false,'dbd527b591a83b7025fbbbf3c08a2e20'),
+            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,false,'e8f58f7de3c776fcdab7521382f0bc37'),
         ('app.maintain_coverage_tile_chunks()','trigger','plpgsql','v',true,false,'u',false,0,
-            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,false,'385bb0bfcd3c486d9eef987847f1ff08'),
+            ARRAY['search_path=pg_catalog, app, public','jit=off'],false,false,'cf62e5ef01fec90635973ba8811c03da'),
         ('app.authorize_map_tile(uuid,uuid,uuid,bigint,boolean)','timestamp with time zone','sql','s',true,false,'u',false,0,
             ARRAY['search_path=pg_catalog, app'],true,false,'0ee9b086746dc45775aad7901052bfa7'),
         ('app.raw_route_mvt(integer,integer,integer,json)','bytea','plpgsql','s',true,false,'u',false,0,
@@ -30,7 +30,7 @@ SELECT $1 < 31 OR (
     SELECT (SELECT schema_version >= 31 AND minimum_runtime_version >= 31 AND minimum_runtime_version <= $1
         AND migration_baseline = 27 FROM app.schema_metadata WHERE singleton)
     AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('app.record_ingest_phase(uuid,text,uuid,text,bigint,bigint)')
-        AND md5(p.prosrc)='5686c29cbf2caf7a845b619e348e97aa')
+        AND (($1<32 AND (($1<32 AND md5(p.prosrc)='5686c29cbf2caf7a845b619e348e97aa') OR ($1>=32 AND md5(p.prosrc)='2664a16b5dbdfe47e9c6b64862357fe8'))) OR ($1>=32 AND md5(p.prosrc)='2664a16b5dbdfe47e9c6b64862357fe8')))
     AND NOT EXISTS (
         SELECT 1 FROM relations expected LEFT JOIN pg_class c ON c.oid=to_regclass('app.'||expected.name)
         WHERE c.oid IS NULL OR c.relkind<>'r' OR c.relpersistence<>'p'

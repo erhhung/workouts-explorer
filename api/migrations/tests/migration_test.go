@@ -75,6 +75,7 @@ var migrationFiles = []string{
 	"029_ingest_status_reporting.sql",
 	"030_coverage_display.sql",
 	"031_tile_rendering.sql",
+	"032_admin_accounts.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {

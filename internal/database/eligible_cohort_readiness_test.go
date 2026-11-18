@@ -6,8 +6,8 @@ import (
 )
 
 func TestEligibleCohortReadinessRequiresComplete28(t *testing.T) {
-	if SupportedSchemaVersion != 31 {
-		t.Fatalf("supported schema = %d, want 31", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 32 {
+		t.Fatalf("supported schema = %d, want 32", SupportedSchemaVersion)
 	}
 	for _, part := range []string{runtimeReadinessSQL, runtimeDeferredReadinessSQL, runtimeCohortReadinessSQL} {
 		if !strings.Contains(runtimeFullReadinessSQL, part) {

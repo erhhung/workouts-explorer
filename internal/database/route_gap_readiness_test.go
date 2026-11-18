@@ -14,7 +14,7 @@ import (
 )
 
 func TestRouteGapReadinessAndSharedSpatialLimit(t *testing.T) {
-	if SupportedSchemaVersion != 31 || !strings.HasSuffix(runtimeFullReadinessSQL, " AND ("+runtimeRouteGapReadinessSQL+")") {
+	if SupportedSchemaVersion != 32 || !strings.HasSuffix(runtimeFullReadinessSQL, " AND ("+runtimeRouteGapReadinessSQL+")") {
 		t.Fatal("missing route gap readiness")
 	}
 	sql, err := migrations.Files.ReadFile("009_raw_route_map.sql")

@@ -33,6 +33,8 @@ import { useKeyboardShortcut } from "./keyboardShortcuts";
 import { RetainedTab } from "./RetainedTab";
 import { StatsPage, DEFAULT_STATS_STATE, type StatsMapTarget } from "./StatsPage";
 import { PreferenceSelect } from "./PreferenceSelect";
+import { DataSourcesDialog } from "./DataSourcesDialog";
+import { AdminRoot } from "./AdminApp";
 import { initialRange, Summary, type AcceptedWorkoutDeletion } from "./Summary";
 import { applyTheme } from "./theme";
 import type {
@@ -46,10 +48,10 @@ import type {
 const MapPage = lazy(() => import("./MapPage"));
 
 const SAFE_ERRORS = {
-  login: "We couldn't sign you in. Check your details and try again.",
+  login: "Sign-in failed. Check your details and try again.",
   invitation: "This invitation is unavailable or has expired.",
-  registration: "We couldn't create your account. Review the fields and try again.",
-  recovery: "We couldn't complete that request. Please try again later.",
+  registration: "Create account failed. Review the fields and try again.",
+  recovery: "Request failed. Please try again later.",
   preferences: "Your changes weren't saved. Review the fields and try again.",
 };
 const LOADING_CONFIG: PublicConfig = {
@@ -292,7 +294,7 @@ function ErrorSummary({
   if (!message) return null;
   return (
     <div className="error-summary" role="alert" tabIndex={-1} ref={summaryRef}>
-      <strong>Something needs attention</strong>
+      <strong>Well, this is a dead end... 🙁</strong>
       <span>{message}</span>
     </div>
   );
@@ -361,9 +363,20 @@ function Login({ returnTo = "/" }: { returnTo?: string }) {
     mutationFn: (credentials: { username: string; password: string }) =>
       api<Session>("/api/session", { method: "POST", body: JSON.stringify(credentials) }),
     onSuccess: async (session) => {
-      await queryClient.cancelQueries({ queryKey: ["session"], exact: true });
-      queryClient.setQueryData(["session"], session);
-      navigate(returnTo, true);
+      const key = [session.identity.role === "administrator" ? "admin-session" : "session"];
+      await queryClient.cancelQueries({ queryKey: key, exact: true });
+      queryClient.setQueryData(key, session);
+      const adminTarget = isAdminPath(returnTo);
+      navigate(
+        session.identity.role === "administrator"
+          ? adminTarget
+            ? returnTo
+            : "/admin"
+          : adminTarget
+            ? "/"
+            : returnTo,
+        true,
+      );
     },
     onError: () => focusSummary(summaryRef),
   });
@@ -382,10 +395,6 @@ function Login({ returnTo = "/" }: { returnTo?: string }) {
       intro="Sign in to return to your personal atlas of movement."
     >
       <form className="stack" onSubmit={submit} noValidate>
-        <ErrorSummary
-          message={mutation.isError ? SAFE_ERRORS.login : undefined}
-          summaryRef={summaryRef}
-        />
         <TextField
           label="Username"
           name="username"
@@ -397,6 +406,18 @@ function Login({ returnTo = "/" }: { returnTo?: string }) {
           name="password"
           type="password"
           autoComplete="current-password"
+        />
+        <ErrorSummary
+          message={
+            mutation.isError
+              ? mutation.error instanceof ApiError &&
+                mutation.error.status === 401 &&
+                mutation.error.problem.type === "urn:workouts-explorer:problem:account-disabled"
+                ? "Your account has been disabled."
+                : SAFE_ERRORS.login
+              : undefined
+          }
+          summaryRef={summaryRef}
         />
         <div className="form-options">
           <AppLink to="/forgot-password">Forgot password?</AppLink>
@@ -799,14 +820,14 @@ function PreferencesDialog({
     }
     const pageSize = Number(values.pageSize);
     if (!pageSizeChoices.includes(pageSize)) {
-      setError("Choose one of the available workout page sizes.");
+      setError("Choose one of the available page sizes.");
       focusSummary(summaryRef);
       return;
     }
     const selectedColumns = new Set(formData.getAll("workoutColumns").map(String));
     const customDateRangeLimit = Number(values.customDateRangeLimit);
     if (![1, 2, 3, 4, 5].includes(customDateRangeLimit)) {
-      setError("Choose how many custom date ranges to remember, from 1 to 5.");
+      setError("Choose how many date ranges to remember (1-5).");
       focusSummary(summaryRef);
       return;
     }
@@ -852,19 +873,15 @@ function PreferencesDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content
-          className="dialog-content preferences-dialog"
+          className="dialog-content compact-dialog preferences-dialog"
+          aria-describedby={undefined}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             onCloseFocus();
           }}
         >
           <header className="dialog-heading preferences-header">
-            <div>
-              <Dialog.Title>Preferences</Dialog.Title>
-              <Dialog.Description>
-                Set how your routes, dates, and profile appear.
-              </Dialog.Description>
-            </div>
+            <Dialog.Title>Preferences</Dialog.Title>
             <Dialog.Close className="icon-button" aria-label="Close Preferences">
               &times;
             </Dialog.Close>
@@ -982,8 +999,8 @@ function PreferencesDialog({
               </fieldset>
               <fieldset>
                 <legend>Diagnostics</legend>
-                <div className="settings-grid">
-                  <div className="field field--wide">
+                <div className="settings-grid diagnostics-settings">
+                  <div className="field">
                     <label className="checkbox-option">
                       <input
                         type="checkbox"
@@ -992,11 +1009,11 @@ function PreferencesDialog({
                       />
                       <span>Enable coverage diagnostics</span>
                     </label>
-                    <span className="field-hint">
-                      Use the selected-route matcher review instead of aggregate coverage on the Map
-                      tab.
-                    </span>
                   </div>
+                  <span className="field-hint field--wide">
+                    Show the matcher review tool for the focused route instead of aggregate
+                    coverage.
+                  </span>
                 </div>
               </fieldset>
             </div>
@@ -1160,7 +1177,7 @@ function Shell({
       active = false;
     };
   }, []);
-  const [dialog, setDialog] = useState<"preferences" | "about" | null>(null);
+  const [dialog, setDialog] = useState<"preferences" | "sources" | "about" | null>(null);
   const [menuError, setMenuError] = useState("");
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const signout = useMutation({
@@ -1410,6 +1427,9 @@ function Shell({
               <DropdownMenu.Item onSelect={() => setDialog("preferences")}>
                 Preferences
               </DropdownMenu.Item>
+              <DropdownMenu.Item onSelect={() => setDialog("sources")}>
+                Data Sources
+              </DropdownMenu.Item>
               <DropdownMenu.Item onSelect={() => void switchTheme()}>
                 Switch to {data.preferences.theme === "dark" ? "light" : "dark"} theme
               </DropdownMenu.Item>
@@ -1461,6 +1481,13 @@ function Shell({
           );
         }}
       />
+      {dialog === "sources" && (
+        <DataSourcesDialog
+          session={session}
+          onClose={() => setDialog(null)}
+          onCloseFocus={() => setContentFocusRequest((value) => value + 1)}
+        />
+      )}
       <Modal
         open={dialog === "about"}
         onOpenChange={(open) => setDialog(open ? "about" : null)}
@@ -1617,14 +1644,55 @@ export function protectedReturnPath(path: string) {
   const pathname = path.split("?")[0];
   if (pathname === "/login") {
     const candidate = new URLSearchParams(path.split("?")[1] ?? "").get("returnTo") ?? "";
-    return candidate.startsWith("/") && !candidate.startsWith("//") && !isPublicPath(candidate)
+    return candidate.startsWith("/") &&
+      !candidate.startsWith("//") &&
+      !candidate.includes("\\") &&
+      !isPublicPath(candidate)
       ? candidate
       : "/";
   }
-  return path.startsWith("/") && !path.startsWith("//") && !isPublicPath(path) ? path : "/";
+  return path.startsWith("/") &&
+    !path.startsWith("//") &&
+    !path.includes("\\") &&
+    !isPublicPath(path)
+    ? path
+    : "/";
+}
+
+function isAdminPath(path: string) {
+  const pathname = path.split("?")[0];
+  return pathname === "/admin" || pathname.startsWith("/admin/");
 }
 
 export function App() {
+  const path = usePathname();
+  const ownerQueries = useQueryClient();
+  const admin = isAdminPath(protectedReturnPath(path));
+  useEffect(() => {
+    if (!admin) return;
+    const privateQuery = (query: { queryKey: readonly unknown[] }) =>
+      query.queryKey[0] !== "public-config";
+    void ownerQueries.cancelQueries({ predicate: privateQuery });
+    ownerQueries.removeQueries({ predicate: privateQuery });
+  }, [admin, ownerQueries]);
+  return admin ? (
+    <AdminRoot
+      path={path}
+      navigate={navigate}
+      login={<Login returnTo={protectedReturnPath(path)} />}
+      brand={
+        <>
+          <Mark compact />
+          <span>Workouts Explorer</span>
+        </>
+      }
+    />
+  ) : (
+    <ExplorerApp />
+  );
+}
+
+function ExplorerApp() {
   const path = usePathname();
   const queryClient = useQueryClient();
   const expirationHandled = useRef(false);
@@ -1711,7 +1779,12 @@ export function App() {
     };
   }, [queryClient, session.data]);
   useEffect(() => {
-    if (session.data && path.split("?")[0] === "/login") navigate(protectedReturnPath(path), true);
+    if (
+      session.data &&
+      path.split("?")[0] === "/login" &&
+      !new URLSearchParams(path.split("?")[1] ?? "").has("switchAccount")
+    )
+      navigate(protectedReturnPath(path), true);
   }, [session.data, path]);
   useEffect(() => {
     if (!session.data) return;
@@ -1784,7 +1857,12 @@ export function App() {
         </button>
       </main>
     );
-  if (isPublicPath(path) && (tokenFlow || !session.data)) {
+  if (
+    isPublicPath(path) &&
+    (tokenFlow ||
+      !session.data ||
+      new URLSearchParams(path.split("?")[1] ?? "").has("switchAccount"))
+  ) {
     if (path.startsWith("/forgot-password")) return <ForgotPassword />;
     if (path.startsWith("/reset-password") || path.startsWith("/password-resets/"))
       return <ResetPassword path={path} passwordMinimumLength={config.passwordMinimumLength} />;

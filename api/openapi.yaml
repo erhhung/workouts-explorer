@@ -54,7 +54,7 @@ paths:
     post:
       operationId: createBrowserSession
       description: >-
-        Authenticates a local identity and creates a revocable browser session. The JSON body is required and must contain username or email in `username` plus `password`.
+        Authenticates a local identity and creates a revocable browser session. Owners use username or email; the administrator uses reserved username admin. Sets only the authenticated role's cookie, preserving the other role's session. Correct owner credentials for a disabled account return 401 with problem type urn:workouts-explorer:problem:account-disabled; incorrect credentials retain the generic 401.
       tags: [session]
       requestBody: {$ref: '#/components/requestBodies/Signin'}
       responses:
@@ -69,16 +69,18 @@ paths:
     get:
       operationId: getCurrentSession
       description: >-
-        Returns metadata for the authenticated, unexpired current session. A bearer token or browser session cookie is required.
+        Returns metadata for the authenticated owner session. Uses workouts_session, never the independent administrator cookie. Administrator sessions use /api/admin/session.
       tags: [session]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       responses:
         '200': {description: Current session, content: {application/json: {schema: {oneOf: [{$ref: '#/components/schemas/BrowserSession'}, {$ref: '#/components/schemas/SessionMetadata'}]}}}}
         '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
     delete:
       operationId: deleteCurrentSession
       description: >-
-        Revokes the authenticated current session. Cookie-authenticated requests require `X-CSRF-Token`; bearer-authenticated requests do not.
+        Revokes the authenticated owner session only. Cookie-authenticated requests require X-CSRF-Token; bearer-authenticated requests do not. Does not clear administrator sessions.
       tags: [session]
       security: [{bearerAuth: []}, {cookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
@@ -91,7 +93,7 @@ paths:
     post:
       operationId: createSessionToken
       description: >-
-        Authenticates a local identity and creates a revocable opaque bearer session. The JSON body is required and must contain username or email in `username` plus `password`.
+        Authenticates a local identity and creates a revocable opaque bearer session. The JSON body is required and must contain username or email in `username` plus `password`. Correct owner credentials for a disabled account return the same account-disabled problem as browser sign-in.
       tags: [session]
       requestBody: {$ref: '#/components/requestBodies/Signin'}
       responses:
@@ -102,13 +104,192 @@ paths:
         '415': {$ref: '#/components/responses/Problem'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Problem'}
+  /api/admin/session:
+    get:
+      operationId: getAdminSession
+      description: Returns the independent administrator session, using workouts_admin_session or an administrator bearer token. Never falls back to the owner cookie.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200': {description: Administrator session, content: {application/json: {schema: {oneOf: [{$ref: '#/components/schemas/BrowserSession'}, {$ref: '#/components/schemas/SessionMetadata'}]}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteAdminSession
+      description: Revokes only the current administrator session. Cookie authentication requires its own CSRF token; owner cookies and sessions are unaffected.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Administrator session revoked}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/admin/users:
+    get:
+      operationId: listAdminUsers
+      description: Lists only owner identity and account lifecycle metadata. Does not query private workouts, sources or user job diagnostics.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/PageSize'}
+        - {name: search, in: query, schema: {type: string, maxLength: 200}}
+      responses:
+        '200': {description: User directory, content: {application/json: {schema: {$ref: '#/components/schemas/AdminUserList'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/directory:
+    get:
+      operationId: getAdminDirectory
+      description: >-
+        Returns the combined unpaged owner/invitation directory for the small-installation Users table.
+        Pending invitations survive reload; accepted invitations are replaced by their owner identity.
+        Only the latest relevant invitation per unregistered email is returned, without tokens or verifiers.
+        activeSessionExpiresAt is the latest expiry of an unrevoked, unexpired browser or bearer session,
+        or null when none exist. It indicates usable authentication, not online presence.
+        The response fails with 422 above 1000 entries rather than silently truncating.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200': {description: Combined directory, content: {application/json: {schema: {$ref: '#/components/schemas/AdminDirectory'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/users/{userId}:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    delete:
+      operationId: deleteAdminUser
+      description: >-
+        Accepts irreversible account deletion. Immediately revokes authentication,
+        blocks new work and cooperatively cancels account jobs. An administrator-owned
+        durable task waits for lease/staging quiescence, purges all private state and
+        releases the original username/email. Repeated pending requests reuse the task.
+        The user remains Deleting until completion, then disappears from Users.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '202': {description: Deletion accepted, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountDeletion'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/users/{userId}/deletion:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    get:
+      operationId: getAdminAccountDeletion
+      description: Sanitized administrator-owned deletion progress only; no private user data or logs.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200': {description: Deletion progress, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAccountDeletion'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/users/{userId}/access:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    put:
+      operationId: setAdminUserAccess
+      description: >-
+        Explicitly enables or disables a personal account. Disable atomically revokes cookie/bearer sessions,
+        blocks new work and cancels queued jobs or requests cooperative cancellation of running jobs.
+        No user data is purged. Enable preserves revoked sessions and cancelled tasks and resumes normal
+        next-due scheduling. Repeating the desired state is idempotent. Deleting/deleted accounts conflict;
+        administrator and unknown identities are not found. Every accepted command is audited.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AdminUserAccess'}}}
+      responses:
+        '200': {description: Authoritative account access, content: {application/json: {schema: {$ref: '#/components/schemas/AdminUserAccess'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/users/{userId}/sessions:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    delete:
+      operationId: revokeAdminUserSessions
+      description: >-
+        Revokes all currently unrevoked and unexpired browser and bearer sessions for a user.
+        Does not change the password, disable the account, cancel jobs or prevent later sign-in.
+        Serialized with session issuance. Repeating after expiry/revocation succeeds without an additional audit.
+        Administrator and unknown targets are not found. No session credentials or identifiers are returned.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Active user sessions revoked or none remained}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/users/{userId}/usage:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    get:
+      operationId: getAdminUserUsage
+      description: Returns only the authorized account usage summary, never workout rows, route geometry, source data or owner capabilities.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters:
+        - {name: timezone, in: query, required: true, schema: {type: string, maxLength: 255}}
+      responses:
+        '200': {description: Bounded usage summary, content: {application/json: {schema: {$ref: '#/components/schemas/AdminUserUsage'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/invitations/{invitationId}/resend:
+    parameters:
+      - {name: invitationId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    post:
+      operationId: resendAdminInvitation
+      description: Rotates an unaccepted invitation token and grants a fresh full seven-day period. Success means SMTP delivery was acknowledged.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, additionalProperties: false}}}
+      responses:
+        '200': {description: Invitation resent, content: {application/json: {schema: {$ref: '#/components/schemas/Invitation'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/invitations/{invitationId}:
+    parameters:
+      - {name: invitationId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    delete:
+      operationId: revokeAdminInvitation
+      description: Revokes an unaccepted invitation and its unused tokens. Removes it from the directory and permits a new invitation to the same email; preserves sanitized audit history.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Invitation revoked}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/config:
+    get:
+      operationId: getAdminConfig
+      description: Returns a curated read-only view of effective policy. No credentials, environment dumps, provider URLs or deployment mutation are exposed.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200': {description: Read-only effective configuration, content: {application/json: {schema: {$ref: '#/components/schemas/AdminConfig'}}}}
+        default: {$ref: '#/components/responses/Problem'}
   /api/admin/invitations:
     post:
       operationId: createInvitation
       description: >-
         Administrator-only operation that creates and emails a single-use invitation. The JSON body and unique `email` are required; cookie authentication also requires `X-CSRF-Token`.
       tags: [administration]
-      security: [{bearerAuth: []}, {cookieAuth: []}]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
       requestBody:
         required: true
@@ -315,10 +496,12 @@ paths:
     patch:
       operationId: updateSource
       description: >-
-        Partially updates an owned source; changing adapter configuration increments its generation and queues a new connection check. `sourceId` and a non-empty JSON body are required; cookie authentication requires `X-CSRF-Token`.
+        Partially updates an owned source; changing adapter configuration increments its generation and queues a new connection check. Optional `checkConnection=true` also checks unchanged configuration in a new generation. `sourceId` and a non-empty JSON body are required; cookie authentication requires `X-CSRF-Token`.
       tags: [sources]
       security: [{bearerAuth: []}, {cookieAuth: []}]
-      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {name: checkConnection, in: query, required: false, schema: {type: boolean, default: false}}
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/SourcePatch'}}}
@@ -1070,6 +1253,7 @@ components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: opaque}
     cookieAuth: {type: apiKey, in: cookie, name: workouts_session}
+    adminCookieAuth: {type: apiKey, in: cookie, name: workouts_admin_session}
   parameters:
     CSRFToken:
       name: X-CSRF-Token
@@ -1270,6 +1454,25 @@ components:
       additionalProperties: false
       required: [status]
       properties: {status: {type: string, enum: [ok]}}
+    AdminAccountDeletion:
+      type: object
+      additionalProperties: false
+      required: [jobId, phase, rowsPurged]
+      properties:
+        jobId: {$ref: '#/components/schemas/CompactUUID'}
+        phase: {type: string, enum: [draining, purging, completed]}
+        rowsPurged: {type: integer, format: int64, minimum: 0}
+        workoutsTotal: {type: integer, format: int64, minimum: 0}
+        routesTotal: {type: integer, format: int64, minimum: 0}
+        sourcesTotal: {type: integer, format: int64, minimum: 0}
+        lastErrorCode: {type: string}
+        completedAt: {type: string, format: date-time}
+    AdminUserAccess:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
     SigninRequest:
       type: object
       additionalProperties: false
@@ -1294,6 +1497,67 @@ components:
         id: {$ref: '#/components/schemas/CompactUUID'}
         identity: {$ref: '#/components/schemas/IdentitySummary'}
         expiresAt: {type: string, format: date-time}
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, accountId, username, fullName, email, state]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        accountId: {$ref: '#/components/schemas/CompactUUID'}
+        username: {type: string}
+        fullName: {type: string}
+        email: {type: string, format: email}
+        state: {type: string}
+    AdminUserList:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AdminUser'}}
+        pagination: {$ref: '#/components/schemas/Pagination'}
+    AdminDirectoryEntry:
+      type: object
+      additionalProperties: false
+      required: [id, kind, username, fullName, email, registeredAt, state, activeSessionExpiresAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        kind: {type: string, enum: [user, invitation]}
+        username: {type: string, nullable: true}
+        fullName: {type: string, nullable: true}
+        registeredAt: {type: string, format: date-time, nullable: true}
+        email: {type: string, format: email}
+        state: {type: string, enum: [active, invited, disabled, deleting, deleted, expired, revoked]}
+        activeSessionExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Latest expiry among currently valid cookie/bearer sessions; null for invitations or no valid sessions. Not online presence.
+    AdminDirectory:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, maxItems: 1000, items: {$ref: '#/components/schemas/AdminDirectoryEntry'}}
+    AdminUserUsage:
+      type: object
+      additionalProperties: false
+      required: [fullName, lastLoginAt, workoutCount, routeCount, lastWorkoutDate]
+      properties:
+        fullName: {type: string}
+        lastLoginAt: {type: string, format: date-time, nullable: true}
+        workoutCount: {type: integer, format: int64, minimum: 0}
+        routeCount: {type: integer, format: int64, minimum: 0}
+        lastWorkoutDate: {type: string, format: date, nullable: true}
+    AdminConfig:
+      type: object
+      additionalProperties: false
+      required: [passwordMinimumLength, pageSizeMaximum, sessionLifetimeSeconds, pollingIntervalSeconds, mapFamilies]
+      properties:
+        passwordMinimumLength: {type: integer}
+        pageSizeMaximum: {type: integer}
+        sessionLifetimeSeconds: {type: integer, format: int64}
+        pollingIntervalSeconds: {type: integer}
+        mapFamilies: {type: array, items: {type: string}}
     BrowserSession:
       type: object
       additionalProperties: false

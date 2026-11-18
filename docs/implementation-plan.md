@@ -15,8 +15,11 @@ deployment/scaling/security moves to **14**. Publication includes GitHub Actions
 CI, public release artifacts and human-facing installation/usage documentation.
 Forward references throughout the documentation use this sequence. Historical
 decision dates, measured results and completed M1-M8 acceptance remain unchanged.
-M9 Stats/New Coverage is complete and accepted; M10 is next planned and public
-publication remains M13 work. See the [M9 closeout](development-progress.md#milestone-9-closeout)
+M9 Stats/New Coverage is complete and accepted; M10's first admin authentication/
+workspace slice is deployed, with remaining administration in progress. Public
+publication remains M13 work. See the [foundation checkpoint](development-progress.md#milestone-10-foundation).
+See the [admin UI specification](admin-ui-spec.md),
+[M9 closeout](development-progress.md#milestone-9-closeout)
 and retained [initial implementation record](development-progress.md#stats-and-new-coverage-initial-implementation).
 
 ## Delivery Principles
@@ -980,8 +983,11 @@ verification boundaries remain historical evidence, not new verification.
 - Require a completed external session: closed version-1 path, write-only Apple
   ID/obscured password/full cookies/trust token, optional non-secret client ID.
   Fix native backend/service to `iclouddrive`/`drive`; reject arbitrary profiles,
-  flags, descriptions and intermediate `_auth_session`. Source CRUD UI and in-app
-  2FA remain out of scope; owners submit whitelisted fields through Swagger/REST.
+  flags, descriptions and intermediate `_auth_session`. At this M8 checkpoint,
+  source CRUD UI and in-app 2FA were out of scope; owners submitted whitelisted
+   fields through Swagger/REST. The owner-profile **Data Sources** UI delivered at
+   Helm 167 supersedes the CRUD-UI exclusion, not the external authentication/2FA
+   boundary; it remains separate from the [M10 admin workspace](admin-ui-spec.md).
 - Persist only refreshed cookies with first-writer-wins generation/lease fencing;
   keep independently encrypted snapshots immutable. Publish refreshed cookies and
   successful connection-check status atomically.
@@ -1310,17 +1316,54 @@ defines history ordering, context scope, query boundaries and client state.
 
 ### Outcome
 
-The installation is operable through Swagger, Argo CD, telemetry, and documented runbooks without an admin UI.
+After installation, the administrator can manage accounts, prepare and maintain
+OSM regions, communicate service announcements and monitor/recover operations
+through a dedicated **`/admin`** workspace. The existing login screen authenticates
+reserved username **`admin`** with the bootstrap administrator's password, without
+granting access to any normal user's private data.
+
+**Scope revision accepted 11/15/2026:** the original no-admin-UI assumption was
+made before the number and complexity of required administrative tasks became
+clear. Manual REST/Swagger and CLI use remains available for automation/recovery,
+but is no longer the normal administration acceptance path. The
+[admin UI specification](admin-ui-spec.md) owns the detailed feature contract.
 
 ### Vertical slice
 
-- Complete admin user list, invitation resend/revoke, and asynchronous account deletion that cancels and drains account jobs before capturing purge targets.
-- Implement all-user in-app announcements, expiration, independent acknowledgement, and retraction.
-- Implement the administrator OSM status/refresh API and job/status contract,
-  moved from Milestone 7 on 10/4/2026, including authorized generation/stage
-  status, manual refresh requests, globally coalesced region operations, bounded
-  progress and safe failures. Reuse the completed operator updater and promotion
-  reconciliation rather than introducing a separate lifecycle or administrator UI.
+- Build four primary tabs, **Accounts, OSM Maps, Operations, Settings**, with
+  Stats-style left navigation for second-level categories and the existing shared
+  UI compositions, themes, retained state and scroll/focus behavior.
+- Extend shared login and session handling for canonical `admin` reservation,
+  server-authorized role routing and independent owner/admin cookie sessions.
+  Provide an explicit audited transition for an existing differently named
+  bootstrap administrator; fail on unresolved canonical collisions, without
+  converting an owner or resetting credentials during startup.
+- Complete user/invitation directories, invitation creation/resend/revoke and
+  delivery recovery, plus suspend/reactivate and session revocation. Password
+  recovery stays self-service; the admin reset-email shortcut was dropped on
+  11/17/2026. Do not expose private user data or impersonation.
+- Implement asynchronous account deletion that immediately denies access, cancels
+  and drains account jobs before capturing purge targets, and durably retries
+  failures without re-enabling the account.
+- Implement all-user in-app announcements, expiration, independent acknowledgement,
+  retraction and sanitized administrative audit/history views.
+- Complete the administrator OSM API and durable task/status contract moved from
+  Milestone 7: provider-catalog selection, initial download/preparation, refresh,
+  stage/generation history, resume/retry, storage inspection/unblock, explicit
+  candidate abort, cleanup recovery and safe reconciliation/readiness summaries.
+  Reuse the existing updater/checkpoints/promotion lifecycle and global locks.
+- Add a separate internal OSM job-controller Deployment with a dedicated
+  namespace-scoped ServiceAccount/Role for approved updater Jobs. Keep Kubernetes
+  Job-launching authority out of the public API and existing workers; specify and
+  verify template/admission restrictions, restart-safe reconciliation and owned-only
+  cleanup. Job creation RBAC alone cannot constrain an embedded pod specification.
+- Build Operations overview, administrative tasks/events/logs, incidents,
+  announcements, audit and contextual recovery guidance. Do not widen owner job
+  APIs into a private cross-account task browser.
+- Limit Settings to independent administrator console preferences/access and a
+  curated **read-only** effective-configuration view. Helm/GitOps/Secrets remain
+  authoritative for deployment settings; no SMTP/base-map/key/resource/policy
+  editors, shadow overrides or write-back into infrastructure configuration.
 - Add all required OTel metrics, traces, dashboards, and suggested Alertmanager rules.
 - Add source freshness, expired credentials, stuck job, cleanup failure, OSM failure, API latency, and tile latency alerts.
 - Complete Helm resources, network policies where supported, service accounts, Secrets, probes, PodDisruptionBudget decisions, and emptyDir limits.
@@ -1330,10 +1373,56 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
   administration slice.
 - Add backup/restore and migration runbooks.
 - Add Argo CD multi-source example documentation for app chart plus `homelab-apps` values.
+- Keep release-oriented Helm installation guidance, including initial base-map
+   selection and MapTiler keys, in M13. The owner-profile **Data Sources**
+   configuration UI is delivered separately at Helm 167 and grants no administrator authority.
+
+### Delivery sequence
+
+The first authentication/workspace slice is deployed at Helm 153: shared login,
+reserved identity/adoption, independent sessions, four-tab/left-nav shell, initial
+read-only directory/invitation sending and effective configuration. Remaining
+steps below are not claimed complete; see [feature status](admin-ui-spec.md#implementation-status).
+
+The Helm-155/156 extension adds forward schema/minimum runtime 32, durable login
+metadata, local registration dates, expressly bounded account usage and real
+invitation resend/revoke. It includes a protected pre-migration backup, drained
+worker window and all affected runtime rollouts. Helm 159 adds audited disable/enable,
+cookie/bearer revocation and ordinary job cancellation without automatic revival;
+verified disabled credentials receive fixed sign-in feedback below the fields.
+The explicitly requested account-access fold into 002 preserves schema/minimum
+runtime 32/32 and ledger 0-32 after actual-backup rehearsal. Helm 173 subsequently
+delivers durable account deletion, full private purge and fresh re-registration
+through schema/minimum runtime 34/34, with Deleting/pending in-place polling.
+Helm 174 subsequently folds lifecycle/source-check foundations into canonical
+001-032 with schema/minimum runtime 32/32; Helm 179 delivers conditional session
+revocation. The admin-triggered recovery shortcut is dropped in favor of existing
+self-service recovery. Full administration detail and OSM/Operations delivery
+still follow this sequence.
+
+1. Synchronize admin OpenAPI/schema/auth contracts, reserve `admin`, provide the
+   identity transition and build shared-login routing plus the isolated admin shell.
+2. Deliver complete Accounts journeys, including invitation delivery, suspension,
+   session revocation and interruption-safe account purge. Recovery is self-service.
+3. Deliver the OSM controller and full region preparation/recovery lifecycle using
+   the existing updater, with real Kubernetes permission/template verification.
+4. Complete Operations tasks, announcements, audit, monitoring gaps and runbooks;
+   deliver Settings without infrastructure configuration drift.
+5. Verify complete admin journeys, privacy boundaries, Helm/GitOps behavior and
+   failure recovery before marking M10 complete.
 
 ### Acceptance
 
-- Admin can operate every MVP lifecycle feature through Swagger without seeing private data.
+- The shared login sends `admin` to `/admin`; normal users cannot enter admin APIs
+  and administrators cannot enter owner APIs, data, logs, reports or private tiles.
+- All specified post-installation admin workflows are available through the four
+  tabs and their left navigation, without manual API/CLI steps for ordinary use.
+- Owner/admin sessions and caches coexist independently; reserved-name collisions,
+  expiry, sign-out and password recovery/change preserve role separation.
+- Region preparation/refresh/recovery survives browser/controller/Job interruption,
+  coalesces duplicate requests and preserves active data after candidate failure.
+- Kubernetes privileges are isolated to the controller/approved updater roles;
+  Settings cannot mutate or shadow Helm/GitOps-managed configuration.
 - Announcement expiration and retraction remove user-visible messages.
 - Account deletion immediately disables access and eventually purges private records.
 - Argo CD blocks rollout on failed migration.
@@ -1341,8 +1430,14 @@ The installation is operable through Swagger, Argo CD, telemetry, and documented
 
 ### Verification focus
 
-- Admin privacy and log-access tests
-- Account purge completeness
+- Shared-login role routing, canonical reservation/identity transition and dual-session CSRF tests
+- Admin privacy, cache isolation, item/log/artifact/export/report/tile denial tests
+- Invitation races/delivery failure, suspension/reactivation, session revocation and self-service recovery
+- Account purge completeness, active-work draining and interrupted retry
+- Real controller/updater RBAC/admission, duplicate Job/restart handling and CLI contention
+- OSM checkpoints, storage clearance, version fences, promotion/reconciliation and cleanup recovery
+- Four-tab/left-nav light/dark UI continuity, keyboard and iPad-class containment
+- Settings ownership, password revocation and upgrade/GitOps no-drift checks
 - Helm install/upgrade/rollback rendering
 - Backup restore followed by migration
 - Alert rule tests from synthetic metrics
