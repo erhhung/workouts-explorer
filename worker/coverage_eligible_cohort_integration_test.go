@@ -308,7 +308,7 @@ func TestEligibleCohortMixedRegionsSingleParentIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherRegion, otherGeneration := f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET
 		boundary=ST_Translate(boundary,20,0) WHERE id=$1`, otherRegion); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestEligibleCohortStalePreparedVectorsRecomputeROIIntegration(t *testing.T)
 		t.Fatal(err)
 	}
 	region, generation := f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, region); err != nil {
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET display_name=display_name WHERE id=$1`, region); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.generation); err != nil {

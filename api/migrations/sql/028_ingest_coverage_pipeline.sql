@@ -78,7 +78,7 @@ CREATE FUNCTION app.ingest_coverage_root_terminal(target_account_id uuid,target_
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
     SELECT EXISTS (SELECT 1 FROM app.jobs root WHERE root.id=target_root_id AND root.account_id=target_account_id
         AND root.parent_job_id IS NULL AND root.kind IN ('manual_ingest','scheduled_ingest')
-        AND root.status IN ('succeeded','partially_succeeded','failed','cancelled'))
+        AND root.status IN ('succeeded','partially_succeeded','failed','canceled'))
       AND NOT EXISTS (SELECT 1 FROM app.jobs source WHERE source.parent_job_id=target_root_id
         AND source.account_id=target_account_id AND source.status IN ('queued','running'))
 $function$;
@@ -797,7 +797,7 @@ $block$;
 -- +goose StatementEnd
 
 -- Private copy of the existing normal reconciler, including its live/current and
--- failed/cancelled target guards. Only the already-locked authority check changes.
+-- failed/canceled target guards. Only the already-locked authority check changes.
 -- +goose StatementBegin
 DO $block$
 DECLARE definition text; pattern text; occurrences integer;
@@ -848,7 +848,7 @@ SET search_path = pg_catalog, app AS $function$
     WHERE state.account_id=$1 AND state.workout_id=$2
       AND context.workout_id=$2 AND context.route_input_revision=$3
       AND context.route_input_sha256=$4
-      AND (child.status IN ('queued','running','failed','cancelled') OR
+      AND (child.status IN ('queued','running','failed','canceled') OR
           (child.status='succeeded' AND state.processing_state='current' AND context.result_outcome IN ('applied','no_evidence')))
       AND app.coverage_generation_vectors_equal(context.target_generations,$5)
       AND parent.matcher_contract_version=app.current_coverage_matcher_contract()
@@ -872,7 +872,7 @@ SET search_path = pg_catalog, app AS $function$
       AND state.target_job_id IS NULL AND state.processing_state IN ('not_started','stale')
       AND state.readiness_state='map_data_ready' AND child.kind='coverage_update_route'
       AND parent_job.kind='coverage_update'
-      AND ((child.status='cancelled' AND state.processing_finished_at=child.terminal_at)
+      AND ((child.status='canceled' AND state.processing_finished_at=child.terminal_at)
           OR (child.status IN ('queued','running') AND state.processing_finished_at IS NULL
               AND (child.cancel_requested_at IS NOT NULL OR parent_job.cancel_requested_at IS NOT NULL)))
       AND state.route_input_revision=context.route_input_revision AND state.route_input_sha256=context.route_input_sha256

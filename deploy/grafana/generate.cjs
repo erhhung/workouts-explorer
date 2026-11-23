@@ -24,7 +24,7 @@ const selfGroups = "service_name,service_instance_id";
 const tileBoundary =
   "Three independent populations: API GET handler includes auth/validation and response handling; API forwarding starts before Martin and ends after body processing/write, excluding auth/capability renewal; Martin native measures successful backend GET tiles (200 or 204), excluding proxy and browser render. Never subtract or add p95s. 500 ms is a provisional performance guide, not an accepted SLO.";
 const coverageCaveat =
-  "Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures.";
+  "Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures.";
 const timingsCaveat =
   "Queue age is creation-to-first-claim (not oldest backlog age); matcher measures Evaluate only; route measures postclaim attempts including cleanup, not durable completion; admission measures the polling loop. Histograms have no measurement dimensions. Sparse observations preserve gaps.";
 const goScopeNote =

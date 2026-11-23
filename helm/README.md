@@ -16,7 +16,7 @@ Install Workouts Explorer on Kubernetes to browse workout routes on a map, synch
 ## Before Installing
 
 1. Provide reachable external PostgreSQL/PostGIS application and OSM databases. Create the databases, install the required extensions, and provision the migration/runtime identities and their credentials. Prepare the coverage-worker, tile, and security-owner roles and required migration membership through database-owner automation, or enable `api.roleProvisioning.enabled` with a suitably privileged connection, including `CREATEROLE`. This optional job requires the `workouts_migration` role to exist and does not set login passwords or replace your credential provisioning.
-2. Prepare the OSM catalog and imported map data for the configured providers and regions outside this chart. Ensure OSM readers can see the required catalog generations and timezone data before relying on matching. The enabled-by-default timezone hook downloads and imports the pinned boundary archive; it needs outbound HTTPS and OSM writer access. If you disable it, supply compatible timezone data yourself.
+2. Use the administrator Regions UI to refresh provider catalogs and download/process map regions. Every promoted active region becomes eligible for Coverage; there is no static region list in Helm or application bootstrap. Ensure OSM readers can see the required catalog generations and timezone data before relying on matching. The enabled-by-default timezone hook downloads and imports the pinned boundary archive; it needs outbound HTTPS and OSM writer access. If you disable it, supply compatible timezone data yourself.
 3. Publish or select compatible application images and configure `image.registry`, `image.tag`, optional `image.digests`, and any existing image-pull Secrets. Martin and collector images use their own complete references.
 4. Provision the existing Secrets described below in the release namespace before running Helm, including Secrets needed by pre-install hooks. Set your browser URL, SMTP server, and usable base-map styles. The default style families are complete MapTiler Outdoor/Streets examples with attribution links and resource origins; replace `YOUR_MAPTILER_KEY` in all four style URLs with your browser-restricted public key and follow the provider's licensing requirements. The mail and application domains remain placeholders.
 5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. Configure a reachable TLS OTLP endpoint or set `otel.endpoint: ""` to disable export and sidecars. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
@@ -55,9 +55,9 @@ For database TLS, `worker.databaseTLSSecret`, `coverageWorker.databaseTLSSecret`
 
 Application and OSM migrations run as pre-install/pre-upgrade hooks, before the new workloads start; optional role provisioning runs first and timezone import follows migrations. Optional administrator bootstrap is a Helm post-install/post-upgrade hook (an Argo CD PreSync hook). These jobs write to your supplied databases. Review backups and database privileges before upgrading; Helm rollback does not undo completed database migrations.
 
-The source application sequence is **001-030**, with final source/runtime `SupportedSchemaVersion=30`, schema/minimum runtime **30**, baseline **27** and contiguous Goose ledger **0-30**. Migrations **001-028 are unchanged**. [029_ingest_status_reporting.sql](../api/migrations/sql/029_ingest_status_reporting.sql) combines ingest outcomes, filtering, explicit reprocessing and phase progress; [030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql) combines display precomputations, targeted stats and canonical identity. See the [history mapping](../docs/database-migrations.md#source-history-mapping).
+The source application sequence is **001-033**, with schema/runtime33, minimum runtime32, baseline27 and ledger0-33. Canonical030 owns Coverage display/currentness; canonical033 owns public OSM catalog refresh and durable region processing/timing/deletion. See the [migration guide](../docs/database-migrations.md).
 
-**Pre-cutover actual status:** Helm revision **60**, schema **34/minimum runtime 33**, baseline **27**, ledger **0-34**, in **pre-squash historical numbering** ([mapping](../docs/database-migrations.md#source-history-mapping)). That release updated only API, shared worker and UI pins; OSM and Martin were unchanged. The approved live rewrite is **not yet executed or verified here**; source 30 is a target, not deployed schema 30. The responsible operator must complete protected catalog/preservation/rollback proof and coordinated reconciliation/cutover before main records the verified actual revision and metadata. Ordinary Helm hooks/Goose Up do not reconcile this historical ledger; this README is not an execution receipt or permission for ad hoc ledger edits.
+Existing installations must use the protected, rehearsed catalog/ledger reconciliation for a source fold before deploying matching runtimes. Ordinary Helm hooks/Goose Up cannot replay already-applied source files. Current deployment receipts are recorded in [Development Progress](../docs/development-progress.md).
 
 Context warming uses existing evidence with no job, generation-policy or matcher-policy change and needs no provider check, new ingest, OSM regeneration/download or route rematching. M8 acceptance remains **PASS**, governed only by [Milestone 8 Closeout](../docs/development-progress.md#milestone-8-closeout); historical passes are not relabeled as fresh squash verification. This README does not certify capacity. Values-table historical `(undeployed)` comments below remain intentionally unchanged.
 
@@ -129,6 +129,17 @@ The filename is an example, not a file supplied by this repository. Pre-install 
 
 Keep `api.allowAdminPassword`, `api.localDevelopment`, and `api.smtp.allowInsecureLocal` false for public installations. Public map style URLs may contain only browser-restricted public provider keys, never private credentials. Configure each style family's HTTPS `resourceOrigins` for all required tiles, sprites, and fonts; these origins feed the UI content security policy. MapTiler supports browser-restricted public keys; Stadia can use domain authentication.
 
+## Administrator OSM Job Retention
+
+`osm.regionUpdates.ttlSecondsAfterFinished` defaults to **21600** (six hours).
+New updater, cancellation-cleanup and region-deletion Jobs retain their terminal
+pods for that Kubernetes TTL so their logs remain readable with `kubectl logs`.
+`0` allows immediate TTL cleanup. Retained terminal pods do not occupy processing
+slots; running/pending pods still block finalization. Jobs created before this
+setting, without a TTL, keep their previous controller-cleanup behavior. See
+[updater pod logs and retention](../docs/osm-region-updates.md#updater-pod-logs-and-job-retention)
+for operator commands and the archived-log fallback.
+
 ## OSM Readers And Concurrency
 
 `osm.useReadReplicasOnly` defaults to **false**, allowing primary OSM readers. When true, readers require a standby and check its role at connection and checkout. For strict physical-backend placement, supply a direct all-node/headless service or explicit backend hosts that expose discoverable database nodes, not a proxy that can switch backends. Use consistent reader cluster host/database configuration across coverage and diagnostic callers so their reservations coordinate. DNS resolution and TLS hostname verification must already work; this chart does not configure CoreDNS or create read replicas.
@@ -153,26 +164,19 @@ The following describes the **folded-028 contract deployed in `dev-20261020`** a
 
 `coverageWorker.autoRetryCount` defaults to **1 additional attempt** per logical Coverage retry root. Set it to `0` to disable automatic creation, or an integer up to `20`. It renders `COVERAGE_WORKER_AUTO_RETRY_COUNT`; use the same policy on every coverage-worker pod. After a **30 second** failure cooldown, at least one authoritative timeout/verified-transient eligible FAILED child enables a new isolated chained attempt carrying **all authoritative FAILED siblings**, including permanent, unknown and null-code failures, provided every failed descriptor remains valid. Successful/superseded siblings never rerun; automatic retry never revives cancellation, current/live targets, deleting workouts or inactive accounts. A parent with only permanent/unknown failures stops automatically.
 
-Schema 28 enrolls failures as they occur after migration; it does not retry already-terminal historical failures. Automatic attempt origin, lineage, and spent budget survive worker restarts and lost replies. Raising the setting permits additional attempts up to the new total; lowering it does not cancel jobs already created. Manual retry remains available on the latest failed or cancelled terminal attempt after the automatic budget is exhausted, without resetting that budget. Manual and automatic creation share a serialized constructor. An explicit authenticated manual retry can reverse cancellation for unchanged, still-authoritative inputs, but never reruns successful siblings or steals newer/current/live work. A cleared target pointer requires a matching cancellation finish timestamp, consistent target/generation proof, and unambiguous route-attempt history; missing or conflicting proof is refused. Automatic retries and ordinary scans do not reverse cancellation of an unchanged target. Timeout-only retries preserve the **6m / 10m / 15m** default execution ladder; other failures reset the timeout counter, not the automatic budget.
+Schema 28 enrolls failures as they occur after migration; it does not retry already-terminal historical failures. Automatic attempt origin, lineage, and spent budget survive worker restarts and lost replies. Raising the setting permits additional attempts up to the new total; lowering it does not cancel jobs already created. Manual retry remains available on the latest failed or canceled terminal attempt after the automatic budget is exhausted, without resetting that budget. Manual and automatic creation share a serialized constructor. An explicit authenticated manual retry can reverse cancellation for unchanged, still-authoritative inputs, but never reruns successful siblings or steals newer/current/live work. A cleared target pointer requires a matching cancellation finish timestamp, consistent target/generation proof, and unambiguous route-attempt history; missing or conflicting proof is refused. Automatic retries and ordinary scans do not reverse cancellation of an unchanged target. Timeout-only retries preserve the **6m / 10m / 15m** default execution ladder; other failures reset the timeout counter, not the automatic budget.
 
 Only `coverage-route-timeout` and `coverage-transient-failed` (with a verified transient database-boundary cause) trigger automation. Generic map-processing, persistence, unknown/null, limit, validation, permission/authentication, schema/configuration and TLS failures are not themselves transient, but authoritative failed siblings with those causes travel with a qualifying mixed parent. Latest-only authority and all-failed-descriptor validation prevent a transient-only successor from stranding permanent siblings. The durable automatic budget is shared per root across descendants/restarts; manual retry does not reset it. Failure logs expose only bounded stages and validated SQLSTATE metadata, never original driver/query/route details.
 
-Typed graph node and edge limits are permanent processing limits, not timeouts,
-even if the operation context expires concurrently. Graph expansion caches each
-node's adjacency and settles distance corrections locally; there is no independent
-64-hop ceiling. The existing node/edge, distance, per-query and execution budgets
-bound work, and each node can trigger at most one topology lookup. Historical
-`graph_layer` failures remain recognized as permanent archived limit diagnostics;
-the current engine no longer emits that limit. Safe diagnostics retain only the
-`graph_node` / `graph_edge` / legacy `graph_layer` enum and a validated bound.
+Typed graph node, edge, and expansion-layer limits are permanent processing limits, not timeouts, even if the operation context expires concurrently. Safe limit diagnostics contain only the `graph_node` / `graph_edge` / `graph_layer` field enum and a validated numeric bound.
 
-Ordinary reconciliation scans do not create fresh roots for identical authoritative failed or cancelled targets, including historical failures and jobs still acknowledging cancellation. Advancing scan revisions does not reset a retry budget. A genuinely changed route input, OSM generation vector, matcher/rules/sampling/path-policy/minimum-traversal contract, regained readiness, or distinct forced-adoption event can create fresh work. Parent contexts snapshot the matcher contract so changes are distinct from unrelated scan/OSM events.
+Ordinary reconciliation scans do not create fresh roots for identical authoritative failed or canceled targets, including historical failures and jobs still acknowledging cancellation. Advancing scan revisions does not reset a retry budget. A genuinely changed route input, OSM generation vector, matcher/rules/sampling/path-policy/minimum-traversal contract, regained readiness, or distinct forced-adoption event can create fresh work. Parent contexts snapshot the matcher contract so changes are distinct from unrelated scan/OSM events.
 
-`worker.coverageBatchSize` / `WORKER_COVERAGE_BATCH_SIZE` defaults to **25** (`1..1000`). During active ingest, each normal parent seals **exactly saved B new eligible matching targets**, globally across regions within its ingest-root/source-sibling scope. Missing maps, current/live/unchanged authoritative failed or cancelled targets and deduplication do not count. Private durable prepared metadata saves B and scope across files/crashes; there is **no placeholder Coverage parent** before full parent and B children seal atomically. Mixed regions are explicitly allowed. Optional `coverage.regionIds` reports the actual child-region union, including retries; `regionId`/`targetGeneration` remain representative anchors, not complete matching scope. Per-route generation vectors, claim fencing and admission are unchanged.
+`worker.coverageBatchSize` / `WORKER_COVERAGE_BATCH_SIZE` defaults to **25** (`1..1000`). During active ingest, each normal parent seals **exactly saved B new eligible matching targets**, globally across regions within its ingest-root/source-sibling scope. Missing maps, current/live/unchanged authoritative failed or canceled targets and deduplication do not count. Private durable prepared metadata saves B and scope across files/crashes; there is **no placeholder Coverage parent** before full parent and B children seal atomically. Mixed regions are explicitly allowed. Optional `coverage.regionIds` reports the actual child-region union, including retries; `regionId`/`targetGeneration` remain representative anchors, not complete matching scope. Per-route generation vectors, claim fencing and admission are unchanged.
 
 Saved builder B becomes parent capacity at seal; configuration changes do not resize saved cohorts. A retry remains a separate chained parent containing only authoritative unsuccessful predecessors as allowed by manual/automatic policy; spare capacity never accepts fresh ingest work. Successful siblings are not rerun. Existing larger historical parents keep inherited retry capacity rather than dropping failed siblings.
 
-Only leased account-reconciliation recovery may seal a final partial cohort, **after the visible ingest root and all source siblings are terminal and due preparation is exhausted**, never active source EOF. Failed/cancelled roots can legitimately owe derived work for committed data without reopening ingest. Normal metadata/deduplication retains cancellation footprints and never resurrects unchanged cancelled targets. Cancelling ingestion does not erase committed obligations or cancel separate Coverage jobs.
+Only leased account-reconciliation recovery may seal a final partial cohort, **after the visible ingest root and all source siblings are terminal and due preparation is exhausted**, never active source EOF. Failed/canceled roots can legitimately owe derived work for committed data without reopening ingest. Normal metadata/deduplication retains cancellation footprints and never resurrects unchanged canceled targets. Canceling ingestion does not erase committed obligations or cancel separate Coverage jobs.
 
 Preparation keeps bounded metadata and only one route's coordinates at a time, with one efficient ROI query per route, not per point. A trusted fingerprint of **all catalog regions/configuration/boundaries/active heads** must match in the same Repeatable Read ROI lookup snapshot and before seal; mismatch invalidates preparation for fresh ROI, never substitutes new heads into an old vector. Separate APP/OSM transactions do not guarantee cross-database latest-state atomicity. The source runner downloads/processes files serially within its job, cleaning before and after the file pipeline; handoff follows commit/transport/slot cleanup. Matching policy, CPU, memory, semantic limits, concurrency and deadlines are not increased.
 
@@ -397,13 +401,40 @@ Values under `osm`.
 | `writerDatabaseSecret.name`<br>_(string)_ | Name of the OSM writer database Secret. | `"workouts-explorer-database"` |
 | `writerDatabaseSecret.key`<br>_(string)_ | Secret key containing the OSM writer connection URL with the required migration/import privileges. | `"osmDatabaseUrl"` |
 | `dataProviders[0]`<br>_(string)_ | Default OSM data provider. | `"geofabrik"` |
-| `regions[0]`<br>_(string)_ | Default provider-qualified OSM region identifier. | `"geofabrik:norcal"` |
 | `autoAddRegions`<br>_(bool)_ | Allow workers to request additional OSM regions; this does not make the chart import map data. | `false` |
 | `maxAutoDownloadBytes`<br>_(int)_ | Maximum size in bytes for an automatically requested OSM download. | `1073741824` |
+| `catalogRefresh.enabled`<br>_(bool)_ | Enable the durable catalog-refresh worker lane and administrator trigger. | `true` |
+| `catalogRefresh`.<br>`metadataConcurrency`<br>_(int)_ | Maximum concurrent provider metadata HTTP requests per refresh job (1..32). | `5` |
+| `catalogRefresh`.<br>`databaseSecret.name`<br>_(string)_ | Name of the OSM catalog runtime database Secret. | `"workouts-explorer-database"` |
+| `catalogRefresh`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing the workouts_osm_catalog runtime connection URL. | `"osmCatalogDatabaseUrl"` |
+| `regionUpdates.enabled`<br>_(bool)_ | Enable region commands and the isolated Kubernetes Job controller. | `false` |
+| `regionUpdates.concurrency`<br>_(int)_ | Maximum dispatched updater/cleanup Jobs; shared-database writer ownership remains stronger. | `1` |
+| `regionUpdates.deadlineSeconds`<br>_(int)_ | Hard execution deadline for a long regional rebuild. | `604800` |
+| `regionUpdates`.<br>`ttlSecondsAfterFinished`<br>_(int)_ | Seconds to retain completed/failed updater and cleanup Jobs for logs; 0 allows immediate TTL cleanup. | `21600` |
+| `regionUpdates.maxDownloadBytes`<br>_(int)_ | Maximum bytes for an explicitly requested PBF. | `21474836480` |
+| `regionUpdates.scratchSizeLimit`<br>_(string)_ | Pod-local temporary storage, never a database PVC change. | `"60Gi"` |
+| `regionUpdates`.<br>`controllerDatabaseSecret.name`<br>_(string)_ | Control-state runtime Secret name. | `"workouts-explorer-database"` |
+| `regionUpdates`.<br>`controllerDatabaseSecret.key`<br>_(string)_ | Control-state runtime URL key. | `"osmControllerDatabaseUrl"` |
+| `regionUpdates`.<br>`executorDatabaseSecret.name`<br>_(string)_ | Executor progress runtime Secret name. | `"workouts-explorer-database"` |
+| `regionUpdates`.<br>`executorDatabaseSecret.key`<br>_(string)_ | Executor progress URL key. | `"osmExecutorDatabaseUrl"` |
+| `regionUpdates`.<br>`writerDatabaseSecret.name`<br>_(string)_ | Updater writer Secret name. | `"workouts-explorer-database"` |
+| `regionUpdates`.<br>`writerDatabaseSecret.key`<br>_(string)_ | Primary-aware updater URL key. | `"osmUpdateDatabaseUrl"` |
+| `regionUpdates.prometheusURL`<br>_(string)_ | Authoritative primary-PVC metrics endpoint. | [View default](values.yaml#L529) |
+| `regionUpdates`.<br>`prometheusServiceIP`<br>_(string)_ | Optional host-cluster metrics Service IP for an isolated vCluster. | `""` |
+| `regionUpdates`.<br>`controllerResources`.<br>`requests.cpu`<br>_(string)_ | Controller reserved CPU. | `"25m"` |
+| `regionUpdates`.<br>`controllerResources`.<br>`requests.memory`<br>_(string)_ | Controller reserved memory. | `"64Mi"` |
+| `regionUpdates`.<br>`controllerResources.limits.cpu`<br>_(string)_ | Controller CPU limit. | `"250m"` |
+| `regionUpdates`.<br>`controllerResources`.<br>`limits.memory`<br>_(string)_ | Controller memory limit. | `"256Mi"` |
+| `regionUpdates`.<br>`jobResources.requests.cpu`<br>_(string)_ | Updater reserved CPU. | `"100m"` |
+| `regionUpdates.jobResources`.<br>`requests.memory`<br>_(string)_ | Updater reserved memory; osmium ID tracking is not bounded by compressed PBF size. | `"2Gi"` |
+| `regionUpdates.jobResources`.<br>`requests.ephemeral-storage`<br>_(string)_ | Updater reserved scratch. | `"2Gi"` |
+| `regionUpdates`.<br>`jobResources.limits.cpu`<br>_(string)_ | Updater CPU limit. | `"1"` |
+| `regionUpdates`.<br>`jobResources.limits.memory`<br>_(string)_ | Updater memory limit, including osmium reference tracking and importer cache. | `"4Gi"` |
+| `regionUpdates.jobResources`.<br>`limits.ephemeral-storage`<br>_(string)_ | Updater scratch limit. | `"60Gi"` |
 | `timezoneBoundaries.enabled`<br>_(bool)_ | Run the timezone boundary import before installation and upgrade. | `true` |
 | `timezoneBoundaries.release`<br>_(string)_ | Timezone boundary release identifier recorded by the importer. | `"2026c"` |
-| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L489) |
-| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L491) |
+| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L574) |
+| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L576) |
 | `resources.requests.cpu`<br>_(string)_ | CPU request for each OSM job container. | `"25m"` |
 | `resources.requests.memory`<br>_(string)_ | Memory request for each OSM job container. | `"64Mi"` |
 | `resources.limits.cpu`<br>_(string)_ | CPU limit for each OSM job container. | `"250m"` |
@@ -430,13 +461,13 @@ Values under `otel`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `endpoint`<br>_(string)_ | External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting. | [View default](values.yaml#L538) |
+| `endpoint`<br>_(string)_ | External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting. | [View default](values.yaml#L623) |
 | `environment`<br>_(string)_ | Deployment environment label attached to telemetry. | `"development"` |
 | `serviceNamespace`<br>_(string)_ | OpenTelemetry service namespace label. | `"workouts-explorer"` |
 | `trustedCASecret.name`<br>_(string)_ | Existing collector CA Secret name; empty falls back to api.trustedCASecret.name and key. | `""` |
 | `trustedCASecret.key`<br>_(string)_ | PEM CA bundle key used only when otel.trustedCASecret.name is nonempty. | `"ca.crt"` |
 | `collector.enabled`<br>_(bool)_ | Enable collector sidecars when otel.endpoint is nonempty. | `true` |
-| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L557) |
+| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L642) |
 | `collector.resources`.<br>`requests.cpu`<br>_(string)_ | CPU request for each metrics collector sidecar. | `"25m"` |
 | `collector.resources`.<br>`requests.memory`<br>_(string)_ | Memory request for each metrics collector sidecar. | `"64Mi"` |
 | `collector.resources.limits.cpu`<br>_(string)_ | CPU limit for each metrics collector sidecar. | `"250m"` |

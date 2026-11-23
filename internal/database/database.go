@@ -11,7 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 )
 
-const SupportedSchemaVersion = 32
+const SupportedSchemaVersion = 33
 
 func Open(ctx context.Context, databaseURL, applicationName string) (*pgxpool.Pool, error) {
 	return OpenWithMaxConns(ctx, databaseURL, applicationName, 0)
@@ -61,6 +61,12 @@ func newTracer(options ...otelpgx.Option) *otelpgx.Tracer {
 const runtimeBaseReadinessSQL = `
 		SELECT COALESCE(max(version_id) FILTER (WHERE is_applied), 0) = $1
 		   AND to_regclass('app.schema_metadata') IS NOT NULL
+		   AND to_regclass('app.osm_processing_settings') IS NOT NULL
+		   AND to_regprocedure('app.capture_osm_storage_policy()') IS NOT NULL
+		   AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('app.osm_region_updates') AND attname='storage_policy_execution_hash' AND NOT attisdropped)
+		   AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app.osm_region_updates') AND tgname='osm_region_updates_storage_policy' AND NOT tgisinternal AND tgenabled='O')
+		   AND to_regprocedure('app.coverage_display_target_current(uuid,uuid,text,text,text)') IS NOT NULL
+		   AND (current_user<>'workouts_api' OR has_function_privilege(current_user,'app.coverage_display_target_current(uuid,uuid,text,text,text)','EXECUTE'))
 		   AND (SELECT schema_version = $1 FROM app.schema_metadata WHERE singleton)
 		   AND NOT EXISTS(SELECT 1 FROM public.goose_db_version WHERE version_id > $1)
 		   AND to_regclass('app.jobs') IS NOT NULL
@@ -1614,6 +1620,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'FOREIGN KEY (account_id, coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE SET NULL (coverage_display_context_id)',
 				'CHECK ((generation > 0))','CHECK ((start_date <= end_date))'])
 		), functions(signature,language,volatility,definer,strict,parallel,returns_set,defaults,result,config,api,tiles,body_hash) AS (VALUES
+			('app.coverage_display_target_current(uuid,uuid,text,text,text)','sql','s',true,false,'u',false,0,'boolean',ARRAY['search_path=pg_catalog, app'],true,false,'93567675a3514a4af09d03ce060e2127'),
 			('app.coverage_display_normalize(text)','sql','i',false,true,'s',false,0,'text',ARRAY['search_path=pg_catalog'],false,false,'f9b737c67fbf910ef932ddd4f8af727b'),
 			('app.coverage_display_identity(text,text,text,text)','plpgsql','i',false,true,'s',false,0,'uuid',ARRAY['search_path=pg_catalog'],false,false,'528503a039e38e7c00894fdf42755fb6'),
 			('app.coverage_display_source_visits(uuid,date,date)','sql','s',true,false,'u',true,0,
@@ -1825,7 +1832,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 			WHERE (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid=to_regprocedure(expected.signature))<>expected.callbacks)
 	)`
 
-const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeTileReadinessSQL + `) AND (` + runtimeTileLODReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `) AND (` + runtimeSourceCheckReadinessSQL + `) AND (` + runtimeAccountDeletionReadinessSQL + `) AND (` + runtimeRouteGapReadinessSQL + `)`
+const runtimeFullReadinessSQL = `SELECT (` + runtimeReadinessSQL + `) AND (` + runtimeDeferredReadinessSQL + `) AND (` + runtimeCohortReadinessSQL + `) AND (` + runtimeCoverageDisplayReadinessSQL + `) AND (` + runtimeCanonicalCoverageDisplayReadinessSQL + `) AND (` + runtimeIngestPhaseReadinessSQL + `) AND (` + runtimeTileReadinessSQL + `) AND (` + runtimeTileLODReadinessSQL + `) AND (` + runtimeCoverageMetadataReadinessSQL + `) AND (` + runtimeSourceCheckReadinessSQL + `) AND (` + runtimeAccountDeletionReadinessSQL + `) AND (` + runtimeOSMCatalogReadinessSQL + `) AND (` + runtimeRouteGapReadinessSQL + `)`
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
 	var ready bool

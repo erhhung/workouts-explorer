@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const GeofabrikIndexURL = "https://download.geofabrik.de/index-v1.json"
@@ -29,14 +30,17 @@ type Region struct {
 	SourceURL       string
 	AdvertisedBytes int64
 	GeometryJSON    []byte
+	CatalogID       string
+	ParentID        string
 }
 
 type geofabrikIndex struct {
 	Features []struct {
 		Properties struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-			URLs struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Parent string `json:"parent"`
+			URLs   struct {
 				PBF string `json:"pbf"`
 			} `json:"urls"`
 		} `json:"properties"`
@@ -65,7 +69,7 @@ func FetchGeofabrikCatalog(ctx context.Context, client *http.Client) ([]Region, 
 	}
 	regions := make([]Region, 0, len(index.Features))
 	for _, feature := range index.Features {
-		if !validRegionPart(feature.Properties.ID) || feature.Properties.Name == "" || !validGeofabrikURL(feature.Properties.URLs.PBF) {
+		if !validCatalogRegionPart(feature.Properties.ID) || feature.Properties.Name == "" || !validGeofabrikURL(feature.Properties.URLs.PBF) {
 			continue
 		}
 		var geometry struct {
@@ -74,10 +78,16 @@ func FetchGeofabrikCatalog(ctx context.Context, client *http.Client) ([]Region, 
 		if err := json.Unmarshal(feature.Geometry, &geometry); err != nil || (geometry.Type != "Polygon" && geometry.Type != "MultiPolygon") {
 			continue
 		}
+		id := feature.Properties.ID
+		// These established installation IDs predate Geofabrik's US hierarchy.
+		if id == "us/california/norcal" || id == "us/california/socal" {
+			id = id[strings.LastIndexByte(id, '/')+1:]
+		}
 		regions = append(regions, Region{
-			ID: "geofabrik:" + feature.Properties.ID, Provider: "geofabrik", ProviderID: feature.Properties.ID,
+			ID: "geofabrik:" + id, Provider: "geofabrik", ProviderID: id,
 			Name: feature.Properties.Name, CatalogURL: GeofabrikIndexURL, SourceURL: feature.Properties.URLs.PBF,
 			GeometryJSON: append([]byte(nil), feature.Geometry...),
+			CatalogID:    feature.Properties.ID, ParentID: feature.Properties.Parent,
 		})
 	}
 	if len(regions) == 0 {
@@ -86,9 +96,73 @@ func FetchGeofabrikCatalog(ctx context.Context, client *http.Client) ([]Region, 
 	return regions, nil
 }
 
-func ResolveRegion(regions []Region, configuredID string) (Region, bool) {
+func validCatalogRegionPart(value string) bool {
+	if len(value) > 192 {
+		return false
+	}
+	for _, part := range strings.Split(value, "/") {
+		if !validRegionPart(part) {
+			return false
+		}
+	}
+	return true
+}
+
+type RegionMetadata struct {
+	Bytes      *int64
+	ModifiedAt *time.Time
+	CheckedAt  time.Time
+}
+
+func FetchRegionMetadata(ctx context.Context, client *http.Client, region Region) (RegionMetadata, error) {
+	if region.Provider != "geofabrik" || !validGeofabrikURL(region.SourceURL) {
+		return RegionMetadata{}, errors.New("unsupported catalog source")
+	}
+	bounded := *client
+	bounded.Timeout = 15 * time.Second
+	bounded.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !validGeofabrikURL(request.URL.String()) {
+			return errors.New("unsupported catalog redirect")
+		}
+		return nil
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, region.SourceURL, nil)
+	if err != nil {
+		return RegionMetadata{}, err
+	}
+	request.Header.Set("User-Agent", "workouts-explorer-osm/1")
+	response, err := bounded.Do(request)
+	if err != nil {
+		return RegionMetadata{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return RegionMetadata{}, fmt.Errorf("metadata HTTP status %d", response.StatusCode)
+	}
+	metadata := RegionMetadata{CheckedAt: time.Now().UTC()}
+	if raw := response.Header.Get("Content-Length"); raw != "" {
+		bytes, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || bytes <= 0 {
+			return RegionMetadata{}, errors.New("invalid provider size")
+		}
+		metadata.Bytes = &bytes
+	}
+	if raw := response.Header.Get("Last-Modified"); raw != "" {
+		modified, err := http.ParseTime(raw)
+		if err != nil {
+			return RegionMetadata{}, errors.New("invalid provider date")
+		}
+		metadata.ModifiedAt = &modified
+	}
+	if metadata.Bytes == nil || metadata.ModifiedAt == nil {
+		return RegionMetadata{}, errors.New("incomplete provider metadata")
+	}
+	return metadata, nil
+}
+
+func ResolveRegion(regions []Region, requestedID string) (Region, bool) {
 	for _, region := range regions {
-		if region.ID == configuredID {
+		if region.ID == requestedID {
 			return region, true
 		}
 	}
@@ -100,10 +174,18 @@ type DownloadResult struct {
 	SHA256 string
 }
 
-func DownloadRegion(ctx context.Context, client *http.Client, region Region, destination string, maximumBytes int64) (DownloadResult, error) {
+func DownloadRegion(ctx context.Context, client *http.Client, region Region, destination string, maximumBytes int64) (result DownloadResult, err error) {
 	if maximumBytes < 1 || !validGeofabrikURL(region.SourceURL) {
 		return DownloadResult{}, errors.New("invalid OSM region download configuration")
 	}
+	defer func() {
+		if err != nil {
+			if transport, ok := err.(*url.Error); ok {
+				err = transport.Err
+			}
+			err = fmt.Errorf("Failed to download %s | %w", region.SourceURL, err)
+		}
+	}()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, region.SourceURL, nil)
 	if err != nil {
 		return DownloadResult{}, err
@@ -111,16 +193,16 @@ func DownloadRegion(ctx context.Context, client *http.Client, region Region, des
 	request.Header.Set("User-Agent", "workouts-explorer-osm/1")
 	response, err := client.Do(request)
 	if err != nil {
-		return DownloadResult{}, fmt.Errorf("download OSM region %s: %w", region.ID, err)
+		return DownloadResult{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return DownloadResult{}, fmt.Errorf("download OSM region %s: unexpected HTTP status %d", region.ID, response.StatusCode)
+		return DownloadResult{}, fmt.Errorf("unexpected HTTP status %d", response.StatusCode)
 	}
 	if length := response.Header.Get("Content-Length"); length != "" {
 		advertised, parseErr := strconv.ParseInt(length, 10, 64)
 		if parseErr != nil || advertised < 0 {
-			return DownloadResult{}, fmt.Errorf("download OSM region %s: invalid content length", region.ID)
+			return DownloadResult{}, errors.New("invalid content length")
 		}
 		if advertised > maximumBytes {
 			return DownloadResult{}, ErrDownloadTooLarge

@@ -279,17 +279,17 @@ func TestOwnerAwareInventoryPostgreSQL(t *testing.T) {
 		_ = tx.Rollback(db.ctx)
 	})
 
-	t.Run("inactive cancelled expired and deleted jobs fail closed", func(t *testing.T) {
-		for _, scenario := range []string{"account-deleting", "cancelled", "parent-cancelled", "expired", "source-deleted"} {
+	t.Run("inactive canceled expired and deleted jobs fail closed", func(t *testing.T) {
+		for _, scenario := range []string{"account-deleting", "canceled", "parent-canceled", "expired", "source-deleted"} {
 			t.Run(scenario, func(t *testing.T) {
 				f := ownershipInventoryJob(t, db, uuid.Nil, uuid.Nil, "incremental")
 				tx := beginAccount(t, db.ctx, db.migration, f.account)
 				switch scenario {
 				case "account-deleting":
 					ownershipInventoryExec(t, db, tx, `UPDATE app.accounts SET state='deleting' WHERE id=$1`, f.account)
-				case "cancelled", "parent-cancelled":
+				case "canceled", "parent-canceled":
 					job := f.job
-					if scenario == "parent-cancelled" {
+					if scenario == "parent-canceled" {
 						job = f.parent
 					}
 					ownershipInventoryExec(t, db, tx, `SELECT app.request_job_cancellation($1,$2)`, job, uuid.New())

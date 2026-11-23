@@ -228,7 +228,7 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 	rows, err := tx.Query(ctx, `
 		SELECT workout.id,workout_type.id,workout_type.type_key,workout_type.provider_label,
 		       workout.started_at,workout.ended_at,workout.provider_duration::text,workout.local_start_date,
-		       route.minimum_longitude,route.minimum_latitude,route.maximum_longitude,route.maximum_latitude,
+               ST_XMin(Box3D(route.route)),ST_YMin(Box3D(route.route)),ST_XMax(Box3D(route.route)),ST_YMax(Box3D(route.route)),
 		       coverage.coverage_minimum_longitude,coverage.coverage_minimum_latitude,
 		       coverage.coverage_maximum_longitude,coverage.coverage_maximum_latitude,
 		       metrics.distance_value::text,metrics.distance_unit,
@@ -238,23 +238,12 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		       metrics.elevation_value::text,metrics.elevation_unit,
 		       coverage.readiness_state,coverage.processing_state,coverage.applied_result_status,
 		       coverage.applied_route_input_revision IS NOT NULL,
-		       COALESCE(coverage.applied_route_input_revision=coverage.route_input_revision
-		         AND coverage.applied_route_input_sha256=coverage.route_input_sha256
-		         AND coverage.applied_rules_version=$3
-		         AND coverage.applied_sampling_version=$4
-		         AND coverage.applied_path_policy_version=$5
-		         AND app.coverage_generation_vectors_equal(coverage.applied_generations,desired.generations),false)
+		       app.coverage_display_target_current(workout.account_id,workout.id,$3,$4,$5)
 		  FROM app.map_selection_workouts selected
 		  JOIN app.workouts workout ON workout.id=selected.workout_id AND workout.account_id=selected.account_id
 		  JOIN app.workout_types workout_type ON workout_type.id=workout.workout_type_id AND workout_type.account_id=workout.account_id
 		  JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
 		  LEFT JOIN app.workout_coverage_states coverage ON coverage.workout_id=workout.id AND coverage.account_id=workout.account_id
-		  LEFT JOIN LATERAL (
-		    SELECT jsonb_agg(jsonb_build_object('regionId',region.region_id,'generation',region.desired_osm_generation)
-		             ORDER BY region.region_id) generations
-		    FROM app.workout_coverage_regions region
-		    WHERE region.account_id=workout.account_id AND region.workout_id=workout.id
-		  ) desired ON true
 		  LEFT JOIN LATERAL (SELECT
 		    max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,max(unit) FILTER (WHERE metric='distance' AND unit='km') AS distance_unit,
 		    max(value) FILTER (WHERE metric='speed_average' AND unit='km/hr') AS speed_value,
@@ -265,7 +254,7 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		    FROM app.workout_aggregates aggregate WHERE aggregate.workout_id=workout.id AND aggregate.account_id=workout.account_id) metrics ON true
 		 WHERE selected.account_id=$1 AND selected.selection_id=$2
 		 ORDER BY selected.sort_order`, accountID, selectionID, string(internalcoverage.ExperimentalRulesV1),
-		string(internalcoverage.ExperimentalSamplingV1), string(internalcoverage.ExperimentalPathPolicyV82))
+		string(internalcoverage.ExperimentalSamplingV1), string(internalcoverage.CurrentPathPolicyVersion))
 	if err != nil {
 		return generated.MapSelection{}, err
 	}
@@ -371,6 +360,10 @@ func mapCoverageReadiness(state, processing *string, appliedCoverage, appliedCov
 		result.ResultStatus = generated.CoverageReadinessResultStatusStale
 		if appliedCoverageCurrent {
 			result.ResultStatus = generated.CoverageReadinessResultStatusCurrent
+			result.MapDataStatus = generated.CoverageReadinessMapDataStatusReady
+			if result.ProcessingStatus == generated.CoverageReadinessProcessingStatusStale {
+				result.ProcessingStatus = generated.CoverageReadinessProcessingStatusCurrent
+			}
 		}
 		if appliedResultStatus != nil && *appliedResultStatus == "no_matches" {
 			result.ResultStatus = generated.CoverageReadinessResultStatusNoMatches

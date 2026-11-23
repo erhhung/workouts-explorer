@@ -30,10 +30,10 @@ func TestIngestPartialSuccessMigrationContract(t *testing.T) {
 		"CREATE OR REPLACE FUNCTION app.derive_parent_status (parent_id uuid)",
 		"CREATE OR REPLACE FUNCTION app.notify_terminal_ingest_parent ()",
 		"COALESCE(sum(progress.workouts_created), 0) > 0 OR COALESCE(sum(progress.workouts_updated), 0) > 0",
-		"WHEN failed_count + cancelled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
+		"WHEN failed_count + canceled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
 		"child.failure_code IS NOT DISTINCT FROM 'source-file-invalid' AND EXISTS",
 		"file.account_id = child.account_id AND file.state = 'failed'",
-		"child.status IN ('failed', 'cancelled')",
+		"child.status IN ('failed', 'canceled')",
 		"ON CONFLICT(account_id, type, condition_key) DO NOTHING",
 		"UPDATE app.schema_metadata SET schema_version = 29, minimum_runtime_version = 29 WHERE singleton;",
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;",
@@ -254,8 +254,8 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 			return
 		}
 		var correct bool
-		severity := map[string]string{"succeeded": "info", "partially_succeeded": "warning", "failed": "error", "cancelled": "info"}[status]
-		title := map[string]string{"succeeded": "Data sync completed", "partially_succeeded": "Data sync partially completed", "failed": "Data sync failed", "cancelled": "Data sync cancelled"}[status]
+		severity := map[string]string{"succeeded": "info", "partially_succeeded": "warning", "failed": "error", "canceled": "info"}[status]
+		title := map[string]string{"succeeded": "Data sync completed", "partially_succeeded": "Data sync partially completed", "failed": "Data sync failed", "canceled": "Data sync canceled"}[status]
 		if err := tx.QueryRow(db.ctx, `SELECT message=$2 AND severity=$3 AND title=$4 AND condition_key='job:'||$1::uuid::text
 			AND subject_type='job' AND subject_id=$1 AND account_id=$5 FROM app.notifications WHERE job_id=$1 AND type='ingest-terminal'`,
 			f.parent, message, severity, title, f.account).Scan(&correct); err != nil || !correct {
@@ -431,7 +431,7 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 				check(t, f, "failed", fileFailed)
 			})
 			for _, mixed := range []bool{false, true} {
-				t.Run(fmt.Sprintf("CancelledChildren/mixed=%t", mixed), func(t *testing.T) {
+				t.Run(fmt.Sprintf("CanceledChildren/mixed=%t", mixed), func(t *testing.T) {
 					f := create(t, kind, 2, uuid.Nil)
 					for i, c := range f.children {
 						claim(t, f, c)
@@ -443,10 +443,10 @@ func TestIngestPartialSuccessPostgreSQL(t *testing.T) {
 							if !requestCancellation(t, db, f.account, c.id) {
 								t.Fatal("request source cancellation")
 							}
-							finish(t, f, c, "cancelled", "")
+							finish(t, f, c, "canceled", "")
 						}
 					}
-					status, message := "cancelled", "Your requested data sync was cancelled."
+					status, message := "canceled", "Your requested data sync was canceled."
 					if kind == "scheduled_ingest" {
 						message = ""
 					}

@@ -100,14 +100,13 @@ ALTER TABLE osm_canonical.path_segments ATTACH PARTITION osm_canonical.path_segm
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	store := PostgreSQLUpdateStore{Pool: pool}
-	if err := store.RefreshStatistics(ctx); err == nil || !strings.Contains(err.Error(), "maintenance privilege required") {
+	if err := refreshUpdateStatistics(ctx, pool); err == nil || !strings.Contains(err.Error(), "maintenance privilege required") {
 		t.Fatalf("ANALYZE must not silently skip unprivileged relations: %v", err)
 	}
 	if _, err := db.Exec(ctx, "GRANT MAINTAIN ON osm_canonical.ways,osm_canonical.localities,osm_canonical.path_segments,osm_catalog.generations TO "+identifier); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RefreshStatistics(ctx); err == nil || !strings.Contains(err.Error(), "ways_g42") {
+	if err := refreshUpdateStatistics(ctx, pool); err == nil || !strings.Contains(err.Error(), "ways_g42") {
 		t.Fatalf("missing leaf privileges must not be skipped: %v", err)
 	}
 	if _, err := db.Exec(ctx, "GRANT MAINTAIN ON ALL TABLES IN SCHEMA osm_catalog,osm_canonical TO "+identifier); err != nil {
@@ -125,7 +124,7 @@ WHERE (schemaname='osm_canonical' AND (inherited OR tablename ~ '_g[0-9]+$'))
 		}
 	}
 	assertStatistics(8)
-	if err := store.RefreshStatistics(ctx); err != nil {
+	if err := refreshUpdateStatistics(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	assertStatistics(51) // (4 ways + 4 localities + 8 segments) * (root + 2 leaves) + 3 catalog
@@ -167,7 +166,7 @@ WHERE schemaname='osm_canonical' AND tablename LIKE 'path_segments%'
 			refreshCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { done <- store.RefreshStatistics(refreshCtx) }()
+			go func() { done <- refreshUpdateStatistics(refreshCtx, pool) }()
 			// Use a separate connection: db is held by the deliberately conflicting lock.
 			observer, err := pgx.ConnectConfig(ctx, adminConfig)
 			if err != nil {
@@ -212,7 +211,7 @@ WHERE schemaname='osm_canonical' AND tablename LIKE 'path_segments%'
 			}
 			assertSettings()
 			// No changed source or generation: the same active leaves must be repairable.
-			if err := store.RefreshStatistics(ctx); err != nil {
+			if err := refreshUpdateStatistics(ctx, pool); err != nil {
 				t.Fatal(err)
 			}
 			assertStatistics(51)
@@ -223,4 +222,73 @@ WHERE schemaname='osm_canonical' AND tablename LIKE 'path_segments%'
 	if err := db.QueryRow(ctx, `SELECT count(*) FROM osm_catalog.generations WHERE state='active'`).Scan(&active); err != nil || active != 2 {
 		t.Fatalf("maintenance changed active generations: active=%d err=%v", active, err)
 	}
+	if _, err := db.Exec(ctx, `CREATE TABLE osm_catalog.route_region_catalog_state(singleton boolean PRIMARY KEY,active_generations jsonb);
+CREATE TABLE osm_catalog.statistics_maintenance(singleton boolean PRIMARY KEY,analyzed_generations jsonb,policy_version integer,analyzed_at timestamptz);
+INSERT INTO osm_catalog.route_region_catalog_state VALUES(true,'{"fixture:a":42,"fixture:b":43}');
+INSERT INTO osm_catalog.statistics_maintenance VALUES(true,'{"fixture:a":42,"fixture:b":43}',1,clock_timestamp());
+GRANT SELECT ON osm_catalog.route_region_catalog_state,osm_catalog.statistics_maintenance TO `+identifier+`;
+GRANT UPDATE ON osm_catalog.statistics_maintenance TO `+identifier); err != nil {
+		t.Fatal(err)
+	}
+	store := PostgreSQLUpdateStore{Pool: pool}
+	blocker, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	if _, err = blocker.Exec(ctx, `LOCK TABLE ONLY osm_canonical.ways IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	for _, heads := range []string{`{"fixture:a":42,"fixture:b":43}`, `{"fixture:a":42}`} {
+		if _, err = blocker.Exec(ctx, `UPDATE osm_catalog.route_region_catalog_state SET active_generations=$1::jsonb`, heads); err != nil {
+			t.Fatal(err)
+		}
+		// Use the original committed vector first; the second committed subset is
+		// checked after releasing this lock, below.
+		fast, end := context.WithTimeout(ctx, time.Second)
+		err = store.RefreshStatistics(fast)
+		end()
+		if err != nil {
+			t.Fatal("healthy preparation touched locked map data", err)
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE osm_catalog.route_region_catalog_state SET active_generations='{"fixture:a":42}'`); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.RefreshStatistics(ctx); err != nil {
+		t.Fatal("retired partitions dirtied healthy surviving statistics", err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE osm_catalog.route_region_catalog_state SET active_generations='{"fixture:a":44}'`); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `LOCK TABLE ONLY osm_canonical.ways IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	dirty, end := context.WithTimeout(ctx, 100*time.Millisecond)
+	err = store.RefreshStatistics(dirty)
+	end()
+	if err == nil {
+		t.Fatal("changed generation skipped required maintenance")
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var receipt string
+	if err = db.QueryRow(ctx, `SELECT analyzed_generations::text FROM osm_catalog.statistics_maintenance`).Scan(&receipt); err != nil || strings.Contains(receipt, "44") {
+		t.Fatal("failed analysis advanced its receipt", receipt, err)
+	}
+	if err = store.RefreshStatistics(ctx); err != nil {
+		t.Fatal("interrupted analysis could not be retried", err)
+	}
+	if err = db.QueryRow(ctx, `SELECT analyzed_generations::text FROM osm_catalog.statistics_maintenance`).Scan(&receipt); err != nil || !strings.Contains(receipt, "44") {
+		t.Fatal("successful repair did not publish its receipt", receipt, err)
+	}
+	t.Log("healthy startup and removal fast paths avoid locked map data; changed generations require maintenance and interrupted work remains retryable")
 }

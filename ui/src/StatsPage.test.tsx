@@ -429,7 +429,11 @@ describe("Stats New Coverage", () => {
     );
     expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(dialog).toHaveClass("stats-visits-dialog--returns");
-    await user.type(within(dialog).getByRole("searchbox"), "return");
+    dialog.querySelector<HTMLButtonElement>(".dialog-heading button")!.focus();
+    await user.keyboard("/");
+    expect(within(dialog).getByRole("searchbox")).toHaveFocus();
+    expect(within(dialog).getByRole("searchbox")).toHaveValue("");
+    await user.keyboard("return");
     await waitFor(() => {
       expect(within(dialog).queryByText("First Park")).not.toBeInTheDocument();
       expect(within(dialog).getByText("Return Road")).toBeInTheDocument();

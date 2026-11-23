@@ -58,7 +58,7 @@ func TestDenseTileCurrentContract(t *testing.T) {
 		fmt.Fprintln(hash, file)
 		hash.Write(raw)
 	}
-	const expected = "654d129e9e0560e68d4a0fd39f11b68502d655950025e5b04b5a308425c2d481"
+	const expected = "b3dc62d3a7378c84a827247d9cc45bbb96b62a259d18c830eba77ef111d4050a"
 	if got := fmt.Sprintf("%x", hash.Sum(nil)); got != expected {
 		t.Fatalf("approved 001-031 (including approved lifecycle/source 002/003 folds) changed: %s", got)
 	}

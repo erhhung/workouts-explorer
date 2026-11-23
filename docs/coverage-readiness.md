@@ -100,6 +100,20 @@ The application can derive `resultStatus` by comparing existing applied metadata
 with the desired route revision, matcher contract, and OSM generation vector. It
 must not derive result status from processing status alone:
 
+Removing shared regional OSM source data does not, by itself, invalidate an
+unchanged applied result. The application retains matched geometry and metadata
+for display. Public Map readiness stays ready/current for that saved result, with
+the route enabled and its normal current icon. It must not acquire a missing-map
+tooltip or stale icon solely because regional data was deleted. Internal
+prerequisites for a new calculation remain separate; a route without an applied
+result still reports unavailable/pending while required regional data is absent.
+
+Display currentness still validates route revision/digest, matching identity and
+accepted regional generation heads. A newer promoted generation makes the old
+result stale. Regional high-watermarks survive deletion, preventing a restored
+region from reusing its previous generation number. Genuine route or matching
+policy changes also remain reasons for staleness.
+
 | Applied result exists | Applied target matches desired target | Result status |
 | --- | --- | --- |
 | No | Not applicable | `none` |

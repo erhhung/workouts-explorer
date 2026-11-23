@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
@@ -40,7 +42,7 @@ func TestEligibleCohortCatalogChangeRefillsFullCohortIntegration(t *testing.T) {
 		t.Fatalf("underfull cache created work: %v", sizes)
 	}
 	region, generation := f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, region, cohortSmallBoundary); err != nil {
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, region, cohortSmallBoundary); err != nil {
 		t.Fatal(err)
 	}
 	assertCountQuery(t, f.osmAdminDB, 1, `SELECT count(*) FROM osm_catalog.generations WHERE id=$1 AND state='active'`, f.generation)
@@ -62,8 +64,11 @@ func TestEligibleCohortCatalogChangeRefillsFullCohortIntegration(t *testing.T) {
 
 func TestEligibleCohortCatalogLookupSnapshotIntegration(t *testing.T) {
 	f, _, _, _ := newCoveragePipelineFixture(t)
-	region, _ := f.seedOSM()
+	region, generation := f.seedOSM()
 	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, region, cohortSmallBoundary); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, generation); err != nil {
 		t.Fatal(err)
 	}
 	before, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0, 0)
@@ -76,7 +81,7 @@ func TestEligibleCohortCatalogLookupSnapshotIntegration(t *testing.T) {
 		if strings.Contains(query.SQL, "route_point AS") && changed.CompareAndSwap(false, true) {
 			// The fingerprint read has occurred. Commit a conflicting catalogue
 			// before ROI executes; only the same RR snapshot may still choose A.
-			if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, region); err != nil {
+			if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='active',retired_at=NULL WHERE id=$1`, generation); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -98,12 +103,12 @@ func TestEligibleCohortCatalogLookupSnapshotIntegration(t *testing.T) {
 	}
 	current, err := osm.ResolveRouteRegionsWithCatalog(f.ctx, f.osmDB, points, 0, 0)
 	if err != nil || current.CatalogFingerprint != after.Fingerprint || len(current.Regions) != 1 || current.Regions[0].RegionID != region {
-		t.Fatalf("new snapshot did not choose smaller configured B: %+v %v", current, err)
+		t.Fatalf("new snapshot did not choose newly active smaller B: %+v %v", current, err)
 	}
 }
 
 func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T) {
-	for _, change := range []string{"new smaller region", "configure existing region", "move existing boundary", "shrink existing boundary", "unconfigured head"} {
+	for _, change := range []string{"new smaller region", "activate existing region", "move existing boundary", "shrink existing boundary", "unselected head"} {
 		t.Run(change, func(t *testing.T) {
 			f, producer, source, keys := newCoveragePipelineFixture(t)
 			if err := ConfigureCoverageBatchSize(f.ctx, f.workerDB, 25); err != nil {
@@ -114,16 +119,23 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 			if change != "new smaller region" {
 				region, generation = f.seedOSM()
 				switch change {
-				case "configure existing region":
+				case "activate existing region":
 					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, region, cohortSmallBoundary); err != nil {
 						t.Fatal(err)
 					}
+					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, generation); err != nil {
+						t.Fatal(err)
+					}
+				case "unselected head":
+					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Translate(boundary,20,0) WHERE id=$1`, region); err != nil {
+						t.Fatal(err)
+					}
 				case "move existing boundary":
-					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,boundary=ST_Translate(boundary,20,0) WHERE id=$1`, region); err != nil {
+					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Translate(boundary,20,0) WHERE id=$1`, region); err != nil {
 						t.Fatal(err)
 					}
 				case "shrink existing boundary":
-					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,boundary=ST_Multi(ST_GeomFromText('POLYGON((-124 35,-120 35,-120 39,-124 39,-124 35))',4326)) WHERE id=$1`, region); err != nil {
+					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText('POLYGON((-124 35,-120 35,-120 39,-124 39,-124 35))',4326)) WHERE id=$1`, region); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -147,13 +159,26 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 			if change == "new smaller region" {
 				wantRegion, wantGeneration = f.seedOSM()
 			}
-			if change == "unconfigured head" {
-				if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, generation); err != nil {
+			if change == "unselected head" {
+				schema := "osm_build_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+				if _, err := f.osmAdminDB.Exec(f.ctx, `CREATE SCHEMA `+pgx.Identifier{schema}.Sanitize()); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.osmAdminDB.Exec(f.ctx, `WITH retired AS (UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1 RETURNING region_id,source_url,importer_version,derivation_version)
+				 INSERT INTO osm_catalog.generations(region_id,state,schema_name,source_url,importer_version,derivation_version,promoted_at)
+				 SELECT region_id,'active',$2::name,source_url,importer_version,derivation_version,clock_timestamp() FROM retired`, generation, schema); err != nil {
 					t.Fatal(err)
 				}
 				wantRegion, wantGeneration = f.regionID, f.generation
-			} else if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, wantRegion, cohortSmallBoundary); err != nil {
-				t.Fatal(err)
+			} else {
+				if change == "activate existing region" {
+					if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='active',retired_at=NULL WHERE id=$1`, generation); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText($2,4326)) WHERE id=$1`, wantRegion, cohortSmallBoundary); err != nil {
+					t.Fatal(err)
+				}
 			}
 			assertCountQuery(t, f.osmAdminDB, 1, `SELECT count(*) FROM osm_catalog.generations WHERE id=$1 AND state='active'`, f.generation)
 			current, err := osm.ReadRouteRegionCatalog(f.ctx, f.osmDB, 0, 0)
@@ -170,7 +195,7 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 				t.Fatalf("catalogue-cut recovery: %v", err)
 			}
 			wantLookups := int64(13)
-			if change == "unconfigured head" {
+			if change == "unselected head" {
 				wantLookups = 0
 			}
 			if sizes := pipelineParentSizes(t, f); !slices.Equal(sizes, []int{13}) || lookups.Load() != wantLookups || snapshots.Load() != wantLookups || ordinary.Load() != 0 {
@@ -181,7 +206,7 @@ func TestEligibleCohortCatalogChangeInvalidatesPreparedIntegration(t *testing.T)
 	}
 }
 
-func TestEligibleCohortCancelledFootprintMetadataIntegration(t *testing.T) {
+func TestEligibleCohortCanceledFootprintMetadataIntegration(t *testing.T) {
 	for _, cancellation := range []string{"queued parent", "queued child", "claimed without request"} {
 		t.Run(cancellation, func(t *testing.T) {
 			f, producer, source, keys := newCoveragePipelineFixture(t)
@@ -205,7 +230,7 @@ func TestEligibleCohortCancelledFootprintMetadataIntegration(t *testing.T) {
 				if _, err := matcher.handleInterruption(claim, errCancellationRequested); err != nil {
 					t.Fatal(err)
 				}
-				assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.jobs WHERE id=$1 AND status='cancelled' AND cancel_requested_at IS NULL`, child)
+				assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.jobs WHERE id=$1 AND status='canceled' AND cancel_requested_at IS NULL`, child)
 			} else {
 				target := child
 				if cancellation == "queued parent" {
@@ -280,8 +305,8 @@ func TestEligibleCohortPreparationFinalizationCancellationIntegration(t *testing
 			} else if !workerCallBool(t, f.adminDB, f.accountID, `SELECT app.delete_source($1,$2)`, source.sourceID, uuid.New()) {
 				t.Fatal("delete prepared source")
 			}
-			if finished, err := producer.finishCancelled(f.ctx, job); err != nil || !finished {
-				t.Fatalf("cancelled source terminal commit: %v", err)
+			if finished, err := producer.finishCanceled(f.ctx, job); err != nil || !finished {
+				t.Fatalf("canceled source terminal commit: %v", err)
 			}
 			if change == "ownership transferred" {
 				incoming := insertAdoptionSource(t, f.adminDB, keys, f.accountID, sourceconfig.LocalType, source.root)

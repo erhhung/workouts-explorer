@@ -347,9 +347,9 @@ func TestCoverageAutoRetryPostgreSQL(t *testing.T) {
 		f.finish(0, "coverage-route-timeout")
 		tx := beginWorkerTestAccount(t, api, f.account)
 		defer tx.Rollback(ctx)
-		var cancelled bool
-		if err := tx.QueryRow(ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, f.parent, f.principal).Scan(&cancelled); err != nil || !cancelled {
-			t.Fatalf("user cancellation: %t %v", cancelled, err)
+		var canceled bool
+		if err := tx.QueryRow(ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, f.parent, f.principal).Scan(&canceled); err != nil || !canceled {
+			t.Fatalf("user cancellation: %t %v", canceled, err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
@@ -357,7 +357,7 @@ func TestCoverageAutoRetryPostgreSQL(t *testing.T) {
 		f.age()
 		f.automatic(20, false)
 		if retry, err := f.manual(f.parent, f.principal); err != nil || retry == uuid.Nil {
-			t.Fatalf("explicit retry of failed and cancelled routes refused: %s %v", retry, err)
+			t.Fatalf("explicit retry of failed and canceled routes refused: %s %v", retry, err)
 		} else {
 			assertCountQuery(t, admin, 2, `SELECT count(*) FROM app.jobs WHERE parent_job_id=$1`, retry)
 		}

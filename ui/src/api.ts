@@ -191,7 +191,7 @@ export interface WorkoutProvenance {
 
 export interface WorkoutDeletionAccepted {
   jobId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  status: "queued" | "running" | "succeeded" | "failed" | "canceled";
   reused: boolean;
   targetCount: number;
 }
@@ -589,7 +589,7 @@ export interface Source {
   statusSummary?: string | null;
 }
 export type JobStatus =
-  "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
+  "queued" | "running" | "succeeded" | "partially_succeeded" | "failed" | "canceled";
 export type JobDisplayStatus = JobStatus | "superseded";
 export type JobTrigger = "manual" | "scheduled" | "system";
 export type NotificationState = "unresolved" | "remind" | "resolved" | "dismissed";
@@ -659,7 +659,7 @@ export interface CoverageRouteStats {
   running: number;
   succeeded: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   superseded: number;
 }
 
@@ -679,7 +679,12 @@ export interface CoverageRouteContext {
   startedAt: string;
   localStartDate?: string | null;
   workoutType: string;
-  targetGenerations: Array<{ regionId: string; generation: number; latest: boolean }>;
+  targetGenerations: Array<{
+    regionId: string;
+    generation: number;
+    regionalGeneration?: number | null;
+    latest: boolean;
+  }>;
   resultOutcome?: "applied" | "no_evidence" | "superseded";
   durationMilliseconds?: number;
 }

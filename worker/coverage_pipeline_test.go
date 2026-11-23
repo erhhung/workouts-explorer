@@ -40,7 +40,7 @@ func TestCoveragePipelineStopsBeforeCheckout(t *testing.T) {
 	for _, revision := range []*int64{nil, new(int64)} {
 		if err := replayIngestCoverage(ctx, nil, nil, uuid.New(), uuid.New(), "test", uuid.New(), revision, 25, false,
 			coverageReplayOptions{}); !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled replay: %v", err)
+			t.Fatalf("canceled replay: %v", err)
 		}
 	}
 	if err := replayIngestCoverage(context.Background(), nil, nil, uuid.New(), uuid.Nil, "test", uuid.New(), new(int64), 25, true,
@@ -69,7 +69,7 @@ func TestCoveragePipelineTypedTransientErrors(t *testing.T) {
 	for _, cause := range []error{context.Canceled, errors.New("unknown"), &pgconn.PgError{Code: "XX000"},
 		&pgconn.PgError{Code: "42501"}, &pgconn.PgError{Code: "42P01"}} {
 		if transientCoverageReadinessError(cause) {
-			t.Fatalf("unknown/permanent/cancelled failure cannot become success: %v", cause)
+			t.Fatalf("unknown/permanent/canceled failure cannot become success: %v", cause)
 		}
 	}
 }

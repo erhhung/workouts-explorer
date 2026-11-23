@@ -24,8 +24,12 @@ type coverageMatchingDescriptor struct {
 }
 
 func productionMatchingDescriptor(minimum float64) coverageMatchingDescriptor {
+	return productionMatchingDescriptorForPolicy(minimum, string(coverage.CurrentPathPolicyVersion))
+}
+
+func productionMatchingDescriptorForPolicy(minimum float64, policy string) coverageMatchingDescriptor {
 	return coverageMatchingDescriptor{string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1),
-		string(coverage.ExperimentalPathPolicyV82), minimum, coverageProductionContractV1}
+		policy, minimum, coverageProductionContractV1}
 }
 
 func readCoverageCatalogFloor(ctx context.Context, db *pgxpool.Pool) (event, revision int64, err error) {

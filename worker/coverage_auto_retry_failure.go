@@ -113,7 +113,7 @@ func classifyCoverageFailure(ctx context.Context, stage coverageFailureStage, er
 		db  bool
 	}
 	pending := []entry{{err: err}}
-	var permanent, unknown, limit, cancelled, deadline, transient, queryCancelled bool
+	var permanent, unknown, limit, canceled, deadline, transient, queryCanceled bool
 	var state string
 	var limitField string
 	var limitValue int
@@ -144,7 +144,7 @@ func classifyCoverageFailure(ctx context.Context, stage coverageFailureStage, er
 				rank := 0
 				switch {
 				case code == "57014":
-					queryCancelled, rank = true, 1
+					queryCanceled, rank = true, 1
 				case transientCoverageSQLState(code):
 					transient = true
 				default:
@@ -191,7 +191,7 @@ func classifyCoverageFailure(ctx context.Context, stage coverageFailureStage, er
 		}
 		switch item.err {
 		case context.Canceled:
-			cancelled, recognized = true, true
+			canceled, recognized = true, true
 		case context.DeadlineExceeded:
 			deadline, recognized = true, true
 		case io.EOF, io.ErrUnexpectedEOF, pgconn.ErrConnClosed, net.ErrClosed, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE:
@@ -227,10 +227,10 @@ func classifyCoverageFailure(ctx context.Context, stage coverageFailureStage, er
 	switch {
 	case limit:
 		code, summary = "coverage-route-too-large", "Coverage route exceeded a processing limit."
-	case permanent || unknown || cancelled || ctx.Err() == context.Canceled:
+	case permanent || unknown || canceled || ctx.Err() == context.Canceled:
 	case deadline || ctx.Err() == context.DeadlineExceeded:
 		code, summary = "coverage-route-timeout", "Coverage matching timed out."
-	case transient && !queryCancelled:
+	case transient && !queryCanceled:
 		code, summary = "coverage-transient-failed", "Coverage processing was interrupted by a transient database failure."
 	}
 	return coverageFailure{code: code, summary: summary, sqlState: state, limitField: limitField, limitValue: limitValue}
@@ -263,6 +263,13 @@ func (r *CoverageRunner) logCoverageFailure(job uuid.UUID, stage coverageFailure
 
 type coverageDatabaseSnapshot struct {
 	routepipeline.ProductionSnapshot
+}
+
+func (s coverageDatabaseSnapshot) OptimizeRouteQueries(ctx context.Context) error {
+	if tuned, ok := s.ProductionSnapshot.(interface{ OptimizeRouteQueries(context.Context) error }); ok {
+		return coverageDatabaseFailure(tuned.OptimizeRouteQueries(ctx))
+	}
+	return nil
 }
 
 func (s coverageDatabaseSnapshot) Candidates(ctx context.Context, observations []osm.MatcherObservation, n int) ([]osm.MatcherCandidate, error) {

@@ -88,7 +88,7 @@ func TestIngestPhaseWriterIntegration(t *testing.T) {
 		t.Fatal("cancel ingest")
 	}
 	if err := runner.recordIngestPhase(f.ctx, job, phaseCleanup, nil, nil); !errors.Is(err, errLeaseLost) {
-		t.Fatalf("cancelled write must lose lease: %v", err)
+		t.Fatalf("canceled write must lose lease: %v", err)
 	}
 	if got := ingestPhaseCodes(t, f, job.id); len(got) != 2 {
 		t.Fatalf("deduplication/rejected writes changed journal: %v", got)

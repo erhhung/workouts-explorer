@@ -13,16 +13,16 @@ CREATE TABLE osm_catalog.route_region_catalog_state (
     fingerprint bytea NOT NULL CHECK (octet_length(fingerprint) = 32),
     selection_fingerprint bytea NOT NULL CHECK (octet_length(selection_fingerprint) = 32),
     active_generations jsonb NOT NULL CHECK (jsonb_typeof(active_generations) = 'object'),
-    configured_regions jsonb NOT NULL CHECK (jsonb_typeof(configured_regions) = 'array'),
+    active_regions jsonb NOT NULL CHECK (jsonb_typeof(active_regions) = 'array'),
     region_names jsonb NOT NULL CHECK (jsonb_typeof(region_names) = 'object')
 );
 
 REVOKE ALL ON osm_catalog.route_region_catalog_state FROM PUBLIC;
 
 INSERT INTO osm_catalog.route_region_catalog_state
-    (revision, fingerprint, selection_fingerprint, active_generations, configured_regions, region_names)
-VALUES (1, sha256(convert_to('route-region-catalog-v1', 'UTF8')),
-    sha256(convert_to('route-region-selection-v1', 'UTF8')), '{}', '[]', '{}');
+    (revision, fingerprint, selection_fingerprint, active_generations, active_regions, region_names)
+VALUES (1, sha256(convert_to('route-region-catalog-v2', 'UTF8')),
+    sha256(convert_to('route-region-selection-v2', 'UTF8')), '{}', '[]', '{}');
 
 -- +goose StatementBegin
 CREATE FUNCTION osm_catalog.lock_route_region_catalog()
@@ -54,7 +54,7 @@ DECLARE
     full_proof bytea;
     selection_proof bytea;
     heads jsonb;
-    configured_names jsonb;
+    active_names jsonb;
     names jsonb;
 BEGIN
     PERFORM 1 FROM osm_catalog.route_region_catalog_state WHERE singleton FOR UPDATE;
@@ -62,22 +62,22 @@ BEGIN
         RAISE EXCEPTION 'missing OSM route region catalog state';
     END IF;
 
-    SELECT sha256(convert_to('route-region-catalog-v1', 'UTF8') || COALESCE(string_agg(
+    SELECT sha256(convert_to('route-region-catalog-v2', 'UTF8') || COALESCE(string_agg(
             sha256(int4send(octet_length(convert_to(region.id, 'UTF8'))) ||
-                convert_to(region.id, 'UTF8') || boolsend(region.configured) ||
+                convert_to(region.id, 'UTF8') ||
                 region.boundary_sha256 || int8send(COALESCE(generation.id, 0))),
             ''::bytea ORDER BY region.id COLLATE "C"), ''::bytea)),
-        sha256(convert_to('route-region-selection-v1', 'UTF8') || COALESCE(string_agg(
+        sha256(convert_to('route-region-selection-v2', 'UTF8') || COALESCE(string_agg(
             sha256(int4send(octet_length(convert_to(region.id, 'UTF8'))) ||
-                convert_to(region.id, 'UTF8') || boolsend(region.configured) ||
-                region.boundary_sha256 || boolsend(region.configured AND generation.id IS NOT NULL)),
+                convert_to(region.id, 'UTF8') ||
+                region.boundary_sha256 || boolsend(generation.id IS NOT NULL)),
             ''::bytea ORDER BY region.id COLLATE "C"), ''::bytea)),
         COALESCE(jsonb_object_agg(region.id, generation.id)
             FILTER (WHERE generation.id IS NOT NULL), '{}'::jsonb),
         COALESCE(jsonb_agg(jsonb_build_object('regionId', region.id, 'displayName', region.display_name)
-            ORDER BY region.id COLLATE "C") FILTER (WHERE region.configured), '[]'::jsonb),
+            ORDER BY region.id COLLATE "C") FILTER (WHERE generation.id IS NOT NULL), '[]'::jsonb),
         COALESCE(jsonb_object_agg(region.id, region.display_name), '{}'::jsonb)
-    INTO full_proof, selection_proof, heads, configured_names, names
+    INTO full_proof, selection_proof, heads, active_names, names
     FROM osm_catalog.regions region LEFT JOIN osm_catalog.generations generation
         ON generation.region_id = region.id AND generation.state = 'active';
 
@@ -85,9 +85,9 @@ BEGIN
     UPDATE osm_catalog.route_region_catalog_state
     SET revision = revision + 1, fingerprint = full_proof,
         selection_fingerprint = selection_proof, active_generations = heads,
-        configured_regions = configured_names, region_names = names
-    WHERE singleton AND (fingerprint, selection_fingerprint, active_generations, configured_regions, region_names)
-        IS DISTINCT FROM (full_proof, selection_proof, heads, configured_names, names);
+        active_regions = active_names, region_names = names
+    WHERE singleton AND (fingerprint, selection_fingerprint, active_generations, active_regions, region_names)
+        IS DISTINCT FROM (full_proof, selection_proof, heads, active_names, names);
     RETURN NULL;
 END;
 $function$;
@@ -97,10 +97,10 @@ $function$;
 -- UPDATE OF cannot use transition relations; compare the small derived state
 -- instead, once per statement (including bulk inserts/upserts and zero rows).
 CREATE TRIGGER regions_lock_route_catalog
-    BEFORE INSERT OR DELETE OR UPDATE OF id, boundary, configured, display_name ON osm_catalog.regions
+    BEFORE INSERT OR DELETE OR UPDATE OF id, boundary, display_name ON osm_catalog.regions
     FOR EACH STATEMENT EXECUTE FUNCTION osm_catalog.lock_route_region_catalog();
 CREATE TRIGGER regions_refresh_route_catalog
-    AFTER INSERT OR DELETE OR UPDATE OF id, boundary, configured, display_name ON osm_catalog.regions
+    AFTER INSERT OR DELETE OR UPDATE OF id, boundary, display_name ON osm_catalog.regions
     FOR EACH STATEMENT EXECUTE FUNCTION osm_catalog.refresh_route_region_catalog();
 CREATE TRIGGER generations_lock_route_catalog
     BEFORE INSERT OR DELETE OR UPDATE OF id, region_id, state ON osm_catalog.generations
@@ -110,7 +110,7 @@ CREATE TRIGGER generations_refresh_route_catalog
     FOR EACH STATEMENT EXECUTE FUNCTION osm_catalog.refresh_route_region_catalog();
 
 -- Initialize from existing rows without rewriting any source boundary.
-UPDATE osm_catalog.regions SET configured = configured WHERE false;
+UPDATE osm_catalog.regions SET display_name = display_name WHERE false;
 
 -- +goose StatementBegin
 CREATE FUNCTION osm_catalog.deny_route_catalog_truncate()

@@ -1,10 +1,30 @@
 package migrations
 
 import (
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestRegionManagementSequenceEndsAtEleven(t *testing.T) {
+	files, err := fs.Glob(Files, "[0-9][0-9][0-9]_*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 11 || files[len(files)-1] != "011_region_management.sql" {
+		t.Fatal("unexpected OSM migration sequence", files)
+	}
+	contents, err := Files.ReadFile("011_region_management.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"control_job_id", "CREATE TABLE osm_catalog.region_deletions", "generation_high_watermark", "promotion_number", "CREATE TABLE osm_catalog.statistics_maintenance", "SET schema_version=11", "SET schema_version=10"} {
+		if !containsSQL(string(contents), fragment) {
+			t.Error("missing consolidated region-management concern", fragment)
+		}
+	}
+}
 
 func containsSQL(sql, fragment string) bool {
 	return strings.Contains(strings.Join(strings.Fields(sql), ""), strings.Join(strings.Fields(fragment), ""))

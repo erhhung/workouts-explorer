@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -561,6 +562,421 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("serialized revocation did not complete")
+		}
+	})
+	t.Run("OSM catalog refresh is administrator-only, CSRF-protected and coalesced", func(t *testing.T) {
+		ownerBearer := insertTestSession(t, db, principal, "bearer", "")
+		server.config.OSMCatalogEnabled = true
+		defer func() { server.config.OSMCatalogEnabled = false }()
+		const path = "/api/admin/osm/catalog-refreshes"
+		for _, method := range []string{"GET", "POST"} {
+			endpoint := "/api/admin/osm/regions"
+			body := ""
+			if method == "POST" {
+				endpoint = path
+				body = "{}"
+			}
+			if w := request(method, endpoint, body, "", "", ownerCookie); w.Code != 401 {
+				t.Fatalf("owner cookie accepted: %d", w.Code)
+			}
+			if w := request(method, endpoint, body, "", ownerBearer); w.Code != 403 {
+				t.Fatalf("owner bearer accepted: %d", w.Code)
+			}
+		}
+		for _, csrf := range []string{"", ownerCSRF} {
+			if w := request("POST", path, "{}", csrf, "", cookie); w.Code != 403 {
+				t.Fatalf("wrong CSRF accepted: %d", w.Code)
+			}
+		}
+		if w := request("POST", path, `{"sourceUrl":"https://arbitrary.invalid/extract"}`, browser.CsrfToken, "", cookie); w.Code != 400 {
+			t.Fatalf("caller URL accepted: %d", w.Code)
+		}
+		first := request("POST", path, "{}", browser.CsrfToken, "", cookie)
+		second := request("POST", path, "{}", browser.CsrfToken, "", cookie)
+		if first.Code != 202 || second.Code != 202 || first.Body.String() != second.Body.String() {
+			t.Fatalf("refresh not coalesced: %d %d", first.Code, second.Code)
+		}
+		validateRecordedResponse(t, "POST", path, first)
+		var task struct {
+			ID    string `json:"id"`
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(first.Body.Bytes(), &task); err != nil || task.State != "queued" {
+			t.Fatal("invalid task")
+		}
+		get := request("GET", path+"/"+task.ID, "", "", "", cookie)
+		if get.Code != 200 {
+			t.Fatalf("task lookup: %d %s", get.Code, get.Body.String())
+		}
+		validateRecordedResponse(t, "GET", path+"/"+task.ID, get)
+		var auditCount int
+		if err := ownerDB.QueryRow(ctx, `SELECT count(*) FROM app.audit_records WHERE action='osm.catalog_refresh_requested' AND target_id=$1`, task.ID).Scan(&auditCount); err != nil || auditCount != 1 {
+			t.Fatalf("coalesced audit: %d %v", auditCount, err)
+		}
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_catalog(id,provider,payload) VALUES
+		('geofabrik:native-api','geofabrik','{"id":"geofabrik:native-api","provider":"geofabrik","name":"Native catalog","boundary":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}'),
+		('other-provider:native-api','other-provider','{"id":"other-provider:native-api","provider":"other-provider","name":"unconfigured-canary"}')`); err != nil {
+			t.Fatal(err)
+		}
+		defer ownerDB.Exec(ctx, `DELETE FROM app.osm_region_catalog WHERE id IN('geofabrik:native-api','other-provider:native-api')`)
+		list := request("GET", "/api/admin/osm/regions", "", "", "", cookie)
+		if list.Code != 200 || !strings.Contains(list.Body.String(), "Native Catalog") || strings.Contains(list.Body.String(), "unconfigured-canary") {
+			t.Fatalf("catalog projection: %d %s", list.Code, list.Body.String())
+		}
+		validateRecordedResponse(t, "GET", "/api/admin/osm/regions", list)
+		if strings.Contains(list.Body.String(), "coordinates") {
+			t.Fatal("bulk catalog includes per-region boundary geometry")
+		}
+		boundaryPath := "/api/admin/osm/region-boundary?regionId=geofabrik%3Anative-api"
+		boundary := request("GET", boundaryPath, "", "", "", cookie)
+		if boundary.Code != 200 || !strings.Contains(boundary.Body.String(), "coordinates") {
+			t.Fatalf("boundary lookup: %d %s", boundary.Code, boundary.Body.String())
+		}
+		validateRecordedResponse(t, "GET", boundaryPath, boundary)
+		if request("GET", boundaryPath, "", "", ownerBearer).Code != 403 || request("GET", boundaryPath, "", "", "", ownerCookie).Code != 401 {
+			t.Fatal("owner reached admin boundary endpoint")
+		}
+		if request("GET", "/api/admin/osm/region-boundary?regionId=missing", "", "", "", cookie).Code != 404 {
+			t.Fatal("unknown boundary did not return 404")
+		}
+		if _, err := db.Exec(ctx, `UPDATE app.osm_catalog_refresh_jobs SET state='failed' WHERE id=$1`, task.ID); err == nil {
+			t.Fatal("API has worker update authority")
+		}
+	})
+	t.Run("OSM processing settings are persisted, audited and revision-fenced", func(t *testing.T) {
+		const path = "/api/admin/osm/processing-settings"
+		ownerBearer := insertTestSession(t, db, principal, "bearer", "")
+		if request("GET", path, "", "", ownerBearer).Code != 403 || request("GET", path, "", "", "", ownerCookie).Code != 401 {
+			t.Fatal("owner reached OSM settings")
+		}
+		get := request("GET", path, "", "", "", cookie)
+		if get.Code != 200 {
+			t.Fatal(get.Code, get.Body.String())
+		}
+		validateRecordedResponse(t, "GET", path, get)
+		var settings osmProcessingSettings
+		if err := json.Unmarshal(get.Body.Bytes(), &settings); err != nil || !settings.MonitorDatabaseStorage {
+			t.Fatal("monitoring must default on", settings, err)
+		}
+		body := fmt.Sprintf(`{"monitorDatabaseStorage":false,"revision":%d}`, settings.Revision)
+		if request("PATCH", path, body, "", "", cookie).Code != 403 {
+			t.Fatal("settings accepted missing CSRF")
+		}
+		for _, invalid := range []string{`{"monitorDatabaseStorage":null,"revision":1}`, `{"monitorDatabaseStorage":false}`, `{"monitorDatabaseStorage":false,"revision":1,"extra":true}`} {
+			if request("PATCH", path, invalid, browser.CsrfToken, "", cookie).Code != 400 {
+				t.Fatal("invalid settings accepted", invalid)
+			}
+		}
+		saved := request("PATCH", path, body, browser.CsrfToken, "", cookie)
+		if saved.Code != 200 {
+			t.Fatal(saved.Code, saved.Body.String())
+		}
+		validateRecordedResponse(t, "PATCH", path, saved)
+		if replay := request("PATCH", path, body, browser.CsrfToken, "", cookie); replay.Code != 200 || replay.Body.String() != saved.Body.String() {
+			t.Fatal("settings retry not idempotent")
+		}
+		stale := fmt.Sprintf(`{"monitorDatabaseStorage":true,"revision":%d}`, settings.Revision)
+		if request("PATCH", path, stale, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("stale settings overwrote a newer choice")
+		}
+		if err := json.Unmarshal(saved.Body.Bytes(), &settings); err != nil {
+			t.Fatal(err)
+		}
+		if settings.MonitorDatabaseStorage {
+			t.Fatal("monitoring was not disabled")
+		}
+		body = fmt.Sprintf(`{"monitorDatabaseStorage":true,"revision":%d}`, settings.Revision)
+		if response := request("PATCH", path, body, browser.CsrfToken, "", cookie); response.Code != 200 {
+			t.Fatal("settings restore failed", response.Body.String())
+		}
+		var audits int
+		if err := ownerDB.QueryRow(ctx, `SELECT count(*) FROM app.audit_records WHERE action IN('osm.storage_monitoring_enabled','osm.storage_monitoring_disabled')`).Scan(&audits); err != nil || audits != 2 {
+			t.Fatal("settings changes not audited exactly once", audits, err)
+		}
+	})
+	t.Run("region updates admit coalesced commands and retain ordered cancellation history", func(t *testing.T) {
+		server.config.OSMUpdatesEnabled = true
+		defer func() { server.config.OSMUpdatesEnabled = false }()
+		server.config.OSMCatalogEnabled = true
+		defer func() { server.config.OSMCatalogEnabled = false }()
+		const region = "geofabrik:native-update"
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_catalog(id,provider,payload) VALUES($1,'geofabrik',jsonb_build_object('id',$1::text,'provider','geofabrik','name','Native update','available',true))`, region); err != nil {
+			t.Fatal(err)
+		}
+		const path = "/api/admin/osm/region-updates"
+		body := `{"regionId":"` + region + `","action":"download"}`
+		ownerBearer := insertTestSession(t, db, principal, "bearer", "")
+		if request("POST", path, body, "", ownerBearer).Code != 403 || request("POST", path, body, ownerCSRF, "", ownerCookie).Code != 401 {
+			t.Fatal("owner reached region update admission")
+		}
+		if request("POST", path, body, "", "", cookie).Code != 403 {
+			t.Fatal("region update accepted missing CSRF")
+		}
+		if request("POST", path, `{"regionId":"`+region+`","action":"download","image":"evil"}`, browser.CsrfToken, "", cookie).Code != 400 {
+			t.Fatal("caller execution config accepted")
+		}
+		first := request("POST", path, body, browser.CsrfToken, "", cookie)
+		second := request("POST", path, body, browser.CsrfToken, "", cookie)
+		if first.Code != 202 || second.Code != 202 || first.Body.String() != second.Body.String() {
+			t.Fatalf("region queue admission %d %d: %s", first.Code, second.Code, first.Body.String())
+		}
+		validateRecordedResponse(t, "POST", path, first)
+		var originalPolicy struct {
+			ID      string `json:"id"`
+			Monitor bool   `json:"monitorDatabaseStorage"`
+		}
+		if err := json.Unmarshal(first.Body.Bytes(), &originalPolicy); err != nil || !originalPolicy.Monitor {
+			t.Fatal("new request did not capture monitoring default", err)
+		}
+		const settingsPath = "/api/admin/osm/processing-settings"
+		var settings osmProcessingSettings
+		settingResponse := request("GET", settingsPath, "", "", "", cookie)
+		if err := json.Unmarshal(settingResponse.Body.Bytes(), &settings); err != nil {
+			t.Fatal(err)
+		}
+		if changed := request("PATCH", settingsPath, fmt.Sprintf(`{"monitorDatabaseStorage":false,"revision":%d}`, settings.Revision), browser.CsrfToken, "", cookie); changed.Code != 200 {
+			t.Fatal("could not change future monitoring policy", changed.Body.String())
+		}
+		preserved := request("GET", path+"/"+originalPolicy.ID, "", "", "", cookie)
+		if !strings.Contains(preserved.Body.String(), `"monitorDatabaseStorage":true`) {
+			t.Fatal("global setting changed an existing job")
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET monitor_database_storage=false WHERE id=$1`, originalPolicy.ID); err == nil {
+			t.Fatal("captured job policy was mutable")
+		}
+		var update struct {
+			ID           string     `json:"id"`
+			State        string     `json:"state"`
+			ElapsedSince *time.Time `json:"elapsedSince"`
+			Steps        []struct {
+				Order int    `json:"order"`
+				Name  string `json:"name"`
+				State string `json:"state"`
+			} `json:"steps"`
+		}
+		if json.Unmarshal(first.Body.Bytes(), &update) != nil || update.State != "waiting" {
+			t.Fatal("not queued as Waiting")
+		}
+		detail := request("GET", path+"/"+update.ID, "", "", "", cookie)
+		if detail.Code != 200 || json.Unmarshal(detail.Body.Bytes(), &update) != nil || len(update.Steps) != 58 || update.Steps[0].Name != "prepare-source" || update.Steps[1].Name != "download" || update.Steps[20].Name != "clip-replacements" {
+			t.Fatalf("ordered progress: %d %s", detail.Code, detail.Body.String())
+		}
+		validateRecordedResponse(t, "GET", path+"/"+update.ID, detail)
+		batchStart := time.Now().UTC().Truncate(time.Millisecond).Add(-64 * time.Second)
+		for _, q := range []string{`UPDATE app.osm_region_updates SET state='processing',current_order=20,elapsed_total_ms=2000000 WHERE id=$1`,
+			`UPDATE app.osm_region_update_steps SET state='running' WHERE update_id=$1 AND task_order=20`} {
+			if _, err := ownerDB.Exec(ctx, q, update.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_update_events(update_id,event_type,task_order,happened_at,outcome) VALUES
+            ($1,'start',20,$2::timestamptz-interval '1 hour',NULL),
+            ($1,'finish',NULL,$2::timestamptz-interval '30 minutes','paused'),
+            ($1,'osm.region_update_resume',NULL,$2::timestamptz-interval '1 minute',NULL),
+            ($1,'start',20,$2,NULL),($1,'start',20,$2::timestamptz+interval '1 second',NULL)`, update.ID, batchStart); err != nil {
+			t.Fatal(err)
+		}
+		assertElapsedSince := func(want *time.Time) {
+			t.Helper()
+			response := request("GET", path+"/"+update.ID, "", "", "", cookie)
+			update.ElapsedSince = nil
+			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &update) != nil {
+				t.Fatal("elapsed projection unavailable", response.Code, response.Body.String())
+			}
+			if (update.ElapsedSince == nil) != (want == nil) || (want != nil && !update.ElapsedSince.Equal(*want)) {
+				t.Fatal("elapsed projection crossed a batch/resume boundary", update.ElapsedSince, want)
+			}
+			validateRecordedResponse(t, "GET", path+"/"+update.ID, response)
+		}
+		assertElapsedSince(&batchStart)
+		for _, state := range []string{"paused", "waiting"} {
+			if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state=$2 WHERE id=$1`, update.ID, state); err != nil {
+				t.Fatal(err)
+			}
+			assertElapsedSince(nil)
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='processing' WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_update_events(update_id,event_type,task_order) VALUES($1,'complete',20)`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		assertElapsedSince(nil)
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='waiting',current_order=0,elapsed_total_ms=0 WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_update_steps SET state='pending' WHERE update_id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		detail = request("GET", path+"/"+update.ID, "", "", "", cookie)
+		if detail.Code != 200 || json.Unmarshal(detail.Body.Bytes(), &update) != nil {
+			t.Fatal("reset elapsed fixture progress unavailable")
+		}
+		cancel := request("POST", path+"/"+update.ID+"/commands", `{"action":"cancel"}`, browser.CsrfToken, "", cookie)
+		if cancel.Code != 202 || !strings.Contains(cancel.Body.String(), `"state":"canceled"`) {
+			t.Fatalf("waiting cancellation: %d %s", cancel.Code, cancel.Body.String())
+		}
+		retained := request("GET", path+"/"+update.ID, "", "", "", cookie)
+		if retained.Code != 200 || !strings.Contains(retained.Body.String(), "clip-replacements") {
+			t.Fatal("cancel discarded progress history")
+		}
+		for _, step := range update.Steps {
+			if step.State != "pending" {
+				t.Fatal("unstarted task falsely marked running")
+			}
+		}
+		if _, err := db.Exec(ctx, `UPDATE app.osm_region_updates SET slot_held=true WHERE id=$1`, update.ID); err == nil {
+			t.Fatal("API can claim execution capacity")
+		}
+		commandPath := path + "/" + update.ID + "/commands"
+		if request("POST", commandPath, `{"action":"clear"}`, "", "", cookie).Code != 403 {
+			t.Fatal("clear accepted missing CSRF")
+		}
+		for i := 0; i < 2; i++ {
+			cleared := request("POST", commandPath, `{"action":"clear"}`, browser.CsrfToken, "", cookie)
+			if cleared.Code != 202 || !strings.Contains(cleared.Body.String(), `"cleared":true`) {
+				t.Fatalf("clear canceled status: %d %s", cleared.Code, cleared.Body.String())
+			}
+		}
+		if request("POST", commandPath, `{"action":"resume"}`, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("cleared history resumed")
+		}
+		var auditCount int
+		if err := ownerDB.QueryRow(ctx, `SELECT count(*) FROM app.osm_region_update_events WHERE update_id=$1 AND event_type='osm.region_update_clear'`, update.ID).Scan(&auditCount); err != nil || auditCount != 1 {
+			t.Fatal("clear was not idempotent", err)
+		}
+		assertBaseline := func(generation *int64) {
+			t.Helper()
+			list := request("GET", "/api/admin/osm/regions", "", "", "", cookie)
+			var result struct {
+				Regions []struct {
+					ID         string           `json:"id"`
+					Generation *int64           `json:"generation"`
+					Update     *json.RawMessage `json:"update"`
+				} `json:"regions"`
+			}
+			if list.Code != 200 || json.Unmarshal(list.Body.Bytes(), &result) != nil {
+				t.Fatal("cleared catalog unavailable")
+			}
+			for _, r := range result.Regions {
+				if r.ID == region {
+					if r.Update != nil || ((r.Generation == nil) != (generation == nil)) {
+						t.Fatal("clear revived an older overlay or lost baseline")
+					}
+					return
+				}
+			}
+			t.Fatal("cleared region missing")
+		}
+		assertBaseline(nil)
+		retry := request("POST", path, body, browser.CsrfToken, "", cookie)
+		if retry.Code != 202 || json.Unmarshal(retry.Body.Bytes(), &update) != nil {
+			t.Fatal("new run after clear unavailable")
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='failed',current_order=2,resumable=false WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		commandPath = path + "/" + update.ID + "/commands"
+		resumed := request("POST", commandPath, `{"action":"resume"}`, browser.CsrfToken, "", cookie)
+		if resumed.Code != 202 || !strings.Contains(resumed.Body.String(), `"state":"waiting"`) {
+			t.Fatalf("pre-checkpoint failure could not retry: %d %s", resumed.Code, resumed.Body.String())
+		}
+		if request("POST", commandPath, `{"action":"clear"}`, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("active work cleared")
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='failed',resumable=true WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_catalog SET payload=payload||'{"generation":18,"buildId":62}'::jsonb WHERE id=$1`, region); err != nil {
+			t.Fatal(err)
+		}
+		if request("POST", commandPath, `{"action":"clear"}`, browser.CsrfToken, "", cookie).Code != 202 {
+			t.Fatal("checkpointed failure could not clear")
+		}
+		generation := int64(62)
+		assertBaseline(&generation)
+		completedID := uuid.New()
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_updates(id,administrator_id,region_id,operation,state,promoted,generation_id,created_at,started_at,finished_at,elapsed_total_ms)
+        VALUES($1,$2,$3,'download','succeeded',true,62,'2026-11-08T00:00:00Z','2026-11-07T23:59:00Z','2026-11-08T16:24:23Z',59063000)`, completedID, admin, region); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ownerDB.Exec(ctx, `INSERT INTO app.osm_region_update_steps(update_id,task_order,name,repeated,state,started_at,finished_at)
+        VALUES($1,1,'download',false,'completed','2026-11-08T00:00:00Z','2026-11-08T00:01:00Z')`, completedID); err != nil {
+			t.Fatal(err)
+		}
+		elapsedList := request("GET", "/api/admin/osm/regions", "", "", "", cookie)
+		if elapsedList.Code != 200 || !strings.Contains(elapsedList.Body.String(), `"generationElapsedSeconds":59063`) {
+			t.Fatalf("promoted duration missing behind cleared/newer attempt: %d %s", elapsedList.Code, elapsedList.Body.String())
+		}
+		retained = request("GET", path+"/"+update.ID, "", "", "", cookie)
+		if retained.Code != 200 || !strings.Contains(retained.Body.String(), "clip-replacements") {
+			t.Fatal("clear deleted run history")
+		}
+		deleteBody := `{"regionId":"` + region + `","action":"delete"}`
+		if request("POST", path, deleteBody, "", "", cookie).Code != 403 || request("POST", path, deleteBody, "", ownerBearer).Code != 403 {
+			t.Fatal("region deletion authorization/CSRF bypass")
+		}
+		fresh := request("POST", path, body, browser.CsrfToken, "", cookie)
+		if !strings.Contains(fresh.Body.String(), `"monitorDatabaseStorage":false`) {
+			t.Fatal("new request ignored the disabled default", fresh.Body.String())
+		}
+		if fresh.Code != 202 || json.Unmarshal(fresh.Body.Bytes(), &update) != nil {
+			t.Fatal("fresh deletion fixture", fresh.Body.String())
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='processing',slot_held=true WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		if request("POST", path, deleteBody, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("deletion raced an active updater")
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='paused',slot_held=false,resumable=true WHERE id=$1`, update.ID); err != nil {
+			t.Fatal(err)
+		}
+		deletion := request("POST", path, deleteBody, browser.CsrfToken, "", cookie)
+		if deletion.Code != 202 || !strings.Contains(deletion.Body.String(), `"state":"deleting"`) {
+			t.Fatal("deletion not admitted", deletion.Code, deletion.Body.String())
+		}
+		validateRecordedResponse(t, "POST", path, deletion)
+		var deleting struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(deletion.Body.Bytes(), &deleting); err != nil {
+			t.Fatal(err)
+		}
+		duplicate := request("POST", path, deleteBody, browser.CsrfToken, "", cookie)
+		if duplicate.Code != 202 || duplicate.Body.String() != deletion.Body.String() {
+			t.Fatal("deletion duplicated")
+		}
+		if request("POST", path, body, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("download raced deletion")
+		}
+		if request("POST", path+"/"+update.ID+"/commands", `{"action":"resume"}`, browser.CsrfToken, "", cookie).Code != 409 {
+			t.Fatal("superseded checkpoint resumed")
+		}
+		for _, action := range []string{"pause", "resume", "cancel", "clear"} {
+			if request("POST", path+"/"+deleting.ID+"/commands", `{"action":"`+action+`"}`, browser.CsrfToken, "", cookie).Code != 409 {
+				t.Fatal("deletion accepted", action)
+			}
+		}
+		deletionDetail := request("GET", path+"/"+deleting.ID, "", "", "", cookie)
+		if deletionDetail.Code != 200 || strings.Count(deletionDetail.Body.String(), `"order":`) != 3 || !strings.Contains(deletionDetail.Body.String(), "reclaim-storage") {
+			t.Fatal("deletion progress incorrect", deletionDetail.Body.String())
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_updates SET state='succeeded' WHERE id=$1`, deleting.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ownerDB.Exec(ctx, `UPDATE app.osm_region_catalog SET payload=payload||'{"generation":null,"buildId":null}' WHERE id=$1`, region); err != nil {
+			t.Fatal(err)
+		}
+		if next := request("POST", path, body, browser.CsrfToken, "", cookie); next.Code != 202 || next.Body.String() == deletion.Body.String() {
+			t.Fatal("deleted region cannot be downloaded again", next.Code, next.Body.String())
+		}
+		latest := request("GET", settingsPath, "", "", "", cookie)
+		if err := json.Unmarshal(latest.Body.Bytes(), &settings); err != nil {
+			t.Fatal(err)
+		}
+		if restored := request("PATCH", settingsPath, fmt.Sprintf(`{"monitorDatabaseStorage":true,"revision":%d}`, settings.Revision), browser.CsrfToken, "", cookie); restored.Code != 200 {
+			t.Fatal("default monitoring restore failed")
 		}
 	})
 	t.Run("CSRF and independent signout", func(t *testing.T) {

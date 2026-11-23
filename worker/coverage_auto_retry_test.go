@@ -48,13 +48,13 @@ func TestCoverageAutoRetryMigrationContract(t *testing.T) {
 		"coverage reconciliation retry-policy anchor must occur exactly once",
 		"coverage reconciliation matcher anchor must occur exactly once",
 		"IF current_state.readiness_state = ''map_data_ready'' AND EXISTS",
-		"child.status IN (''failed'',''cancelled'')", "parent.cancel_requested_at IS NOT NULL",
+		"child.status IN (''failed'',''canceled'')", "parent.cancel_requested_at IS NOT NULL",
 		"parent_context.matcher_contract_version = app.current_coverage_matcher_contract()",
 		"CREATE FUNCTION app.coverage_auto_retry_parent_eligible(prior_job_id uuid, target_account_id uuid)",
 		"failure_code NOT IN ('coverage-route-timeout','coverage-transient-failed')",
 		"IF automatic_limit IS NOT NULL AND NOT app.coverage_auto_retry_parent_eligible(prior_job_id,target_account_id) THEN RETURN; END IF;",
-		"IF automatic_limit IS NOT NULL AND (prior_parent.cancel_requested_at IS NOT NULL OR prior_parent.status = 'cancelled') THEN RETURN; END IF;",
-		"child.status IN ('failed','cancelled')", "state.processing_finished_at = child.terminal_at",
+		"IF automatic_limit IS NOT NULL AND (prior_parent.cancel_requested_at IS NOT NULL OR prior_parent.status = 'canceled') THEN RETURN; END IF;",
+		"child.status IN ('failed','canceled')", "state.processing_finished_at = child.terminal_at",
 		"other_context.created_at >= context.created_at",
 	} {
 		if !strings.Contains(sql, contract) {

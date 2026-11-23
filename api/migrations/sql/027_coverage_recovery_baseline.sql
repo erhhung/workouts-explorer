@@ -218,7 +218,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
         FROM app.workout_coverage_regions region WHERE region.workout_id = context.workout_id AND region.account_id = context.account_id
     ) desired ON true
     WHERE child.parent_job_id = prior_job_id AND child.account_id = target_account_id
-      AND child.kind = 'coverage_update_route' AND child.status IN ('failed','cancelled')
+      AND child.kind = 'coverage_update_route' AND child.status IN ('failed','canceled')
       AND state.readiness_state = 'map_data_ready'
       AND state.route_input_revision = context.route_input_revision AND state.route_input_sha256 = context.route_input_sha256
       AND parent_context.matcher_contract_version = app.current_coverage_matcher_contract()
@@ -226,7 +226,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
       AND (
           (state.target_job_id = child.id
            AND ((child.status = 'failed' AND state.processing_state = 'failed')
-                OR (child.status = 'cancelled' AND state.processing_state IN ('not_started','stale')))
+                OR (child.status = 'canceled' AND state.processing_state IN ('not_started','stale')))
            AND state.target_revision = context.route_input_revision
            AND state.target_rules_version = parent_context.rules_version AND state.target_sampling_version = parent_context.sampling_version
            AND state.target_path_policy_version = parent_context.path_policy_version
@@ -234,7 +234,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
           OR
           -- A cleared pointer is not authority by itself. Require the exact
           -- cancellation footprint, current generation proof and no later work.
-          (child.status = 'cancelled' AND state.target_job_id IS NULL AND state.processing_state IN ('not_started','stale')
+          (child.status = 'canceled' AND state.target_job_id IS NULL AND state.processing_state IN ('not_started','stale')
            AND state.processing_finished_at = child.terminal_at
            AND (state.target_revision IS NULL OR state.target_revision = context.route_input_revision)
            AND (state.target_rules_version IS NULL OR state.target_rules_version = parent_context.rules_version)
@@ -293,7 +293,7 @@ BEGIN
         context.rules_version, context.sampling_version, context.path_policy_version, context.minimum_traversal_meters, context.matcher_contract_version
     INTO prior_parent FROM app.jobs job JOIN app.coverage_job_contexts context ON context.job_id = job.id AND context.account_id = job.account_id
     WHERE job.id = prior_job_id AND job.account_id = target_account_id AND job.kind = 'coverage_update'
-      AND job.status IN ('failed','partially_succeeded','cancelled') FOR UPDATE OF job NOWAIT;
+      AND job.status IN ('failed','partially_succeeded','canceled') FOR UPDATE OF job NOWAIT;
     IF NOT FOUND THEN
         IF automatic_limit IS NOT NULL THEN RETURN; END IF;
         RAISE EXCEPTION 'coverage retry requires a terminal parent' USING ERRCODE = '55000';
@@ -302,7 +302,7 @@ BEGIN
         IF automatic_limit IS NOT NULL THEN RETURN; END IF;
         RAISE EXCEPTION 'only the latest coverage attempt may be retried' USING ERRCODE = '55000';
     END IF;
-    IF automatic_limit IS NOT NULL AND (prior_parent.cancel_requested_at IS NOT NULL OR prior_parent.status = 'cancelled') THEN RETURN; END IF;
+    IF automatic_limit IS NOT NULL AND (prior_parent.cancel_requested_at IS NOT NULL OR prior_parent.status = 'canceled') THEN RETURN; END IF;
     SELECT root_job_id, depth INTO root_id, retry_depth FROM app.coverage_retry_root(prior_job_id);
     IF retry_depth >= max_ordinal THEN
         IF automatic_limit IS NOT NULL THEN RETURN; END IF;
@@ -433,7 +433,7 @@ END;
 $block$;
 
 -- A scan is not a retry policy. Preserve identical authoritative failed or
--- cancelled targets even for legacy jobs with no automatic-retry enrollment.
+-- canceled targets even for legacy jobs with no automatic-retry enrollment.
 -- Genuine target changes and readiness regained still permit fresh work;
 -- forced adoption uses its separate event constructor, not this scan guard.
 DO $block$
@@ -455,12 +455,12 @@ BEGIN
         JOIN app.jobs parent ON parent.id = child.parent_job_id AND parent.account_id = child.account_id
         JOIN app.coverage_route_job_contexts route_context ON route_context.job_id = child.id AND route_context.account_id = child.account_id
         JOIN app.coverage_job_contexts parent_context ON parent_context.job_id = parent.id AND parent_context.account_id = parent.account_id
-        WHERE (child.id = current_state.target_job_id OR (current_state.target_job_id IS NULL AND child.status = ''cancelled''
+        WHERE (child.id = current_state.target_job_id OR (current_state.target_job_id IS NULL AND child.status = ''canceled''
                AND EXISTS (SELECT 1 FROM app.coverage_retry_targets(parent.id,target_account_id) retry_target WHERE retry_target.child_id = child.id)))
           AND child.account_id = target_account_id
           AND child.kind = ''coverage_update_route'' AND parent.kind = ''coverage_update''
-          AND (child.status IN (''failed'',''cancelled'') OR child.cancel_requested_at IS NOT NULL
-               OR parent.cancel_requested_at IS NOT NULL OR parent.status = ''cancelled'')
+          AND (child.status IN (''failed'',''canceled'') OR child.cancel_requested_at IS NOT NULL
+               OR parent.cancel_requested_at IS NOT NULL OR parent.status = ''canceled'')
           AND route_context.workout_id = target_workout_id AND route_context.route_input_revision = target_route_revision
           AND route_context.route_input_sha256 = target_route_digest
           AND app.coverage_generation_vectors_equal(route_context.target_generations,region_generations)
@@ -577,7 +577,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
             AND current_parent.parent_job_id IS NULL
         LEFT JOIN app.coverage_job_contexts current_parent_context ON current_parent_context.job_id = current_parent.id
             AND current_parent_context.account_id = child.account_id
-        WHERE child.kind = 'coverage_update_route' AND child.status IN ('failed','cancelled')
+        WHERE child.kind = 'coverage_update_route' AND child.status IN ('failed','canceled')
     ), counts AS (
         SELECT owned.*,
             (SELECT count(*) FROM app.coverage_retry_targets(owned.id,owned.account_id)) AS eligible,
@@ -594,7 +594,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
         FROM owned
     ), decision AS (
         SELECT counts.*, CASE
-            WHEN status NOT IN ('failed','partially_succeeded','cancelled') THEN 'not_terminal'
+            WHEN status NOT IN ('failed','partially_succeeded','canceled') THEN 'not_terminal'
             -- Proven resolution needs no action, even for ancestors or at the limit.
             WHEN eligible = 0 AND unsuccessful > 0 AND current_count = unsuccessful THEN 'already_current'
             WHEN has_successor THEN 'not_latest'
@@ -620,7 +620,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
         WHERE job.account_id = app.current_account_id() AND job.parent_job_id IS NULL
           AND job.kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update')
           AND page_size BETWEEN 1 AND 100 AND page_offset >= 0 AND max_ordinal BETWEEN 1 AND 100
-          AND COALESCE(status_filter,'') IN ('','queued','running','succeeded','partially_succeeded','failed','cancelled','superseded')
+          AND COALESCE(status_filter,'') IN ('','queued','running','succeeded','partially_succeeded','failed','canceled','superseded')
           AND COALESCE(operation_filter,'') IN ('','manual_sync','automated_sync','workout_deletion','coverage_update')
           AND (COALESCE(status_filter,'') NOT IN ('failed','partially_succeeded','superseded') OR job.status = status_filter
               OR (status_filter = 'superseded' AND job.kind = 'coverage_update' AND job.status IN ('failed','partially_succeeded')))

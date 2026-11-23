@@ -108,7 +108,7 @@ func testCoverageAutoRetryEligibleCohort(t *testing.T, newFixture func(*testing.
 		f.adopt(retry)
 		f.finish(0, "")
 	})
-	for _, change := range []string{"current", "superseded", "changed input", "missing context", "cancelled"} {
+	for _, change := range []string{"current", "superseded", "changed input", "missing context", "canceled"} {
 		t.Run("eligible cohort requires every failed target authority/"+change, func(t *testing.T) {
 			f := newFixture(t, 2)
 			f.finish(0, "coverage-transient-failed")
@@ -119,7 +119,7 @@ func testCoverageAutoRetryEligibleCohort(t *testing.T, newFixture func(*testing.
 				"superseded":      `UPDATE app.workout_coverage_states SET target_job_id=NULL,processing_state='stale' WHERE workout_id=$1`,
 				"changed input":   `UPDATE app.workout_coverage_states SET route_input_revision=2 WHERE workout_id=$1`,
 				"missing context": `DELETE FROM app.coverage_route_job_contexts WHERE workout_id=$1`,
-				"cancelled":       `UPDATE app.jobs SET status='cancelled' WHERE id=(SELECT job_id FROM app.coverage_route_job_contexts WHERE workout_id=$1)`,
+				"canceled":        `UPDATE app.jobs SET status='canceled' WHERE id=(SELECT job_id FROM app.coverage_route_job_contexts WHERE workout_id=$1)`,
 			}[change]
 			f.synthetic(query, f.workouts[1])
 			f.automatic(20, false)

@@ -1172,7 +1172,7 @@ func TestDeleteSourceFunctionOwnershipRLSAndAtomicCleanup(t *testing.T) {
 	if callBool(t, db.ctx, db.api, account, `SELECT app.delete_source($1,$2)`, sourceID, requester) {
 		t.Fatal("already deleted source deletion returned true")
 	}
-	if status, _ := readStatus(t, db.ctx, db.api, account, jobID); status != "cancelled" {
+	if status, _ := readStatus(t, db.ctx, db.api, account, jobID); status != "canceled" {
 		t.Fatalf("deleted source job status=%s", status)
 	}
 	if snapshotCount(t, db, account, jobID) != 0 {
@@ -1360,11 +1360,11 @@ func TestStandaloneTransitionsFencingCancellationAndAttempts(t *testing.T) {
 	if callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1, $2, $3, 'succeeded')`, jobID, "worker-a", uuid.New()) {
 		t.Fatal("stale lease completion succeeded")
 	}
-	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1, $2, $3, 'cancelled')`, jobID, "worker-a", lease) {
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1, $2, $3, 'canceled')`, jobID, "worker-a", lease) {
 		t.Fatal("fenced cancellation completion failed")
 	}
 	status, attempt := readStatus(t, db.ctx, db.worker, account, jobID)
-	if status != "cancelled" || attempt != 1 {
+	if status != "canceled" || attempt != 1 {
 		t.Fatalf("status=%s attempt=%d", status, attempt)
 	}
 	if requestCancellation(t, db, account, jobID) {
@@ -1376,7 +1376,7 @@ func TestStandaloneTransitionsFencingCancellationAndAttempts(t *testing.T) {
 		t.Fatal("queued cancellation failed")
 	}
 	status, attempt = readStatus(t, db.ctx, db.worker, account, queued)
-	if status != "cancelled" || attempt != 0 {
+	if status != "canceled" || attempt != 0 {
 		t.Fatalf("queued cancellation status=%s attempt=%d", status, attempt)
 	}
 }
@@ -1492,8 +1492,8 @@ func TestSourceCompletionAndDeletionUseSameLockOrder(t *testing.T) {
 	if !result.finished || result.sourceUpdated {
 		t.Fatalf("completion after tombstone finished=%t source_updated=%t", result.finished, result.sourceUpdated)
 	}
-	if status, _ := readStatus(t, db.ctx, db.worker, account, jobID); status != "cancelled" {
-		t.Fatalf("completion after deletion status=%s, want cancelled", status)
+	if status, _ := readStatus(t, db.ctx, db.worker, account, jobID); status != "canceled" {
+		t.Fatalf("completion after deletion status=%s, want canceled", status)
 	}
 }
 
@@ -1546,11 +1546,11 @@ func TestSourceSnapshotIsolationFencingImmutabilityAndCleanup(t *testing.T) {
 	recovering := insertQueued(t, db.ctx, db.api, account, uuid.Nil, "source_connection_check")
 	if !callBool(t, db.ctx, db.worker, account, `SELECT app.claim_job($1,'snapshot-worker',$2,interval '1 millisecond')`, recovering, uuid.New()) ||
 		!requestCancellation(t, db, account, recovering) {
-		t.Fatal("could not prepare cancelled lease recovery")
+		t.Fatal("could not prepare canceled lease recovery")
 	}
 	time.Sleep(5 * time.Millisecond)
 	if !callBool(t, db.ctx, db.worker, account, `SELECT app.recover_expired_job($1)`, recovering) || snapshotCount(t, db, account, recovering) != 0 {
-		t.Fatal("cancelled lease recovery did not atomically remove its snapshot")
+		t.Fatal("canceled lease recovery did not atomically remove its snapshot")
 	}
 }
 
@@ -1641,7 +1641,7 @@ func TestWorkerJobLogContextFencingIdentityIsolationAndSourceLifecycle(t *testin
 	if err != nil || owner != ownerUsername || sourceName != "source-"+sourceID.String() || sourceType != "health-auto-export-local" {
 		t.Fatalf("tombstoned snapshot context=%q/%q/%q err=%v", owner, sourceName, sourceType, err)
 	}
-	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'context-worker',$2,'cancelled')`, jobID, lease) {
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'context-worker',$2,'canceled')`, jobID, lease) {
 		t.Fatal("context fixture cleanup failed")
 	}
 	if _, _, _, err := readContext(jobID, lease, "context-worker"); !errors.Is(err, pgx.ErrNoRows) {
@@ -1755,7 +1755,7 @@ func TestDeletedSourceSnapshotLifecycle(t *testing.T) {
 		t.Fatalf("cancel-requested lease holder could not read retained snapshot: %v", err)
 	}
 	_ = tx.Rollback(db.ctx)
-	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'deleted-source-worker',$2,'cancelled')`, runningJob, lease) {
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'deleted-source-worker',$2,'canceled')`, runningJob, lease) {
 		t.Fatal("cooperative cancellation finish failed")
 	}
 	if snapshotCount(t, db, account, runningJob) != 0 {
@@ -1787,8 +1787,8 @@ func TestDeletedSourceSnapshotLifecycle(t *testing.T) {
 	if snapshotCount(t, db, account, queuedJob) != 0 {
 		t.Fatal("queued cancellation retained deleted-source snapshot")
 	}
-	if status, _ := readStatus(t, db.ctx, db.api, account, queuedJob); status != "cancelled" {
-		t.Fatalf("queued deleted-source job status=%s, want cancelled", status)
+	if status, _ := readStatus(t, db.ctx, db.api, account, queuedJob); status != "canceled" {
+		t.Fatalf("queued deleted-source job status=%s, want canceled", status)
 	}
 }
 
@@ -2353,7 +2353,7 @@ func TestScheduledIngestClaimFenceCommitAndKindPairing(t *testing.T) {
 		t.Fatalf("non-ingest job fence error=%v, want no rows", err)
 	}
 	_ = tx.Rollback(db.ctx)
-	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'wrong-kind-worker',$2,'cancelled')`, wrongKind, wrongLease) {
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'wrong-kind-worker',$2,'canceled')`, wrongKind, wrongLease) {
 		t.Fatal("wrong-kind fixture cleanup failed")
 	}
 }
@@ -2404,7 +2404,7 @@ func TestWorkerClaimSkipsParentLockedForCancellation(t *testing.T) {
 		t.Fatal("could not finish claim selected after locked parent")
 	}
 	if !requestCancellation(t, db, lockedAccount, lockedParent) {
-		t.Fatal("locked parent could not be cancelled after concurrent claim")
+		t.Fatal("locked parent could not be canceled after concurrent claim")
 	}
 
 	connectionAccount := uuid.Must(uuid.NewV7())
@@ -2434,7 +2434,7 @@ func TestWorkerClaimSkipsParentLockedForCancellation(t *testing.T) {
 	}
 }
 
-func TestDeferredIngestFenceRollsBackCancelledCommit(t *testing.T) {
+func TestDeferredIngestFenceRollsBackCanceledCommit(t *testing.T) {
 	db := openTestDatabases(t)
 	account := uuid.Must(uuid.NewV7())
 	parent := insertQueued(t, db.ctx, db.worker, account, uuid.Nil, "manual_ingest")
@@ -2456,13 +2456,13 @@ func TestDeferredIngestFenceRollsBackCancelledCommit(t *testing.T) {
 		_ = tx.Rollback(db.ctx)
 		t.Fatal(err)
 	}
-	var cancelled bool
-	if err := tx.QueryRow(db.ctx, `SELECT app.request_job_cancellation($1,$2)`, jobID, uuid.Must(uuid.NewV7())).Scan(&cancelled); err != nil || !cancelled {
+	var canceled bool
+	if err := tx.QueryRow(db.ctx, `SELECT app.request_job_cancellation($1,$2)`, jobID, uuid.Must(uuid.NewV7())).Scan(&canceled); err != nil || !canceled {
 		_ = tx.Rollback(db.ctx)
-		t.Fatalf("could not invalidate fenced transaction with cancellation: cancelled=%t err=%v", cancelled, err)
+		t.Fatalf("could not invalidate fenced transaction with cancellation: canceled=%t err=%v", canceled, err)
 	}
 	if err := tx.Commit(db.ctx); err == nil {
-		t.Fatal("cancelled deferred fence committed domain writes")
+		t.Fatal("canceled deferred fence committed domain writes")
 	}
 	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'commit-fence-worker',$2,'succeeded')`, jobID, lease) {
 		t.Fatal("cancellation rollback did not restore the running lease")
@@ -2625,8 +2625,8 @@ func TestSourceDeletionAndChildCancellationDoNotInvertLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	type cancellationResult struct {
-		cancelled bool
-		err       error
+		canceled bool
+		err      error
 	}
 	result := make(chan cancellationResult, 1)
 	requester := accountRequester(t, db, account)
@@ -2641,23 +2641,23 @@ func TestSourceDeletionAndChildCancellationDoNotInvertLocks(t *testing.T) {
 			result <- cancellationResult{err: err}
 			return
 		}
-		var cancelled bool
-		err = tx.QueryRow(db.ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, child, requester).Scan(&cancelled)
+		var canceled bool
+		err = tx.QueryRow(db.ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, child, requester).Scan(&canceled)
 		if err == nil {
 			err = tx.Commit(db.ctx)
 		}
-		result <- cancellationResult{cancelled: cancelled, err: err}
+		result <- cancellationResult{canceled: canceled, err: err}
 	}()
 	select {
 	case got := <-result:
 		_ = deletion.Rollback(db.ctx)
-		t.Fatalf("child cancellation bypassed held source lock: cancelled=%t err=%v", got.cancelled, got.err)
+		t.Fatalf("child cancellation bypassed held source lock: canceled=%t err=%v", got.canceled, got.err)
 	case <-time.After(30 * time.Millisecond):
 	}
-	var cancelled bool
-	if err := deletion.QueryRow(db.ctx, `SELECT app.request_job_cancellation($1,$2)`, child, uuid.Must(uuid.NewV7())).Scan(&cancelled); err != nil || !cancelled {
+	var canceled bool
+	if err := deletion.QueryRow(db.ctx, `SELECT app.request_job_cancellation($1,$2)`, child, uuid.Must(uuid.NewV7())).Scan(&canceled); err != nil || !canceled {
 		_ = deletion.Rollback(db.ctx)
-		t.Fatalf("source-first deletion cancellation failed: cancelled=%t err=%v", cancelled, err)
+		t.Fatalf("source-first deletion cancellation failed: canceled=%t err=%v", canceled, err)
 	}
 	if _, err := deletion.Exec(db.ctx, `UPDATE app.sources
 		SET auto_sync_enabled=false,config_envelope=NULL,deleted_at=transaction_timestamp() WHERE id=$1`, sourceID); err != nil {
@@ -2669,14 +2669,14 @@ func TestSourceDeletionAndChildCancellationDoNotInvertLocks(t *testing.T) {
 	}
 	select {
 	case got := <-result:
-		if got.err != nil || !got.cancelled {
-			t.Fatalf("concurrent child cancellation after source deletion: cancelled=%t err=%v", got.cancelled, got.err)
+		if got.err != nil || !got.canceled {
+			t.Fatalf("concurrent child cancellation after source deletion: canceled=%t err=%v", got.canceled, got.err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("child cancellation remained blocked after source deletion commit")
 	}
-	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'source-delete-worker',$2,'cancelled')`, child, lease) {
-		t.Fatal("could not finish source-deleted cancelled child")
+	if !callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'source-delete-worker',$2,'canceled')`, child, lease) {
+		t.Fatal("could not finish source-deleted canceled child")
 	}
 }
 
@@ -2713,7 +2713,7 @@ func TestIllegalStateMutationsAndCancellationRecovery(t *testing.T) {
 	jobID := insertQueued(t, db.ctx, db.api, account, uuid.Nil, "source_connection_check")
 	expectOwnerMutationRejected(t, db, account, `UPDATE app.jobs SET attempt = attempt + 1 WHERE id = $1`, jobID)
 	expectOwnerMutationRejected(t, db, account, `UPDATE app.jobs SET lease_token = $2 WHERE id = $1`, jobID, uuid.New())
-	expectOwnerMutationRejected(t, db, account, `UPDATE app.jobs SET status = 'cancelled', terminal_at = now() WHERE id = $1`, jobID)
+	expectOwnerMutationRejected(t, db, account, `UPDATE app.jobs SET status = 'canceled', terminal_at = now() WHERE id = $1`, jobID)
 	expectOwnerMutationRejected(t, db, account, `INSERT INTO app.jobs
 		(id, account_id, kind, priority, status, attempt, worker_id, lease_token, claimed_at, heartbeat_at, lease_expires_at, started_at)
 		VALUES ($1, $2, 'source_connection_check', 100, 'running', 1, 'worker', $3, now(), now(), now() + interval '1 minute', now())`,
@@ -2733,7 +2733,7 @@ func TestIllegalStateMutationsAndCancellationRecovery(t *testing.T) {
 	if !callBool(t, db.ctx, db.worker, account, `SELECT app.recover_expired_job($1)`, recoverID) {
 		t.Fatal("cancellation-aware recovery failed")
 	}
-	if status, attempt := readStatus(t, db.ctx, db.worker, account, recoverID); status != "cancelled" || attempt != 1 {
+	if status, attempt := readStatus(t, db.ctx, db.worker, account, recoverID); status != "canceled" || attempt != 1 {
 		t.Fatalf("recovered cancellation status=%s attempt=%d", status, attempt)
 	}
 }
@@ -2747,10 +2747,10 @@ func TestParentDerivationAndControlledMutation(t *testing.T) {
 		{"succeeded", "succeeded", "succeeded"},
 		// These source-only fixtures import/update no workouts.
 		{"succeeded", "failed", "failed"},
-		{"succeeded", "cancelled", "failed"},
+		{"succeeded", "canceled", "failed"},
 		{"failed", "failed", "failed"},
-		{"failed", "cancelled", "failed"},
-		{"cancelled", "cancelled", "cancelled"},
+		{"failed", "canceled", "failed"},
+		{"canceled", "canceled", "canceled"},
 	} {
 		t.Run(test.left+"_"+test.right, func(t *testing.T) {
 			parent := insertQueued(t, db.ctx, db.worker, account, uuid.Nil, "manual_ingest")
@@ -2800,8 +2800,8 @@ func TestParentDerivationAndControlledMutation(t *testing.T) {
 	if !requestCancellation(t, db, account, parent) {
 		t.Fatal("parent cancellation failed")
 	}
-	if status, _ := readStatus(t, db.ctx, db.worker, account, parent); status != "cancelled" {
-		t.Fatalf("cancelled parent status=%s", status)
+	if status, _ := readStatus(t, db.ctx, db.worker, account, parent); status != "canceled" {
+		t.Fatalf("canceled parent status=%s", status)
 	}
 	scheduledCheck := beginAccount(t, db.ctx, db.api, account)
 	var scheduledNotifications int
@@ -3267,7 +3267,7 @@ func TestIngestFileSlotPolicyLifecycle(t *testing.T) {
 			}
 		}
 		for _, value := range claims {
-			_ = callBool(t, db.ctx, db.worker, value.account, `SELECT app.finish_job($1,$2,$3,'cancelled')`,
+			_ = callBool(t, db.ctx, db.worker, value.account, `SELECT app.finish_job($1,$2,$3,'canceled')`,
 				value.job, value.worker, value.lease)
 			_ = requestCancellation(t, db, value.account, value.parent)
 		}
@@ -3325,8 +3325,8 @@ func TestIngestFileSlotPolicyLifecycle(t *testing.T) {
 		t.Fatal("heartbeat failed while another slot was active")
 	}
 
-	if !callBool(t, db.ctx, db.worker, accountA, `SELECT app.finish_job($1,$2,$3,'cancelled')`, a[0].job, a[0].worker, a[0].lease) {
-		t.Fatal("cancelled slot owner did not finish")
+	if !callBool(t, db.ctx, db.worker, accountA, `SELECT app.finish_job($1,$2,$3,'canceled')`, a[0].job, a[0].worker, a[0].lease) {
+		t.Fatal("canceled slot owner did not finish")
 	}
 	replacement := acquire(a[2])
 	if replacement == nil {
@@ -3411,7 +3411,7 @@ func TestConcurrentIngestFileSlotLimitsAcrossPools(t *testing.T) {
 	t.Cleanup(func() {
 		for _, value := range claims {
 			_ = callBool(t, context.Background(), db.worker, value.account,
-				`SELECT app.finish_job($1,$2,$3,'cancelled')`, value.job, value.worker, value.lease)
+				`SELECT app.finish_job($1,$2,$3,'canceled')`, value.job, value.worker, value.lease)
 			_ = requestCancellation(t, db, value.account, value.parent)
 		}
 	})
@@ -3494,7 +3494,7 @@ func TestIngestFileManifestIsExactAndPrivate(t *testing.T) {
 		t.Fatal("could not claim manifest fixture")
 	}
 	t.Cleanup(func() {
-		_ = callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'manifest-worker',$2,'cancelled')`, child, lease)
+		_ = callBool(t, db.ctx, db.worker, account, `SELECT app.finish_job($1,'manifest-worker',$2,'canceled')`, child, lease)
 		_ = requestCancellation(t, db, account, parent)
 	})
 	manifest := `[{
@@ -4099,12 +4099,12 @@ func TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry(t *testing.T
 	}
 	tx = beginAccount(t, db.ctx, db.api, account)
 	var status string
-	var total, processed, succeeded, failed, cancelled, superseded int
+	var total, processed, succeeded, failed, canceled, superseded int
 	var segmentMatches, pathAttributions, dailyCount, allTimeCount, parkAttributions, parkDailyCount, parkAllTimeCount int
 	if err := tx.QueryRow(db.ctx, `SELECT job.status,progress.routes_total,progress.routes_processed,progress.routes_succeeded,
-		progress.routes_failed,progress.routes_cancelled,progress.routes_superseded FROM app.jobs job
+		progress.routes_failed,progress.routes_canceled,progress.routes_superseded FROM app.jobs job
 		JOIN app.coverage_job_progress progress ON progress.job_id=job.id AND progress.account_id=job.account_id WHERE job.id=$1`, parent).Scan(
-		&status, &total, &processed, &succeeded, &failed, &cancelled, &superseded); err != nil {
+		&status, &total, &processed, &succeeded, &failed, &canceled, &superseded); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(db.ctx, `SELECT (SELECT count(*) FROM app.workout_segment_matches WHERE workout_id=$1),
@@ -4120,8 +4120,8 @@ func TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry(t *testing.T
 	if err := tx.Commit(db.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if status != "partially_succeeded" || total != 3 || processed != 3 || succeeded != 1 || failed != 1 || cancelled != 0 || superseded != 1 {
-		t.Fatalf("parent=%s counters=%d/%d/%d/%d/%d/%d", status, total, processed, succeeded, failed, cancelled, superseded)
+	if status != "partially_succeeded" || total != 3 || processed != 3 || succeeded != 1 || failed != 1 || canceled != 0 || superseded != 1 {
+		t.Fatalf("parent=%s counters=%d/%d/%d/%d/%d/%d", status, total, processed, succeeded, failed, canceled, superseded)
 	}
 	if segmentMatches != 1 || pathAttributions != 1 {
 		t.Fatalf("durable segment/path rows=%d/%d", segmentMatches, pathAttributions)
@@ -4325,7 +4325,7 @@ func TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry(t *testing.T
 		t.Fatalf("timeout retry count=%d, want 1", timeoutRetryCount)
 	}
 	if !callBool(t, db.ctx, db.api, account, `SELECT app.request_owned_job_cancellation($1,$2)`, retryParent, requester) {
-		t.Fatal("coverage retry parent was not cancelled")
+		t.Fatal("coverage retry parent was not canceled")
 	}
 	tx = beginAccount(t, db.ctx, db.api, account)
 	var retryParentStatus, retryChildStatus, processingState string
@@ -4339,8 +4339,8 @@ func TestCoverageRouteFailureIsolationMatcherSlotsAndSelectiveRetry(t *testing.T
 	if err := tx.Commit(db.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if retryParentStatus != "cancelled" || retryChildStatus != "cancelled" || processingState != "not_started" {
-		t.Fatalf("cancelled coverage parent/child/state=%s/%s/%s", retryParentStatus, retryChildStatus, processingState)
+	if retryParentStatus != "canceled" || retryChildStatus != "canceled" || processingState != "not_started" {
+		t.Fatalf("canceled coverage parent/child/state=%s/%s/%s", retryParentStatus, retryChildStatus, processingState)
 	}
 }
 
@@ -5804,7 +5804,7 @@ func deleteSourceFixture(t *testing.T, db testDatabases, account, sourceID uuid.
 
 func finishChild(t *testing.T, db testDatabases, account, jobID uuid.UUID, status string) {
 	t.Helper()
-	if status == "cancelled" {
+	if status == "canceled" {
 		if !requestCancellation(t, db, account, jobID) {
 			t.Fatal("child cancellation failed")
 		}

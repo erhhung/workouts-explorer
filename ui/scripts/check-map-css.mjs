@@ -20,9 +20,10 @@ if (
   !/\.coverage-cell-value\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/.test(
     css,
   ) ||
-  !/\.coverage-table-link\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*padding:\s*0/.test(
+  !/\.table-cell-link\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*padding:\s*var\(--space-3\)/.test(
     css,
-  )
+  ) ||
+  !/\.workout-table td\.table-action-cell\s*\{[^}]*padding:\s*0/.test(css)
 )
   throw new Error("Road Coverage values must truncate within the padded column content area");
 

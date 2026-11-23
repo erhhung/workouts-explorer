@@ -90,6 +90,95 @@ function setup(
 }
 
 describe("administrator workspace", () => {
+  test("OSM processing stores the monitoring default and retains it across tabs", async () => {
+    const user = userEvent.setup();
+    let settings = { monitorDatabaseStorage: true, revision: 1, updatedAt: "2026-11-21T00:00:00Z" };
+    const { requests } = setup("/admin/settings/osm-processing", (path, init) => {
+      if (path !== "/api/admin/osm/processing-settings") return;
+      if (init?.method === "PATCH") {
+        expect(new Headers(init.headers).get("X-CSRF-Token")).toBe(admin.csrfToken);
+        expect(JSON.parse(String(init.body))).toEqual({
+          monitorDatabaseStorage: false,
+          revision: 1,
+        });
+        settings = { ...settings, monitorDatabaseStorage: false, revision: 2 };
+        return json(settings);
+      }
+      return json(settings);
+    });
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Monitor available database storage",
+    });
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    expect(checkbox).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("OSM processing settings saved.");
+    expect(checkbox).not.toBeChecked();
+    const nav = screen.getByRole("navigation", { name: "Administration" });
+    await user.click(within(nav).getByRole("link", { name: "Accounts" }));
+    await user.click(within(nav).getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("heading", { level: 1, name: "OSM Processing" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Monitor available database storage" }),
+    ).not.toBeChecked();
+    expect(requests.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+  });
+  test("OSM settings conflict reloads the revision without silently discarding the requested value", async () => {
+    const user = userEvent.setup();
+    let revision = 1,
+      attempts = 0;
+    setup("/admin/settings/osm-processing", (path, init) => {
+      if (path !== "/api/admin/osm/processing-settings") return;
+      if (init?.method === "PATCH") {
+        attempts++;
+        if (attempts === 1) {
+          revision = 2;
+          return json({ title: "Conflict" }, 409);
+        }
+        expect(JSON.parse(String(init.body))).toEqual({
+          monitorDatabaseStorage: false,
+          revision: 2,
+        });
+        return json({
+          monitorDatabaseStorage: false,
+          revision: 3,
+          updatedAt: "2026-11-21T00:00:00Z",
+        });
+      }
+      return json({ monitorDatabaseStorage: true, revision, updatedAt: "2026-11-21T00:00:00Z" });
+    });
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Monitor available database storage",
+    });
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Settings changed elsewhere. Review the latest value and save again.");
+    expect(checkbox).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("OSM processing settings saved.");
+  });
+  test("OSM settings failed saves preserve the draft and allow retry", async () => {
+    const user = userEvent.setup();
+    setup("/admin/settings/osm-processing", (path, init) =>
+      path === "/api/admin/osm/processing-settings"
+        ? init?.method === "PATCH"
+          ? json({ title: "Unavailable" }, 503)
+          : json({ monitorDatabaseStorage: true, revision: 1, updatedAt: "2026-11-21T00:00:00Z" })
+        : undefined,
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Monitor available database storage",
+    });
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Could not save OSM processing settings. Try again.");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
   test("isolates private queries and retains left-nav selection across tabs", async () => {
     const user = userEvent.setup();
     const { requests } = setup("/admin/accounts/deletions");
@@ -322,6 +411,13 @@ describe("administrator workspace", () => {
         }),
       ).toHaveAttribute("aria-current", "page");
       expect(document.activeElement).toHaveAttribute("data-app-content");
+      if (label === "OSM Maps") {
+        const search = screen.getByRole("searchbox");
+        search.focus();
+        fireEvent.keyDown(search, { key: "3" });
+        expect(window.location.pathname).toContain("/osm/");
+        screen.getByRole("heading", { name: "Regions" }).focus();
+      }
     }
     fireEvent.keyDown(document.body, { key: "4", ctrlKey: true });
     expect(window.location.pathname).toContain("/accounts/");
@@ -355,12 +451,24 @@ describe("administrator workspace", () => {
       row = cell.closest("tr");
     await user.click(screen.getByRole("button", { name: "Actions for trailrunner" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
-    const dialog = screen.getByRole("dialog", { name: "Delete user" });
+    const dialog = screen.getByRole("dialog", { name: "Delete user?" });
     expect(dialog).toHaveTextContent("@trailrunner");
     expect(dialog).toHaveTextContent("This cannot be undone");
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    const confirmation = within(dialog).getByRole("textbox", { name: "Type DELETE to confirm." });
+    expect(confirmation).toHaveAttribute("placeholder", "DELETE");
+    const yes = within(dialog).getByRole("button", { name: "Yes" });
+    expect(yes).toBeDisabled();
+    for (const value of ["delete", "Delete", " DELETE "]) {
+      await user.clear(confirmation);
+      await user.type(confirmation, value);
+      expect(yes).toBeDisabled();
+    }
+    await user.clear(confirmation);
+    await user.type(confirmation, "DELETE");
+    expect(yes).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Yes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Yes" }));
     expect(requests.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
     await act(async () => release());
     await screen.findByText("Deleting", { selector: ".admin-user-status" });
@@ -370,6 +478,29 @@ describe("administrator workspace", () => {
     );
     const [, init] = requests.mock.calls.find(([, init]) => init?.method === "DELETE")!;
     expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe(admin.csrfToken);
+  });
+
+  test("canceling a typed user deletion clears confirmation before reopening", async () => {
+    const user = userEvent.setup();
+    const { requests } = setup("/admin");
+    const open = async () => {
+      await user.click(await screen.findByRole("button", { name: "Actions for trailrunner" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
+      return screen.getByRole("dialog", { name: "Delete user?" });
+    };
+    let dialog = await open();
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Type DELETE to confirm." }),
+      "DELETE",
+    );
+    expect(within(dialog).getByRole("button", { name: "Yes" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await open();
+    expect(within(dialog).getByRole("textbox", { name: "Type DELETE to confirm." })).toHaveValue(
+      "",
+    );
+    expect(within(dialog).getByRole("button", { name: "Yes" })).toBeDisabled();
+    expect(requests.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
   });
 
   test("compatible deletion polls keep rows in place and remove them only after an authoritative refresh", async () => {
@@ -425,13 +556,14 @@ describe("administrator workspace", () => {
     );
     await user.click(await screen.findByRole("button", { name: "Actions for trailrunner" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.type(screen.getByRole("textbox", { name: "Type DELETE to confirm." }), "DELETE");
+    await user.click(screen.getByRole("button", { name: "Yes" }));
     await act(async () =>
       release(json({ title: "Unavailable", detail: "private diagnostics" }, 503)),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("could not be started");
     expect(screen.getByRole("alert")).not.toHaveTextContent("private diagnostics");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Yes" }));
     act(() => {
       history.pushState(null, "", "/admin/osm/regions");
       window.dispatchEvent(new PopStateEvent("popstate"));
@@ -464,10 +596,14 @@ describe("administrator workspace", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Actions for trailrunner" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
-    const dialog = screen.getByRole("dialog", { name: "Delete user" });
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete user?" });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Type DELETE to confirm." }),
+      "DELETE",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Yes" }));
     expect(await within(dialog).findByRole("status")).toHaveTextContent("retry automatically");
-    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Yes" })).toBeDisabled();
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(attempts).toBe(2), { timeout: 3000 });
     await act(async () =>
@@ -492,7 +628,8 @@ describe("administrator workspace", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Actions for trailrunner" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete user" }));
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.type(screen.getByRole("textbox", { name: "Type DELETE to confirm." }), "DELETE");
+    await user.click(screen.getByRole("button", { name: "Yes" }));
     await screen.findByText(/Deletion will retry automatically/);
     act(() => {
       history.pushState(null, "", "/admin/osm/regions");
@@ -539,7 +676,7 @@ describe("administrator workspace", () => {
     await user.click(screen.getByRole("menuitem", { name: "Enable user" }));
     dialog = screen.getByRole("dialog", { name: "Enable user" });
     expect(dialog).toHaveTextContent(
-      "Enable @trailrunner? The user will be able to sign in again and automatic sync will resume on schedule. Revoked sessions and cancelled jobs will not be restored.",
+      "Enable @trailrunner? The user will be able to sign in again and automatic sync will resume on schedule. Revoked sessions and canceled jobs will not be restored.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Enable" }));
     await act(async () => release());

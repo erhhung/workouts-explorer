@@ -145,7 +145,7 @@ func TestFootAttributionPrefersNearbyDrivableRoadOverPedestrianPath(t *testing.T
 	path := osm.MatcherCandidate{ObservationIndex: 1, SegmentID: uuid.New(), Highway: "path", DistanceMeters: 0.1}
 	policy := experimentalPathPolicy(MovementFoot)
 	got, _, suppressed := attributionCandidates(MovementFoot, policy, []osm.MatcherCandidate{sidewalk, road, path}, DefaultRoadGeometryRules())
-	if policy.version != ExperimentalPathPolicyV82 {
+	if policy.version != CurrentPathPolicyVersion {
 		t.Fatalf("policy version=%q", policy.version)
 	}
 	if suppressed != 1 || len(got) != 2 || got[0].SegmentID != road.SegmentID || got[1].SegmentID != path.SegmentID {

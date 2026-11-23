@@ -467,7 +467,7 @@ func TestAdoptionCoverageIntegration(t *testing.T) {
 		bootstrapAssertState(t, db, f, 0, nil)
 		bootstrapExec(t, db, f, `UPDATE app.coverage_reconciliation_accounts SET lease_expires_at=clock_timestamp()+interval '2 minutes' WHERE account_id=$1`, f.account)
 	})
-	t.Run("CancelledIngestCannotConsumeButReconcilerCanRecover", func(t *testing.T) {
+	t.Run("CanceledIngestCannotConsumeButReconcilerCanRecover", func(t *testing.T) {
 		f := newBootstrapFixture(t, db, 1)
 		event, job, lease := adoptionCommitFile(t, db, f)
 		if !requestCancellation(t, db, f.account, job) {
@@ -479,7 +479,7 @@ func TestAdoptionCoverageIntegration(t *testing.T) {
 			'map_data_ready',NULL,'[{"regionId":"geofabrik:test","generation":1}]',$7,$8,
 			'coverage-experimental-v1','coverage-sampling-experimental-v1','coverage-path-policy-experimental-v82',5)`,
 			f.account, job, lease, f.workouts[0], event, bootstrapDigest(), uuid.New(), uuid.New()).Scan(&applied); err != nil || applied {
-			t.Fatalf("cancelled ingest applied=%v err=%v", applied, err)
+			t.Fatalf("canceled ingest applied=%v err=%v", applied, err)
 		}
 		_ = tx.Rollback(ctx)
 		adoptionAssertCounts(t, db, f, 1, 0)
@@ -504,11 +504,11 @@ func TestAdoptionCoverageIntegration(t *testing.T) {
 		if err := blocker.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
-		cancelled, cancel := context.WithCancel(ctx)
+		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = db.coverage.Exec(cancelled, adoptionApplySQL, adoptionApplyArgs(f, event, "map_data_ready", bootstrapDigest())...)
+		_, err = db.coverage.Exec(canceled, adoptionApplySQL, adoptionApplyArgs(f, event, "map_data_ready", bootstrapDigest())...)
 		if err == nil {
-			t.Fatal("cancelled replay succeeded")
+			t.Fatal("canceled replay succeeded")
 		}
 		adoptionAssertCounts(t, db, f, 1, 0)
 		if !adoptionApply(t, db, f, event, "map_data_ready", bootstrapDigest()) {

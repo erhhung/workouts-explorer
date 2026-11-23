@@ -41,8 +41,8 @@ func TestRouteCatalogReplicaFences(t *testing.T) {
 			}
 			if err != nil || physical.IsClosed() || catalog.Revision != 1 || catalog.PromotionEventID != 7 ||
 				catalog.Fingerprint != strings.Repeat("01", 32) || catalog.SelectionFingerprint != strings.Repeat("02", 32) ||
-				catalog.ActiveGenerations["fixture:unconfigured"] != 3 || len(catalog.ConfiguredRegions) != 1 ||
-				catalog.ConfiguredRegions[0].DisplayName != "Region" {
+				catalog.ActiveGenerations["fixture:installed"] != 3 || len(catalog.ActiveRegions) != 2 ||
+				catalog.ActiveRegions[0].DisplayName != "Region" {
 				t.Fatalf("catalog=%+v err=%v", catalog, err)
 			}
 		})
@@ -75,9 +75,9 @@ func TestRouteReadinessCatalogProof(t *testing.T) {
 }
 
 type routeCatalogRow struct {
-	revision, eventID                         int64
-	fingerprint, selection, heads, configured []byte
-	err                                       error
+	revision, eventID                     int64
+	fingerprint, selection, heads, active []byte
+	err                                   error
 }
 
 func (r routeCatalogRow) Scan(dest ...any) error {
@@ -86,7 +86,7 @@ func (r routeCatalogRow) Scan(dest ...any) error {
 	}
 	*dest[0].(*int64), *dest[5].(*int64) = r.revision, r.eventID
 	*dest[1].(*[]byte), *dest[2].(*[]byte) = r.fingerprint, r.selection
-	*dest[3].(*[]byte), *dest[4].(*[]byte) = r.heads, r.configured
+	*dest[3].(*[]byte), *dest[4].(*[]byte) = r.heads, r.active
 	return nil
 }
 
@@ -105,9 +105,9 @@ func (tx *routeCatalogTx) QueryRow(_ context.Context, sql string, args ...any) p
 }
 
 func TestRouteCatalogRejectsMissingMetadata(t *testing.T) {
-	for _, name := range []string{"missing row", "old schema", "revision", "full fingerprint", "selection fingerprint", "heads", "configured", "null heads", "null configured", "negative promotion"} {
+	for _, name := range []string{"missing row", "old schema", "revision", "full fingerprint", "selection fingerprint", "heads", "active", "null heads", "null active", "negative promotion"} {
 		t.Run(name, func(t *testing.T) {
-			row := routeCatalogRow{revision: 1, fingerprint: make([]byte, 32), selection: make([]byte, 32), heads: []byte(`{}`), configured: []byte(`[]`)}
+			row := routeCatalogRow{revision: 1, fingerprint: make([]byte, 32), selection: make([]byte, 32), heads: []byte(`{}`), active: []byte(`[]`)}
 			switch name {
 			case "missing row":
 				row.err = pgx.ErrNoRows
@@ -121,12 +121,12 @@ func TestRouteCatalogRejectsMissingMetadata(t *testing.T) {
 				row.selection = nil
 			case "heads":
 				row.heads = []byte(`[]`)
-			case "configured":
-				row.configured = []byte(`{}`)
+			case "active":
+				row.active = []byte(`{}`)
 			case "null heads":
 				row.heads = []byte(`null`)
-			case "null configured":
-				row.configured = []byte(`null`)
+			case "null active":
+				row.active = []byte(`null`)
 			case "negative promotion":
 				row.eventID = -1
 			}

@@ -424,6 +424,7 @@ func (s *Server) evaluateCoverageDiagnostic(ctx context.Context, workout diagnos
 	evaluated, err := routepipeline.Evaluate(ctx, snapshot, workout.points, routepipeline.Config{
 		Rules: rules, Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: s.diagnostics.roadGeometry,
 		MovementMode: workout.mode, Limits: routepipeline.DefaultLimits(),
+		RecoverProcessingLimits: true, MemoizeSnapshot: true,
 	})
 	if err != nil {
 		return diagnosticResult{}, err
@@ -532,7 +533,7 @@ func (s *Server) persistCoverageDiagnostic(ctx context.Context, accountID uuid.U
 	var persisted bool
 	err = tx.QueryRow(ctx, `SELECT app.persist_coverage_diagnostic($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
 		accountID, result.runID, result.workout.id, result.workout.revision, result.workout.digest,
-		coverage.ExperimentalRules().Version, coverage.ExperimentalSamplingRules().Version, coverage.ExperimentalPathPolicyV82,
+		coverage.ExperimentalRules().Version, coverage.ExperimentalSamplingRules().Version, coverage.CurrentPathPolicyVersion,
 		result.workout.mode, s.diagnostics.minimumTraversalMeters, outcome, result.counts.OriginalPoints, result.counts.SampledPoints, result.counts.MatchedPoints,
 		result.counts.AmbiguousPoints, result.counts.UnmatchedPoints, result.counts.RejectedPoints, result.counts.Traversals,
 		result.counts.Portions, result.counts.UniqueSegments, result.counts.DurationMilliseconds, generationJSON, evidenceJSON).Scan(&persisted)
@@ -549,7 +550,7 @@ func diagnosticResponse(result diagnosticResult) generated.CoverageDiagnosticRun
 	response := generated.CoverageDiagnosticRun{
 		Id: compactUUID(result.runID), WorkoutId: compactUUID(result.workout.id), RouteRevision: result.workout.revision,
 		RulesVersion: generated.CoverageExperimentalV1, SamplingVersion: generated.CoverageSamplingExperimentalV1,
-		PathPolicyVersion: generated.CoveragePathPolicyExperimentalV82, MovementMode: generated.CoverageDiagnosticRunMovementMode(result.workout.mode),
+		PathPolicyVersion: generated.CoveragePathPolicyExperimentalV83, MovementMode: generated.CoverageDiagnosticRunMovementMode(result.workout.mode),
 		MinimumTraversalMeters: result.minimumTraversalMeters, Counts: result.counts, CreatedAt: result.createdAt,
 		Generations: make([]generated.CoverageDiagnosticGeneration, 0, len(result.generations)),
 		Overlay:     generated.CoverageDiagnosticEvidenceCollection{Type: generated.CoverageDiagnosticEvidenceCollectionTypeFeatureCollection, Features: make([]generated.CoverageDiagnosticEvidenceFeature, 0, len(result.evidence))},

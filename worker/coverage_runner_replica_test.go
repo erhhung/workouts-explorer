@@ -109,7 +109,7 @@ func TestCoverageReplicaSanitizedReaderClassification(t *testing.T) {
 		{"network", &net.OpError{Op: "dial", Err: errors.New("reader-host-canary.invalid reader-password-canary")}, true, false},
 		{"network timeout", &net.DNSError{Name: "reader-host-canary.invalid", Err: "reader-password-canary", IsTimeout: true}, true, true},
 		{"EOF with network timeout", errors.Join(io.EOF, &net.DNSError{Name: "reader-host-canary.invalid", IsTimeout: true}), true, true},
-		{"cancelled", context.Canceled, false, false},
+		{"canceled", context.Canceled, false, false},
 		{"bounded timeout", context.DeadlineExceeded, true, true},
 		{"unknown", errors.New("reader-private-detail-canary"), false, false},
 	} {

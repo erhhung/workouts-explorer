@@ -351,7 +351,7 @@ PENDING.** [ADR 0014](decisions/014-metadata-driven-coverage-reconciliation.md)
 adds catalog revision fencing to the existing promotion-event fence. Separate
 OSM **010**, schema/minimum runtime **10/10**, is coordinated with APP feature
 **029** in complete source/runtime **30**. Last reported live OSM remains **9**,
-APP schema/minimum **34/33**, Helm **60**; existing replica-policy deployment
+the then-current application contract, Helm **60**; existing replica-policy deployment
 receipts do not establish this metadata contract as deployed.
 
 `osm_catalog.route_region_catalog_state` provides a singleton transactional

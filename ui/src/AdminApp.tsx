@@ -9,6 +9,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { ADMIN_SESSION_EXPIRED_EVENT, ApiError, api, type PublicConfig, type Session } from "./api";
 import { ContentBackground } from "./ContentBackground";
 import { AdminUsers } from "./AdminUsers";
+import { AdminOSMRegions } from "./AdminOSMRegions";
+import { AdminOSMProcessingSettings } from "./AdminOSMProcessingSettings";
 import { RetainedTab, useTabActive } from "./RetainedTab";
 import { useKeyboardShortcut } from "./keyboardShortcuts";
 
@@ -44,6 +46,7 @@ const TABS = [
     title: "Settings",
     sections: [
       ["preferences", "Console preferences"],
+      ["osm-processing", "OSM Processing"],
       ["access", "Administrator access"],
       ["configuration", "Effective configuration"],
     ],
@@ -337,9 +340,14 @@ function AdminShell({
           item.sections.find(
             ([id]) => id === (item.id === tab.id ? segments[3] : remembered[item.id]),
           ) ?? item.sections[0];
+        const tableCaption =
+          (item.id === "accounts" && selected[0] === "users") ||
+          (item.id === "osm" && selected[0] === "regions");
         return (
           <RetainedTab key={item.id} id={`/admin/${item.id}`} active={item.id === tab.id}>
-            <main className="stats-page admin-page">
+            <main
+              className={`stats-page admin-page${tableCaption ? " admin-page--table-caption" : ""}`}
+            >
               <aside className="stats-sidebar" data-app-scroll>
                 <nav className="stats-report-nav" aria-label={`${item.title} sections`}>
                   <h2>{item.title}</h2>
@@ -367,7 +375,7 @@ function AdminShell({
                   tabIndex={-1}
                   aria-labelledby={`admin-heading-${item.id}`}
                 >
-                  {!(item.id === "accounts" && selected[0] === "users") && (
+                  {!tableCaption && (
                     <header className="stats-heading">
                       <p className="eyebrow">Administration</p>
                       <h1 id={`admin-heading-${item.id}`}>{selected[1]}</h1>
@@ -378,12 +386,28 @@ function AdminShell({
                       Sign out failed. Try again.
                     </p>
                   )}
-                  {item.id === "accounts" && selected[0] === "users" ? (
+                  {item.id === "osm" && (
+                    <RetainedTab
+                      id="/admin/osm/regions"
+                      active={tab.id === "osm" && selected[0] === "regions"}
+                    >
+                      <AdminOSMRegions
+                        baseMaps={config.baseMaps}
+                        polling={config.pollingIntervalSeconds}
+                        session={session}
+                        headingId={`admin-heading-${item.id}`}
+                      />
+                    </RetainedTab>
+                  )}
+                  {item.id === "osm" && selected[0] === "regions" ? null : item.id === "accounts" &&
+                    selected[0] === "users" ? (
                     <AdminUsers
                       polling={config.pollingIntervalSeconds}
                       session={session}
                       headingId={`admin-heading-${item.id}`}
                     />
+                  ) : item.id === "settings" && selected[0] === "osm-processing" ? (
+                    <AdminOSMProcessingSettings session={session} />
                   ) : item.id === "settings" && selected[0] === "configuration" ? (
                     <EffectiveConfig />
                   ) : item.id === "settings" && selected[0] === "access" ? (

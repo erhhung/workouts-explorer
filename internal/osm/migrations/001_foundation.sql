@@ -27,7 +27,6 @@ CREATE TABLE osm_catalog.regions (
     source_url text NOT NULL CHECK (source_url LIKE 'https://%'),
     advertised_download_bytes bigint CHECK (advertised_download_bytes > 0),
     boundary geometry(MultiPolygon, 4326) NOT NULL,
-    configured boolean NOT NULL DEFAULT false,
     discovered_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     UNIQUE (provider, provider_region_id),

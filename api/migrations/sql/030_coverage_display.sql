@@ -1405,6 +1405,39 @@ END;
 $function$;
 -- +goose StatementEnd
 
+-- Display freshness is independent of whether the original regional inputs are
+-- still installed. Applied geometry remains usable until its target changes.
+-- +goose StatementBegin
+CREATE FUNCTION app.coverage_display_target_current(target_account uuid,target_workout uuid,rules text,sampling text,policy text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+    SELECT COALESCE(target_account=app.current_account_id(),false) AND EXISTS(
+        SELECT 1 FROM app.workout_coverage_states state
+        JOIN app.coverage_reconciliation_state catalog ON catalog.singleton
+        LEFT JOIN app.coverage_applied_match_proofs proof ON proof.account_id=state.account_id AND proof.workout_id=state.workout_id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(jsonb_build_object('regionId',region.region_id,'generation',region.desired_osm_generation) ORDER BY region.region_id) generations
+            FROM app.workout_coverage_regions region WHERE region.account_id=state.account_id AND region.workout_id=state.workout_id
+        ) desired ON true
+        WHERE state.account_id=target_account AND state.workout_id=target_workout
+          AND state.applied_route_input_revision=state.route_input_revision
+          AND state.applied_route_input_sha256=state.route_input_sha256
+          AND state.applied_rules_version=rules AND state.applied_sampling_version=sampling AND state.applied_path_policy_version=policy
+          AND app.valid_coverage_generation_vector(state.applied_generations)
+          AND (proof.workout_id IS NULL OR catalog.matching_descriptor='{}'::jsonb OR proof.matching_descriptor=catalog.matching_descriptor)
+          AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(state.applied_generations) applied
+              WHERE catalog.active_heads ? (applied->>'regionId')
+                AND (catalog.active_heads->>(applied->>'regionId'))::bigint IS DISTINCT FROM (applied->>'generation')::bigint)
+          AND (app.coverage_generation_vectors_equal(state.applied_generations,desired.generations)
+            OR (state.readiness_state IN('pending','unavailable')
+              AND (proof.workout_id IS NULL OR (proof.route_input_revision=state.route_input_revision AND proof.route_input_sha256=state.route_input_sha256
+                AND app.coverage_generation_vectors_equal(proof.generations,state.applied_generations)))
+              AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(desired.generations,'[]'::jsonb)) wanted
+                  WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(state.applied_generations) applied
+                      WHERE applied->>'regionId'=wanted->>'regionId' AND applied->>'generation'=wanted->>'generation'))))
+    )
+$function$;
+-- +goose StatementEnd
+
 GRANT CREATE ON SCHEMA app TO workouts_security_owner;
 ALTER TABLE app.coverage_display_revisions OWNER TO workouts_security_owner;
 ALTER TABLE app.coverage_display_contexts OWNER TO workouts_security_owner;
@@ -1412,6 +1445,7 @@ ALTER TABLE app.coverage_display_members OWNER TO workouts_security_owner;
 ALTER TABLE app.coverage_display_visits OWNER TO workouts_security_owner;
 ALTER TABLE app.coverage_display_entities OWNER TO workouts_security_owner;
 ALTER TABLE app.coverage_display_invalidations OWNER TO workouts_security_owner;
+ALTER FUNCTION app.coverage_display_target_current(uuid,uuid,text,text,text) OWNER TO workouts_security_owner;
 ALTER FUNCTION app.coverage_display_normalize(text) OWNER TO workouts_security_owner;
 ALTER FUNCTION app.coverage_display_identity(text, text, text, text) OWNER TO workouts_security_owner;
 ALTER FUNCTION app.coverage_display_source_visits(uuid, date, date) OWNER TO workouts_security_owner;
@@ -1435,7 +1469,7 @@ GRANT UPDATE(coverage_display_context_id) ON app.map_selections TO workouts_secu
 REVOKE ALL ON app.coverage_display_revisions, app.coverage_display_contexts, app.coverage_display_members,
     app.coverage_display_visits, app.coverage_display_entities, app.coverage_display_invalidations
 FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
-REVOKE ALL ON FUNCTION app.coverage_display_normalize(text), app.coverage_display_identity(text, text, text, text),
+REVOKE ALL ON FUNCTION app.coverage_display_normalize(text), app.coverage_display_target_current(uuid,uuid,text,text,text), app.coverage_display_identity(text, text, text, text),
     app.coverage_display_source_visits(uuid, date, date), app.enqueue_coverage_display_invalidations(uuid[]),
     app.advance_account_data_generation(), app.mark_coverage_display_dirty(), app.queue_coverage_display_source_invalidation(),
     app.queue_coverage_display_metadata_invalidation(), app.flush_coverage_display_invalidations(),
@@ -1451,6 +1485,7 @@ REVOKE ALL ON FUNCTION app.coverage_display_normalize(text), app.coverage_displa
     app.map_selection_coverage_entity_members(uuid, uuid, uuid, bigint, text, uuid)
 FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles;
 GRANT EXECUTE ON FUNCTION app.prepare_coverage_display_context(uuid, uuid, uuid, bigint),
+    app.coverage_display_target_current(uuid,uuid,text,text,text),
     app.stats_visit_workouts(uuid, uuid, uuid, bigint, uuid, date, date),
     app.stats_prepare_report_scope(uuid, uuid, uuid, bigint, date, date, text, timestamptz, boolean),
     app.stats_read_report_scope(uuid, uuid, uuid, bigint), app.stats_delete_report_scope(uuid, uuid, uuid),

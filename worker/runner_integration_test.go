@@ -76,7 +76,7 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		if err := cleanup.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,'occupied-ingest-runner',$2,'cancelled')`, child, lease) {
+		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,'occupied-ingest-runner',$2,'canceled')`, child, lease) {
 			t.Fatal("could not clean up simulated ingest")
 		}
 	})
@@ -229,7 +229,7 @@ func TestRunnerPostgreSQL(t *testing.T) {
 			strings.Contains(logs.String(), `"msg":"job processing completed"`) {
 			t.Fatalf("reclaimed job lifecycle was logged inaccurately: %s", logs.String())
 		}
-		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,$2,$3,'cancelled')`,
+		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,$2,$3,'canceled')`,
 			fixture.jobID, replacement.workerID, replacementJob.lease) {
 			t.Fatal("replacement lease cleanup failed")
 		}
@@ -250,11 +250,11 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		if err := runner.executeLogged(ctx, job, runner.execute); err != nil {
 			t.Fatal(err)
 		}
-		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "cancelled", 0)
-		if !strings.Contains(logs.String(), `"msg":"job processing cancelled"`) ||
-			!strings.Contains(logs.String(), `"job_status":"cancelled"`) ||
+		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "canceled", 0)
+		if !strings.Contains(logs.String(), `"msg":"job processing canceled"`) ||
+			!strings.Contains(logs.String(), `"job_status":"canceled"`) ||
 			strings.Contains(logs.String(), `"msg":"job processing completed"`) {
-			t.Fatalf("cancelled job lifecycle was logged inaccurately: %s", logs.String())
+			t.Fatalf("canceled job lifecycle was logged inaccurately: %s", logs.String())
 		}
 	})
 
@@ -266,9 +266,9 @@ func TestRunnerPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cancelled, cancel := context.WithCancel(ctx)
+		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		if _, err := runner.execute(cancelled, job); !errors.Is(err, context.Canceled) {
+		if _, err := runner.execute(canceled, job); !errors.Is(err, context.Canceled) {
 			t.Fatalf("shutdown interruption error=%v", err)
 		}
 		assertWorkerState(t, setupDB, fixture, "checking-connection", 1, "running", 1)

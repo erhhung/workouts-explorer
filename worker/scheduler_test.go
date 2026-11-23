@@ -176,7 +176,7 @@ func TestSchedulerLoopCancellation(t *testing.T) {
 		return false, context.Canceled
 	}, func(error) { t.Fatal("cancellation was reported as a cycle failure") })
 	if err != nil || cycles != 1 {
-		t.Fatalf("cancelled loop cycles=%d err=%v", cycles, err)
+		t.Fatalf("canceled loop cycles=%d err=%v", cycles, err)
 	}
 }
 

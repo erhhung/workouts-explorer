@@ -21,7 +21,7 @@ BEGIN
         PERFORM set_config('app.account_id', orphan.account_id::text, true);
         PERFORM set_config('app.job_transition', CASE orphan.status WHEN 'queued' THEN 'cancel' ELSE 'finish' END, true);
         UPDATE app.jobs job
-           SET status = 'cancelled',
+           SET status = 'canceled',
                terminal_at = transaction_timestamp(),
                worker_id = NULL,
                lease_token = NULL,
@@ -29,7 +29,7 @@ BEGIN
                heartbeat_at = NULL,
                lease_expires_at = NULL,
                failure_code = 'source-snapshot-missing',
-               failure_summary = 'Job cancelled during schema upgrade because its source snapshot was missing.'
+               failure_summary = 'Job canceled during schema upgrade because its source snapshot was missing.'
          WHERE job.id = orphan.id
            AND job.account_id = orphan.account_id
            AND job.status = orphan.status

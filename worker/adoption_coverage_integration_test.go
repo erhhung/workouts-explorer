@@ -213,7 +213,7 @@ func newAdoptionCoverageFixture(t *testing.T) (*coverageIntegrationFixture, uuid
 	f.adminDB, f.workerDB, f.coverageDB = pool(appConfig, ""), pool(appConfig, "workouts_worker"), pool(appConfig, "workouts_coverage_worker")
 	f.osmAdminDB, f.osmDB = pool(osmConfig, ""), pool(osmConfig, "workouts_coverage_worker")
 	f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, f.regionID); err != nil {
+	if _, err := f.osmAdminDB.Exec(ctx, `UPDATE osm_catalog.regions SET display_name=display_name WHERE id=$1`, f.regionID); err != nil {
 		t.Fatal(err)
 	}
 	workout, parent := uuid.New(), uuid.New()

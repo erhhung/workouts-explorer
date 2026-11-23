@@ -470,14 +470,99 @@ osm:
   dataProviders:
     # -- Default OSM data provider.
     - geofabrik
-  # -- Initial OSM catalog region identifiers; their map data must be prepared outside this chart.
-  regions:
-    # -- Default provider-qualified OSM region identifier.
-    - geofabrik:norcal
   # -- Allow workers to request additional OSM regions; this does not make the chart import map data.
   autoAddRegions: false
   # -- Maximum size in bytes for an automatically requested OSM download.
   maxAutoDownloadBytes: 1073741824
+
+  # -- On-demand provider catalog and HEAD-only extract metadata refreshes, independent of ingest slots.
+  catalogRefresh:
+    # -- Enable the durable catalog-refresh worker lane and administrator trigger.
+    enabled: true
+    # -- Maximum concurrent provider metadata HTTP requests per refresh job (1..32).
+    metadataConcurrency: 5
+
+    # -- Existing Secret containing a narrowly privileged OSM catalog writer URL; never use the OSM migration login.
+    databaseSecret:
+      # -- Name of the OSM catalog runtime database Secret.
+      name: workouts-explorer-database
+      # -- Secret key containing the workouts_osm_catalog runtime connection URL.
+      key: osmCatalogDatabaseUrl
+
+  # -- Dedicated administrator region updater controller; provision credentials and a pinned workouts-osm image before enabling.
+  regionUpdates:
+    # -- Enable region commands and the isolated Kubernetes Job controller.
+    enabled: false
+    # -- Maximum dispatched updater/cleanup Jobs; shared-database writer ownership remains stronger.
+    concurrency: 1
+    # -- Hard execution deadline for a long regional rebuild.
+    deadlineSeconds: 604800
+    # -- Seconds to retain completed/failed updater and cleanup Jobs for logs; 0 allows immediate TTL cleanup.
+    ttlSecondsAfterFinished: 21600
+    # -- Maximum bytes for an explicitly requested PBF.
+    maxDownloadBytes: 21474836480
+    # -- Pod-local temporary storage, never a database PVC change.
+    scratchSizeLimit: 60Gi
+
+    # -- Limited application control-state connection Secret.
+    controllerDatabaseSecret:
+      # -- Control-state runtime Secret name.
+      name: workouts-explorer-database
+      # -- Control-state runtime URL key.
+      key: osmControllerDatabaseUrl
+
+    # -- Capability-scoped progress connection Secret.
+    executorDatabaseSecret:
+      # -- Executor progress runtime Secret name.
+      name: workouts-explorer-database
+      # -- Executor progress URL key.
+      key: osmExecutorDatabaseUrl
+
+    # -- Primary-aware updater writer connection Secret.
+    writerDatabaseSecret:
+      # -- Updater writer Secret name.
+      name: workouts-explorer-database
+      # -- Primary-aware updater URL key.
+      key: osmUpdateDatabaseUrl
+
+    # -- Authoritative primary-PVC metrics endpoint.
+    prometheusURL: https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    # -- Optional host-cluster metrics Service IP for an isolated vCluster.
+    prometheusServiceIP: ""
+
+    # -- Dedicated controller resources.
+    controllerResources:
+      # -- Controller reservations.
+      requests:
+        # -- Controller reserved CPU.
+        cpu: 25m
+        # -- Controller reserved memory.
+        memory: 64Mi
+      # -- Controller limits.
+      limits:
+        # -- Controller CPU limit.
+        cpu: 250m
+        # -- Controller memory limit.
+        memory: 256Mi
+
+    # -- Updater pod resources; processing SQL runs on PostgreSQL.
+    jobResources:
+      # -- Updater pod reservations.
+      requests:
+        # -- Updater reserved CPU.
+        cpu: 100m
+        # -- Updater reserved memory; osmium ID tracking is not bounded by compressed PBF size.
+        memory: 2Gi
+        # -- Updater reserved scratch.
+        ephemeral-storage: 2Gi
+      # -- Updater pod limits.
+      limits:
+        # -- Updater CPU limit.
+        cpu: "1"
+        # -- Updater memory limit, including osmium reference tracking and importer cache.
+        memory: 4Gi
+        # -- Updater scratch limit.
+        ephemeral-storage: 60Gi
 
   # -- Timezone boundary import hook; enabled by default and writes through osm.writerDatabaseSecret.
   timezoneBoundaries:

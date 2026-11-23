@@ -25,6 +25,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./worker/cm
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/coverage-worker ./worker/cmd/coverage-worker && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-migrate ./worker/cmd/osm-migrate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-catalog ./worker/cmd/osm-catalog && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-controller ./worker/cmd/osm-controller && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/timezone-import ./worker/cmd/timezone-import && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/timezone-backfill ./worker/cmd/timezone-backfill && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/coverage-evaluate ./worker/cmd/coverage-evaluate
@@ -39,6 +40,7 @@ COPY --from=build /out/worker /app/worker
 COPY --from=build /out/coverage-worker /app/coverage-worker
 COPY --from=build /out/osm-migrate /app/osm-migrate
 COPY --from=build /out/osm-catalog /app/osm-catalog
+COPY --from=build /out/osm-controller /app/osm-controller
 COPY --from=build /out/timezone-import /app/timezone-import
 COPY --from=build /out/timezone-backfill /app/timezone-backfill
 COPY --from=build /out/coverage-evaluate /app/coverage-evaluate

@@ -140,7 +140,7 @@ rewrite existing coalescing keys, retry ancestry or queued historical jobs.
 
 ## Retry And Same-Job Recovery
 
-Retry still creates a new parent and eligible failed/cancelled source children,
+Retry still creates a new parent and eligible failed/canceled source children,
 with current validated source configuration and immediate-predecessor links.
 It retains the original range and effective reprocessing policy, not a file-list
 filter derived from the Files disclosure. Latest-attempt authorization, ordinal
@@ -233,8 +233,8 @@ zero created and zero updated workouts displays **Failed**, even when its failed
 file count is zero: source discovery, authentication or other source-level work
 can fail before a file fails. There is no new `failuresCount` API field; public
 file failures use `JobProgress.filesFailed`, alongside `workoutsCreated` and
-`workoutsUpdated`. Success-only empty runs remain successful, all-cancelled runs
-remain cancelled, and unsuccessful runs qualify for partial success only through
+`workoutsUpdated`. Success-only empty runs remain successful, all-canceled runs
+remain canceled, and unsuccessful runs qualify for partial success only through
 created/updated workouts. Historical execution records and notifications are not
 rewritten to achieve the display projection.
 

@@ -1,9 +1,25 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8").replace(
   /\s+/g,
   " ",
 );
+
+for (const name of readdirSync(new URL("../src/", import.meta.url))) {
+  if (!name.endsWith(".tsx") || name.includes(".test.") || name === "Dialog.tsx") continue;
+  const source = readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8");
+  if (source.includes('from "@radix-ui/react-dialog"')) {
+    throw new Error(`${name} must use the shared pixel-aligned Dialog primitives`);
+  }
+}
+
+if (
+  !/\.dialog-content\[data-dialog-pixel-positioned\]\s*\{[^}]*transform:\s*none;[^}]*translate:\s*none;/.test(
+    css,
+  )
+) {
+  throw new Error("Settled dialogs must use layout positioning without compositor translations");
+}
 
 if (
   !/\.dialog-actions\s*\{[^}]*gap:\s*var\(--space-4\)[^}]*padding:\s*var\(--space-4\)/.test(css)

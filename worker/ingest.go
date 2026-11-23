@@ -238,7 +238,7 @@ func (r *Runner) finishCancellationPending(ctx context.Context, job claimedJob) 
 	if !pending {
 		return false, nil
 	}
-	return r.finishCancelled(ctx, job)
+	return r.finishCanceled(ctx, job)
 }
 
 func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResults) (err error) {
@@ -250,7 +250,7 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		return err
 	}
 	if cancellationPending {
-		_, err = r.finishCancelled(ctx, job)
+		_, err = r.finishCanceled(ctx, job)
 		return err
 	}
 	job.ingestPhase = &ingestPhaseProgress{}
@@ -376,9 +376,9 @@ func (r *Runner) ingest(ctx context.Context, job claimedJob, results *ingestResu
 		return err
 	}
 	if !finished {
-		if cancelled, cancelErr := r.finishCancelled(ctx, job); cancelErr != nil {
+		if canceled, cancelErr := r.finishCanceled(ctx, job); cancelErr != nil {
 			return cancelErr
-		} else if cancelled {
+		} else if canceled {
 			return nil
 		}
 		return errLeaseLost
@@ -553,7 +553,7 @@ func (r *Runner) processSourceFile(ctx context.Context, job claimedJob, sourceID
 	var parsed parsedSourceFile
 	var failure *ingestFailure
 	if remote != nil {
-		// Installed before Download: even failed/cancelled downloads may retain
+		// Installed before Download: even failed/canceled downloads may retain
 		// plaintext. Confirm pinned-root cleanup before releasing the DB slot.
 		defer func() {
 			if remote.DiscardDownload() != nil {
@@ -754,11 +754,11 @@ func (r *Runner) acquireFileSlot(ctx context.Context, job claimedJob) (uuid.UUID
 		if token != nil {
 			return *token, nil
 		}
-		cancelled, err := r.observeIngest(ctx, job)
+		canceled, err := r.observeIngest(ctx, job)
 		if err != nil {
 			return uuid.Nil, err
 		}
-		if cancelled {
+		if canceled {
 			return uuid.Nil, errCancellationRequested
 		}
 		select {
@@ -1013,17 +1013,17 @@ func (r *Runner) observeIngest(ctx context.Context, job claimedJob) (bool, error
 		return false, err
 	}
 	defer tx.Rollback(ctx)
-	var cancelled bool
+	var canceled bool
 	err = tx.QueryRow(ctx, `SELECT cancel_requested_at IS NOT NULL
 		FROM app.jobs WHERE id=$1 AND status='running' AND worker_id=$2 AND lease_token=$3
-		AND lease_expires_at >= clock_timestamp()`, job.id, r.workerID, job.lease).Scan(&cancelled)
+		AND lease_expires_at >= clock_timestamp()`, job.id, r.workerID, job.lease).Scan(&canceled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, errLeaseLost
 	}
 	if err != nil {
 		return false, err
 	}
-	return cancelled, tx.Commit(ctx)
+	return canceled, tx.Commit(ctx)
 }
 
 func (r *Runner) checkpointSourceFile(ctx context.Context, job claimedJob, file sourceFile) (fileCheckpoint, bool, *ingestFailure, error) {
@@ -1438,9 +1438,9 @@ func (r *Runner) failIngest(ctx context.Context, job claimedJob, failure ingestF
 		return err
 	}
 	if !finished {
-		if cancelled, cancelErr := r.finishCancelled(ctx, job); cancelErr != nil {
+		if canceled, cancelErr := r.finishCanceled(ctx, job); cancelErr != nil {
 			return cancelErr
-		} else if cancelled {
+		} else if canceled {
 			return nil
 		}
 		return errLeaseLost

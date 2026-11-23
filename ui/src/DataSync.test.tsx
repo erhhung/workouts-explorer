@@ -128,7 +128,7 @@ const coverageFailure: JobDetail = {
     running: 0,
     succeeded: 0,
     failed: 2,
-    cancelled: 0,
+    canceled: 0,
     superseded: 0,
   },
   children: ["A", "B"].map((letter) => ({
@@ -457,7 +457,7 @@ describe("DataSync", () => {
       },
     );
 
-    test.each(["failed", "cancelled", "partially_succeeded"] as const)(
+    test.each(["failed", "canceled", "partially_succeeded"] as const)(
       "never presents stale cleanup or success for %s",
       async (status) => {
         baseFetch((path) =>
@@ -494,7 +494,7 @@ describe("DataSync", () => {
         path === `/api/jobs/${JOB_ID}` ? json({ ...run, cancelRequested: true }) : undefined,
       );
       const { client } = renderDataSync(JOB_ID);
-      await screen.findByText("Cancelling...", { selector: '[role="status"]' });
+      await screen.findByText("Canceling...", { selector: '[role="status"]' });
       expect(screen.queryByText(activityLabels.analyzing_imported_routes)).not.toBeInTheDocument();
       expect(screen.queryByText(/Routes checked/)).not.toBeInTheDocument();
       act(() => client.setQueryData(["job", JOB_ID], { ...run, status: "queued" }));
@@ -2327,7 +2327,7 @@ describe("DataSync", () => {
         running: 0,
         succeeded: 1,
         failed: 0,
-        cancelled: 0,
+        canceled: 0,
         superseded: 0,
       },
     };
@@ -2420,7 +2420,7 @@ describe("DataSync", () => {
         running: 0,
         succeeded: 1,
         failed: 1,
-        cancelled: 0,
+        canceled: 0,
         superseded: 1,
       },
       coverage: {
@@ -2449,9 +2449,20 @@ describe("DataSync", () => {
             resultOutcome: "applied",
             durationMilliseconds: 1234,
             targetGenerations: [
-              { regionId: "geofabrik:north", generation: 7, latest: true },
-              { regionId: "geofabrik:north", generation: 2, latest: false },
-              { regionId: "geofabrik:south", generation: 9, latest: false },
+              { regionId: "geofabrik:north", generation: 62, regionalGeneration: 18, latest: true },
+              {
+                regionId: "geofabrik:north",
+                generation: 40,
+                regionalGeneration: 12,
+                latest: false,
+              },
+              { regionId: "geofabrik:south", generation: 65, regionalGeneration: 1, latest: false },
+              {
+                regionId: "geofabrik:unprojected",
+                generation: 70,
+                regionalGeneration: null,
+                latest: false,
+              },
             ],
           },
         },
@@ -2482,12 +2493,15 @@ describe("DataSync", () => {
         [...row.querySelectorAll("td")].map((cell) => cell.textContent),
       ),
     ).toEqual([
-      ["geofabrik:north", "7"],
-      ["geofabrik:north", "2"],
-      ["geofabrik:south", "9"],
+      ["geofabrik:north", "18"],
+      ["geofabrik:north", "12"],
+      ["geofabrik:south", "1"],
+      ["geofabrik:unprojected", "\u2014"],
     ]);
-    expect(within(generations).getByText("7")).toHaveClass("is-latest");
-    expect(within(generations).getByText("2")).not.toHaveClass("is-latest");
+    expect(within(generations).getByText("18")).toHaveClass("is-latest");
+    expect(within(generations).getByText("12")).not.toHaveClass("is-latest");
+    expect(within(generations).queryByText("62")).not.toBeInTheDocument();
+    expect(within(generations).queryByText("70")).not.toBeInTheDocument();
     expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
     expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute(
@@ -2552,7 +2566,7 @@ describe("DataSync", () => {
         running: 1,
         succeeded: 1,
         failed: 0,
-        cancelled: 0,
+        canceled: 0,
         superseded: 0,
       },
     };
@@ -2663,7 +2677,7 @@ describe("DataSync", () => {
   });
 
   test("uses filled semantic detail statuses and explicit schedule states", async () => {
-    const statuses = ["succeeded", "failed", "partially_succeeded", "cancelled"] as const;
+    const statuses = ["succeeded", "failed", "partially_succeeded", "canceled"] as const;
     const children = statuses.map((status, index) => ({
       ...detail,
       id: String(index + 3).repeat(32),
@@ -2684,7 +2698,7 @@ describe("DataSync", () => {
     expect(screen.getByText("Disabled", { selector: ".schedule-state" })).toHaveClass(
       "schedule-state--disabled",
     );
-    expect(within(region).getByText("Canceled")).toHaveClass("sync-status--cancelled");
+    expect(within(region).getByText("Canceled")).toHaveClass("sync-status--canceled");
   });
 
   test("resets lazy artifacts when the selected job changes", async () => {
@@ -3243,7 +3257,7 @@ describe("DataSync", () => {
         frames.set(id, callback);
         return id;
       });
-      // Keep cancelled callbacks available to exercise their own stale-work guards.
+      // Keep canceled callbacks available to exercise their own stale-work guards.
       vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
     });
 
@@ -4591,7 +4605,7 @@ describe("DataSync", () => {
       if (path === `/api/jobs/${JOB_ID}`) {
         details += 1;
         return json(
-          details === 1 ? running : { ...detail, status: "cancelled", cancelRequested: true },
+          details === 1 ? running : { ...detail, status: "canceled", cancelRequested: true },
         );
       }
       return undefined;
@@ -4815,7 +4829,7 @@ describe("DataSync", () => {
   });
 
   test.each([
-    ["no_eligible_routes", /no current failed or cancelled route targets eligible/],
+    ["no_eligible_routes", /no current failed or canceled route targets eligible/],
     ["not_latest", /Open the latest attempt/],
     ["retry_limit", /reached its retry limit/],
   ] as const)("explains blocked coverage retry: %s", async (reason, copy) => {
@@ -4981,7 +4995,7 @@ describe("DataSync", () => {
         within(region).queryByText("Superseded", { selector: ".sync-status" }),
       ).not.toBeInTheDocument();
       expect(within(region).getByRole("note", { name: "Retry availability" })).toHaveTextContent(
-        "no current failed or cancelled route targets eligible",
+        "no current failed or canceled route targets eligible",
       );
     } finally {
       view.unmount();
@@ -5024,7 +5038,7 @@ describe("DataSync", () => {
       const button = screen.getByRole("button", { name: "Retry run" });
       expect(button).toBeDisabled();
       expect(button).toHaveAccessibleDescription(
-        /no current failed or cancelled route targets eligible/,
+        /no current failed or canceled route targets eligible/,
       );
       expect(screen.getByText("Run detail is unavailable.")).toBeVisible();
       expect(document.body).not.toHaveTextContent("private raw database error");
@@ -5067,7 +5081,7 @@ describe("DataSync", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Retry run" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Retry run" })).toBeDisabled());
     expect(screen.getByRole("button", { name: "Retry run" })).toHaveAccessibleDescription(
-      /no current failed or cancelled route targets eligible/,
+      /no current failed or canceled route targets eligible/,
     );
     expect(view.client.getQueryData<JobDetail>(["job", JOB_ID])?.retryEligibility).toBeUndefined();
     act(() => {
@@ -5263,7 +5277,7 @@ describe("DataSync", () => {
               {
                 id: JOB_ID,
                 trigger: "manual",
-                status: "cancelled",
+                status: "canceled",
                 progress,
                 createdAt: detail.createdAt,
                 startedAt: detail.createdAt,
@@ -5282,7 +5296,7 @@ describe("DataSync", () => {
       within(table as HTMLElement).getByRole("columnheader", { name: "Started" }),
     ).toBeInTheDocument();
     expect(table.querySelector("tbody .sync-status")).toBeNull();
-    expect(table.querySelector("tbody .sync-status-text--cancelled")).toHaveTextContent("Canceled");
+    expect(table.querySelector("tbody .sync-status-text--canceled")).toHaveTextContent("Canceled");
     expect(Array.from(table.querySelectorAll("col")).map((column) => column.className)).toEqual([
       "history-started-column",
       "history-operation-column",
@@ -5291,7 +5305,7 @@ describe("DataSync", () => {
       "history-action-column",
     ]);
     const cards = document.querySelector(".sync-history-cards")!;
-    expect(cards.querySelector(".sync-status-text--cancelled")).toHaveTextContent("Canceled");
+    expect(cards.querySelector(".sync-status-text--canceled")).toHaveTextContent("Canceled");
     expect(screen.getByText("Enabled", { selector: ".schedule-state" })).toHaveClass(
       "schedule-state--enabled",
     );

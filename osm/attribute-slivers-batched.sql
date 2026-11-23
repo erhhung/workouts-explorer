@@ -110,8 +110,10 @@ BEGIN
           AND EXISTS (
               SELECT 1
               FROM localities AS county
-              WHERE county.relation_id = previous.locality_relation_id
-                AND county.admin_level = 6
+               WHERE county.relation_id = previous.locality_relation_id
+                 AND county.admin_level = 6
+                 -- Administrative levels need not form a geometric containment hierarchy.
+                 AND ST_Length(ST_CollectionExtract(ST_Difference(middle.geom, county.geom), 2)::geography) <= 0.01
           )
           AND previous.normalized_name IS NOT DISTINCT FROM middle.normalized_name
           AND following.normalized_name IS NOT DISTINCT FROM middle.normalized_name

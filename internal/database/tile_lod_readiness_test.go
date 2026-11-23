@@ -11,7 +11,7 @@ import (
 )
 
 func TestDenseTileReadinessContract(t *testing.T) {
-	if SupportedSchemaVersion != 32 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileLODReadinessSQL+")") {
+	if SupportedSchemaVersion != 33 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileLODReadinessSQL+")") {
 		t.Fatal("current runtime must compose LOD readiness")
 	}
 	for _, required := range []string{"SELECT $1 < 31 OR (", "minimum_runtime_version >= 31", "migration_baseline = 27",

@@ -1,0 +1,37 @@
+# Optional OSM PostgreSQL-HA endpoints when Pgpool cannot authenticate an additional
+# restricted catalog login. Apply on the DATABASE cluster, not the app vCluster.
+# Adapt namespace/pod selectors and retain certificate-name verification. Each
+# DNS name resolves one node; a multi-host URL with target_session_attrs=read-write
+# selects the current primary without weakening TLS or pinning a pod IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-catalog-0
+  namespace: postgresql
+  labels: {app.kubernetes.io/part-of: workouts-osm-catalog-access}
+spec:
+  clusterIP: None
+  selector: {statefulset.kubernetes.io/pod-name: postgresql-postgresql-0}
+  ports: [{name: postgresql, port: 5432, targetPort: 5432}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-catalog-1
+  namespace: postgresql
+  labels: {app.kubernetes.io/part-of: workouts-osm-catalog-access}
+spec:
+  clusterIP: None
+  selector: {statefulset.kubernetes.io/pod-name: postgresql-postgresql-1}
+  ports: [{name: postgresql, port: 5432, targetPort: 5432}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-catalog-2
+  namespace: postgresql
+  labels: {app.kubernetes.io/part-of: workouts-osm-catalog-access}
+spec:
+  clusterIP: None
+  selector: {statefulset.kubernetes.io/pod-name: postgresql-postgresql-2}
+  ports: [{name: postgresql, port: 5432, targetPort: 5432}]

@@ -9,12 +9,12 @@ import (
 )
 
 func TestSupervisorTreatsActiveComponentExitAsFatal(t *testing.T) {
-	cancelled := make(chan struct{})
+	canceled := make(chan struct{})
 	err := supervise(context.Background(), time.Second,
 		supervisedComponent{name: "runner", run: func(context.Context) error { return nil }},
 		supervisedComponent{name: "scheduler", run: func(ctx context.Context) error {
 			<-ctx.Done()
-			close(cancelled)
+			close(canceled)
 			return nil
 		}},
 	)
@@ -22,9 +22,9 @@ func TestSupervisorTreatsActiveComponentExitAsFatal(t *testing.T) {
 		t.Fatalf("unexpected supervisor result: %v", err)
 	}
 	select {
-	case <-cancelled:
+	case <-canceled:
 	default:
-		t.Fatal("peer component was not cancelled")
+		t.Fatal("peer component was not canceled")
 	}
 }
 

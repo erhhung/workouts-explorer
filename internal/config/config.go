@@ -52,6 +52,9 @@ type API struct {
 	LocalDevelopment       bool
 	SMTP                   SMTP
 	CoverageDiagnostics    CoverageDiagnostics
+	OSMProviders           []string
+	OSMCatalogEnabled      bool
+	OSMUpdatesEnabled      bool
 }
 
 type CoverageDiagnostics struct {
@@ -110,7 +113,9 @@ type OSM struct {
 	UseReadReplicasOnly  bool
 	MaxAutoDownloadBytes int64
 	DataProviders        []string
-	Regions              []string
+	CatalogDatabaseURL   string
+	MetadataConcurrency  int
+	CatalogEnabled       bool
 }
 
 type SMTP struct {
@@ -227,7 +232,18 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	providers, err := identifierList("OSM_DATA_PROVIDERS_JSON", `["geofabrik"]`, false)
+	if err != nil {
+		return API{}, err
+	}
+	catalogEnabled, err := boolean("OSM_CATALOG_REFRESH_ENABLED", false)
+	if err != nil {
+		return API{}, err
+	}
 	result := API{
+		OSMUpdatesEnabled:      env("OSM_REGION_UPDATES_ENABLED", "false") == "true",
+		OSMCatalogEnabled:      catalogEnabled,
+		OSMProviders:           providers,
 		Common:                 c,
 		PublicURL:              publicURL,
 		BrowserSigninOrigins:   browserSigninOrigins,
@@ -535,14 +551,23 @@ func LoadOSM() (OSM, error) {
 	if err != nil {
 		return OSM{}, err
 	}
-	regions, err := identifierList("OSM_REGIONS_JSON", `["geofabrik:norcal"]`, true)
-	if err != nil {
-		return OSM{}, err
-	}
 	if autoAdd && len(providers) == 0 {
 		return OSM{}, fmt.Errorf("OSM_DATA_PROVIDERS_JSON must not be empty when OSM_AUTO_ADD_REGIONS is enabled")
 	}
-	return OSM{AutoAddRegions: autoAdd, UseReadReplicasOnly: useReadReplicasOnly, MaxAutoDownloadBytes: maximum, DataProviders: providers, Regions: regions}, nil
+	concurrency, err := integerRange("OSM_CATALOG_METADATA_CONCURRENCY", 5, 1, 32)
+	if err != nil {
+		return OSM{}, err
+	}
+	enabled, err := boolean("OSM_CATALOG_REFRESH_ENABLED", false)
+	if err != nil {
+		return OSM{}, err
+	}
+	catalogURL := os.Getenv("OSM_CATALOG_DATABASE_URL")
+	if enabled && catalogURL == "" {
+		return OSM{}, fmt.Errorf("OSM_CATALOG_DATABASE_URL is required for catalog refresh")
+	}
+	return OSM{AutoAddRegions: autoAdd, UseReadReplicasOnly: useReadReplicasOnly, MaxAutoDownloadBytes: maximum, DataProviders: providers,
+		CatalogDatabaseURL: catalogURL, MetadataConcurrency: concurrency, CatalogEnabled: enabled}, nil
 }
 
 func identifierList(name, fallback string, qualified bool) ([]string, error) {
@@ -561,9 +586,18 @@ func identifierList(name, fallback string, qualified bool) ([]string, error) {
 		if (!qualified && len(parts) != 1) || (qualified && len(parts) != 2) {
 			return nil, fmt.Errorf("%s contains an invalid identifier", name)
 		}
-		for _, part := range parts {
-			if !validIdentifier(part) {
-				return nil, fmt.Errorf("%s contains an invalid identifier", name)
+		for index, part := range parts {
+			pieces := []string{part}
+			if qualified && index == 1 {
+				if len(part) > 192 {
+					return nil, fmt.Errorf("%s contains an invalid identifier", name)
+				}
+				pieces = strings.Split(part, "/")
+			}
+			for _, piece := range pieces {
+				if !validIdentifier(piece) {
+					return nil, fmt.Errorf("%s contains an invalid identifier", name)
+				}
 			}
 		}
 		if _, exists := seen[value]; exists {

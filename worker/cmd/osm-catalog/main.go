@@ -34,7 +34,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := osm.SyncCatalog(ctx, pool, regions, cfg.OSM.Regions); err != nil {
+	if err := osm.SyncCatalog(ctx, pool, regions); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "synchronized %d OSM regions\n", len(regions))

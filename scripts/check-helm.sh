@@ -110,12 +110,10 @@ if ! grep -q 'name: WORKER_FILE_CONCURRENCY' "$rendered" ||
    ! grep -q 'name: OSM_AUTO_ADD_REGIONS' "$rendered" ||
    ! grep -q 'name: OSM_MAX_AUTO_DOWNLOAD_BYTES' "$rendered" ||
    ! grep -q 'name: OSM_DATA_PROVIDERS_JSON' "$rendered" ||
-   ! grep -q 'name: OSM_REGIONS_JSON' "$rendered" ||
    ! grep -q 'name: OSM_DATABASE_URL' "$rendered" ||
    ! grep -q 'key: osmDatabaseUrl' "$rendered" ||
    ! grep -q 'mountPath: /tls/prod-db' "$rendered" ||
    ! grep -q 'secretName: workouts-explorer-database-tls' "$rendered" ||
-   ! grep -Fq '[\"geofabrik:norcal\"]' "$rendered" ||
    ! grep -q 'mountPath: /var/lib/workouts/staging' "$rendered" ||
    ! grep -q 'sizeLimit: 2Gi' "$rendered"; then
   printf '%s\n' 'Worker concurrency or bounded staging configuration is incomplete' >&2
@@ -139,17 +137,16 @@ fi
 helm template workouts-explorer helm \
   --set osm.autoAddRegions=true \
   --set osm.maxAutoDownloadBytes=2000000000 \
-  --set-string 'osm.dataProviders[0]=geofabrik' \
-  --set-string 'osm.regions[0]=geofabrik:new-york' >"$changed"
+  --set-string 'osm.dataProviders[0]=geofabrik' >"$changed"
 if ! grep -q 'name: OSM_AUTO_ADD_REGIONS' "$changed" ||
    ! grep -q 'value: "true"' "$changed" ||
    ! grep -q 'value: "2000000000"' "$changed" ||
-   ! grep -Fq '[\"geofabrik:new-york\"]' "$changed"; then
+   ! grep -Fq '[\"geofabrik\"]' "$changed"; then
   printf '%s\n' 'Worker OSM configuration rendering is incomplete' >&2
   exit 1
 fi
 if helm template workouts-explorer helm --set osm.maxAutoDownloadBytes=0 >/dev/null 2>&1 ||
-   helm template workouts-explorer helm --set-string 'osm.regions[0]=norcal' >/dev/null 2>&1 ||
+   helm template workouts-explorer helm --set-string 'osm.regions[0]=geofabrik:norcal' >/dev/null 2>&1 ||
    helm template workouts-explorer helm --set-string 'osm.dataProviders[0]=geofabrik:norcal' >/dev/null 2>&1; then
   printf '%s\n' 'Worker OSM schema accepted invalid settings' >&2
   exit 1

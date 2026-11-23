@@ -413,7 +413,7 @@ func TestICloudMigrationIntegration(t *testing.T) {
 		}
 	})
 	t.Run("RefreshAndFailureFences", func(t *testing.T) {
-		for _, scenario := range []string{"cross-account", "worker", "lease", "expired", "lost-lease", "cancelled", "parent-cancelled", "deleted", "generation", "account-deleting", "connection-failed"} {
+		for _, scenario := range []string{"cross-account", "worker", "lease", "expired", "lost-lease", "canceled", "parent-canceled", "deleted", "generation", "account-deleting", "connection-failed"} {
 			t.Run(scenario, func(t *testing.T) {
 				f := newICloudFixture(t, db, "manual_ingest_source", "health-auto-export-icloud")
 				worker := icloudWorker
@@ -433,9 +433,9 @@ func TestICloudMigrationIntegration(t *testing.T) {
 							t.Fatal("could not transfer expired lease")
 						}
 					}
-				case "cancelled", "parent-cancelled":
+				case "canceled", "parent-canceled":
 					job := f.job
-					if scenario == "parent-cancelled" {
+					if scenario == "parent-canceled" {
 						job = f.parent
 					}
 					if !callBool(t, ctx, db.migration, f.account, `SELECT app.request_job_cancellation($1,$2)`, job, uuid.New()) {
@@ -460,7 +460,7 @@ func TestICloudMigrationIntegration(t *testing.T) {
 		}
 	})
 	t.Run("ConnectionCheckRefreshAndCleanup", func(t *testing.T) {
-		for _, scenario := range []string{"refresh", "null", "stale", "cancelled", "deleted", "expired", "failure"} {
+		for _, scenario := range []string{"refresh", "null", "stale", "canceled", "deleted", "expired", "failure"} {
 			t.Run(scenario, func(t *testing.T) {
 				f := newICloudFixture(t, db, "source_connection_check", "health-auto-export-icloud")
 				var refresh any = syntheticICloudEnvelope(t)
@@ -473,7 +473,7 @@ func TestICloudMigrationIntegration(t *testing.T) {
 					status, code, summary, refresh = "connection-failed", "source-auth-failed", "Source authentication failed.", nil
 				case "stale":
 					icloudFixtureExec(t, db, f, `UPDATE app.sources SET generation=2,status='connection-failed' WHERE id=$1`, f.source)
-				case "cancelled":
+				case "canceled":
 					_ = callBool(t, ctx, db.migration, f.account, `SELECT app.request_job_cancellation($1,$2)`, f.job, uuid.New())
 				case "deleted":
 					_ = callBool(t, ctx, db.migration, f.account, `SELECT app.delete_source($1,$2)`, f.source, uuid.New())
@@ -506,8 +506,8 @@ func TestICloudMigrationIntegration(t *testing.T) {
 					wantSource = "connected"
 				case "stale":
 					wantGeneration, wantSource = 2, "connection-failed"
-				case "cancelled", "deleted":
-					wantJob = "cancelled"
+				case "canceled", "deleted":
+					wantJob = "canceled"
 				case "expired":
 					wantJob, wantSnapshots = "running", 1
 				case "failure":

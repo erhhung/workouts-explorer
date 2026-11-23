@@ -55,7 +55,7 @@ func TestCoverageReconcilerReplicaFreshnessIntegration(t *testing.T) {
 				t.Fatalf("observation must use the granted helper, not direct table SELECT: allowed=%v error=%v", helperOnly, err)
 			}
 			f.seedOSM()
-			if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, f.regionID); err != nil {
+			if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET display_name=display_name WHERE id=$1`, f.regionID); err != nil {
 				t.Fatal(err)
 			}
 			first, second := f.addWorkout(coverageIntegrationRoute(0)), f.addWorkout(coverageIntegrationRoute(1))
@@ -213,7 +213,7 @@ func (*reconcilerSnapshotTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.Tr
 func TestCoverageReconcilerPromotionSnapshotIntegration(t *testing.T) {
 	f := newCoverageIntegrationFixture(t)
 	f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, f.regionID); err != nil {
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET display_name=display_name WHERE id=$1`, f.regionID); err != nil {
 		t.Fatal(err)
 	}
 	var newerGeneration int64

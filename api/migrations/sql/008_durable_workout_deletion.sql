@@ -128,7 +128,7 @@ BEGIN
             WHERE retry.id = NEW.current_job_id AND retry.account_id = NEW.account_id
               AND retry.kind = 'workout_deletion' AND retry.status = 'queued'
               AND prior.id = OLD.current_job_id AND prior.kind = 'workout_deletion'
-              AND prior.status IN ('failed', 'cancelled') AND retry.parameters = prior.parameters
+              AND prior.status IN ('failed', 'canceled') AND retry.parameters = prior.parameters
        ) THEN
         RETURN NEW;
     END IF;
@@ -436,7 +436,7 @@ BEGIN
     GET DIAGNOSTICS target_count = ROW_COUNT;
     IF target_count = 0 THEN RETURN; END IF;
     SELECT job. * INTO prior_job FROM app.jobs job WHERE job.id = prior_job_id AND job.account_id = target_account
-      AND job.kind = 'workout_deletion' AND job.status IN ('failed', 'cancelled') FOR UPDATE;
+      AND job.kind = 'workout_deletion' AND job.status IN ('failed', 'canceled') FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'workout deletion retry requires a terminal current job' USING ERRCODE = '55000'; END IF;
     WITH RECURSIVE lineage AS (
         SELECT job.id, job.retry_of_job_id, 0 AS ordinal FROM app.jobs job WHERE job.id = prior_job_id

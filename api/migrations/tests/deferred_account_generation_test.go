@@ -177,11 +177,11 @@ func TestDeferredGenerationActiveInventoryAndImmutableBaseline(t *testing.T) {
 			active = append(active, entry.Name())
 		}
 	}
-	if len(active) != 32 || active[27] != "028_ingest_coverage_pipeline.sql" || active[28] != "029_ingest_status_reporting.sql" || active[29] != "030_coverage_display.sql" || active[30] != "031_tile_rendering.sql" || active[31] != "032_admin_accounts.sql" {
+	if len(active) != 33 || active[27] != "028_ingest_coverage_pipeline.sql" || active[28] != "029_ingest_status_reporting.sql" || active[29] != "030_coverage_display.sql" || active[30] != "031_tile_rendering.sql" || active[31] != "032_admin_accounts.sql" || active[32] != "033_osm_region_management.sql" {
 		t.Fatalf("unexpected active migration inventory: %v", active)
 	}
 	for file, expected := range map[string]string{
-		"027_coverage_recovery_baseline.sql": "33dea989a5e4653081bdb4e080f396a46580d1874e0bde35b1d99d72bb5e80dc",
+		"027_coverage_recovery_baseline.sql": "8127c37164d482b17bfea444eca2920ad87a5ccf61e096177bd76970ce4496a2",
 	} {
 		raw, err := migrations.Files.ReadFile(file)
 		if err != nil {

@@ -22,13 +22,13 @@ func TestPlacementSanitizeFatalPrecedence(t *testing.T) {
 	transient := &pgconn.PgError{Code: "08006", Message: "private-password-canary"}
 	ordinary := errors.New("private-password-canary invalid digest")
 	for _, test := range []struct {
-		name      string
-		err       error
-		fatal     bool
-		code      string
-		unready   bool
-		deadline  bool
-		cancelled bool
+		name     string
+		err      error
+		fatal    bool
+		code     string
+		unready  bool
+		deadline bool
+		canceled bool
 	}{
 		{name: "ordinary", err: ordinary, fatal: true},
 		{name: "ordinary joined deadline", err: errors.Join(context.DeadlineExceeded, ordinary), fatal: true},
@@ -44,13 +44,13 @@ func TestPlacementSanitizeFatalPrecedence(t *testing.T) {
 		{name: "lag", err: osm.ErrMatcherReplicaNotReady, unready: true},
 		{name: "DNS missing", err: &net.DNSError{Err: "private-password-canary", IsNotFound: true}, unready: true},
 		{name: "deadline", err: context.DeadlineExceeded, deadline: true},
-		{name: "cancel ordinary", err: errors.Join(context.Canceled, ordinary), cancelled: true},
+		{name: "cancel ordinary", err: errors.Join(context.Canceled, ordinary), canceled: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := sanitize(test.err)
 			if permanent(err) != test.fatal || errorSQLState(err) != test.code ||
 				errors.Is(err, osm.ErrMatcherReplicaNotReady) != test.unready ||
-				errors.Is(err, context.DeadlineExceeded) != test.deadline || errors.Is(err, context.Canceled) != test.cancelled {
+				errors.Is(err, context.DeadlineExceeded) != test.deadline || errors.Is(err, context.Canceled) != test.canceled {
 				t.Fatalf("classification changed: err=%v fatal=%v", err, permanent(err))
 			}
 			assertPrivate(t, err.Error())

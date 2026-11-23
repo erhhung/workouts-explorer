@@ -26,9 +26,283 @@ type updateStoreStub struct {
 	statisticsHook      func(context.Context) error
 }
 
+type updateProgressRecorder struct {
+	events  []UpdateProgress
+	inspect func(UpdateProgress)
+}
+
+type cancelAfterCommittedReport struct {
+	updateProgressRecorder
+	cancel context.CancelFunc
+}
+
+func (r *cancelAfterCommittedReport) Report(ctx context.Context, event UpdateProgress) error {
+	r.events = append(r.events, event)
+	if event.Type == "complete" && event.Task == 5 {
+		r.cancel()
+	}
+	return nil
+}
+
+type cancellationAwareStorage struct{}
+
+func (cancellationAwareStorage) Check(ctx context.Context) (StorageObservation, error) {
+	if ctx.Err() != nil {
+		return StorageObservation{}, ctx.Err()
+	}
+	return StorageObservation{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 500, CheckedAt: time.Now()}, nil
+}
+func TestCommittedBatchReportedBeforeCancellableStorageObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &updateStoreStub{}
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events})
+	updater.Store = resumableUpdateStoreStub{updateStoreStub: store}
+	reporter := &cancelAfterCommittedReport{cancel: cancel}
+	updater.Progress = reporter
+	updater.StoragePreflight = cancellationAwareStorage{}
+	if _, err := updater.Run(ctx, "geofabrik:norcal"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("post-batch cancellation missing: %v", err)
+	}
+	for _, event := range reporter.events {
+		if event.Type == "complete" && event.Task == 5 && event.Completed && event.ElapsedMilliseconds != nil {
+			return
+		}
+	}
+	t.Fatal("committed task completion/timing lost before storage wait")
+}
+
+type promotedNumberStore struct{ *updateStoreStub }
+
+func (s promotedNumberStore) PromotedGenerationNumber(context.Context, int64, string) (int64, error) {
+	return 18, nil
+}
+
+func TestPromotionLogSeparatesRegionalGenerationAndBuildID(t *testing.T) {
+	store := &updateStoreStub{}
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: validUpdateReport()})
+	updater.Store = promotedNumberStore{store}
+	var output bytes.Buffer
+	updater.Log = &output
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "generation #18 for job #42") {
+		t.Fatal("promotion log lost region-local generation/build identity")
+	}
+	if strings.Contains(output.String(), "generation 42") {
+		t.Fatal("internal processing attempt ID logged as generation")
+	}
+}
+
+func (r *updateProgressRecorder) Report(_ context.Context, event UpdateProgress) error {
+	if r.inspect != nil {
+		r.inspect(event)
+	}
+	r.events = append(r.events, event)
+	return nil
+}
+
+type finalizationUpdateStoreStub struct{ resumableUpdateStoreStub }
+
+type validationFailureStore struct {
+	finalizationUpdateStoreStub
+	failure *string
+}
+
+type incompatibleSliverStore struct {
+	resumableUpdateStoreStub
+	failure *string
+}
+
+func (s incompatibleSliverStore) StageFenceMatches(_ context.Context, _ int64, stage, _ string) (bool, error) {
+	return stage != "attribute-slivers", nil
+}
+
+func (s incompatibleSliverStore) FailStage(_ context.Context, _ Generation, _ string, summary string) error {
+	*s.failure = summary
+	return nil
+}
+
+type fencedUpdatePipelineStub struct{ updatePipelineStub }
+
+func (fencedUpdatePipelineStub) StageFence(string) (string, error) {
+	return strings.Repeat("a", 64), nil
+}
+
+func TestCompletedSliverCheckpointRequiresFreshProcessingAfterRuleChange(t *testing.T) {
+	store := &updateStoreStub{}
+	var failure string
+	updater := newTestUpdater(t, store, fencedUpdatePipelineStub{updatePipelineStub{events: &store.events}})
+	updater.Store = incompatibleSliverStore{resumableUpdateStoreStub{updateStoreStub: store}, &failure}
+	updater.ResumeGenerationID = 42
+	_, err := updater.Run(context.Background(), "geofabrik:norcal")
+	want := "completed step attribute-slivers uses different processing rules; cancel this job and start a fresh region update"
+	if err == nil || err.Error() != want || failure != want || store.promoted || len(store.failures) != 0 {
+		t.Fatalf("incompatible candidate was replayed or lost its recovery reason: error=%v stored=%q promoted=%t failed=%v", err, failure, store.promoted, store.failures)
+	}
+	for _, event := range store.events {
+		if event == "start:attribute-slivers" || event == "validate" || event == "identity-segments" {
+			t.Fatal("dependent work ran on an incompatible checkpoint", store.events)
+		}
+	}
+}
+
+func (s validationFailureStore) FailStage(_ context.Context, _ Generation, stage, summary string) error {
+	if stage == "validate" {
+		*s.failure = summary
+	}
+	return nil
+}
+
+func TestValidationGateFailureRetainsSpecificReason(t *testing.T) {
+	store := &updateStoreStub{}
+	report := strings.Replace(string(validUpdateReport()), `"materialLocalityResiduals":0`, `"materialLocalityResiduals":4`, 1)
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: []byte(report)})
+	var failure string
+	updater.Store = validationFailureStore{finalizationUpdateStoreStub{resumableUpdateStoreStub{updateStoreStub: store}}, &failure}
+	_, err := updater.Run(context.Background(), "geofabrik:norcal")
+	want := "OSM validation gate: materialLocalityResiduals is 4, expected 0"
+	if err == nil || err.Error() != want || failure != want || store.promoted || len(store.failures) != 0 {
+		t.Fatalf("validation failure not retained while preserving the candidate: err=%v stored=%q promoted=%t discarded=%v", err, failure, store.promoted, store.failures)
+	}
+}
+
+func (s finalizationUpdateStoreStub) StageCursor(_ context.Context, _ int64, stage string) (json.RawMessage, error) {
+	if stage == "validate" {
+		return json.RawMessage(`{"phase":"finalize"}`), nil
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+func TestFinalTaskCompletesOnlyAfterMaintenance(t *testing.T) {
+	for _, failure := range []string{"", "cleanup", "statistics"} {
+		t.Run(failure, func(t *testing.T) {
+			store := &updateStoreStub{}
+			if failure == "cleanup" {
+				store.gcFailureAt = 2
+			}
+			if failure == "statistics" {
+				store.statisticsFailureAt = 2
+			}
+			recorder := &updateProgressRecorder{}
+			completed := func() bool {
+				for _, event := range recorder.events {
+					if event.Task == len(UpdateTasks) && event.Completed && !event.AwaitingMetrics {
+						return true
+					}
+				}
+				return false
+			}
+			store.statisticsHook = func(context.Context) error {
+				if store.promoted && completed() {
+					t.Fatal("final task completed before statistics maintenance returned")
+				}
+				if store.promoted && failure == "statistics" {
+					return errors.New("statistics unavailable")
+				}
+				return nil
+			}
+			updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: validUpdateReport()})
+			updater.Store = finalizationUpdateStoreStub{resumableUpdateStoreStub{updateStoreStub: store}}
+			updater.Progress = recorder
+			recorder.inspect = func(event UpdateProgress) {
+				if event.Task == len(UpdateTasks) && event.Completed {
+					if _, err := os.Stat(filepath.Join(updater.ScratchRoot, "job-42")); !os.IsNotExist(err) {
+						t.Fatal("final completion preceded local scratch cleanup", err)
+					}
+				}
+			}
+			_, err := updater.Run(context.Background(), "geofabrik:norcal")
+			if (err != nil) != (failure != "") || completed() != (failure == "") {
+				t.Fatalf("failure=%q error=%v premature/missing final completion=%v", failure, err, completed())
+			}
+			var validationSettled bool
+			for _, event := range recorder.events[:len(recorder.events)-1] {
+				if event.Task == len(UpdateTasks) && event.Type == "settled" {
+					validationSettled = true
+					if event.Completed {
+						t.Fatal("validation SQL settled the whole finalization task")
+					}
+				}
+			}
+			if !validationSettled {
+				t.Fatal("missing final validation batch report")
+			}
+		})
+	}
+}
+
+func TestSourcePreparationReportsActivityBeforeStatisticsMaintenance(t *testing.T) {
+	store := &updateStoreStub{}
+	recorder := &updateProgressRecorder{}
+	stop := errors.New("fixture stops at startup maintenance")
+	store.statisticsHook = func(context.Context) error {
+		if len(recorder.events) != 1 || recorder.events[0].Type != "start" || recorder.events[0].Task != 1 {
+			t.Fatalf("running updater is invisible during maintenance: %+v", recorder.events)
+		}
+		return stop
+	}
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events})
+	updater.Progress = recorder
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); !errors.Is(err, stop) {
+		t.Fatal(err)
+	}
+}
+
+func TestPreparationCompletesBeforeNetworkDownloadStarts(t *testing.T) {
+	store := &updateStoreStub{}
+	recorder := &updateProgressRecorder{}
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: validUpdateReport()})
+	updater.Progress = recorder
+	download := updater.Download
+	updater.Download = func(ctx context.Context, client *http.Client, region Region, destination string, limit int64) (DownloadResult, error) {
+		var prepared bool
+		for _, event := range recorder.events {
+			if event.Type == "complete" && event.Task == 1 && event.Completed && event.ElapsedMilliseconds != nil {
+				prepared = true
+			}
+		}
+		if !prepared {
+			t.Fatal("network transfer began before preparation completed")
+		}
+		last := recorder.events[len(recorder.events)-1]
+		if last.Type != "start" || last.Task != 2 {
+			t.Fatal("download lacks its separate start boundary", last)
+		}
+		return download(ctx, client, region, destination, limit)
+	}
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+		t.Fatal(err)
+	}
+	var completed bool
+	for _, event := range recorder.events {
+		if event.Type == "complete" && event.Task == 2 && event.Completed && event.ElapsedMilliseconds != nil {
+			completed = true
+		}
+	}
+	if !completed {
+		t.Fatal("download did not receive a separate successful duration")
+	}
+}
+
+func TestUpdaterRetainsConciseDownloadFailure(t *testing.T) {
+	store := &updateStoreStub{}
+	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events})
+	updater.Download = DownloadRegion
+	updater.HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: ioNopCloser{strings.NewReader("")}, Header: make(http.Header)}, nil
+	})}
+	_, err := updater.Run(context.Background(), "geofabrik:norcal")
+	want := "Failed to download https://download.geofabrik.de/north-america/us/california/norcal-latest.osm.pbf | unexpected HTTP status 503"
+	if err == nil || err.Error() != want || len(store.failures) != 1 || store.failures[0] != want {
+		t.Fatalf("updater added download prefixes: error=%v stored=%v", err, store.failures)
+	}
+}
+
 func (s *updateStoreStub) Reserve(context.Context, string, ToolVersions) (Generation, error) {
 	s.events = append(s.events, "reserve")
-	return Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42", SourceURL: "https://download.geofabrik.de/north-america/us/california/norcal-latest.osm.pbf"}, nil
+	return Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42", SourceURL: "https://download.geofabrik.de/north-america/us/california/norcal-latest.osm.pbf", RegionalGeneration: 1}, nil
 }
 func (s *updateStoreStub) RecordDownload(context.Context, int64, DownloadResult, time.Time) error {
 	s.events = append(s.events, "record-download")
@@ -132,7 +406,7 @@ func TestPostBatchStorageSettlingCancellationDoesNotReadMetrics(t *testing.T) {
 		t.Fatalf("settling cancellation=%v", err)
 	}
 	if preflight.calls != 0 {
-		t.Fatal("cancelled settling interval queried metrics")
+		t.Fatal("canceled settling interval queried metrics")
 	}
 }
 
@@ -184,7 +458,7 @@ func (s resumableUpdateStoreStub) LockGeneration(context.Context, int64) (func()
 
 func (s resumableUpdateStoreStub) Resume(context.Context, int64, string, ToolVersions) (Generation, map[string]bool, error) {
 	s.events = append(s.events, "resume")
-	return Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42", SourceURL: "unused"}, map[string]bool{
+	return Generation{ID: 42, RegionID: "geofabrik:norcal", SchemaName: "osm_build_42", SourceURL: "unused", RegionalGeneration: 1}, map[string]bool{
 		"tags-filter": true, "check-refs": true, "osm2pgsql": true, "postprocess": true, "derive": true,
 		"clip-candidates": true, "clip-replacements": true, "clip-apply": true, "clip-residual": true, "clip-finalize": true,
 		"attribute-parks-tags": true, "attribute-education": true, "attribute-slivers": true,
@@ -347,17 +621,21 @@ func TestUpdaterLogsLocalGenerationAndStageBanners(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		`2026-09-25 23:10:22 ====== Starting OSM update generation 42 (derivation v21) batch "download" ======`,
-		`====== OSM update generation 42 (derivation v21) batch "download" completed in 2s ======`,
-		`====== Starting OSM update generation 42 (derivation v21) batch "tags-filter" ======`,
-		`====== OSM update generation 42 (derivation v21) batch "tags-filter" completed in 2s ======`,
-		`====== OSM update generation 42 completed in`,
+		`2026-09-25 23:10:21 ====== Preparing source update: performing PostgreSQL storage cleanup ======`,
+		`====== Preparing source update: ensuring stats partitions are healthy ======`,
+		`2026-09-25 23:10:24 ====== Starting job #42 (generation #1, ruleset v21) batch "download" ======`,
+		`Downloading: https://download.geofabrik.de/north-america/us/california/norcal-latest.osm.pbf`,
+		"Wrote 3 bytes to " + filepath.Join(updater.ScratchRoot, "job-42", "source.osm.pbf"),
+		`====== Job #42 (generation #1, ruleset v21) batch "download" completed in 2s ======`,
+		`====== Starting job #42 (generation #1, ruleset v21) batch "tags-filter" ======`,
+		`====== Job #42 (generation #1, ruleset v21) batch "tags-filter" completed in 3s ======`,
+		`====== Job #42 (generation #1, ruleset v21) completed in`,
 	} {
 		if !strings.Contains(log.String(), expected) {
 			t.Errorf("log does not contain %q:\n%s", expected, log.String())
 		}
 	}
-	if !strings.Contains(log.String(), `batch "tags-filter" completed in 2s ======`+"\n\n") {
+	if !strings.Contains(log.String(), `batch "tags-filter" completed in 3s ======`+"\n\n") {
 		t.Fatalf("completion banner lacks a trailing blank line:\n%s", log.String())
 	}
 }
@@ -460,19 +738,82 @@ func TestStorageBelowPercentUsesStrictLowWaterThreshold(t *testing.T) {
 	}
 }
 
-func TestPostGCStorageObservationWaitsOnceWhenFirstSampleIsBelowLowWater(t *testing.T) {
+func TestHealthyPostBatchObservationDoesNotWaitForSmallStorageDrop(t *testing.T) {
 	finished := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	preflight := &sequenceStoragePreflight{observations: []StorageObservation{
-		{SampledAt: finished.Add(time.Second), FreeBytes: 90},
-		{SampledAt: finished.Add(31 * time.Second), FreeBytes: 120},
+		{SampledAt: finished.Add(-30 * time.Second), CapacityBytes: 1000, FreeBytes: 900},
+		{SampledAt: finished.Add(31 * time.Second), CapacityBytes: 1000, FreeBytes: 950},
 	}}
 	updater := Updater{StoragePreflight: preflight}
-	observation, err := updater.postGCStorageObservation(context.Background(), StorageObservation{FreeBytes: 100}, finished)
+	observation, err := updater.postGCStorageObservation(context.Background(), StorageObservation{CapacityBytes: 1000, FreeBytes: 950}, finished)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preflight.calls != 2 || observation.FreeBytes != 120 {
+	if preflight.calls != 1 || observation.FreeBytes != 900 {
 		t.Fatalf("calls=%d observation=%+v", preflight.calls, observation)
+	}
+}
+
+func TestLowHeadroomRetainsFreshnessAndSecondReading(t *testing.T) {
+	finished := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	preflight := &sequenceStoragePreflight{observations: []StorageObservation{
+		{SampledAt: finished.Add(time.Second), CapacityBytes: 1000, FreeBytes: 100},
+		{SampledAt: finished.Add(31 * time.Second), CapacityBytes: 1000, FreeBytes: 140},
+	}}
+	updater := Updater{StoragePreflight: preflight}
+	observation, err := updater.postGCStorageObservation(context.Background(), StorageObservation{CapacityBytes: 1000, FreeBytes: 140}, finished)
+	if err != nil || preflight.calls != 2 || observation.FreeBytes != 140 {
+		t.Fatal("low headroom lost its second fresh reading", preflight.calls, observation, err)
+	}
+}
+
+type invalidStorageObservation struct{ code StoragePreflightCode }
+
+func (s invalidStorageObservation) Check(context.Context) (StorageObservation, error) {
+	observation := StorageObservation{PVCName: "fixture", CapacityBytes: 1000, FreeBytes: 900, SampledAt: time.Now()}
+	return observation, &StoragePreflightError{Code: s.code, Observation: observation, Cause: errors.New("invalid required reading")}
+}
+func TestAdaptiveMonitoringFailsClosedOnInvalidRequiredObservations(t *testing.T) {
+	for _, code := range []StoragePreflightCode{StorageMetricStale, StorageMetricMissing, StorageMetricInvalid, StorageMetricsUnavailable, StoragePrimaryChanged} {
+		updater := Updater{StoragePreflight: invalidStorageObservation{code: code}}
+		if _, err := updater.postGCStorageObservation(context.Background(), StorageObservation{CapacityBytes: 1000, FreeBytes: 900}, time.Now()); err == nil {
+			t.Fatal("invalid metric accepted with healthy-looking headroom", code)
+		}
+	}
+}
+
+type primaryCheckedUpdateStore struct {
+	*updateStoreStub
+	checks  int
+	failure error
+}
+
+func (s *primaryCheckedUpdateStore) VerifyWriterPrimary(context.Context) error {
+	s.checks++
+	return s.failure
+}
+
+func TestStorageBypassPreservesPrimaryChecksAndRequiredMaintenance(t *testing.T) {
+	base := &updateStoreStub{}
+	store := &primaryCheckedUpdateStore{updateStoreStub: base}
+	pipeline := &maintainedUpdatePipelineStub{updatePipelineStub: updatePipelineStub{events: &base.events, validation: validUpdateReport()}}
+	updater := newTestUpdater(t, base, pipeline.updatePipelineStub)
+	updater.Store = store
+	updater.Pipeline = pipeline
+	updater.StoragePreflight = nil
+	updater.SkipStorageMonitoring = true
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err != nil {
+		t.Fatal(err)
+	}
+	if store.checks < 2 || pipeline.maintenanceCalls != 0 || base.statisticsCalls != 2 {
+		t.Fatal("bypass removed required work or retained mid-job vacuum", store.checks, pipeline.maintenanceCalls, base.statisticsCalls)
+	}
+	if !contains(base.events, "promote") || !contains(base.events, "gc") {
+		t.Fatal("bypass skipped publication/cleanup", base.events)
+	}
+	store.failure = errors.New("not a primary")
+	if _, err := updater.Run(context.Background(), "geofabrik:norcal"); err == nil || !strings.Contains(err.Error(), "not a primary") {
+		t.Fatal("bypass disabled writer validation", err)
 	}
 }
 
@@ -1099,7 +1440,7 @@ func TestUpdaterUsesGenerationScopedScratch(t *testing.T) {
 	store := &updateStoreStub{}
 	updater := newTestUpdater(t, store, updatePipelineStub{events: &store.events, validation: validUpdateReport()})
 	updater.Download = func(_ context.Context, _ *http.Client, _ Region, destination string, _ int64) (DownloadResult, error) {
-		if filepath.Base(filepath.Dir(destination)) != "generation-42" {
+		if filepath.Base(filepath.Dir(destination)) != "job-42" {
 			t.Fatalf("destination = %s", destination)
 		}
 		return DownloadResult{}, errors.New("stop")

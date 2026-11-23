@@ -24,6 +24,7 @@
   --table-message-font-size: 1.1rem;
   --cursor-tooltip-gap: 0.65rem;
   --summary-section-max-width: 90rem;
+  --map-route-start-color: #20a464;
   --row-hover: color-mix(in srgb, var(--route-ride) 7%, transparent);
 }
 
@@ -954,6 +955,15 @@ h2 {
   background: transparent;
   animation: none;
 }
+[data-dialog-pixel-aligned] {
+  translate: var(--dialog-pixel-offset-x, 0px) var(--dialog-pixel-offset-y, 0px);
+}
+.dialog-content[data-dialog-pixel-positioned] {
+  left: var(--dialog-pixel-left);
+  top: var(--dialog-pixel-top);
+  transform: none;
+  translate: none;
+}
 .dialog-content {
   position: fixed;
   z-index: 51;
@@ -1240,6 +1250,15 @@ h2 {
 .admin-page .stats-report-nav {
   margin-top: 0;
 }
+.admin-page .stats-sidebar {
+  padding-top: var(--space-5);
+}
+.admin-page--table-caption .stats-sidebar {
+  padding-top: calc(var(--space-5) + 1px);
+}
+.admin-page .stats-report-nav h2 {
+  margin-top: 0;
+}
 .admin-section,
 .admin-planned {
   position: relative;
@@ -1273,6 +1292,285 @@ h2 {
 }
 .admin-users {
   min-width: 51rem;
+}
+.workouts-section.osm-regions-section {
+  width: min(100%, 87rem);
+  margin-top: 0;
+}
+.osm-regions-section > .section-line {
+  margin-bottom: 0;
+}
+.osm-regions-section .osm-regions-search {
+  margin: var(--space-4) 0;
+}
+.osm-regions-table {
+  min-width: 71rem;
+}
+.osm-regions-table td {
+  white-space: nowrap;
+}
+.osm-regions-heading-label {
+  display: block;
+  padding: var(--space-3);
+}
+.osm-regions-table .workout-value-lane {
+  font-variant-numeric: tabular-nums;
+}
+.osm-regions-generation-value,
+.osm-regions-generation-tooltip > .tooltip-trigger {
+  min-width: 2em;
+}
+.osm-regions-generation-tooltip > .tooltip-trigger {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.osm-regions-viewport .dialog-table-frame {
+  margin-inline: 0;
+}
+.workout-table-wrap.osm-regions-table-wrap {
+  display: block;
+}
+.osm-regions-viewport .workout-row-sample {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+}
+.osm-regions-section .osm-regions-footer {
+  padding: var(--space-4) 0 0;
+}
+.osm-regions-table .osm-regions-actions-cell {
+  text-align: right !important;
+}
+.osm-regions-show-all-box {
+  position: relative;
+  top: 0;
+}
+.osm-regions-row {
+  cursor: pointer;
+}
+.osm-regions-section .osm-regions-refreshing {
+  color: var(--running-status);
+  cursor: help;
+}
+.osm-regions-name-tooltip,
+.osm-regions-name-tooltip > .tooltip-trigger {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  cursor: inherit;
+}
+.osm-regions-name-value {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.osm-regions-status,
+.osm-regions-status.table-cell-link {
+  font-weight: 750;
+}
+.osm-regions-status.osm-regions-status--ready {
+  color: var(--route-ride);
+}
+.osm-regions-status.osm-regions-status--downloading,
+.osm-regions-status.osm-regions-status--processing,
+.osm-regions-status.osm-regions-status--waiting,
+.osm-regions-status.osm-regions-status--pausing,
+.osm-regions-status.osm-regions-status--canceling {
+  color: var(--running-status);
+}
+.osm-regions-status.osm-regions-status--failed,
+.osm-regions-status.osm-regions-status--deleting {
+  color: var(--error);
+}
+.osm-regions-status.osm-regions-status--available {
+  color: var(--text);
+}
+.osm-regions-status.osm-regions-status--paused,
+.osm-regions-status.osm-regions-status--canceled {
+  color: var(--text-muted);
+}
+.osm-update-progress-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(72rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+  padding: 0;
+}
+.osm-update-progress-dialog .dialog-heading {
+  flex: 0 0 auto;
+  padding: var(--space-5);
+}
+.osm-update-status-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: 0 var(--space-5) var(--space-4);
+}
+.osm-update-current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 28rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.osm-update-icon-slot {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  min-width: 1rem;
+  place-items: center;
+  vertical-align: middle;
+}
+.osm-update-order {
+  display: inline-grid;
+  grid-template-columns: max-content 1rem;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+.osm-update-progress-table {
+  min-width: 62rem;
+}
+.osm-update-progress-dialog .dialog-table-frame--sticky {
+  height: calc(var(--dialog-table-height, calc(3rem + 20 * 3rem)) - 3px);
+  max-height: calc(100dvh - 15rem - 1px);
+}
+.osm-update-progress-dialog--compact .dialog-table-frame--sticky {
+  height: auto;
+}
+.osm-update-progress-dialog--compact .dialog-table-frame--sticky > [data-dialog-table-scroll] {
+  flex: 0 1 auto;
+}
+.workout-table.osm-update-progress-table th {
+  padding: var(--space-3);
+}
+.osm-update-progress-table td {
+  white-space: nowrap;
+}
+.workout-table .osm-update-task-row td {
+  padding: var(--space-2) var(--space-3);
+}
+.osm-update-task-sample {
+  display: inline-block;
+  min-height: 1.1rem;
+}
+.osm-update-read-error {
+  color: var(--error);
+}
+.osm-update-storage-policy {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  transform: translateY(-0.25rem);
+  text-align: right;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+.osm-update-policy-value {
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+.osm-update-policy-value--enabled {
+  color: var(--map-route-start-color);
+}
+.osm-update-policy-value--disabled {
+  color: var(--text-faint);
+}
+.osm-update-progress-dialog > .error-summary,
+.osm-update-progress-dialog > .osm-update-read-error {
+  margin: 0 var(--space-5) var(--space-4);
+  flex: 0 0 auto;
+}
+.osm-update-download-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.osm-update-download-error .tooltip {
+  display: inline;
+}
+.osm-update-download-url {
+  display: inline;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  user-select: text;
+}
+.osm-update-download-url:hover {
+  color: var(--accent);
+}
+.osm-update-progress-dialog .dialog-table-frame {
+  margin-bottom: var(--space-5);
+}
+.osm-regions-boundary-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(70rem, calc(100vw - 2rem));
+  height: auto;
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 0;
+}
+.osm-regions-boundary-dialog .dialog-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  background: var(--surface-elevated);
+  padding: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.osm-regions-boundary-dialog .icon-button,
+.osm-update-progress-dialog .icon-button {
+  border: 1px solid transparent;
+}
+.osm-regions-boundary-dialog .icon-button:hover,
+.osm-update-progress-dialog .icon-button:hover {
+  border-color: var(--accent);
+}
+.osm-regions-boundary-body {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 0;
+}
+.osm-regions-boundary-host,
+.osm-regions-boundary-map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.osm-regions-boundary-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  background: var(--surface);
+  text-align: center;
 }
 .admin-user-row {
   cursor: pointer;
@@ -1970,7 +2268,8 @@ h2 {
 .road-coverage-dialog .icon-button:hover {
   border-color: #ed7d0c;
 }
-.coverage-search {
+.coverage-search,
+.osm-regions-search {
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: 1.2rem minmax(0, 1fr);
@@ -1982,15 +2281,18 @@ h2 {
   padding: 0.15rem 0.7rem;
   background: var(--surface);
 }
-:root[data-input-modality="keyboard"] .coverage-search:focus-within {
+:root[data-input-modality="keyboard"] .coverage-search:focus-within,
+:root[data-input-modality="keyboard"] .osm-regions-search:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 28%, transparent);
 }
-.coverage-search svg {
+.coverage-search svg,
+.osm-regions-search svg {
   width: 1.05rem;
   color: var(--text-muted);
 }
-.coverage-search input {
+.coverage-search input,
+.osm-regions-search input {
   min-width: 0;
   min-height: 2.5rem;
   border: 0;
@@ -1998,15 +2300,20 @@ h2 {
   background: transparent;
   box-shadow: none;
 }
-.coverage-search input:focus {
+.coverage-search input:focus,
+.osm-regions-search input:focus {
   outline: 0;
 }
-.coverage-search input[type="search"]::-webkit-search-cancel-button {
+.coverage-search input[type="search"]::-webkit-search-cancel-button,
+.osm-regions-search input[type="search"]::-webkit-search-cancel-button {
   cursor: pointer;
 }
 .coverage-search input:-webkit-autofill,
 .coverage-search input:-webkit-autofill:hover,
-.coverage-search input:-webkit-autofill:focus {
+.coverage-search input:-webkit-autofill:focus,
+.osm-regions-search input:-webkit-autofill,
+.osm-regions-search input:-webkit-autofill:hover,
+.osm-regions-search input:-webkit-autofill:focus {
   -webkit-text-fill-color: var(--text);
   caret-color: var(--text);
   box-shadow: 0 0 0 1000px var(--surface) inset;
@@ -2022,6 +2329,12 @@ h2 {
   max-height: calc(100dvh - 15rem);
   margin: 0 var(--space-5);
   overflow: hidden;
+}
+.dialog-table-frame--sticky {
+  /* Keep the scrollport's border strokes clear of the outer clipping edge. */
+  padding-block: 1px;
+  max-height: calc(100dvh - 15rem + 2px);
+  top: var(--dialog-table-pixel-offset-y, 0px);
 }
 .dialog-table-measure {
   position: absolute;
@@ -2047,23 +2360,33 @@ h2 {
   text-align: center;
   pointer-events: none;
 }
-.road-coverage-table-wrap {
+.dialog-table-frame--sticky > [data-dialog-table-scroll] {
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.dialog-table-frame--sticky::after {
+  /* Keep the outline outside the scrolling layer and above its sticky header. */
+  content: "";
+  position: absolute;
+  inset: 1px 0;
+  z-index: 2;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  pointer-events: none;
 }
 .road-coverage-table {
+  --table-cell-min-height: 0px;
   min-width: 92rem;
 }
-.road-coverage-table thead {
+.dialog-table-frame--sticky thead {
   position: sticky;
   z-index: 1;
   top: 0;
-  background: var(--surface-elevated);
 }
 .road-coverage-table th:first-child,
 .road-coverage-table td:first-child {
@@ -2109,28 +2432,8 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.coverage-table-link {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  border: 0;
-  padding: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.coverage-table-link:hover {
-  color: var(--accent);
-}
-:root[data-input-modality="keyboard"] .coverage-table-link:focus-visible {
-  border-radius: 0.15rem;
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.road-coverage-footer {
+.road-coverage-footer,
+.osm-regions-footer {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
@@ -2139,11 +2442,13 @@ h2 {
   gap: var(--space-4) var(--space-5);
   padding: var(--space-4) var(--space-5) max(var(--space-5), env(safe-area-inset-bottom));
 }
-.road-coverage-footer .pagination {
+.road-coverage-footer .pagination,
+.osm-regions-footer .pagination {
   flex: 0 0 auto;
   margin: 0 0 0 auto;
 }
 .road-coverage-unnamed,
+.osm-regions-show-all,
 .artifact-failures-filter {
   display: inline-flex;
   align-items: center;
@@ -2153,13 +2458,59 @@ h2 {
   white-space: nowrap;
   cursor: pointer;
 }
-.road-coverage-unnamed input,
-.artifact-failures-filter input {
+.inline-checkbox {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
   width: 1rem;
   height: 1rem;
   min-height: 0;
   margin: 0;
-  accent-color: var(--accent);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.2rem;
+  color: var(--accent-ink);
+  background: var(--surface);
+  box-shadow: none;
+  cursor: pointer;
+}
+.inline-checkbox::before {
+  content: "";
+  width: 0.625rem;
+  height: 0.625rem;
+  background: currentColor;
+  clip-path: polygon(14% 44%, 0 59%, 40% 100%, 100% 19%, 85% 6%, 39% 68%);
+  opacity: 0;
+}
+.inline-checkbox:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.inline-checkbox:checked::before {
+  opacity: 1;
+}
+.inline-checkbox:disabled {
+  border-color: var(--disabled);
+  color: var(--disabled);
+  background: var(--surface-soft);
+  cursor: not-allowed;
+}
+.road-coverage-unnamed > .inline-checkbox {
+  position: relative;
+  top: 1px;
+}
+@media (forced-colors: active) {
+  .inline-checkbox,
+  .inline-checkbox:checked,
+  .inline-checkbox:disabled {
+    appearance: auto;
+    border: 0;
+    background: initial;
+  }
+  .inline-checkbox::before {
+    content: none;
+  }
 }
 .road-coverage-error-dialog {
   --road-coverage-error-inset: var(--space-5);
@@ -3505,7 +3856,7 @@ h2 {
   overflow: visible;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  background: var(--surface);
 }
 .workout-table-wrap.is-loading {
   display: block;
@@ -3522,14 +3873,16 @@ h2 {
   width: 38%;
 }
 .stats-table td.stats-count-cell,
-.stats-visits-table td.stats-action-cell {
+.workout-table td.table-action-cell {
   padding: 0;
 }
 .stats-count-link,
-.stats-cell-link {
+.table-cell-link {
   display: block;
   width: 100%;
-  min-height: calc(3rem - 1px);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--table-cell-min-height, calc(3rem - 1px));
   height: 100%;
   border: 0;
   border-radius: 0;
@@ -3542,15 +3895,15 @@ h2 {
   cursor: pointer;
 }
 .stats-count-cell,
-.stats-action-cell {
+.table-action-cell {
   cursor: pointer;
 }
 .stats-count-link:hover,
-.stats-action-cell:hover .stats-cell-link {
+.table-action-cell:hover .table-cell-link {
   color: var(--accent);
 }
 .stats-count-link:disabled,
-.stats-cell-link:disabled {
+.table-cell-link:disabled {
   color: var(--text);
   cursor: wait;
 }
@@ -3568,7 +3921,7 @@ h2 {
   background: transparent;
 }
 :root[data-input-modality="keyboard"] .stats-count-link:focus-visible,
-:root[data-input-modality="keyboard"] .stats-cell-link:focus-visible {
+:root[data-input-modality="keyboard"] .table-cell-link:focus-visible {
   outline: 2px solid #c026ff;
   outline-offset: -2px;
 }
@@ -3601,27 +3954,11 @@ h2 {
   align-items: center;
   transform: translateX(-50%);
 }
-.stats-visits-table-wrap {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding-top: 1px;
-}
 .stats-visits-table {
   min-width: 46.25rem;
 }
 .stats-visits-dialog--returns .stats-visits-table {
   min-width: 58.5rem;
-}
-.stats-visits-table thead {
-  position: sticky;
-  z-index: 1;
-  top: 1px;
-  background: var(--surface-elevated);
 }
 .stats-visits-table th:first-child {
   width: 20rem;
@@ -3643,8 +3980,13 @@ h2 {
   border-radius: inherit;
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+  background: var(--surface);
+}
+.workout-table thead {
+  background: var(--surface);
 }
 .workout-table th {
+  padding: 1px;
   border-bottom: 1px solid var(--border-strong);
   color: var(--text-muted);
   text-align: left;
@@ -3685,9 +4027,10 @@ h2 {
   white-space: pre;
 }
 .workout-table th[aria-sort="ascending"],
-.workout-table th[aria-sort="descending"] {
+.workout-table th[aria-sort="descending"],
+.workout-table th[aria-sort="ascending"] button:not(:disabled):hover,
+.workout-table th[aria-sort="descending"] button:not(:disabled):hover {
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 .workout-table th button:hover {
   color: var(--text);
@@ -4747,7 +5090,7 @@ h2 {
   border-color: var(--status-error);
   background: var(--status-error);
 }
-.sync-status--cancelled {
+.sync-status--canceled {
   color: var(--status-neutral-ink);
   border-color: var(--status-neutral);
   background: var(--status-neutral);
@@ -5150,7 +5493,7 @@ h2 {
 .sync-status-text--failed {
   color: var(--error);
 }
-.sync-status-text--cancelled {
+.sync-status-text--canceled {
   color: var(--text-muted);
 }
 .detail-link {

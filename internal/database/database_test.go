@@ -18,8 +18,8 @@ import (
 )
 
 func TestSupportedSchemaVersion(t *testing.T) {
-	if SupportedSchemaVersion != 32 {
-		t.Fatalf("SupportedSchemaVersion = %d, want 32", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 33 {
+		t.Fatalf("SupportedSchemaVersion = %d, want 33", SupportedSchemaVersion)
 	}
 }
 

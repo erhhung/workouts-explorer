@@ -13,7 +13,9 @@ import (
 func TestMatcherCopySegmentsScopedLogicalPaths(t *testing.T) {
 	query := strings.Join(strings.Fields(matcherCopySegmentsSQL), " ")
 	for _, fragment := range []string{
-		"LEFT JOIN LATERAL ( SELECT min(member.name) AS name,min(member.normalized_name) AS normalized_name FROM osm_active.path_segments member WHERE member.logical_path_id=segment.logical_path_id ) path ON true",
+		"logical_keys AS MATERIALIZED ( SELECT DISTINCT segment.logical_path_id FROM requested",
+		"FROM logical_keys key LEFT JOIN LATERAL ( SELECT min(member.name) AS name,min(member.normalized_name) AS normalized_name FROM osm_active.path_segments member WHERE member.logical_path_id=key.logical_path_id ) label ON true",
+		"LEFT JOIN path_labels path ON path.logical_path_id=segment.logical_path_id",
 		"segment.region_id=requested.region_id AND segment.generation_id=requested.generation_id AND segment.segment_id=requested.segment_id",
 		"locality.region_id=segment.region_id AND locality.generation_id=segment.generation_id AND locality.relation_id=segment.locality_relation_id",
 		"COALESCE(path.normalized_name,segment.tags->>'workouts:education_normalized_name')",

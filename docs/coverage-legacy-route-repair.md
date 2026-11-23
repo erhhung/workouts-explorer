@@ -102,7 +102,7 @@ replaces five functions: `read_coverage_reconciliation_routes`,
 6. Explicitly retry eligible failed/partially successful coverage parents through
    the owner Data Sync Retry action or `POST /api/jobs/{jobId}/retry`. Follow the
    latest-only, non-forking retry chain; do not manually rewrite child states or
-   retry successful children. Superseded/cancelled targets retain normal eligibility
+   retry successful children. Superseded/canceled targets retain normal eligibility
    rules. Observe each new attempt until terminal outcomes and durable results
    are verified; pending retries do not satisfy the M8 deployment gate.
 

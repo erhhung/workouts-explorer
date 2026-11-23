@@ -56,7 +56,7 @@ func TestCoverageMetricsExport(t *testing.T) {
 	m.matcherDuration.Record(ctx, 2)
 	m.routeDuration.Record(ctx, 12)
 	m.admissionWait.Record(ctx, 3)
-	for _, outcome := range []string{"applied", "no_evidence", "superseded", "cancelled"} {
+	for _, outcome := range []string{"applied", "no_evidence", "superseded", "canceled"} {
 		m.terminal(ctx, outcome, "")
 	}
 	for _, code := range []string{"coverage-route-timeout", "coverage-route-too-large", "coverage-route-invalid",
@@ -96,12 +96,12 @@ func TestCoverageMetricsExport(t *testing.T) {
 	}
 	for name, want := range map[string]map[string]int64{
 		"coverage.route.outcomes": {
-			"applied/none": 1, "no_evidence/none": 1, "superseded/none": 1, "cancelled/none": 1,
+			"applied/none": 1, "no_evidence/none": 1, "superseded/none": 1, "canceled/none": 1,
 			"failed/timeout": 1, "failed/limit": 1, "failed/invalid": 1, "failed/route_read": 1,
 			"failed/persist": 1, "failed/osm": 1, "failed/transient": 1, "failed/other": 1,
 		},
 		"coverage.control.calls": {
-			"heartbeat/renewed": 1, "heartbeat/lost": 1, "heartbeat/timeout": 1, "heartbeat/cancelled": 1,
+			"heartbeat/renewed": 1, "heartbeat/lost": 1, "heartbeat/timeout": 1, "heartbeat/canceled": 1,
 			"admission/denied": 1, "admission/acquired": 1, "release/released": 1, "release/not_found": 1, "release/error": 1,
 		},
 		"coverage.retry.attempts":   {"recovery": 1, "retry": 1, "timeout_backoff": 1},

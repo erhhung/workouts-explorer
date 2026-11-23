@@ -298,7 +298,7 @@ BEGIN
                WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                  AND contextual.code = 'coverage-route-start-context')) OR
            (log.code IN ('coverage-route-applied', 'coverage-route-no-evidence', 'coverage-route-failed',
-           'coverage-route-superseded', 'coverage-route-cancelled') AND EXISTS (
+           'coverage-route-superseded', 'coverage-route-canceled') AND EXISTS (
                SELECT 1 FROM app.job_logs contextual
                WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                  AND contextual.code = 'coverage-route-result-context')))
@@ -328,7 +328,7 @@ BEGIN
                    WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                      AND contextual.code = 'coverage-route-start-context')) OR
                (log.code IN ('coverage-route-applied', 'coverage-route-no-evidence', 'coverage-route-failed',
-               'coverage-route-superseded', 'coverage-route-cancelled') AND EXISTS (
+               'coverage-route-superseded', 'coverage-route-canceled') AND EXISTS (
                    SELECT 1 FROM app.job_logs contextual
                    WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                      AND contextual.code = 'coverage-route-result-context')));
@@ -484,12 +484,12 @@ CREATE TABLE app.coverage_job_progress (
     routes_processed integer NOT NULL DEFAULT 0 CHECK (routes_processed >= 0),
     routes_succeeded integer NOT NULL DEFAULT 0 CHECK (routes_succeeded >= 0),
     routes_failed integer NOT NULL DEFAULT 0 CHECK (routes_failed >= 0),
-    routes_cancelled integer NOT NULL DEFAULT 0 CHECK (routes_cancelled >= 0),
+    routes_canceled integer NOT NULL DEFAULT 0 CHECK (routes_canceled >= 0),
     routes_superseded integer NOT NULL DEFAULT 0 CHECK (routes_superseded >= 0),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     FOREIGN KEY (job_id, account_id) REFERENCES app.jobs (id, account_id) ON DELETE CASCADE,
     CHECK (routes_processed = routes_succeeded + routes_failed + routes_superseded),
-    CHECK (routes_processed + routes_cancelled <= routes_total)
+    CHECK (routes_processed + routes_canceled <= routes_total)
 );
 
 ALTER TABLE app.workout_coverage_states
@@ -655,7 +655,7 @@ BEGIN
         END IF;
         RETURN NEW;
     END IF;
-    IF OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN
+    IF OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN
         RAISE EXCEPTION 'terminal jobs are immutable' USING ERRCODE = '23514';
     END IF;
     IF OLD.id <> NEW.id OR OLD.kind <> NEW.kind OR OLD.account_id IS DISTINCT FROM NEW.account_id OR
@@ -673,9 +673,9 @@ BEGIN
         IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
             (transition = 'claim' AND OLD.status = 'queued' AND NEW.status = 'running') OR
             (transition = 'supersede' AND OLD.status = 'queued' AND NEW.status = 'succeeded') OR
-            (transition = 'recover' AND OLD.status = 'running' AND NEW.status IN ('queued', 'cancelled')) OR
-            (transition = 'finish' AND OLD.status = 'running' AND NEW.status IN ('succeeded', 'failed', 'cancelled')) OR
-            (transition = 'cancel' AND OLD.status = 'queued' AND NEW.status = 'cancelled')) THEN
+            (transition = 'recover' AND OLD.status = 'running' AND NEW.status IN ('queued', 'canceled')) OR
+            (transition = 'finish' AND OLD.status = 'running' AND NEW.status IN ('succeeded', 'failed', 'canceled')) OR
+            (transition = 'cancel' AND OLD.status = 'queued' AND NEW.status = 'canceled')) THEN
             RAISE EXCEPTION 'invalid job status transition' USING ERRCODE = '23514';
         END IF;
         IF NEW.attempt <> OLD.attempt AND NOT (transition = 'claim' AND NEW.attempt = OLD.attempt + 1) THEN
@@ -704,13 +704,13 @@ SET
     search_path = pg_catalog,
     app AS $function$
 DECLARE derived_status text; parent_kind text; child_count integer; queued_count integer; running_count integer;
-DECLARE succeeded_count integer; failed_count integer; cancelled_count integer; superseded_count integer;
+DECLARE succeeded_count integer; failed_count integer; canceled_count integer; superseded_count integer;
 BEGIN
     SELECT kind INTO parent_kind FROM app.jobs WHERE id = parent_id AND account_id = app.current_account_id() FOR UPDATE;
     IF NOT FOUND OR parent_kind NOT IN ('manual_ingest', 'scheduled_ingest', 'coverage_update') THEN RETURN; END IF;
     SELECT count( * ), count( * ) FILTER (WHERE status = 'queued'), count( * ) FILTER (WHERE status = 'running'),
-           count( * ) FILTER (WHERE status = 'succeeded'), count( * ) FILTER (WHERE status = 'failed'), count( * ) FILTER (WHERE status = 'cancelled')
-      INTO child_count, queued_count, running_count, succeeded_count, failed_count, cancelled_count
+           count( * ) FILTER (WHERE status = 'succeeded'), count( * ) FILTER (WHERE status = 'failed'), count( * ) FILTER (WHERE status = 'canceled')
+      INTO child_count, queued_count, running_count, succeeded_count, failed_count, canceled_count
       FROM app.jobs WHERE parent_job_id = parent_id AND account_id = app.current_account_id();
     IF child_count = 0 THEN RETURN; END IF;
     IF parent_kind = 'coverage_update' THEN
@@ -718,26 +718,26 @@ BEGIN
           JOIN app.coverage_route_job_contexts context ON context.job_id = child.id AND context.account_id = child.account_id
          WHERE child.parent_job_id = parent_id AND child.account_id = app.current_account_id()
            AND child.status = 'succeeded' AND context.result_outcome = 'superseded';
-        INSERT INTO app.coverage_job_progress(job_id, account_id, routes_total, routes_processed, routes_succeeded, routes_failed, routes_cancelled, routes_superseded)
+        INSERT INTO app.coverage_job_progress(job_id, account_id, routes_total, routes_processed, routes_succeeded, routes_failed, routes_canceled, routes_superseded)
         VALUES(parent_id, app.current_account_id(), child_count, succeeded_count + failed_count,
-            succeeded_count - superseded_count, failed_count, cancelled_count, superseded_count)
+            succeeded_count - superseded_count, failed_count, canceled_count, superseded_count)
         ON CONFLICT (job_id) DO UPDATE SET routes_total = EXCLUDED.routes_total, routes_processed = EXCLUDED.routes_processed,
             routes_succeeded = EXCLUDED.routes_succeeded, routes_failed = EXCLUDED.routes_failed,
-            routes_cancelled = EXCLUDED.routes_cancelled, routes_superseded = EXCLUDED.routes_superseded, updated_at = transaction_timestamp();
+            routes_canceled = EXCLUDED.routes_canceled, routes_superseded = EXCLUDED.routes_superseded, updated_at = transaction_timestamp();
     END IF;
     derived_status := CASE
         WHEN queued_count = child_count THEN 'queued'
         WHEN running_count > 0 OR (queued_count > 0 AND queued_count < child_count) THEN 'running'
         WHEN succeeded_count = child_count THEN 'succeeded'
-        WHEN succeeded_count > 0 AND failed_count + cancelled_count > 0 THEN 'partially_succeeded'
-        WHEN succeeded_count = 0 AND cancelled_count = child_count THEN 'cancelled'
+        WHEN succeeded_count > 0 AND failed_count + canceled_count > 0 THEN 'partially_succeeded'
+        WHEN succeeded_count = 0 AND canceled_count = child_count THEN 'canceled'
         ELSE 'failed' END;
     PERFORM set_config('app.job_transition', 'derive_parent', true);
     UPDATE app.jobs SET status = derived_status,
         progress_current = CASE WHEN parent_kind = 'coverage_update' THEN succeeded_count + failed_count ELSE progress_current END,
         progress_total = CASE WHEN parent_kind = 'coverage_update' THEN child_count ELSE progress_total END,
         started_at = CASE WHEN derived_status = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
-        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END
+        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN now() ELSE NULL END
      WHERE id = parent_id AND account_id = app.current_account_id() AND status IS DISTINCT FROM derived_status;
 END;
 $function$;
@@ -777,7 +777,7 @@ BEGIN
     IF requester_id IS NULL THEN RAISE EXCEPTION 'requester is required' USING ERRCODE = '22023'; END IF;
     SELECT status INTO target_status FROM app.jobs
      WHERE id = job_id AND account_id = app.current_account_id() AND kind = 'coverage_update' FOR UPDATE;
-    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN false; END IF;
+    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN false; END IF;
     FOR child_to_lock IN SELECT child.id FROM app.jobs child
       WHERE child.parent_job_id = job_id AND child.account_id = app.current_account_id()
         AND child.status IN ('queued', 'running') ORDER BY child.id
@@ -788,7 +788,7 @@ BEGIN
     UPDATE app.jobs parent SET cancel_requested_at = COALESCE(parent.cancel_requested_at, transaction_timestamp()),
         cancel_requested_by = COALESCE(parent.cancel_requested_by, requester_id)
      WHERE parent.id = request_coverage_job_cancellation.job_id AND parent.account_id = app.current_account_id();
-    UPDATE app.jobs child SET status = 'cancelled', terminal_at = transaction_timestamp(),
+    UPDATE app.jobs child SET status = 'canceled', terminal_at = transaction_timestamp(),
         cancel_requested_at = transaction_timestamp(), cancel_requested_by = requester_id
      WHERE child.parent_job_id = request_coverage_job_cancellation.job_id AND child.account_id = app.current_account_id()
        AND child.status = 'queued';
@@ -835,7 +835,7 @@ BEGIN
     IF NEW.status = 'queued' THEN
         UPDATE app.workout_coverage_states state SET processing_state = 'queued', updated_at = transaction_timestamp()
          WHERE state.account_id = NEW.account_id AND state.target_job_id = NEW.id;
-    ELSIF NEW.status = 'cancelled' THEN
+    ELSIF NEW.status = 'canceled' THEN
         UPDATE app.workout_coverage_states state SET
             processing_state = CASE WHEN state.applied_route_input_revision IS NULL THEN 'not_started' ELSE 'stale' END,
             processing_finished_at = transaction_timestamp(), updated_at = transaction_timestamp()
@@ -1142,7 +1142,7 @@ BEGIN
       INTO prior_parent FROM app.jobs job JOIN app.coverage_job_contexts context
         ON context.job_id = job.id AND context.account_id = job.account_id
      WHERE job.id = prior_job_id AND job.account_id = target_account AND job.kind = 'coverage_update'
-       AND job.status IN ('failed', 'partially_succeeded', 'cancelled') FOR UPDATE OF job;
+       AND job.status IN ('failed', 'partially_succeeded', 'canceled') FOR UPDATE OF job;
     IF NOT FOUND THEN RAISE EXCEPTION 'coverage retry requires a terminal parent' USING ERRCODE = '55000'; END IF;
     IF EXISTS (SELECT 1 FROM app.jobs retry WHERE retry.retry_of_job_id = prior_job_id AND retry.account_id = target_account
         AND retry.kind = 'coverage_update') THEN
@@ -1160,7 +1160,7 @@ BEGIN
           ON context.job_id = child.id AND context.account_id = child.account_id
          JOIN app.workout_coverage_states state ON state.workout_id = context.workout_id AND state.account_id = context.account_id
          WHERE child.parent_job_id = prior_job_id AND child.account_id = target_account
-           AND child.status IN ('failed', 'cancelled') AND state.readiness_state = 'map_data_ready'
+           AND child.status IN ('failed', 'canceled') AND state.readiness_state = 'map_data_ready'
          ORDER BY child.created_at, child.id FOR UPDATE OF state
     LOOP
         child_count := child_count + 1;
@@ -1181,7 +1181,7 @@ BEGIN
             ON context.job_id = child.id AND context.account_id = child.account_id
           JOIN app.workout_coverage_states state ON state.workout_id = context.workout_id AND state.account_id = context.account_id
          WHERE child.parent_job_id = prior_job_id AND child.account_id = target_account
-           AND child.status IN ('failed', 'cancelled') AND state.readiness_state = 'map_data_ready'
+           AND child.status IN ('failed', 'canceled') AND state.readiness_state = 'map_data_ready'
          ORDER BY child.created_at, child.id
     LOOP
         new_child_id := gen_random_uuid();

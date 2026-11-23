@@ -563,6 +563,8 @@ func TestMapCoverageReadinessExposesIndependentStatuses(t *testing.T) {
 		{pointer("map_data_ready"), pointer("failed"), true, true, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusFailed, generated.CoverageReadinessResultStatusCurrent},
 		{pointer("map_data_ready"), pointer("failed"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusFailed, generated.CoverageReadinessResultStatusStale},
 		{pointer("map_data_ready"), pointer("stale"), true, false, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusStale, generated.CoverageReadinessResultStatusStale},
+		{pointer("unavailable"), pointer("stale"), true, true, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusCurrent, generated.CoverageReadinessResultStatusCurrent},
+		{pointer("pending"), pointer("stale"), true, true, generated.CoverageReadinessMapDataStatusReady, generated.CoverageReadinessProcessingStatusCurrent, generated.CoverageReadinessResultStatusCurrent},
 	}
 	for _, test := range tests {
 		got := mapCoverageReadiness(test.state, test.processing, test.applied, test.appliedCurrent, nil)

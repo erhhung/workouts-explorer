@@ -164,7 +164,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	uncancelled, cancelled := false, true
+	uncanceled, canceled := false, true
 	assertCancellation := func(t *testing.T, r readerReservation, want *bool) {
 		t.Helper()
 		tx := beginAccount(t, ctx, db.coverage, r.account)
@@ -258,7 +258,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 		reset(t, 2)
 		r := newReaderProduction(t, db, "cancellation-helper-owner")
 		foreign := newReaderProductionJob(t, db, "cancellation-helper-foreign-owner")
-		assertCancellation(t, r, &uncancelled)
+		assertCancellation(t, r, &uncanceled)
 		for _, variant := range []string{"owner", "lease", "account", "missing"} {
 			bad := r
 			switch variant {
@@ -320,7 +320,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				t.Fatalf("foreign parent yielded cancellation authority: %v err=%v", result, err)
 			}
 		})
-		assertCancellation(t, r, &uncancelled)
+		assertCancellation(t, r, &uncanceled)
 		if !callBool(t, ctx, r.pool, r.account, `SELECT app.fail_coverage_route($1,$2,$3,1,'coverage-route-timeout','Synthetic timeout.')`, r.job, r.owner, r.lease) {
 			t.Fatal("could not make real terminal helper fixture")
 		}
@@ -598,7 +598,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 			t.Fatal("real parent cancellation failed")
 		}
 		if mustReaderAssign(t, ctx, production, cluster, keys) != nil || callBool(t, ctx, db.coverage, production.account, `SELECT app.acquire_coverage_matcher_slot($1,$2,$3,$4)`, production.job, production.owner, production.lease, uuid.New()) {
-			t.Fatal("cancelled running job was accepted")
+			t.Fatal("canceled running job was accepted")
 		}
 		diagnostic := newReaderDiagnostic(t, db, "inactive-owner", "2 minutes")
 		mustReaderAssign(t, ctx, diagnostic, cluster, keys)
@@ -662,13 +662,13 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				}()
 				bootstrapWaitEvent(t, ctx, admin, pid, "transactionid")
 				// A parent-first completion waiter must not hold the child. The
-				// cancelling transaction can lock children while retaining its parent.
+				// canceling transaction can lock children while retaining its parent.
 				if _, err := blocker.Exec(ctx, `SELECT 1 FROM app.jobs WHERE id=$1 FOR UPDATE NOWAIT`, r.job); err != nil {
 					t.Fatalf("completion held child while waiting for parent: %v", err)
 				}
-				var cancelled bool
-				if err := blocker.QueryRow(ctx, `SELECT app.request_coverage_job_cancellation($1,$2)`, r.parent, requester).Scan(&cancelled); err != nil || !cancelled {
-					t.Fatalf("parent cancellation blocked on completion: %t err=%v", cancelled, err)
+				var canceled bool
+				if err := blocker.QueryRow(ctx, `SELECT app.request_coverage_job_cancellation($1,$2)`, r.parent, requester).Scan(&canceled); err != nil || !canceled {
+					t.Fatalf("parent cancellation blocked on completion: %t err=%v", canceled, err)
 				}
 				if err := blocker.Commit(ctx); err != nil {
 					t.Fatal(err)
@@ -682,11 +682,11 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				if err := completion.Commit(ctx); err != nil {
 					t.Fatal(err)
 				}
-				var cancelledRunning bool
+				var canceledRunning bool
 				if err := admin.QueryRow(ctx, `SELECT status='running' AND cancel_requested_at IS NOT NULL
 					AND worker_id=$2 AND lease_token=$3 AND lease_expires_at>=clock_timestamp()
-					FROM app.jobs WHERE id=$1`, r.job, r.owner, r.lease).Scan(&cancelledRunning); err != nil || !cancelledRunning {
-					t.Fatalf("rejected completion changed cancelled running child: %t err=%v", cancelledRunning, err)
+					FROM app.jobs WHERE id=$1`, r.job, r.owner, r.lease).Scan(&canceledRunning); err != nil || !canceledRunning {
+					t.Fatalf("rejected completion changed canceled running child: %t err=%v", canceledRunning, err)
 				}
 			})
 		}
@@ -718,7 +718,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				if !callBool(t, ctx, prior.pool, prior.account, `SELECT app.release_matcher_slot($1,$2,$3)`, prior.slot, prior.owner, prior.lease) {
 					t.Fatal("could not retire prior physical reservation")
 				}
-				current := readerReservation{account: prior.account, job: uuid.New(), parent: uuid.New(), slot: uuid.New(), lease: uuid.New(), owner: "cancelled-evidence-owner", pool: db.coverage}
+				current := readerReservation{account: prior.account, job: uuid.New(), parent: uuid.New(), slot: uuid.New(), lease: uuid.New(), owner: "canceled-evidence-owner", pool: db.coverage}
 				tx = beginAccount(t, ctx, db.worker, current.account)
 				defer tx.Rollback(ctx)
 				routes := fmt.Sprintf(`[{"jobId":"%s","workoutId":"%s","routeRevision":1,"generations":[{"regionId":"geofabrik:test","generation":1}]}]`, current.job, workout)
@@ -739,7 +739,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 					t.Fatal(err)
 				}
 				requester := accountRequester(t, db, current.account)
-				assertCancellation(t, current, &uncancelled)
+				assertCancellation(t, current, &uncanceled)
 				target := current.parent
 				if scope == "child" {
 					target = current.job
@@ -753,7 +753,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				if !callBool(t, ctx, db.api, current.account, cancelQuery, target, requester) {
 					t.Fatal("actual committed cancellation was denied")
 				}
-				assertCancellation(t, current, &cancelled)
+				assertCancellation(t, current, &canceled)
 				// Compare full evidence, processing state, completion context, and the
 				// explorer generation, not just row counts or a rolled-back result.
 				capture := func() string {
@@ -776,7 +776,7 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 					tx = beginAccount(t, ctx, current.pool, current.account)
 					var result *string
 					if err := tx.QueryRow(ctx, `SELECT app.persist_coverage_route($1,$2,$3,1,'[{"regionId":"geofabrik:test","generation":1}]'::jsonb,$4::jsonb)`, current.job, current.owner, current.lease, payload).Scan(&result); err != nil || result != nil {
-						t.Fatalf("cancelled persistence accepted replacement payload: result=%v err=%v", result, err)
+						t.Fatalf("canceled persistence accepted replacement payload: result=%v err=%v", result, err)
 					}
 					if err := tx.Commit(ctx); err != nil {
 						t.Fatal(err)
@@ -784,25 +784,25 @@ func TestCoordinatedCoverageReadersIntegration(t *testing.T) {
 				}
 				if callBool(t, ctx, current.pool, current.account, `SELECT app.fail_coverage_route($1,$2,$3,1,'coverage-route-timeout','Synthetic timeout.')`, current.job, current.owner, current.lease) ||
 					callBool(t, ctx, current.pool, current.account, `SELECT app.supersede_coverage_route($1,$2,$3,1)`, current.job, current.owner, current.lease) {
-					t.Fatal("cancelled failure/supersede completion was accepted")
+					t.Fatal("canceled failure/supersede completion was accepted")
 				}
 				if after := capture(); before != after {
-					t.Fatal("cancelled completion changed prior evidence, processing state, result context, diagnostics, or account generation")
+					t.Fatal("canceled completion changed prior evidence, processing state, result context, diagnostics, or account generation")
 				}
-				var validCancelledLease, childCancelled, parentCancelled bool
+				var validCanceledLease, childCanceled, parentCanceled bool
 				if err := admin.QueryRow(ctx, `SELECT child.status='running'
 					AND (child.cancel_requested_at IS NOT NULL OR parent.cancel_requested_at IS NOT NULL)
 					AND child.worker_id=$2 AND child.lease_token=$3 AND child.lease_expires_at>=clock_timestamp(),
 					child.cancel_requested_at IS NOT NULL,parent.cancel_requested_at IS NOT NULL
 					FROM app.jobs child JOIN app.jobs parent ON parent.id=child.parent_job_id
-					WHERE child.id=$1`, current.job, current.owner, current.lease).Scan(&validCancelledLease, &childCancelled, &parentCancelled); err != nil || !validCancelledLease {
-					t.Fatalf("rejection did not retain cancelled running job with valid owner/lease: %t err=%v", validCancelledLease, err)
+					WHERE child.id=$1`, current.job, current.owner, current.lease).Scan(&validCanceledLease, &childCanceled, &parentCanceled); err != nil || !validCanceledLease {
+					t.Fatalf("rejection did not retain canceled running job with valid owner/lease: %t err=%v", validCanceledLease, err)
 				}
-				if childCancelled != (scope != "parent-only") || parentCancelled != (scope != "child") {
-					t.Fatalf("wrong committed cancellation scope: %s child=%t parent=%t", scope, childCancelled, parentCancelled)
+				if childCanceled != (scope != "parent-only") || parentCanceled != (scope != "child") {
+					t.Fatalf("wrong committed cancellation scope: %s child=%t parent=%t", scope, childCanceled, parentCanceled)
 				}
 				// Cancellation cleanup still uses the existing trusted finish entrypoint.
-				if !callBool(t, ctx, current.pool, current.account, `SELECT app.finish_job($1,$2,$3,'cancelled')`, current.job, current.owner, current.lease) {
+				if !callBool(t, ctx, current.pool, current.account, `SELECT app.finish_job($1,$2,$3,'canceled')`, current.job, current.owner, current.lease) {
 					t.Fatal("cancellation cleanup could not finish the fenced child")
 				}
 				assertCancellation(t, current, nil)

@@ -387,7 +387,7 @@ func finishSourceJob(t *testing.T, db *pgxpool.Pool, accountID, jobID, leaseToke
 	defer tx.Rollback(context.Background())
 	if _, err = tx.Exec(context.Background(), `SELECT set_config('app.account_id',$1,true)`, accountID.String()); err == nil {
 		var finished bool
-		err = tx.QueryRow(context.Background(), `SELECT app.finish_job($1,'source-api-test',$2,'cancelled')`, jobID, leaseToken).Scan(&finished)
+		err = tx.QueryRow(context.Background(), `SELECT app.finish_job($1,'source-api-test',$2,'canceled')`, jobID, leaseToken).Scan(&finished)
 		if err == nil && !finished {
 			err = errors.New("running source job was not finished")
 		}

@@ -23,7 +23,8 @@ is self-service; an administrator-triggered reset-email action is out of scope.
 | Workspace | Four tabs, guarded 1-4 shortcuts, Stats-style left navigation, deep links and retained category selection implemented; compact sign-out keeps its pending label/appearance stable |
 | Accounts | Combined directory, Registered dates, bounded usage, invitation lifecycle, disable/enable, conditional session revocation and background account deletion implemented; richer lifecycle detail remains pending; password recovery is self-service only |
 | Settings | Curated read-only effective configuration and identity/recovery link implemented; persistent console preferences, password change and session-management controls remain pending |
-| OSM Maps / Operations | Navigation only; controller, maintenance/tasks, announcements, audit and monitoring/recovery completion remain pending |
+| OSM Maps | Regions catalog/boundaries plus managed Download/Reprocess/View progress/Pause/Resume/Cancel/Delete implemented; separate Update history and Storage/cleanup UI remain planned |
+| Operations | Navigation only; maintenance/tasks, announcements, audit and monitoring/recovery completion remain pending |
 | Verification | 985 UI tests, Go checks and native32 lifecycle/readiness/isolation checks pass; Chromium dark/WebKit light verify disable/enable, credential-verified sign-in feedback and desktop/tablet containment; earlier strict-TLS SMTP and invitation/usage receipts retain their scope |
 
 See [development progress](development-progress.md#admin-account-disable-and-enable) for
@@ -167,7 +168,7 @@ remain separate from Summary, Map, Stats and Data Sync.
 - Mutations use CSRF, capture the actual selected identity, prevent duplicate
   submission and revalidate authority on the server. Show accepted task links and
   durable state rather than claiming completion when a command is merely queued.
-- Destructive dialogs name the exact account, candidate generation or scope and
+- Destructive dialogs name the exact account, candidate build or scope and
   initially focus the least destructive action. A late response cannot navigate
   an inactive workspace or reopen a dismissed menu/dialog.
 - Support desktop and reachable iPad-class layouts in both themes. M11 retains
@@ -227,7 +228,7 @@ remain separate from Summary, Map, Stats and Data Sync.
   reset-email action on 11/17/2026. Suspension
   denies sign-in and existing sessions, prevents new manual/scheduled jobs and
   cooperatively drains active work without purging data. Reactivation is explicit,
-  does not revive sessions or cancelled tasks, and resumes scheduling through the
+  does not revive sessions or canceled tasks, and resumes scheduling through the
   ordinary next-due policy without duplicating missed runs. Record every action.
 - Revoking sessions includes cookie and bearer sessions for that user; it does not
   interrupt the administrator's session. Administrators do not send reset links,
@@ -258,7 +259,7 @@ remain separate from Summary, Map, Stats and Data Sync.
   retain the dialog and row. Success updates the selected identity's status and
   restores row-trigger focus. Tab exit closes the dialog; late replies cannot reopen it.
 - Enable confirmation copy is **Enable @user? The user will be able to sign in
-  again and automatic sync will resume on schedule. Revoked sessions and cancelled
+  again and automatic sync will resume on schedule. Revoked sessions and canceled
   jobs will not be restored.** Replace `@user` with the selected bold username.
 - `PUT /api/admin/users/{userId}/access` accepts required boolean `enabled`.
   Administrator authorization and independent cookie CSRF are required. The fixed
@@ -275,8 +276,8 @@ remain separate from Summary, Map, Stats and Data Sync.
   authorized just before disable. Sign-in retains an account/principal issuance
   fence through session commit so it cannot race a completed disable.
 - Enable clears suspension only for active/disabled accounts. It restores sign-in
-  and normal next-due scheduling, never old sessions or cancelled jobs. Unused
-  automatic-retry allowance does not revive a cancelled Coverage run; an eligible
+  and normal next-due scheduling, never old sessions or canceled jobs. Unused
+  automatic-retry allowance does not revive a canceled Coverage run; an eligible
   manual retry or genuinely changed desired target follows the ordinary job policy.
 - Correct owner credentials for a disabled account return `401` with problem type
   `urn:workouts-explorer:problem:account-disabled`. Show exactly **Your account has
@@ -285,8 +286,9 @@ remain separate from Summary, Map, Stats and Data Sync.
   details. Recovery does not reactivate the account. Existing API-401 confirmation
   and sign-in redirection remain the detection mechanism; no new session polling is added.
 - At the owner's explicit request, the SQL is folded into `002_account_lifecycle.sql`.
-  There is no active 033; source/runtime remain 32/32. The existing database receives
-  a separately backed-up, rehearsed catalog upgrade preserving the exact Goose ledger.
+  Account access has no standalone migration. Canonical033 is reserved for region
+  management; the application source/schema is33 with minimum runtime32. Existing
+  installations use the separately rehearsed catalog/ledger adoption.
 
 ### Registered And View Usage
 
@@ -348,7 +350,13 @@ pass. The owner's purge/fresh-registration expectations include historical data
 and later schema additions, not only the rows currently visible in the explorer.
 
 - **Delete user** opens the shared compact destructive confirmation naming the
-  selected username and focusing Cancel first. On `DELETE /api/admin/users/{id}`
+  selected username and focusing Cancel first. Its title is **Delete user?**;
+  preserve the existing warning, then reuse the range-deletion confirmation field:
+  bold **Type DELETE to confirm.**, a text box with **DELETE** hint and Cancel/Yes
+  buttons. Yes remains disabled until the value is exactly uppercase `DELETE`,
+  without whitespace trimming. Clear confirmation on reopening or choosing another
+  user; pending acceptance disables both the input and duplicate submission.
+  On `DELETE /api/admin/users/{id}`
   acceptance, upsert that same row to yellow **Deleting**, retaining all other
   accepted rows and sort/scroll. Never optimistically remove an accepted deletion.
 - A database lock timeout before acceptance returns the sanitized
@@ -356,7 +364,7 @@ and later schema additions, not only the rows currently visible in the explorer.
   retry that condition at one-second intervals, at most 14 retries (approximately
   one minute including each three-second lock wait). Show waiting feedback; never
   retry unrelated errors automatically. Stop scheduled retries on admin-session
-  replacement or tab exit. Exhausted contention can be retried with Delete in the
+  replacement or tab exit. Exhausted contention can be retried with Yes in the
   same dialog, without reloading the page. Account/enqueue/sign-in fences are unchanged.
 - Users polls at the configured active cadence, accelerated to at most 10 seconds
   whenever a row is Deleting. Compatible refreshes keep existing row nodes mounted;
@@ -364,7 +372,7 @@ and later schema additions, not only the rows currently visible in the explorer.
   Inactive views pause polling and close transient dialogs. Late old-session/tab
   replies cannot reopen dialogs or restore identity state.
 - Deleting rows offer **View deletion**, returning only sanitized phase/counts/error
-  status. A dialog can be closed without cancelling the task. **Retry** nudges the
+  status. A dialog can be closed without canceling the task. **Retry** nudges the
   same durable task; no undo/reactivation/task-cancel operation is offered.
 - The account purge task is admin-owned and survives removal of all owner job
   rows. Original identity/invitation/reset/session state is removed, username/email
@@ -402,12 +410,298 @@ and later schema additions, not only the rows currently visible in the explorer.
 
 ## OSM Maps
 
+### OSM Processing Settings
+
+Settings includes **OSM Processing**, with the persisted, default-enabled
+**Monitor available database storage** checkbox and shared Save/error/loading
+behavior. Explain that this default applies to new downloads/reprocessing, while
+each actual start/resume captures the latest default, while a running execution
+keeps its captured policy. Completed history retains the final execution's value. Saving requires
+administrator browser authentication, CSRF and optimistic revision checking;
+late acknowledgements must not cross session replacement. Do not place this
+mutable setting in the read-only Effective configuration section.
+
+Progress shows **Database storage monitoring ENABLED/DISABLED** on the current
+task/elapsed row, right-aligned with the table. The label is regular text without
+  a colon and has two non-breaking spaces before the state. The state uses shared
+  all-caps heading typography with tighter, indicator-only letter spacing, green for ENABLED
+  (the same shared green as the map's start marker)
+and the same muted gray as n/a for DISABLED. Allow wrapping on narrow viewports
+without overflowing or obscuring the task line. Deletion is not subject to these monitoring
+checks. The authoritative [work-unit matrix](osm-region-updates.md#storage-monitoring-policy)
+defines precisely which probes/waits/conditional vacuum are skipped; cleanup,
+checkpoints, writer-primary/ownership checks, validation and required statistics
+are retained. Enabled mode accepts recent healthy readings and only waits for new
+readings on low headroom, rather than stalling every batch.
+
 This tab manages public OSM extracts used for Coverage, not background MapTiler
 styles or private user routes. Reuse the implemented
 [resumable updater](osm-resumable-rebuild.md) and promotion/reconciliation logic.
 
 ### Regions
 
+- Region lifecycle actions now use the dedicated controller described below.
+  Download/Reprocess requests enter a durable Waiting queue, default dispatch
+  concurrency1 (Helm-configurable), and expose distinct Downloading/Processing
+  activity. The shared-database writer lock remains stronger than dispatch limits.
+- Updater/cleanup Jobs identify the stable controller Deployment as their Kubernetes
+  owner, not its replaceable pod or ReplicaSet. Owner lookup is a name-scoped,
+  read-only Deployment GET; no owner-delete permission is added. Existing request
+  labels, approved-image validation and Job/pod UID guards remain enforced.
+- Pause retains checkpoints and shows Pausing until stopped, then Paused. Resume
+  requeues with Waiting behind running work. Cancel discards the unfinished
+  candidate and shows Canceling until stop and cleanup are confirmed, then
+  Canceled. A canceled/paused run retains its audit/task history. View progress
+  remains available for Canceled/Paused/Failed and active started work.
+- View progress titles use **Downloading <region ID>** or **Processing <region
+  ID>** while active and **Processed <region ID>** after successful completion,
+  including in-place completion polling, with a top-right X. The smaller current-task line has the shared circular
+  icon and **21 of 58 — clip-replacements — batch 25 of 95** formatting. New processing
+  inventories start with prepare-source, then download; earlier 57-step requests
+  retain their numbering and historical combined source timing. Only show a
+  batch suffix/count when the repeated task has a known total >1; completed rows
+  retain their recorded batch counts. Append active execution elapsed time,
+  including between-batch bookkeeping/metric waits, while processing, and the
+  recorded active wall-clock total after completion. Paused/queued
+  intervals do not inflate the timer.
+- The current-task icon uses the same task state as the corresponding table row,
+  rather than substituting the aggregate job state. Never-started queued work
+  reserves the waiting spinner in both locations. The final validate/finalize task
+  remains Running with no Finished time through publication, storage cleanup,
+  statistics maintenance and temporary-file cleanup. Complete it only after these
+  succeed, including post-promotion retries and legacy 57-step requests.
+- Before task execution, show only a spinner and the waiting message, without
+  a step counter or fabricated running table task. Queued resume history keeps
+  its real task icons. On open/current-task or stop-state changes, follow the
+  current row: 1–20 at the top, 21–57 with row `n-19` fully visible below the sticky
+  header, and the final task at absolute bottom. Adjust for shorter viewports;
+  same-task polling must not undo a manual scroll.
+- Download errors use **Failed to download <URL> | <reason>**, without repeated
+  task/region prefixes. The source URL is an inline copy button, not a navigation
+  link. Reuse shared tooltip/theme/focus behavior; support click and keyboard
+  activation, copy only the URL and provide accessible success/failure feedback.
+  Reset copy feedback when the message changes or the dialog reopens, and wrap
+  long source URLs within the mobile error panel.
+- All task failure summaries omit the redundant `<task> failed:` prefix; existing
+  history also hides that current-task prefix in the dialog. Log instructions use
+  **Review the updater pod logs for this job.** Preserve a specific validation-gate
+  cause when available rather than replacing it with an exit-code fallback.
+- Its sole table is ordered and unsortable, with no search or page buttons, a
+  scrollable viewport capped at the existing twenty-row size and ten-second
+  open-dialog polling. Lists of twenty steps or fewer fit their actual header and
+  rows without unused reserved space or clipping the last row; longer lists retain
+  the established sizing. Viewport bounds and horizontal scrolling still apply.
+  Columns are
+  Step, Task, Batch, Started and Finished. The step number is right-aligned in a
+  shared lane and every row reserves icon space, including unstarted tasks.
+  Completed/running/failed/canceled marks are green check/spinner/red X/gray X;
+  local timestamps refer to the first batch start and whole-task finish. Missing
+  or inapplicable values use muted `n/a`. Stopped outcomes get the shared framed
+  error/status summary. See [the region update guide](osm-region-updates.md).
+- Opening progress focuses its scrollable step table. Native Up/Down and Home/End
+  scroll that list without moving the underlying page; polling preserves focus and
+  scroll. Closing returns to the invoking status/menu action or its surviving fallback.
+- View job progress and the status shortcut are enabled immediately for every
+  admitted request, including never-started Waiting downloads and queued deletion.
+  Titles use the operation's phase immediately. The current line reserves a spinner
+  and names the first step alongside Waiting for updater capacity/Waiting to start;
+  resumed requests retain their current step and Waiting to resume processing.
+- Hovering a task name uses the help cursor and shared styled tooltip, also
+  available on keyboard focus. The tooltip takes its text directly from the
+  corresponding **Work and completion boundary** cell in the
+  [rebuild inventory](osm-resumable-rebuild.md#full-rebuild-batch-inventory),
+  imported and watched by the UI build rather than maintained as separate copy.
+  Descriptions explain the purpose in plain language, use at most two sentences
+  and omit database/algorithm jargon. Cleanup and older-job help follow the same rule.
+- Downloading, Processing, Canceled, Paused, Failed and Ready status cells open
+  the same View progress dialog when a run history is available. Reuse the shared
+  full-cell action, accent hover and single keyboard stop; closing returns focus
+  to that status action. Ready without managed run history remains plain text.
+- Ready offers Reprocess region; Paused offers Resume processing and Cancel
+  processing; Failed offers Resume processing and Clear job status; Canceled
+  offers Download region and Clear job status. Keep shared boundary/history and
+  separate deletion actions. Failed Resume restores prerequisites when no durable
+  import checkpoint survives, otherwise it resumes durable processing.
+- Clear job status hides the latest stopped outcome, restoring Available without
+  a promoted generation or Ready with one. Preserve run/audit history and region
+  data, reject active work and do not revive an older failed overlay.
+- Status-cell actions preserve semantic normal colors in both themes: running/
+  pending/stopping yellow, failed/deleting red, paused/canceled muted gray, Ready
+  green and Available normal text. Shared cell hover still uses the accent.
+- Context menus put Show boundaries first and View job progress second when
+  applicable, then a divider before job commands. Failed orders Resume processing
+  then Clear job status; Canceled orders Download region then Clear job status.
+- Generation values are region-local successful-promotion numbers starting at1;
+  failed/canceled candidates do not advance them. Keep immutable global build IDs
+  for internal references, and match duration/promotion history by that build ID.
+- Finished timestamps show first-to-final active task-span elapsed help, including
+  metrics-settle waits and using the actual post-wait Finished boundary. Recorded
+  task spans can overlap for revisited phases; the job total is independent.
+  Known totals show elapsed help
+  such as **2m 40s total**, using the styled tooltip and question-mark cursor.
+  Accumulate completed batch runtimes, excluding failed attempts and pause/resume
+  idle time. Generation help combines the promotion date and matching completed
+  job total, including successful promotion/cleanup; historical unknown totals
+  stay omitted rather than inferred from timestamp differences.
+- Keep the boundary outline at **5px**. Larger round-join radii are not pursued
+  when they require a heavier stroke; retain `line-join: round` and
+  `line-round-limit: 0` without modifying the geographic boundary geometry.
+- Refresh help must dismiss on pointer exit, outside click, Escape and window
+  blur. Replacing the clicked button with a status label must clear stale child
+  focus, and subsequent progress-counter updates must not resurrect dismissed
+  help. Completion polls update existing rows automatically and restore the action.
+- The Regions table reuses Accounts/Users' `workouts-section`, H2 section-line
+  and right-hand **Refresh catalogs** text action, with a Regions-only **87rem**
+  maximum width shared by its heading, search, table and footer. Workout log's
+  maximum remains 90rem. Do not add an Administration eyebrow, separate page title,
+  provider cards or search-disclosure button. A divider precedes the always-
+  visible Road Coverage-style search field and shared table viewport.
+- Columns, in order: **Name**, **Date**, **PBF size**, **Downloaded**,
+  **Generation**, **Database usage**, **Workouts**, **Status**, then the shared ellipsis menu.
+  Name defaults ascending; date/size/downloaded/usage default descending when
+  selected. Generation is not sortable. Missing values use Workout log's muted
+  `n/a`, not Unknown/dashes/zero. Date/size lanes right-align within the common
+  column extent while that extent stays left-anchored in its padded cell.
+- Generation reuses the same right-aligned numeric lane. Its styled help target
+  has a minimum width of **2em**, right-aligned to the number; the rest of the cell
+  keeps its ordinary row cursor rather than a cell-wide help cursor.
+- Workouts uses a **9rem** track, widened by 3rem after its initial addition.
+  Status is 1rem narrower and PBF size is 1rem narrower than the initial Workouts
+  layout; the other tracks retain their widths. The minimum table width is **71rem**.
+  It uses Generation's right-aligned
+  numeric lane and **2em** minimum styled hover target, and defaults descending
+  when sorted. Its value is the distinct all-account workout count for routes
+  intersecting the region, including routes not yet processed. Its help reads
+  **n coverage routes**, counting applied results for current route inputs using
+  this region's latest promoted generation. New promotions reset that progress
+  count while retaining the total; successful Coverage updates increase it.
+  Without a generation value, Workouts has no tooltip/help cursor and inherits
+  the row's ordinary hand cursor.
+- After the initial column adjustment, reduce Downloaded and Status by 10% each
+  and transfer both released widths to Name. Preserve the fixed ellipsis track
+  and shared header/action boundary at every responsive table width.
+- Database usage's width allocation is 25% smaller than the initial Regions
+  table; transfer that complete allocation to Name. Status consumes the remaining
+  data-column width, leaving only the shared fixed-width ellipsis column. Its
+  cell-wide header hover must reach the ellipsis trigger's padded boundary rather
+  than leaving spare space in the action column.
+- Date displays the local short calendar date; its tooltip gives exact local
+  date/time/seconds/time-zone abbreviation. PBF size and Database usage tooltips
+  contain only grouped exact bytes. Database usage always has one decimal place.
+  Downloaded shows the recorded download date with exact downloaded bytes in its
+  tooltip. Generation's tooltip combines the promotion's long local calendar date
+  with the matching completed job's active wall-clock total when recorded.
+  Name's tooltip is its full provider-qualified region ID. Provider HTML line
+  breaks become spaces; raw slug labels such as `us/district-of-columbia` are
+  displayed as **US / District of Columbia**, without changing stored IDs.
+- Title casing is generic word-level formatting, not a region-name allowlist.
+  Capitalize words/hyphenated components, preserve existing acronyms/internal
+  capitals, and lowercase common prepositions/articles except at a segment start.
+  This covers **Polynésie Française (French Polynesia)** as well as localized
+  Polish/Czech labels. Keep punctuation and provider IDs intact.
+  Minor words include **mit**, **et**, **y**, **with**, **de**, **da**, **la**,
+  **includes** and the whole abbreviation **a.k.a.**. Keep them lowercase unless
+  they begin the name/path segment. Parenthetical descriptions do not reset that
+  first-word exception; e.g. **(includes …)** and **(a.k.a. …)** stay lowercase.
+- Ready is green, Downloading/Processing yellow, Failed/Deleting red, and Available
+  ordinary theme text. These are region lifecycle states, not catalog-refresh
+  states: a global metadata refresh must not label every region Processing.
+- Paginate at **25** rows. Keep current row/cell nodes mounted through compatible
+  paging, sorting, searching and polling; hide unused slots on a short last page.
+  Preserve the unfiltered viewport capacity through searches and filters. The
+  Regions footer has unchecked-by-default **Show all regions** on the left
+  and standard page buttons on the right. Unchecked excludes only Available.
+  Reserve exactly 25 row slots even when the filtered/default view has one row.
+- Regions owns its `osm-regions-*` search/footer/checkbox/name/status/map hooks;
+  equal properties may share CSS selector groups with Road Coverage, but Regions
+  must not inherit Road Coverage's checkbox positioning. The Regions box omits
+  Road Coverage's +1px downshift, moving only that box up by one pixel. Right-align
+  the ellipsis trigger so its top/right/bottom insets match, independent of spare
+  column width. A missing value without tooltip content is a plain `n/a` span and
+  inherits the clickable row's hand cursor, not a help cursor.
+- The persistent Regions search opts into navigation while unfocused. Admin
+  shortcuts 1-4 and arrow paging remain enabled outside focused editing; focused
+  input, open menus, modal ownership, modifiers and composition remain guarded.
+  **A** toggles **Show all regions** on this page only, resets paging just like
+  clicking the checkbox and exposes `aria-keyshortcuts="A"`. Uppercase/lowercase
+  work; key repeat must not toggle repeatedly or leak to inactive admin sections.
+  **/** focuses the visible search field in the current dialog, or the active page
+  when no dialog is open. Prefer the focused paging region when it has its own
+  search. Do not fall through a search-less dialog, steal menu/typing ownership,
+  intercept modified/composition keys or insert the activating slash. An already
+  focused input still accepts literal slashes, and a held focus shortcut must not
+  fill the newly focused field with repeated slashes.
+- Failed, resumable, unpromoted candidates also offer **Cancel processing** through
+  the existing audited cancellation command. It discards only the unfinished
+  candidate before a fresh download/reprocess under changed processing rules;
+  failed post-promotion maintenance cannot use this action.
+- While a refresh is pending/running, replace the action with a yellow,
+  non-clickable **Refreshing catalogs** help label. Tooltip progress reads
+  **123 of 554 regions cataloged**; partial-result help uses ** — ** before
+  **cached values retained**. Do not leave a gray clickable-looking action.
+- A row click or its native keyboard name action opens **Show boundaries**; the
+  ellipsis menu is independent. The modal title is the region name, with top-right
+  X dismissal. Use the theme's **Streets** MapTiler style and a magenta boundary:
+  25% fill and a five-pixel outline, both below every base-map symbol/text label.
+  Boundary line segments use rounded joins at their corners.
+  Set `line-round-limit: 0` as well as `line-join: round`; MapLibre's default 1.05
+  otherwise converts shallow round joins back to miters at obtuse corners.
+  Fit the boundary when opened and restore focus to the source row action.
+  The canvas is square at the existing dialog width; shorter screens scroll the
+  bounded dialog with a sticky heading/X rather than squashing the map height.
+- Keep one map/WebGL canvas alive across dismissals and subsequent region
+  examinations. Park its DOM node while the modal portal is absent; reopening
+  reparents/resizes it, replaces the boundary data and fits the selected extent.
+  Theme changes replace style on that same map. Only session/workspace teardown
+  disposes it. Fetch/cache geometry per region, not in every bulk list response.
+- **Delete region** is a danger action below a divider, enabled when stored data
+  remains and no updater/cleanup is active. Its shared confirmation names the
+  actual region and focuses Cancel. Acceptance immediately shows red **Deleting**;
+  its status opens the three-task deletion progress dialog. Keep Deleting through
+  interrupted cleanup/retries and until the pod has stopped, the durable receipt
+   is complete and all region relations/temporary processing schemas are physically gone. Then
+  show Available and clear generation/download/usage values. Preserve provider
+  boundaries, audit/promotion history and other regions; old checkpoints cannot
+  resume after deletion. Available rows follow Show all regions as usual.
+- Deletion progress uses **Deleting <region ID>** while pending/running and
+  **Deleted <region ID>** after successful cleanup, including in-place completion
+  and historical progress opened from Available. Its three steps use the same
+  short-list sizing contract as other progress dialogs.
+- The confirmation has three logical lines: **Delete <name> (<region ID>)?**;
+  **This will permanently delete processed map data as well as data from any unfinished processing job to reclaim database storage; this region will then become available for download again.**;
+  **Workout routes in this region that have already updated their coverage will continue to display unaffected.**
+  Already-applied, unchanged Coverage remains enabled/current without a missing-map
+  tooltip or stale icon solely because regional source data was removed. Regional
+  high-watermarks survive deletion; a newer promoted generation properly makes
+  prior Coverage stale. Routes without applied Coverage still need active map data.
+- **Refresh catalogs** queues a durable administrator-owned application
+  job for configured `osm.dataProviders`; equivalent active requests coalesce.
+  Accepted work survives browser closure/navigation and worker replacement.
+  Active refresh polls at most every five seconds; inactive Regions pauses reads.
+- Save each supported provider index first, then obtain PBF Content-Length and
+  Last-Modified with HEAD-only requests. Honor
+  `osm.catalogRefresh.metadataConcurrency` (default **5**, range 1-32), including
+  redirects and bounded retries, independently of owner ingest slots. Geofabrik
+  is the only current adapter. Unsupported providers produce safe failure status.
+- Track provider attempt/success and per-region metadata observation/attempt
+  separately. Failed metadata requests retain prior values; report checked/total,
+  failures and partial outcomes. Lease/token fencing and an OSM advisory lock
+  exclude competing refreshers. Retry abandoned executions at most three times.
+- Show Name/Status, current provider PBF size/file date, the active generation's
+  download date/actual bytes and current database footprint using the column
+  labels and formatting specified above.
+  Sum its three canonical partitions including indexes/TOAST; exclude shared
+  metadata/timezones, builds, retired garbage, WAL, backups and replicas. Legacy
+  download times remain null in metadata and display as `n/a`. Preserve
+  search/sort/scroll and existing rows.
+- The worker refreshes public storage projections every five minutes without
+  provider HTTP. Promotion also records a processed-size snapshot. PBF source
+  timestamp, download completion and promotion remain distinct metadata fields.
+  Support hierarchical provider IDs while retaining existing norcal/socal IDs.
+- The API reads admin-only application projections, not an OSM writer login.
+  The worker's separate `workouts_osm_catalog` role has region INSERT/UPDATE,
+  bounded public generation/storage reads and a per-region size function only;
+  no generation promotion/delete/DDL or Kubernetes Job-launching permissions.
 - List configured, prepared and in-progress provider-qualified regions. Search
   the supported provider catalog by display name/ID to choose an initial region;
   show published extract metadata and available size/coverage information.
@@ -436,9 +730,10 @@ styles or private user routes. Reuse the implemented
   bounded sanitized events/logs, retries, active execution and promotion outcome.
 - Resume retained work only with matching source/tool/image/stage fences; show a
   safe explanation when a new candidate or retained compatible image is required.
-- Offer cooperative execution cancellation where supported. Preserve resumable
-  work after the durable boundary; cancellation is not an implicit candidate abort.
-  An explicit **Abort candidate** separately fails and removes the retained build.
+- Offer cooperative stop, with Pausing/Canceling shown until confirmed stopped.
+  Managed Pause preserves resumable work; managed Cancel explicitly authorizes
+  candidate discard and remains Canceling until cleanup is verified. Standalone
+  CLI cancellation retains the existing explicit Abort candidate recovery path.
 - A retry/resume of a blocked generation cannot bypass an operator clearance.
   Preserve existing work and avoid creating a second generation for that region.
 - Show public promotion/reconciliation status through bounded operational
@@ -609,7 +904,7 @@ back into their desired configuration.
 
 ### Dedicated OSM Job Controller
 
-UI-initiated updater Jobs require Kubernetes API access. **Add a separate,
+UI-initiated updater Jobs require Kubernetes API access. **Use the separate,
 internal OSM job-controller pod/Deployment**, using a dedicated ServiceAccount
 and namespace-scoped Role/RoleBinding. Reuse the existing worker/OSM code and
 images where practical; do not give this access to the public API, UI, general

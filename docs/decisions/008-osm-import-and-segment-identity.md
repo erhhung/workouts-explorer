@@ -44,11 +44,11 @@ importer, derivation tools, schema, or stable segment identity.
 - Long-lived OSM data and indexes must fit within 20 GiB. The spike must measure
   importer scratch space and WAL separately and must not assume that two complete
   regional generations fit concurrently.
-- Configuration is an ordered list of provider-qualified named extracts, not
-  coordinates, radii, or dynamically cached regions. The initial list contains
-  Geofabrik extract ID `norcal` (Northern California).
+- Administrators select provider-qualified named regions through the Regions UI,
+  rather than supplying a deployment-time list or private route coordinates.
+  Promotion makes a validated region eligible for Coverage automatically.
 - Product and operational terminology calls these named datasets regions. The
-  worker configuration contains `osm.regions`, `osm.dataProviders`,
+  worker configuration contains `osm.dataProviders`,
   `osm.autoAddRegions`, and `osm.maxAutoDownloadBytes`; provider source metadata
   may continue to use the upstream term extract internally.
 - When automatic addition is enabled, an ingest outside promoted regions resolves
@@ -56,7 +56,7 @@ importer, derivation tools, schema, or stable segment identity.
   eligible only when its advertised PBF size does not exceed the byte ceiling.
   Resolution enqueues or reuses one active region-update job and never sends the
   route envelope or points to the provider.
-- The updater resolves configured IDs through Geofabrik's versioned index,
+- The updater resolves requested IDs through Geofabrik's versioned index,
   downloads each current PBF into ephemeral local scratch space, records its
   source URL, checksum, header timestamp, and replication metadata, and removes
   it after successful or failed processing. No persistent raw OSM archive or NFS
@@ -368,7 +368,7 @@ Generation schemas are mutable only during build and preparation. After clipping
 preparation adds fixed region and generation provenance, replaces candidate keys,
 validates partition-bound constraints, builds indexes matching the canonical
 parents, and renames `ways`, `localities`, and `path_segments` with their
-generation ID. Canonical contribution tables are `LIST (region_id)` partitioned
+global build ID. Canonical contribution tables are `LIST (region_id)` partitioned
 parents. Promotion moves those prepared tables into `osm_canonical`, detaches the
 old leaves for that region, and attaches the new leaves; it never performs a
 full-table `INSERT SELECT`. A transaction-scoped advisory lock serializes

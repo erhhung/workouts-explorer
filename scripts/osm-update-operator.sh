@@ -102,7 +102,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 launch_job() {
-  local action=$1 generation=${2:-} note=${3:-} reason=${4:-}
+  local action=$1 build=${2:-} note=${3:-} reason=${4:-}
   local suffix
   case "$action" in
     start)
@@ -125,8 +125,8 @@ launch_job() {
   suffix="operator-${action}-$(date +%Y%m%d%H%M%S)"
   suffix=${suffix,,}
 
-  export OSM_JOB_SUFFIX=$suffix OSM_UPDATE_ACTION=$action OSM_GENERATION_ID=$generation
-  export OSM_RESUME_GENERATION_ID=$generation OSM_OPERATOR_NOTE=$note OSM_ABORT_REASON=$reason
+  export OSM_JOB_SUFFIX=$suffix OSM_UPDATE_ACTION=$action OSM_GENERATION_ID=$build
+  export OSM_RESUME_GENERATION_ID=$build OSM_OPERATOR_NOTE=$note OSM_ABORT_REASON=$reason
   export OSM_RESOURCE_REQUEST_EPHEMERAL_STORAGE OSM_RESOURCE_LIMIT_EPHEMERAL_STORAGE
   envsubst < "$template" | kubectl --context "$KUBE_CONTEXT" -n "$OSM_NAMESPACE" apply -f - >/dev/null
   job_name="osm-update-${suffix}"
@@ -148,8 +148,8 @@ wait_for_job() {
 }
 
 run_short_job() {
-  local action=$1 generation=${2:-} note=${3:-} reason=${4:-} logs result=0
-  launch_job "$action" "$generation" "$note" "$reason"
+  local action=$1 build=${2:-} note=${3:-} reason=${4:-} logs result=0
+  launch_job "$action" "$build" "$note" "$reason"
   if ! wait_for_job "$job_name"; then
     result=1
   fi
@@ -257,10 +257,10 @@ choose() {
 while true; do
   status=$(probe_status) || exit 1
   if [[ $(jq -r '.found' <<<"$status") != true ]]; then
-    printf '\nNo incomplete OSM generation exists for %s.\n' "$OSM_REGION_ID"
-    printf 'The next generation will be %s for derivation version %s.\n' \
-      "$(jq -r '.nextGenerationId' <<<"$status")" "$(jq -r '.derivationVersion' <<<"$status")"
-    answer=$(choose 'Choose an action:' '1) Start a new generation' '2) Refresh status' '0) Exit')
+    printf '\nNo unfinished OSM processing job exists for %s.\n' "$OSM_REGION_ID"
+    printf 'The next processing job will be %s for derivation version %s.\n' \
+      "$(jq -r '.nextBuildId' <<<"$status")" "$(jq -r '.derivationVersion' <<<"$status")"
+    answer=$(choose 'Choose an action:' '1) Start a new build' '2) Refresh status' '0) Exit')
     case "$answer" in
       1)
         cleanup_prior_update_jobs
@@ -276,7 +276,7 @@ while true; do
     continue
   fi
 
-  generation=$(jq -r '.generationId' <<<"$status")
+  build=$(jq -r '.buildId' <<<"$status")
   state=$(jq -r '.state' <<<"$status")
   stage_state=$(jq -r '.currentStage.state // "none"' <<<"$status")
   active_job_names=$(kubectl --context "$KUBE_CONTEXT" -n "$OSM_NAMESPACE" get jobs \
@@ -286,8 +286,8 @@ while true; do
   if [[ -n "$active_job_names" ]]; then
     controller_running=true
   fi
-  printf '\nCurrent OSM generation status:\n'
-  jq '{generationId, regionId, state, schemaName, failure, currentStage,
+  printf '\nCurrent OSM processing status:\n'
+  jq '{buildId, generation, regionId, state, schemaName, failure, currentStage,
     block: (if .block != null and .block.clearedAt == null then .block else null end)} |
     with_entries(select(.value != null))' <<<"$status"
   if ! postgres_primary_storage; then
@@ -301,15 +301,15 @@ while true; do
   elif [[ "$blocked" == true ]]; then
     if [[ "$block_reason" == "insufficient_space" ]]; then
       unblock_note_prompt='Describe the completed storage remediation: '
-      answer=$(choose 'The generation is storage-capacity-blocked:' '1) Unblock after storage remediation' '2) Abort the generation' '3) Refresh status' '0) Exit')
+      answer=$(choose 'The processing job is storage-capacity-blocked:' '1) Unblock after storage remediation' '2) Abort the processing job' '3) Refresh status' '0) Exit')
     else
       unblock_note_prompt='Describe how the preflight failure was resolved: '
-      answer=$(choose "The generation is preflight-blocked (${block_reason}):" '1) Unblock after resolving the preflight failure' '2) Abort the generation' '3) Refresh status' '0) Exit')
+      answer=$(choose "The processing job is preflight-blocked (${block_reason}):" '1) Unblock after resolving the preflight failure' '2) Abort the processing job' '3) Refresh status' '0) Exit')
     fi
   elif [[ "$state" == "building" && "$stage_state" == "running" && "$controller_running" == true ]]; then
-    answer=$(choose "The generation is actively running as Job \"${active_job_names//$'\n'/, }\":" '1) Abort the generation' '2) Refresh status' '0) Exit')
+    answer=$(choose "The processing job is actively running as Job \"${active_job_names//$'\n'/, }\":" '1) Abort the processing job' '2) Refresh status' '0) Exit')
   else
-    answer=$(choose 'Choose a valid follow-up:' '1) Resume the generation' '2) Abort the generation' '3) Refresh status' '0) Exit')
+    answer=$(choose 'Choose a valid follow-up:' '1) Resume the build' '2) Abort the processing job' '3) Refresh status' '0) Exit')
   fi
 
   if [[ "$state" == "evaluating" ]]; then
@@ -347,7 +347,7 @@ while true; do
   case "$action" in
     resume)
       cleanup_prior_update_jobs
-      launch_job resume "$generation"
+      launch_job resume "$build"
       job_persistent=true
       printf '\nStarted "%s". The controller\nwill rerun storage preflight and continue from its durable cursor.\n' "$job_name"
       exit 0
@@ -358,23 +358,23 @@ while true; do
         printf 'A remediation note is required.\n' >&2
         continue
       fi
-      output=$(run_short_job unblock "$generation" "$note") || { printf '%s\n' "$output" >&2; exit 1; }
+      output=$(run_short_job unblock "$build" "$note") || { printf '%s\n' "$output" >&2; exit 1; }
       printf '%s\n' "$output"
-      printf '\nThe generation is unblocked. Choose Resume on the next prompt to run a fresh preflight.\n'
+      printf '\nThe processing job is unblocked. Choose Resume on the next prompt to run a fresh preflight.\n'
       ;;
     abort)
-      read -r -p $'\nReason for permanently aborting this generation: ' reason
+      read -r -p $'\nReason for permanently aborting this build: ' reason
       if [[ -z ${reason// } ]]; then
         printf 'An abort reason is required.\n' >&2
         continue
       fi
-      read -r -p "Type generation number \"$generation\" to confirm: " confirmation
-      if [[ "$confirmation" != "$generation" ]]; then
-        printf 'Abort cancelled.\n'
+      read -r -p "Type processing attempt ID \"$build\" to confirm: " confirmation
+      if [[ "$confirmation" != "$build" ]]; then
+        printf 'Abort canceled.\n'
         continue
       fi
       cleanup_prior_update_jobs
-      output=$(run_short_job abort "$generation" "" "$reason") || { printf '%s\n' "$output" >&2; exit 1; }
+      output=$(run_short_job abort "$build" "" "$reason") || { printf '%s\n' "$output" >&2; exit 1; }
       printf '%s\n' "$output"
       ;;
   esac

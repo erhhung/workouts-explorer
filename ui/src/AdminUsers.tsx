@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -219,6 +219,7 @@ export function AdminUsers({
   const accessCancel = useRef<HTMLButtonElement | null>(null);
   const accessLock = useRef(false);
   const [deleteTarget, setDeleteTarget] = useState<DirectoryEntry>();
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deletionTarget, setDeletionTarget] = useState<DirectoryEntry>();
   const deleteFocus = useRef<HTMLButtonElement | null>(null);
   const deleteCancel = useRef<HTMLButtonElement>(null);
@@ -638,6 +639,7 @@ export function AdminUsers({
                     }}
                     onDelete={(entry, trigger) => {
                       remove.reset();
+                      setDeleteConfirmation("");
                       deleteFocus.current = trigger;
                       setDeleteTarget(entry);
                     }}
@@ -749,7 +751,10 @@ export function AdminUsers({
       <Dialog.Root
         open={Boolean(deleteTarget) && active}
         onOpenChange={(open) => {
-          if (!open && !remove.isPending) setDeleteTarget(undefined);
+          if (!open && !remove.isPending) {
+            setDeleteTarget(undefined);
+            setDeleteConfirmation("");
+          }
         }}
       >
         <Dialog.Portal>
@@ -770,17 +775,30 @@ export function AdminUsers({
             }}
           >
             <div className="dialog-heading">
-              <Dialog.Title>Delete user</Dialog.Title>
+              <Dialog.Title>Delete user?</Dialog.Title>
             </div>
             <Dialog.Description className="deletion-confirmation-message">
               Delete <strong>@{deleteTarget?.username}</strong>? The user will be signed out
-              immediately, and running jobs will be cancelled while a background task permanently
+              immediately, and running jobs will be canceled while a background task permanently
               deletes all private data. This cannot be undone.
             </Dialog.Description>
+            <div className="field range-confirmation">
+              <label htmlFor="user-delete-confirmation">
+                Type <strong>DELETE</strong> to confirm.
+              </label>
+              <input
+                id="user-delete-confirmation"
+                value={deleteConfirmation}
+                placeholder="DELETE"
+                autoComplete="off"
+                disabled={remove.isPending}
+                onChange={(event) => setDeleteConfirmation(event.target.value)}
+              />
+            </div>
             {remove.isError && (
               <p className="error-summary" role="alert">
                 {deletionIsBusy(remove.error)
-                  ? "The account is still busy finishing a data update. Try Delete again shortly; no page reload is needed."
+                  ? "The account is still busy finishing a data update. Try again shortly; no page reload is needed."
                   : "Account deletion could not be started. Refresh the users list and try again."}
               </p>
             )}
@@ -796,16 +814,17 @@ export function AdminUsers({
               <button
                 type="button"
                 className="danger-action"
-                disabled={remove.isPending}
+                disabled={remove.isPending || deleteConfirmation !== "DELETE"}
                 aria-busy={remove.isPending}
                 onClick={() => {
-                  if (!deleteTarget || deleteLock.current) return;
+                  if (!deleteTarget || deleteLock.current || deleteConfirmation !== "DELETE")
+                    return;
                   deleteLock.current = true;
                   deletionRetryAllowed.current = true;
                   remove.mutate(deleteTarget);
                 }}
               >
-                Delete
+                Yes
               </button>
             </div>
           </Dialog.Content>
@@ -850,7 +869,7 @@ export function AdminUsers({
                       ? "Completed"
                       : deletion.data?.phase === "purging"
                         ? "Purging private data"
-                        : "Cancelling jobs and cleaning up"}
+                        : "Canceling jobs and cleaning up"}
                   </dd>
                 </div>
                 <div>
@@ -918,12 +937,12 @@ export function AdminUsers({
                 <>
                   Enable <strong>@{accessTarget.entry.username}</strong>? The user will be able to
                   sign in again and automatic sync will resume on schedule. Revoked sessions and
-                  cancelled jobs will not be restored.
+                  canceled jobs will not be restored.
                 </>
               ) : (
                 <>
                   Disable <strong>@{accessTarget?.entry.username}</strong>? The user will be signed
-                  out, automatic sync will stop, and queued or running jobs will be cancelled. Their
+                  out, automatic sync will stop, and queued or running jobs will be canceled. Their
                   data and settings are retained.
                 </>
               )}

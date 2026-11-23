@@ -60,7 +60,7 @@ func TestIngestOutcomesIntegration(t *testing.T) {
 		tx := integrationAccountTransaction(t, apiDB, account)
 		defer tx.Rollback(ctx)
 		for _, kind := range []string{"manual_ingest", "scheduled_ingest", "manual_ingest_source", "scheduled_ingest_source", "coverage_update", "coverage_update_route", "workout_deletion", "source_check"} {
-			for _, status := range []string{"queued", "running", "succeeded", "partially_succeeded", "failed", "cancelled"} {
+			for _, status := range []string{"queued", "running", "succeeded", "partially_succeeded", "failed", "canceled"} {
 				for _, test := range ingestOutcomeProgressCases {
 					var got string
 					if err := tx.QueryRow(ctx, `SELECT app.ingest_outcome_status($1,$2,$3,$4)`, kind, status,

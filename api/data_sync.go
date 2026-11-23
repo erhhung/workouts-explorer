@@ -109,7 +109,7 @@ func (s *Server) GetDataSync(w http.ResponseWriter, r *http.Request) {
 func readDataSyncJob(ctx context.Context, tx pgx.Tx, active bool) (*generated.JobSummary, error) {
 	statusClause := `j.status IN ('queued','running')`
 	if !active {
-		statusClause = `j.status IN ('succeeded','partially_succeeded','failed','cancelled')`
+		statusClause = `j.status IN ('succeeded','partially_succeeded','failed','canceled')`
 	}
 	row := tx.QueryRow(ctx, `SELECT j.id,j.kind,j.status,j.progress_current,COALESCE(j.progress_total,0),j.started_at,j.terminal_at,j.created_at,j.updated_at,
 		COALESCE(p.files_discovered,0),COALESCE(p.files_skipped,0),COALESCE(p.files_succeeded,0),COALESCE(p.files_failed,0),

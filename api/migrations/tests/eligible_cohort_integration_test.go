@@ -349,7 +349,7 @@ func TestEligibleCohortPostgreSQL(t *testing.T) {
 		bootstrapSQLState(t, err, "42501")
 		_ = tx.Rollback(ctx)
 		if got := sizes(f); len(got) != 0 {
-			t.Fatalf("cancelled/foreign/stale lease created a parent: %v", got)
+			t.Fatalf("canceled/foreign/stale lease created a parent: %v", got)
 		}
 	})
 	t.Run("MixedOriginsDoNotForceNormalCanonicalTargets", func(t *testing.T) {

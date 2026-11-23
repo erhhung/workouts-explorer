@@ -24,7 +24,7 @@ type RegionGeneration struct {
 	Generation int64  `json:"generation"`
 }
 
-type ConfiguredRegion struct {
+type ActiveRegion struct {
 	RegionID    string `json:"regionId"`
 	DisplayName string `json:"displayName"`
 }
@@ -44,28 +44,28 @@ type RouteRegionCatalog struct {
 	SelectionFingerprint string
 	PromotionEventID     int64
 	ActiveGenerations    map[string]int64
-	ConfiguredRegions    []ConfiguredRegion
+	ActiveRegions        []ActiveRegion
 }
 
-func ConfiguredRegions(ctx context.Context, pool *pgxpool.Pool) ([]ConfiguredRegion, error) {
+func ActiveRegions(ctx context.Context, pool *pgxpool.Pool) ([]ActiveRegion, error) {
 	if pool == nil {
 		return nil, errors.New("OSM database is unavailable")
 	}
-	rows, err := pool.Query(ctx, `SELECT id,display_name FROM osm_catalog.regions WHERE configured ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT r.id,r.display_name FROM osm_catalog.regions r JOIN osm_catalog.generations g ON g.region_id=r.id AND g.state='active' ORDER BY r.id`)
 	if err != nil {
-		return nil, fmt.Errorf("read configured OSM regions: %w", err)
+		return nil, fmt.Errorf("read active OSM regions: %w", err)
 	}
 	defer rows.Close()
-	regions := make([]ConfiguredRegion, 0)
+	regions := make([]ActiveRegion, 0)
 	for rows.Next() {
-		var region ConfiguredRegion
+		var region ActiveRegion
 		if err := rows.Scan(&region.RegionID, &region.DisplayName); err != nil {
-			return nil, fmt.Errorf("read configured OSM region: %w", err)
+			return nil, fmt.Errorf("read active OSM region: %w", err)
 		}
 		regions = append(regions, region)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read configured OSM regions: %w", err)
+		return nil, fmt.Errorf("read active OSM regions: %w", err)
 	}
 	return regions, nil
 }
@@ -200,9 +200,9 @@ func ReadRouteRegionCatalog(ctx context.Context, pool *pgxpool.Pool, minimumEven
 
 func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID, minimumCatalogRevision int64) (RouteRegionCatalog, error) {
 	var catalog RouteRegionCatalog
-	var fingerprint, selection, heads, configured []byte
+	var fingerprint, selection, heads, active []byte
 	if err := tx.QueryRow(ctx, readRouteRegionCatalogSQL).Scan(&catalog.Revision, &fingerprint,
-		&selection, &heads, &configured, &catalog.PromotionEventID); err != nil {
+		&selection, &heads, &active, &catalog.PromotionEventID); err != nil {
 		return RouteRegionCatalog{}, fmt.Errorf("read OSM route region catalog proof: %w", err)
 	}
 	if catalog.Revision < 1 || len(fingerprint) != 32 || len(selection) != 32 || catalog.PromotionEventID < 0 {
@@ -217,17 +217,17 @@ func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID, mini
 	if err := json.Unmarshal(heads, &catalog.ActiveGenerations); err != nil {
 		return RouteRegionCatalog{}, fmt.Errorf("decode OSM route region catalog heads: %w", err)
 	}
-	if err := json.Unmarshal(configured, &catalog.ConfiguredRegions); err != nil {
-		return RouteRegionCatalog{}, fmt.Errorf("decode configured OSM route regions: %w", err)
+	if err := json.Unmarshal(active, &catalog.ActiveRegions); err != nil {
+		return RouteRegionCatalog{}, fmt.Errorf("decode active OSM route regions: %w", err)
 	}
-	if catalog.ActiveGenerations == nil || catalog.ConfiguredRegions == nil {
+	if catalog.ActiveGenerations == nil || catalog.ActiveRegions == nil {
 		return RouteRegionCatalog{}, errors.New("missing OSM route region catalog metadata")
 	}
 	return catalog, nil
 }
 
 const readRouteRegionCatalogSQL = `SELECT revision,fingerprint,selection_fingerprint,
-	active_generations,configured_regions,osm_catalog.promotion_event_head()
+	active_generations,active_regions,osm_catalog.promotion_event_head()
 	FROM osm_catalog.route_region_catalog_state WHERE singleton`
 
 type regionQuerier interface {
@@ -276,7 +276,7 @@ const resolveRouteRegionsSQL = `
 			SELECT region.id AS region_id,generation.id AS generation_id
 			FROM osm_catalog.regions region
 			JOIN osm_catalog.generations generation ON generation.region_id=region.id AND generation.state='active'
-			WHERE region.configured AND ST_Covers(region.boundary,point.location)
+			WHERE ST_Covers(region.boundary,point.location)
 			ORDER BY region.geographic_area_m2,region.id LIMIT 1
 		) active ON true
 		LEFT JOIN LATERAL (

@@ -196,7 +196,7 @@ func TestM10AccountAccessIntegration(t *testing.T) {
 	t.Run("workers can finish cancellation and retained data remains intact", func(t *testing.T) {
 		tx := integrationAccountTransaction(t, workerDB, account)
 		var done bool
-		if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'read-fixture',$2,'cancelled')`, fixture.jobID, fixture.childLease).Scan(&done); err != nil || !done {
+		if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'read-fixture',$2,'canceled')`, fixture.jobID, fixture.childLease).Scan(&done); err != nil || !done {
 			t.Fatalf("finish cancellation: %v", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -204,7 +204,7 @@ func TestM10AccountAccessIntegration(t *testing.T) {
 		}
 		coverageTx := integrationAccountTransaction(t, coverageDB, account)
 		defer coverageTx.Rollback(ctx)
-		if err := coverageTx.QueryRow(ctx, `SELECT app.finish_job($1,'synthetic-coverage',$2,'cancelled')`, coverageRunning, coverageLease).Scan(&done); err != nil || !done {
+		if err := coverageTx.QueryRow(ctx, `SELECT app.finish_job($1,'synthetic-coverage',$2,'canceled')`, coverageRunning, coverageLease).Scan(&done); err != nil || !done {
 			t.Fatalf("finish Coverage cancellation: %v", err)
 		}
 		if err := coverageTx.Commit(ctx); err != nil {
@@ -222,7 +222,7 @@ func TestM10AccountAccessIntegration(t *testing.T) {
 			t.Fatal("post-disable enqueue succeeded")
 		}
 	})
-	t.Run("reenable preserves cancelled work and requires new signin", func(t *testing.T) {
+	t.Run("reenable preserves canceled work and requires new signin", func(t *testing.T) {
 		for range 2 {
 			if w := access(true); w.Code != 200 {
 				t.Fatalf("enable: %d %s", w.Code, w.Body.String())
@@ -234,7 +234,7 @@ func TestM10AccountAccessIntegration(t *testing.T) {
 		if preserved, err := scanAccount(`SELECT
 		 (SELECT state='active' FROM app.accounts WHERE id=$1)
 		 AND (SELECT disabled_at IS NULL FROM app.authentication_principals WHERE id=$2)
-		 AND NOT EXISTS(SELECT 1 FROM app.jobs WHERE id=ANY($3::uuid[]) AND status<>'cancelled')
+		 AND NOT EXISTS(SELECT 1 FROM app.jobs WHERE id=ANY($3::uuid[]) AND status<>'canceled')
 		 AND (SELECT count(*)=3 FROM app.audit_records WHERE account_id=$1 AND action IN ('account.disabled','account.enabled'))`, account, principal, []uuid.UUID{queuedParent, queuedChild, coverageParent, coverageChild, coverageRunning, fixture.jobID}); err != nil || !preserved {
 			t.Fatalf("reactivation invariant: %v", err)
 		}

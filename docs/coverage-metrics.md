@@ -158,8 +158,8 @@ metrics exist on the application Go processes or deferred Jobs.
 | `coverage.matcher.duration` | Actual `routepipeline.Evaluate` call, including unsuccessful calls; excludes admission, snapshot setup, generation verification, preparation, persistence and cleanup | None |
 | `coverage.route.duration` | Every observed postclaim attempt, including invalid claims, loading, admission, matching, persistence and cleanup; not a durable-outcome latency | None |
 | `coverage.admission.wait` | Full admission loop until acquisition, error or interruption | None |
-| `coverage.route.outcomes` | Confirmed committed terminal transitions, including persistence and detached failure/supersede/cancel helpers | `outcome`: `applied`, `no_evidence`, `superseded`, `failed`, `cancelled`; `failure`: `none`, `timeout`, `limit`, `invalid`, `route_read`, `persist`, `osm`, `other` |
-| `coverage.control.calls` | Admission decisions, heartbeat results, release results and rollback errors | `operation`: `admission`, `heartbeat`, `release`, `rollback`; `result`: `acquired`, `denied`, `renewed`, `lost`, `released`, `not_found`, `error`, `timeout`, `cancelled` |
+| `coverage.route.outcomes` | Confirmed committed terminal transitions, including persistence and detached failure/supersede/cancel helpers | `outcome`: `applied`, `no_evidence`, `superseded`, `failed`, `canceled`; `failure`: `none`, `timeout`, `limit`, `invalid`, `route_read`, `persist`, `osm`, `other` |
+| `coverage.control.calls` | Admission decisions, heartbeat results, release results and rollback errors | `operation`: `admission`, `heartbeat`, `release`, `rollback`; `result`: `acquired`, `denied`, `renewed`, `lost`, `released`, `not_found`, `error`, `timeout`, `canceled` |
 | `coverage.retry.attempts` | Attempts observed during loading: same-job recovery (`attempt>1`), explicit retry (`retry_of_job_id` present), timeout backoff (`timeout_retry_count>0`) | `kind`: `recovery`, `retry`, `timeout_backoff` |
 | `coverage.stale.rejections` | Confirmed ownership-fenced rejection of terminal transitions; never counted as durable completion | `operation`: `persist`, `fail`, `supersede`, `cancel` |
 
@@ -207,7 +207,7 @@ and errors remain available without SQL, parameters, or connection details.
 
 Heartbeat control transactions, claims and boolean control transactions are
 bounded to five seconds. Cleanup rollback uses a fresh, bounded context rather
-than a cancelled route context. Release failures are counted and logged; a
+than a canceled route context. Release failures are counted and logged; a
 missing slot is counted separately and may reflect normal terminal cleanup.
 Heartbeat `renewed` means the renewal transaction committed, even if that same
 transaction observed a cancellation request. `lost` means the database rejected

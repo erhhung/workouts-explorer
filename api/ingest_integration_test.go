@@ -76,9 +76,9 @@ func TestManualIngestIntegration(t *testing.T) {
 	}
 	legacyCleanup := integrationAccountTransaction(t, adminDB, accountID)
 	defer legacyCleanup.Rollback(ctx)
-	var legacyCancelled bool
-	if err := legacyCleanup.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, legacyParent, principalID).Scan(&legacyCancelled); err != nil || !legacyCancelled {
-		t.Fatalf("legacy cleanup parent=%s child=%s cancelled=%t err=%v", legacyParent, legacyChild, legacyCancelled, err)
+	var legacyCanceled bool
+	if err := legacyCleanup.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, legacyParent, principalID).Scan(&legacyCanceled); err != nil || !legacyCanceled {
+		t.Fatalf("legacy cleanup parent=%s child=%s canceled=%t err=%v", legacyParent, legacyChild, legacyCanceled, err)
 	}
 	if _, err := legacyCleanup.Exec(ctx, `DELETE FROM app.jobs WHERE id=$1`, legacyChild); err != nil {
 		t.Fatalf("delete terminal legacy fixture child=%s: %v", legacyChild, err)

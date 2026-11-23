@@ -307,10 +307,20 @@ func postgresConnectionEnvironment(raw string) ([]string, string, error) {
 	if err != nil || databaseName == "" || strings.Contains(databaseName, "/") {
 		return nil, "", fmt.Errorf("invalid PostgreSQL database name")
 	}
-	environment := []string{"PGHOST=" + parsed.Hostname(), "PGDATABASE=" + databaseName}
-	if port := parsed.Port(); port != "" {
-		environment = append(environment, "PGPORT="+port)
+	var hosts, ports []string
+	for _, endpoint := range strings.Split(parsed.Host, ",") {
+		host, err := url.Parse("postgresql://" + endpoint)
+		if err != nil || host.Hostname() == "" {
+			return nil, "", fmt.Errorf("invalid PostgreSQL host")
+		}
+		hosts = append(hosts, host.Hostname())
+		port := host.Port()
+		if port == "" {
+			port = "5432"
+		}
+		ports = append(ports, port)
 	}
+	environment := []string{"PGHOST=" + strings.Join(hosts, ","), "PGPORT=" + strings.Join(ports, ","), "PGDATABASE=" + databaseName}
 	if parsed.User != nil {
 		environment = append(environment, "PGUSER="+parsed.User.Username())
 		if password, present := parsed.User.Password(); present {
@@ -319,6 +329,8 @@ func postgresConnectionEnvironment(raw string) ([]string, string, error) {
 	}
 	for queryName, environmentName := range map[string]string{
 		"sslmode": "PGSSLMODE", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY", "sslrootcert": "PGSSLROOTCERT",
+		"host": "PGHOST", "hostaddr": "PGHOSTADDR", "port": "PGPORT", "target_session_attrs": "PGTARGETSESSIONATTRS",
+		"connect_timeout": "PGCONNECT_TIMEOUT", "options": "PGOPTIONS", "application_name": "PGAPPNAME",
 	} {
 		if value := parsed.Query().Get(queryName); value != "" {
 			environment = append(environment, environmentName+"="+value)

@@ -32,12 +32,18 @@ WHERE NOT (has_table_privilege(relations.relid,'MAINTAIN')
 	OR pg_has_role((SELECT datdba FROM pg_database WHERE datname=current_database()),'USAGE'))`
 
 func (s PostgreSQLUpdateStore) RefreshStatistics(ctx context.Context) error {
-	return refreshUpdateStatistics(ctx, s.Pool)
+	return refreshUpdateStatisticsWithReceipt(ctx, s.Pool, true)
 }
 
 func refreshUpdateStatistics(ctx context.Context, db interface {
 	Begin(context.Context) (pgx.Tx, error)
 }) error {
+	return refreshUpdateStatisticsWithReceipt(ctx, db, false)
+}
+
+func refreshUpdateStatisticsWithReceipt(ctx context.Context, db interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, receipt bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	tx, err := db.Begin(ctx)
@@ -54,6 +60,20 @@ func refreshUpdateStatistics(ctx context.Context, db interface {
 	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout='10min'; SET LOCAL lock_timeout='5s'`); err != nil {
 		return err
 	}
+	var generations []byte
+	if receipt {
+		var current bool
+		// Removing a region does not dirty surviving partitions. New or replaced
+		// generations require maintenance; healthy startup reads only this marker.
+		if err := tx.QueryRow(ctx, `SELECT catalog.active_generations,COALESCE(maintenance.policy_version=1 AND maintenance.analyzed_generations @> catalog.active_generations,false)
+            FROM osm_catalog.route_region_catalog_state catalog CROSS JOIN osm_catalog.statistics_maintenance maintenance
+            WHERE catalog.singleton AND maintenance.singleton`).Scan(&generations, &current); err != nil {
+			return err
+		}
+		if current {
+			return tx.Commit(ctx)
+		}
+	}
 	var denied string
 	if err := tx.QueryRow(ctx, updateStatisticsPrivileges).Scan(&denied); err != nil {
 		return err
@@ -64,6 +84,13 @@ func refreshUpdateStatistics(ctx context.Context, db interface {
 	for _, statement := range updateStatisticsStatements {
 		if _, err := tx.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("%s: %w", statement, err)
+		}
+	}
+	if receipt {
+		// Capture only the observed target. If publication changes concurrently,
+		// its new target will remain pending rather than receiving a false receipt.
+		if _, err := tx.Exec(ctx, `UPDATE osm_catalog.statistics_maintenance SET analyzed_generations=$1::jsonb,policy_version=1,analyzed_at=clock_timestamp() WHERE singleton`, generations); err != nil {
+			return err
 		}
 	}
 	return tx.Commit(ctx)

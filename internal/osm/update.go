@@ -23,13 +23,14 @@ const (
 )
 
 type Generation struct {
-	ID         int64
-	RegionID   string
-	SchemaName string
-	SourceURL  string
-	BatchSize  int
-	BatchIndex int
-	BatchTotal int
+	ID                 int64
+	RegionID           string
+	SchemaName         string
+	SourceURL          string
+	BatchSize          int
+	BatchIndex         int
+	BatchTotal         int
+	RegionalGeneration int64
 }
 
 type ToolVersions struct {
@@ -107,6 +108,7 @@ type Updater struct {
 	ScratchRoot               string
 	ResumeGenerationID        int64
 	StoragePreflight          StoragePreflight
+	SkipStorageMonitoring     bool
 	Log                       io.Writer
 	LogLocation               *time.Location
 	Now                       func() time.Time
@@ -114,6 +116,8 @@ type Updater struct {
 	StorageFreshTimeout       time.Duration
 	StorageSettleTimeout      time.Duration
 	StorageSettlePollInterval time.Duration
+	Progress                  UpdateReporter
+	DiscardOnCancel           func() bool
 }
 
 var identityPipelineStages = []string{
@@ -328,7 +332,7 @@ func (u Updater) freshStorageObservation(ctx context.Context, after time.Time) (
 		observation, err := u.StoragePreflight.Check(ctx)
 		if err != nil {
 			var blocked *StoragePreflightError
-			if !errors.As(err, &blocked) || blocked.Observation.PVCName == "" {
+			if !errors.As(err, &blocked) || blocked.Code != StorageInsufficientSpace || blocked.Observation.PVCName == "" {
 				return observation, err
 			}
 			observation = blocked.Observation
@@ -353,9 +357,24 @@ func (u Updater) postGCStorageObservation(ctx context.Context, lowWater StorageO
 	if err := ctx.Err(); err != nil {
 		return StorageObservation{}, err
 	}
-	observation, err := u.freshStorageObservation(ctx, batchFinished)
+	observation, err := u.StoragePreflight.Check(ctx)
 	if err != nil {
-		return observation, err
+		var blocked *StoragePreflightError
+		if !errors.As(err, &blocked) || blocked.Code != StorageInsufficientSpace || blocked.Observation.PVCName == "" {
+			return observation, err
+		}
+		observation = blocked.Observation
+	}
+	// A recent valid reading is sufficient with healthy headroom. Requiring a
+	// new scrape after every tiny batch otherwise turns scrape cadence into work.
+	if !storageBelowPercent(observation, 15) && !storageBelowPercent(lowWater, 15) {
+		return observation, nil
+	}
+	if !observation.SampledAt.IsZero() && !observation.SampledAt.After(batchFinished) {
+		observation, err = u.freshStorageObservation(ctx, batchFinished)
+		if err != nil {
+			return observation, err
+		}
 	}
 	if observation.FreeBytes < lowWater.FreeBytes {
 		after := observation.SampledAt
@@ -406,8 +425,14 @@ var databaseURLPattern = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s]+`)
 
 func (u Updater) Run(ctx context.Context, regionID string) (generation Generation, err error) {
 	updateStarted := u.now()
-	if u.Store == nil || u.Pipeline == nil || u.HTTPClient == nil || u.Download == nil || u.StoragePreflight == nil || u.MaximumBytes < 1 || u.ScratchRoot == "" {
+	if u.Store == nil || u.Pipeline == nil || u.HTTPClient == nil || u.Download == nil || (!u.SkipStorageMonitoring && u.StoragePreflight == nil) || u.MaximumBytes < 1 || u.ScratchRoot == "" {
 		return Generation{}, errors.New("invalid OSM updater configuration")
+	}
+	preparationStarted := time.Now()
+	if u.ResumeGenerationID == 0 {
+		if err := u.report(ctx, UpdateProgress{Type: "start", Task: logicalTask("prepare-source", "").Order}); err != nil {
+			return Generation{}, err
+		}
 	}
 	versions := ToolVersions{Osmium: ExpectedOsmium, Osm2pgsql: ExpectedOsm2pgsql}
 	if u.ResumeGenerationID == 0 {
@@ -428,11 +453,18 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		return Generation{}, fmt.Errorf("acquire exclusive OSM updater ownership: %w", err)
 	}
 	defer unlockUpdater()
+	if primary, ok := u.Store.(interface{ VerifyWriterPrimary(context.Context) error }); ok {
+		if err := primary.VerifyWriterPrimary(ctx); err != nil {
+			return Generation{}, err
+		}
+	}
+	u.logBanner("Preparing source update: performing PostgreSQL storage cleanup")
 	// Replay maintenance even without a new source or a resumable build. Promotion
 	// is the durable boundary; a crash must not permanently skip active statistics.
 	if err := u.Store.ProcessStorageGC(ctx); err != nil {
 		return Generation{}, fmt.Errorf("process pending OSM storage GC: %w", err)
 	}
+	u.logBanner("Preparing source update: ensuring stats partitions are healthy")
 	if err := u.Store.RefreshStatistics(ctx); err != nil {
 		return Generation{}, fmt.Errorf("refresh active OSM statistics (retryable): %w", err)
 	}
@@ -469,7 +501,7 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 	if unlock != nil {
 		defer unlock()
 	}
-	scratch := filepath.Join(u.ScratchRoot, fmt.Sprintf("generation-%d", generation.ID))
+	scratch := filepath.Join(u.ScratchRoot, fmt.Sprintf("job-%d", generation.ID))
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		updateErr := fmt.Errorf("create generation scratch: %w", err)
 		failErr := u.Store.Fail(context.WithoutCancel(ctx), generation, safeFailure(updateErr))
@@ -484,6 +516,27 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 			if removeErr != nil {
 				err = errors.Join(err, fmt.Errorf("remove generation scratch: %w", removeErr))
 			}
+			if err == nil {
+				finish, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+				defer done()
+				err = u.report(finish, UpdateProgress{Type: "settled", Task: len(UpdateTasks), Completed: true})
+				if err == nil {
+					u.logCompletionBanner("Job #%d (generation #%d, ruleset v%d) completed in %s", generation.ID, generation.RegionalGeneration, DerivationVersion, u.now().Sub(updateStarted).Round(time.Second))
+				}
+			}
+			return
+		}
+		if ctx.Err() != nil && u.DiscardOnCancel != nil && u.DiscardOnCancel() {
+			cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+			defer done()
+			aborter, ok := u.Store.(interface {
+				Abort(context.Context, int64, string, string) error
+			})
+			if !ok {
+				err = errors.Join(err, errors.New("candidate abort is unavailable"))
+				return
+			}
+			err = errors.Join(err, aborter.Abort(cleanup, generation.ID, generation.RegionID, "Canceled by administrator"), removeErr)
 			return
 		}
 		if preserveBuild {
@@ -494,16 +547,37 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		dropErr := u.Store.DropBuildSchema(context.WithoutCancel(ctx), generation.SchemaName)
 		err = errors.Join(err, failErr, dropErr, removeErr)
 	}()
+	if err = u.report(ctx, UpdateProgress{Type: "generation", GenerationID: generation.ID}); err != nil {
+		return generation, err
+	}
+	preparationEvent := UpdateProgress{Type: "complete", Task: logicalTask("prepare-source", "").Order, Completed: true}
+	if u.ResumeGenerationID > 0 {
+		preparationEvent.Type = "elapsed"
+		preparationEvent.Completed = false
+	}
+	if err = u.reportElapsed(ctx, preparationEvent, time.Since(preparationStarted)); err != nil {
+		return generation, err
+	}
 
 	sourcePBF := filepath.Join(scratch, "source.osm.pbf")
 	filteredPBF := filepath.Join(scratch, "filtered.osm.pbf")
 	if u.ResumeGenerationID == 0 {
 		downloadStarted := u.now()
-		u.logBanner("Starting OSM update generation %d (derivation v%d) batch %q", generation.ID, DerivationVersion, "download")
+		downloadElapsedStarted := time.Now()
+		u.logBanner("Starting job #%d (generation #%d, ruleset v%d) batch %q", generation.ID, generation.RegionalGeneration, DerivationVersion, "download")
+		if u.Log != nil {
+			_, _ = fmt.Fprintf(u.Log, "Downloading: %s\n", generation.SourceURL)
+		}
 		region := Region{ID: generation.RegionID, SourceURL: generation.SourceURL}
+		if err = u.report(ctx, UpdateProgress{Type: "start", Task: logicalTask("download", "").Order}); err != nil {
+			return generation, err
+		}
 		download, downloadErr := u.Download(ctx, u.HTTPClient, region, sourcePBF, u.MaximumBytes)
 		if downloadErr != nil {
-			return generation, fmt.Errorf("download source PBF: %w", downloadErr)
+			return generation, downloadErr
+		}
+		if u.Log != nil {
+			_, _ = fmt.Fprintf(u.Log, "Wrote %d bytes to %s\n", download.Bytes, sourcePBF)
 		}
 		sourceTimestamp, timestampErr := u.Pipeline.SourceTimestamp(ctx, sourcePBF)
 		if timestampErr != nil {
@@ -512,7 +586,10 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		if recordErr := u.Store.RecordDownload(ctx, generation.ID, download, sourceTimestamp); recordErr != nil {
 			return generation, fmt.Errorf("record source PBF: %w", recordErr)
 		}
-		u.logCompletionBanner("OSM update generation %d (derivation v%d) batch %q completed in %s", generation.ID, DerivationVersion, "download", u.now().Sub(downloadStarted).Round(time.Second))
+		u.logCompletionBanner("Job #%d (generation #%d, ruleset v%d) batch %q completed in %s", generation.ID, generation.RegionalGeneration, DerivationVersion, "download", u.now().Sub(downloadStarted).Round(time.Second))
+		if err = u.reportElapsed(ctx, UpdateProgress{Type: "complete", Task: logicalTask("download", "").Order, Completed: true}, time.Since(downloadElapsedStarted)); err != nil {
+			return generation, err
+		}
 	}
 
 	var validation json.RawMessage
@@ -526,7 +603,13 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 				matches, fenceErr := checkpointStore.StageFenceMatches(ctx, generation.ID, stageName, fence)
 				if fenceErr != nil || !matches {
 					if fenceErr == nil {
-						fenceErr = fmt.Errorf("completed stage %s fence changed; abort and rebuild the generation", stageName)
+						fenceErr = fmt.Errorf("completed step %s uses different processing rules; cancel this job and start a fresh region update", stageName)
+						failure, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+						recordErr := checkpointStore.FailStage(failure, generation, stageName, safeFailure(fenceErr))
+						done()
+						if recordErr != nil {
+							fenceErr = errors.Join(fenceErr, fmt.Errorf("record incompatible checkpoint: %w", recordErr))
+						}
 					}
 					return generation, fenceErr
 				}
@@ -547,6 +630,7 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		}
 		var output []byte
 		for {
+			batchElapsedStart := time.Now()
 			unitStarted := u.now()
 			batchName := stageName
 			generation.BatchSize = 0
@@ -558,21 +642,50 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 					return generation, cursorErr
 				}
 				var cursorFields struct {
-					Phase string `json:"phase"`
+					Phase       string `json:"phase"`
+					Orientation int    `json:"orientation"`
 				}
 				if json.Unmarshal(cursor, &cursorFields) == nil && cursorFields.Phase != "" {
 					batchName += "/" + cursorFields.Phase
+				}
+				if stageName == "identity-edges" {
+					orientation := cursorFields.Orientation
+					if orientation == 0 {
+						orientation = 1
+					}
+					if orientation > 4 {
+						batchName = stageName + "/finalize"
+					} else {
+						batchName = fmt.Sprintf("%s/orientation-%d", stageName, orientation)
+					}
 				}
 				if batchStages[stageName] {
 					generation.BatchSize = repeatedBatchSize(stageName, cursor)
 					generation.BatchIndex, generation.BatchTotal = repeatedBatchProgress(cursor)
 				}
 			}
-			u.logBanner("Starting OSM update generation %d (derivation v%d) batch %q%s", generation.ID, DerivationVersion, batchName, batchProgressSuffix(generation))
+			parts := strings.SplitN(batchName, "/", 2)
+			phase := ""
+			if len(parts) == 2 {
+				phase = parts[1]
+			}
+			task := logicalTask(stageName, phase)
+			if u.Progress != nil && task.Order == 0 {
+				return generation, fmt.Errorf("unrecognized updater task %s", batchName)
+			}
+			if err = u.report(ctx, UpdateProgress{Type: "start", Task: task.Order, Batch: generation.BatchIndex, Batches: generation.BatchTotal}); err != nil {
+				return generation, err
+			}
+			u.logBanner("Starting job #%d (generation #%d, ruleset v%d) batch %q%s", generation.ID, generation.RegionalGeneration, DerivationVersion, batchName, batchProgressSuffix(generation))
 			var storageStart StorageObservation
 			var stopStorageMonitor context.CancelFunc
 			var storageMinimum <-chan StorageObservation
-			if u.StoragePreflight != nil && stageNeedsStoragePreflight(stageName) {
+			if primary, ok := u.Store.(interface{ VerifyWriterPrimary(context.Context) error }); ok {
+				if err = primary.VerifyWriterPrimary(ctx); err != nil {
+					return generation, err
+				}
+			}
+			if !u.SkipStorageMonitoring && u.StoragePreflight != nil && stageNeedsStoragePreflight(stageName) {
 				storageStart, err = u.StoragePreflight.Check(ctx)
 				if err != nil {
 					var blocked *StoragePreflightError
@@ -598,7 +711,7 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 				stopStorageMonitor()
 				storageLow = <-storageMinimum
 			}
-			if err == nil && stageName == "identity-propagate" && storageBelowPercent(storageLow, 15) {
+			if err == nil && !u.SkipStorageMonitoring && stageName == "identity-propagate" && storageBelowPercent(storageLow, 15) {
 				if maintainer, ok := u.Pipeline.(StageMaintainer); ok {
 					err = maintainer.Maintain(ctx, stageName, generation)
 				}
@@ -610,14 +723,62 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 				}
 				return generation, fmt.Errorf("OSM stage %s: %w", stageName, err)
 			}
-			if !storageStart.CheckedAt.IsZero() {
-				storageEnd, storageErr := u.postGCStorageObservation(ctx, storageLow, batchFinished)
-				if storageErr != nil {
-					return generation, fmt.Errorf("OSM stage %s post-batch storage observation: %w", stageName, storageErr)
+			logicalDone := !sqlCheckpointStage(stageName)
+			if u.Progress != nil && resumable && sqlCheckpointStage(stageName) {
+				logicalDone, err = checkpointStore.StageCompleted(ctx, generation.ID, stageName)
+				if err != nil {
+					return generation, err
 				}
-				u.logStorageCompletion(storageLow, storageEnd)
+				if !logicalDone {
+					if cursors, ok := u.Store.(StageCursorStore); ok {
+						next, e := cursors.StageCursor(ctx, generation.ID, stageName)
+						if e != nil {
+							return generation, e
+						}
+						var fields struct {
+							Phase       string `json:"phase"`
+							Orientation int    `json:"orientation"`
+						}
+						_ = json.Unmarshal(next, &fields)
+						p := fields.Phase
+						if stageName == "identity-edges" {
+							if fields.Orientation > 4 {
+								p = "finalize"
+							} else {
+								p = fmt.Sprintf("orientation-%d", fields.Orientation)
+							}
+						}
+						logicalDone = logicalTask(stageName, p).Order != task.Order
+					}
+				}
 			}
-			u.logCompletionBanner("OSM update generation %d (derivation v%d) batch %q%s completed in %s", generation.ID, DerivationVersion, batchName, batchProgressSuffix(generation), batchFinished.Sub(unitStarted).Round(time.Second))
+			// The final task includes promotion, cleanup and statistics, not just validation SQL.
+			if task.Order == len(UpdateTasks) {
+				logicalDone = false
+			}
+			if err = u.reportElapsed(ctx, UpdateProgress{Type: "complete", Task: task.Order, Completed: logicalDone, AwaitingMetrics: true, Batch: generation.BatchIndex, Batches: generation.BatchTotal}, time.Since(batchElapsedStart)); err != nil {
+				return generation, err
+			}
+			// The batch is committed. Publish its completion before a cancellable
+			// post-batch metrics wait can leave a completed checkpoint marked Paused.
+			var storageErr error
+			if !storageStart.CheckedAt.IsZero() {
+				var storageEnd StorageObservation
+				storageEnd, storageErr = u.postGCStorageObservation(ctx, storageLow, batchFinished)
+				if storageErr == nil {
+					u.logStorageCompletion(storageLow, storageEnd)
+				}
+			}
+			settled, stopSettled := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			reportErr := u.reportElapsed(settled, UpdateProgress{Type: "settled", Task: task.Order, Completed: logicalDone, Batch: generation.BatchIndex, Batches: generation.BatchTotal}, time.Since(batchElapsedStart))
+			stopSettled()
+			if reportErr != nil {
+				return generation, reportErr
+			}
+			if storageErr != nil {
+				return generation, fmt.Errorf("OSM stage %s post-batch storage observation: %w", stageName, storageErr)
+			}
+			u.logCompletionBanner("Job #%d (generation #%d, ruleset v%d) batch %q%s completed in %s", generation.ID, generation.RegionalGeneration, DerivationVersion, batchName, batchProgressSuffix(generation), u.now().Sub(unitStarted).Round(time.Second))
 			if !resumable || !sqlCheckpointStage(stageName) {
 				break
 			}
@@ -646,10 +807,23 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		if stageName == "validate" {
 			validation, err = validateReport(output, generation)
 			if err != nil {
-				return generation, fmt.Errorf("OSM validation gate: %w", err)
+				validationErr := fmt.Errorf("OSM validation gate: %w", err)
+				if resumable {
+					failure, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					recordErr := checkpointStore.FailStage(failure, generation, stageName, safeFailure(validationErr))
+					done()
+					if recordErr != nil {
+						return generation, errors.Join(validationErr, fmt.Errorf("record validation failure: %w", recordErr))
+					}
+				}
+				return generation, validationErr
 			}
 		}
 	}
+	if err = u.report(ctx, UpdateProgress{Type: "start", Task: len(UpdateTasks)}); err != nil {
+		return generation, err
+	}
+	promotionStarted := time.Now()
 	if err := u.Store.SetValidating(ctx, generation.ID, validation); err != nil {
 		return generation, fmt.Errorf("set generation validating: %w", err)
 	}
@@ -657,13 +831,33 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 		return generation, fmt.Errorf("promote OSM generation: %w", err)
 	}
 	promoted = true
-	if err := u.Store.ProcessStorageGC(ctx); err != nil {
-		return generation, fmt.Errorf("generation %d promoted; storage GC remains retryable: %w", generation.ID, err)
+	if versions, ok := u.Store.(interface {
+		PromotedGenerationNumber(context.Context, int64, string) (int64, error)
+	}); ok {
+		number, versionErr := versions.PromotedGenerationNumber(ctx, generation.ID, generation.RegionID)
+		if versionErr == nil {
+			u.logBanner("Promoted %s generation #%d for job #%d", generation.RegionID, number, generation.ID)
+		}
 	}
-	if err := u.Store.RefreshStatistics(ctx); err != nil {
-		return generation, fmt.Errorf("generation %d promoted; statistics refresh remains retryable: %w", generation.ID, err)
+	finish, done := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+	defer done()
+	if err = u.reportElapsed(finish, UpdateProgress{Type: "promoted", Promoted: true, Task: len(UpdateTasks)}, time.Since(promotionStarted)); err != nil {
+		return generation, err
 	}
-	u.logCompletionBanner("OSM update generation %d completed in %s", generation.ID, u.now().Sub(updateStarted).Round(time.Second))
+	cleanupStarted := time.Now()
+	if err := u.Store.ProcessStorageGC(finish); err != nil {
+		return generation, fmt.Errorf("processing attempt %d promoted; storage GC remains retryable: %w", generation.ID, err)
+	}
+	if err := u.reportElapsed(finish, UpdateProgress{Type: "elapsed", Task: len(UpdateTasks)}, time.Since(cleanupStarted)); err != nil {
+		return generation, err
+	}
+	statisticsStarted := time.Now()
+	if err := u.Store.RefreshStatistics(finish); err != nil {
+		return generation, fmt.Errorf("processing attempt %d promoted; statistics refresh remains retryable: %w", generation.ID, err)
+	}
+	if err := u.reportElapsed(finish, UpdateProgress{Type: "elapsed", Task: len(UpdateTasks)}, time.Since(statisticsStarted)); err != nil {
+		return generation, err
+	}
 	return generation, nil
 }
 

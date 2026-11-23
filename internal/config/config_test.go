@@ -453,8 +453,7 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 	if err != nil || cfg.FileConcurrency != 2 || cfg.AccountConcurrency != 2 || cfg.GlobalConcurrency != 4 || cfg.StagingRoot != "/var/lib/workouts/staging" ||
 		cfg.AutoSyncInterval != 24*time.Hour || cfg.AutoSyncPollInterval != 30*time.Second || cfg.AutoSyncStaleDays != 3 || cfg.SchedulerLease != 2*time.Minute ||
 		cfg.CoverageMinTraversalMeters != 5 ||
-		cfg.OSM.AutoAddRegions || cfg.OSM.MaxAutoDownloadBytes != 1<<30 || !reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik"}) ||
-		!reflect.DeepEqual(cfg.OSM.Regions, []string{"geofabrik:norcal"}) {
+		cfg.OSM.AutoAddRegions || cfg.OSM.MaxAutoDownloadBytes != 1<<30 || !reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik"}) {
 		t.Fatalf("defaults=%+v err=%v", cfg, err)
 	}
 	for _, test := range []struct{ key, value string }{
@@ -473,7 +472,6 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 		{"OSM_MAX_AUTO_DOWNLOAD_BYTES", "0"}, {"OSM_MAX_AUTO_DOWNLOAD_BYTES", "1099511627777"},
 		{"OSM_DATA_PROVIDERS_JSON", `{}`}, {"OSM_DATA_PROVIDERS_JSON", `["geofabrik","geofabrik"]`},
 		{"OSM_DATA_PROVIDERS_JSON", `["geofabrik:norcal"]`},
-		{"OSM_REGIONS_JSON", `["norcal"]`}, {"OSM_REGIONS_JSON", `["geofabrik:nor_cal"]`},
 	} {
 		t.Run(test.key+test.value, func(t *testing.T) {
 			t.Setenv(test.key, test.value)
@@ -489,11 +487,9 @@ func TestLoadWorkerConcurrencyAndStaging(t *testing.T) {
 		t.Setenv("OSM_AUTO_ADD_REGIONS", "true")
 		t.Setenv("OSM_MAX_AUTO_DOWNLOAD_BYTES", "2000000000")
 		t.Setenv("OSM_DATA_PROVIDERS_JSON", `["geofabrik","custom-provider"]`)
-		t.Setenv("OSM_REGIONS_JSON", `["geofabrik:norcal","geofabrik:new-york"]`)
 		cfg, err := LoadWorker()
 		if err != nil || !cfg.OSM.AutoAddRegions || cfg.OSM.MaxAutoDownloadBytes != 2_000_000_000 ||
-			!reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik", "custom-provider"}) ||
-			!reflect.DeepEqual(cfg.OSM.Regions, []string{"geofabrik:norcal", "geofabrik:new-york"}) {
+			!reflect.DeepEqual(cfg.OSM.DataProviders, []string{"geofabrik", "custom-provider"}) {
 			t.Fatalf("custom OSM config=%+v err=%v", cfg.OSM, err)
 		}
 	})

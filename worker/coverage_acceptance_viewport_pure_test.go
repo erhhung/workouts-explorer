@@ -397,18 +397,18 @@ func TestViewportErrorsNoRetryOrRedirect(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	cancelled := viewportBurst(ctx, client, "", "route", tiles, []string{server.URL, server.URL, server.URL}, 3, func(viewportTile, []byte) (int, error) { return 0, nil })
-	for _, s := range cancelled.Samples {
-		if s.ErrorClass != "cancelled" {
+	canceled := viewportBurst(ctx, client, "", "route", tiles, []string{server.URL, server.URL, server.URL}, 3, func(viewportTile, []byte) (int, error) { return 0, nil })
+	for _, s := range canceled.Samples {
+		if s.ErrorClass != "canceled" {
 			t.Fatalf("cancellation lost: %+v", s)
 		}
 	}
 	if viewportErrorClass(context.DeadlineExceeded) != "timeout" {
 		t.Fatal("deadline classification")
 	}
-	c := viewportCase{Batches: []viewportBatch{b, cancelled}}
+	c := viewportCase{Batches: []viewportBatch{b, canceled}}
 	viewportAggregate(&c)
-	if c.Attempts != 6 || c.Errors != 6 || c.Successes != 0 || c.Status != "FAIL" || c.Statuses[502] != 1 || c.FailureTotals["cancelled"] != 3 {
+	if c.Attempts != 6 || c.Errors != 6 || c.Successes != 0 || c.Status != "FAIL" || c.Statuses[502] != 1 || c.FailureTotals["canceled"] != 3 {
 		t.Fatalf("errors not aggregated: %+v", c)
 	}
 	encoded, _ := json.Marshal(c)

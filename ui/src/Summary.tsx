@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTabActive } from "./RetainedTab";
@@ -1067,7 +1067,9 @@ function AggregateCard({
       </button>
       {visible && hint && (
         <span className="aggregate-mode-hint" role="tooltip" style={{ left: hint.x, top: hint.y }}>
-          {averages ? "Click to see totals" : "Click to see averages"}
+          {`Click to view ${averages ? "totals" : "averages"}; press and hold shift`}
+          <br />
+          {`key to hover over ${averages ? "totals" : "averages"} by workout type`}
         </span>
       )}
       <div

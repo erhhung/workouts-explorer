@@ -197,7 +197,7 @@ paths:
       description: >-
         Explicitly enables or disables a personal account. Disable atomically revokes cookie/bearer sessions,
         blocks new work and cancels queued jobs or requests cooperative cancellation of running jobs.
-        No user data is purged. Enable preserves revoked sessions and cancelled tasks and resumes normal
+        No user data is purged. Enable preserves revoked sessions and canceled tasks and resumes normal
         next-due scheduling. Repeating the desired state is idempotent. Deleting/deleted accounts conflict;
         administrator and unknown identities are not found. Every accepted command is audited.
       tags: [administration]
@@ -213,6 +213,128 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/regions:
+    get:
+      operationId: getAdminOSMRegions
+      description: Administrator-only cached metadata for configured provider catalogs and their prepared region generations. No extracts are downloaded by this read.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200':
+          description: Cached catalogs and latest durable refresh job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminOSMRegions'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/region-updates:
+    post:
+      operationId: createAdminOSMRegionUpdate
+      description: Queue an approved region download/reprocess. Active requests coalesce and queued work waits for capacity. No caller URLs, pod specs or images are accepted.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [regionId, action], properties: {regionId: {type: string, minLength: 1, maxLength: 257}, action: {type: string, enum: [download, reprocess, delete]}}}
+      responses:
+        '202':
+          description: Existing or newly queued update
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OSMRegionUpdate'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/region-updates/{jobId}:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    get:
+      operationId: getAdminOSMRegionUpdate
+      description: Ordered durable task/batch history including paused and canceled runs. Unknown batch totals remain unavailable.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200':
+          description: Region update and ordered tasks
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OSMRegionUpdate'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/region-updates/{jobId}/commands:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    post:
+      operationId: commandAdminOSMRegionUpdate
+      description: Pause retains checkpoints; resume requeues failed or paused work from the last durable checkpoint, restoring source/import prerequisites when no import checkpoint survives. Cancel discards the unfinished candidate. Clear dismisses a stopped Failed or Canceled overlay while preserving history and region data. Canceling remains until cleanup and execution stop are confirmed. A promoted generation is never removed.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [action], properties: {action: {type: string, enum: [pause, resume, cancel, clear]}}}
+      responses:
+        '202':
+          description: Durable command accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OSMRegionUpdate'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/region-boundary:
+    get:
+      operationId: getAdminOSMRegionBoundary
+      description: Read one configured provider region boundary from the cached public projection; never contacts the provider or downloads an extract.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters:
+        - {name: regionId, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 257}}
+      responses:
+        '200':
+          description: Cached polygon or multipolygon boundary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, geometry]
+                properties:
+                  id: {type: string}
+                  geometry: {type: object, additionalProperties: true}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/catalog-refreshes:
+    post:
+      operationId: createAdminOSMCatalogRefresh
+      description: Queue an on-demand refresh of deployment-configured provider catalogs and HEAD-only PBF metadata. Concurrent requests coalesce. The job survives browser closure and worker replacement; unknown metadata is not zero. No caller-supplied provider URLs are accepted.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        '202':
+          description: Queued or existing active refresh
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OSMCatalogRefresh'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/catalog-refreshes/{jobId}:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {$ref: '#/components/schemas/CompactUUID'}}
+    get:
+      operationId: getAdminOSMCatalogRefresh
+      description: Read administrator-owned catalog-refresh progress without private owner data or raw provider diagnostics.
+      tags: [administration]
+      security: [{bearerAuth: []}, {adminCookieAuth: []}]
+      responses:
+        '200':
+          description: Durable refresh progress and safe outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OSMCatalogRefresh'}
         default: {$ref: '#/components/responses/Problem'}
   /api/admin/users/{userId}/sessions:
     parameters:
@@ -273,6 +395,29 @@ paths:
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
       responses:
         '204': {description: Invitation revoked}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/processing-settings:
+    get:
+      operationId: getAdminOSMProcessingSettings
+      description: Returns persisted administrator defaults for monitoring database storage during future OSM processing requests.
+      tags: [administration]
+      security: [{adminCookieAuth: []}]
+      responses:
+        '200': {description: Persisted defaults for future region processing requests, content: {application/json: {schema: {$ref: '#/components/schemas/OSMProcessingSettings'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: updateAdminOSMProcessingSettings
+      description: Saves the storage-monitoring default with administrator session, CSRF, revision and audit checks. Each updater start/resume captures the then-current default without changing already-running executions.
+      tags: [administration]
+      security: [{adminCookieAuth: []}]
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [monitorDatabaseStorage, revision], properties: {monitorDatabaseStorage: {type: boolean}, revision: {type: integer, format: int64, minimum: 1}}}
+      responses:
+        '200': {description: Saved OSM processing defaults, content: {application/json: {schema: {$ref: '#/components/schemas/OSMProcessingSettings'}}}}
         default: {$ref: '#/components/responses/Problem'}
   /api/admin/config:
     get:
@@ -608,7 +753,7 @@ paths:
     post:
       operationId: createJobRetry
       description: >-
-        Creates a linked retry for eligible owned failed, partially succeeded or cancelled ingest/deletion/coverage work without requeuing the original job. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
+        Creates a linked retry for eligible owned failed, partially succeeded or canceled ingest/deletion/coverage work without requeuing the original job. `jobId` and an empty JSON object are required; cookie authentication requires `X-CSRF-Token`.
         Coverage eligibility on job detail is advisory; this operation rechecks exact targets under locks. Coverage conflicts use problem type URLs prefixed with `https://workouts-explorer.invalid/problems/coverage-retry/` and one of `already-current`, `no-eligible-routes`, `not-terminal`, `not-latest`, `retry-limit`, `busy`, or `unavailable`. Busy does not revoke eligibility; refresh before trying again. Problem details are static safe text.
       tags: [jobs]
       security: [{bearerAuth: []}, {cookieAuth: []}]
@@ -1532,6 +1677,73 @@ components:
           format: date-time
           nullable: true
           description: Latest expiry among currently valid cookie/bearer sessions; null for invitations or no valid sessions. Not online presence.
+    OSMRegionUpdate:
+      type: object
+      required: [id, regionId, state, phase, operation, resumable, promoted, currentOrder, createdAt]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        regionId: {type: string}
+        state: {type: string, enum: [waiting, downloading, processing, pausing, canceling, paused, canceled, failed, succeeded, deleting]}
+        phase: {type: string, enum: [Downloading, Processing]}
+        operation: {type: string, enum: [download, reprocess, delete]}
+        monitorDatabaseStorage: {type: boolean, description: Policy used by the latest execution; refreshed from the global default on each start/resume and retained in completed history.}
+        storagePolicyRevision: {type: integer, format: int64, minimum: 1}
+        buildId: {type: integer, format: int64, nullable: true, description: Globally unique internal build-attempt identifier; not the region-local generation number.}
+        resumable: {type: boolean}
+        promoted: {type: boolean}
+        currentOrder: {type: integer, minimum: 0, maximum: 58}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time, nullable: true}
+        finishedAt: {type: string, format: date-time, nullable: true}
+        error: {type: string, nullable: true}
+        cleared: {type: boolean, description: Whether this terminal outcome has been dismissed from the Regions status overlay.}
+        elapsedTotal: {type: number, nullable: true, description: 'Active execution wall-clock seconds, including metrics settling and final maintenance. Excludes queued/paused gaps. Null when historical boundaries are unavailable.'}
+        elapsedSince: {type: string, format: date-time, nullable: true, description: 'Legacy per-batch estimate boundary. Current clients use executionElapsed and executionSince for active wall-clock time.'}
+        executionElapsed: {type: number, nullable: true, description: 'Completed active execution seconds derived from structured job boundaries. Excludes queued and paused periods.'}
+        executionSince: {type: string, format: date-time, nullable: true, description: 'Start of the open active execution interval, including normal between-batch overhead. On completion its active wall-clock duration becomes the job total.'}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [order, name, repeated, state, batch, batches, startedAt, finishedAt]
+            properties:
+              order: {type: integer}
+              name: {type: string}
+              repeated: {type: boolean}
+              state: {type: string, enum: [pending, running, completed, failed, canceled, paused]}
+              batch: {type: integer}
+              batches: {type: integer}
+              startedAt: {type: string, format: date-time, nullable: true}
+              finishedAt: {type: string, format: date-time, nullable: true}
+              elapsedTotal: {type: number, nullable: true, description: 'Active span from the first batch start through the last batch metrics-settle completion. Queued/paused gaps are excluded; interleaved task spans can overlap.'}
+    OSMCatalogRefresh:
+      type: object
+      required: [id, state, providers, progress, createdAt, startedAt, finishedAt, failureCode]
+      properties:
+        id: {$ref: '#/components/schemas/CompactUUID'}
+        state: {type: string, enum: [queued, running, succeeded, partially_succeeded, failed]}
+        providers: {type: array, items: {type: string}}
+        progress: {type: object, additionalProperties: true}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time, nullable: true}
+        finishedAt: {type: string, format: date-time, nullable: true}
+        failureCode: {type: string, nullable: true}
+    AdminOSMRegions:
+      type: object
+      required: [providers, regions, refresh]
+      properties:
+        providers:
+          type: array
+          items: {type: object, additionalProperties: true}
+        regions:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              workoutCount: {type: integer, format: int64, minimum: 0, description: Distinct non-deleting workouts across all accounts whose current route intersects this region.}
+              coverageRouteCount: {type: integer, format: int64, minimum: 0, description: Those workouts with an applied result for their current route input and this region's latest promoted generation.}
+        refresh: {allOf: [{$ref: '#/components/schemas/OSMCatalogRefresh'}], nullable: true}
     AdminDirectory:
       type: object
       additionalProperties: false
@@ -1548,6 +1760,14 @@ components:
         workoutCount: {type: integer, format: int64, minimum: 0}
         routeCount: {type: integer, format: int64, minimum: 0}
         lastWorkoutDate: {type: string, format: date, nullable: true}
+    OSMProcessingSettings:
+      type: object
+      additionalProperties: false
+      required: [monitorDatabaseStorage, revision, updatedAt]
+      properties:
+        monitorDatabaseStorage: {type: boolean, description: Default monitoring policy captured whenever a region updater starts or resumes.}
+        revision: {type: integer, format: int64, minimum: 1}
+        updatedAt: {type: string, format: date-time}
     AdminConfig:
       type: object
       additionalProperties: false
@@ -1829,7 +2049,7 @@ components:
         reused: {type: boolean}
     JobStatus:
       type: string
-      enum: [queued, running, succeeded, partially_succeeded, failed, cancelled]
+      enum: [queued, running, succeeded, partially_succeeded, failed, canceled]
     JobDisplayStatus:
       type: string
       description: >-
@@ -1837,10 +2057,10 @@ components:
         For current and historical ingest parents and source children with failed or partially_succeeded execution status,
         displays partially_succeeded only when workoutsCreated or workoutsUpdated is positive, otherwise failed.
         Successful files, skips, and unchanged workouts alone do not count as imported data.
-        Succeeded ingest jobs, including empty syncs, and queued, running, or cancelled jobs keep their execution status.
+        Succeeded ingest jobs, including empty syncs, and queued, running, or canceled jobs keep their execution status.
         Superseded applies only to top-level failed or partially succeeded coverage attempts whose retry eligibility
         reason is already_current; route attempts keep their execution status. Workout deletion is unchanged.
-      enum: [queued, running, succeeded, partially_succeeded, failed, cancelled, superseded]
+      enum: [queued, running, succeeded, partially_succeeded, failed, canceled, superseded]
     JobTrigger:
       type: string
       enum: [manual, scheduled, system]
@@ -1889,14 +2109,14 @@ components:
     CoverageRouteStats:
       type: object
       additionalProperties: false
-      required: [total, processed, running, succeeded, failed, cancelled, superseded]
+      required: [total, processed, running, succeeded, failed, canceled, superseded]
       properties:
         total: {type: integer, minimum: 0}
         processed: {type: integer, minimum: 0}
         running: {type: integer, minimum: 0}
         succeeded: {type: integer, minimum: 0}
         failed: {type: integer, minimum: 0}
-        cancelled: {type: integer, minimum: 0}
+        canceled: {type: integer, minimum: 0}
         superseded: {type: integer, minimum: 0}
     RoadCoverageEntity:
       type: object
@@ -2000,7 +2220,17 @@ components:
       required: [regionId, generation, latest]
       properties:
         regionId: {type: string, minLength: 1, maxLength: 129}
-        generation: {type: integer, format: int64, minimum: 1}
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Internal immutable OSM build identity, retained for provenance. Display regionalGeneration instead.
+        regionalGeneration:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+          description: This exact build's regional promotion number, including retired or deleted generations. Null or absent when catalog metadata has not been projected; never substitute the latest generation or the build ID.
         latest: {type: boolean}
     JobSummary:
       type: object
@@ -2067,7 +2297,7 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: Historical failed or cancelled routes whose workouts have proven authoritative current coverage, including newer input, generations or matcher contracts. Requires a succeeded current route child and matching current child/parent contexts and applied state; missing proof never counts as current.
+          description: Historical failed or canceled routes whose workouts have proven authoritative current coverage, including newer input, generations or matcher contracts. Requires a succeeded current route child and matching current child/parent contexts and applied state; missing proof never counts as current.
         currentCoverageJobIds:
           type: array
           maxItems: 100
@@ -2361,11 +2591,13 @@ components:
         duration: {type: string, pattern: '^[0-9]+(?:\.[0-9]+)?$'}
         localStartDate: {type: string, format: date, nullable: true}
         partialRoute: {type: boolean}
-        bounds: {$ref: '#/components/schemas/RouteBounds'}
+        bounds:
+          allOf: [{$ref: '#/components/schemas/RouteBounds'}]
+          description: Bounds of the displayed segmented GPS route; excludes isolated or rejected observations that are not drawn. Imported observation extrema remain unchanged.
         coverageBounds:
           allOf: [{$ref: '#/components/schemas/RouteBounds'}]
           nullable: true
-          description: Precomputed bounds of the applied displayable Coverage geometry, including usable stale evidence. Null when there is no displayable applied geometry. The bounds property remains the raw GPS route bounds.
+          description: Precomputed bounds of the applied displayable Coverage geometry, including usable stale evidence. Null when there is no displayable applied geometry. Independent of the displayed GPS route bounds.
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
@@ -2858,6 +3090,7 @@ components:
             - coverage-path-policy-experimental-v80
             - coverage-path-policy-experimental-v81
             - coverage-path-policy-experimental-v82
+            - coverage-path-policy-experimental-v83
         movementMode: {type: string, enum: [foot, bicycle, shared_public]}
         minimumTraversalMeters: {type: number, format: double, minimum: 0.1, maximum: 100}
         outcome: {type: string, enum: [evaluated, no_evidence]}

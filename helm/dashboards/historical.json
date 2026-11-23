@@ -1146,7 +1146,7 @@
     {
       "id": 15,
       "title": "Coverage outcomes",
-      "description": "Selected-range increase estimates observed events with reset handling, not exact durable/calendar counts. Missing data is N/A. Retained data may be incomplete. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures.",
+      "description": "Selected-range increase estimates observed events with reset handling, not exact durable/calendar counts. Missing data is N/A. Retained data may be incomplete. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures.",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -1228,7 +1228,7 @@
     {
       "id": 16,
       "title": "Coverage outcomes (daily)",
-      "description": "Rolling 1d increase per source series before grouping, evaluated at 1d steps (min interval 1d); not rates, cumulative-counter heights or exact timezone calendar-day ledgers. Missing days preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures.",
+      "description": "Rolling 1d increase per source series before grouping, evaluated at 1d steps (min interval 1d); not rates, cumulative-counter heights or exact timezone calendar-day ledgers. Missing days preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1333,7 +1333,7 @@
     {
       "id": 17,
       "title": "Coverage timing (p95)",
-      "description": "Queue age is creation-to-first-claim (not oldest backlog age); matcher measures Evaluate only; route measures postclaim attempts including cleanup, not durable completion; admission measures the polling loop. Histograms have no measurement dimensions. Sparse observations preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures. Whole-window buckets are aggregated before quantile, not averages of daily p95.",
+      "description": "Queue age is creation-to-first-claim (not oldest backlog age); matcher measures Evaluate only; route measures postclaim attempts including cleanup, not durable completion; admission measures the polling loop. Histograms have no measurement dimensions. Sparse observations preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures. Whole-window buckets are aggregated before quantile, not averages of daily p95.",
       "type": "stat",
       "datasource": {
         "type": "prometheus",

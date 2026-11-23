@@ -18,18 +18,19 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Committed-route Coverage pipeline | Folded-028 contract introduced at Helm revision 29 remains deployed; exact eligible cohorts and mixed-failure automatic recovery active |
 | Metadata-driven Coverage reconciliation | Deployed at Helm 62; initialization complete; selected real PostgreSQL matrix and three live unchanged cycles PASS with no GPS/ROI, new jobs or changed rows |
 | Concurrent coverage and reader coordination | Deployed and focused verification complete; one coverage pod runs two jobs with shared least-active reader assignment |
-| Application database | Live source/schema/minimum runtime 32/32/32, baseline 27, ledger 0-32; Helm-174 lifecycle/source-check fold rehearsed on a verified full backup; original 0-32 rows/timestamps and sequence high-water preserved |
+| Application database | Source/schema33, minimum runtime32, baseline27, ledger0-33; consolidated region management in033 and display currentness in030; retained ledger prefix/timestamps, original function identities and private data preserved |
 | Historical database checkpoints | Superseded; detailed historical source/catalog receipts are private and do not define current compatibility |
-| OSM database | Native OSM 010 Up completed on actual PG17; schema/minimum runtime 10/10 verified on primary and two standbys; isolated matrix used PG18.6 |
-| Park/education boundary correction | OSM generation 62, derivation 21 active; both account campaigns complete; the three former graph-layer failures are recovered with current generation-62 evidence |
-| Source layout | Account access/purge foundation 002, source-check lane 003; continuity 009/010, pipeline 028, status 029, display/Stats 030, tiles 031, admin metadata and late purge fences/grants 032 |
+| OSM database | Source/schema11, minimum10; durable regional generation high-watermarks and statistics receipts; healthy preparation skips installed map-data scans and retained promotion numbers/source hashes remain intact |
+| Park/education boundary correction | OSM NorCal generation 18 (build ID 62), derivation 21 active; both account campaigns complete; the three former graph-layer failures are recovered with current NorCal generation-18 evidence (build ID 62) |
+| Source layout | Account access/purge foundation002, source-check lane003; continuity009/010, pipeline028, status029, display/Stats/currentness030, tiles031, admin metadata/fences032, consolidated OSM region management033 |
 | Old-contract 28 repair | Approved exact actual-profile repair rehearsed on a protected actual backup, then applied under the real non-superuser migration login; preservation and new readiness verified |
 | UI follow-up | Owner Data Sources dialog delivers source table, add/edit/delete, typed settings, write-only retention placeholders and bounded connection-check feedback; Preferences fixes retained |
 | Historical yearly recovery | Available-map Coverage independently settled; final measurements retained privately; M8 accepted without a capacity claim |
-| Chart semantics | Helm 180 rolls UI only; existing namespace get-pods-only staging verification retained; API, workers, Martin and all 18 configuration tuples preserved |
+| Chart semantics | Helm194 adds a separate limited OSM controller and approved updater template, default dispatch concurrency1; existing credentials/configuration and Martin preserved |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm 180, Users menu order refined and admin reset-email action dropped from scope; canonical dev-20261111 tags match deployed pins; all five deployments healthy; schema/minimum runtime 32/32 |
+| Release | Helm232, current dev-20261120 pins; sentence-case Coverage route outcomes in Data Sync; Helm231 hover behavior, Helm230 column widths and Helm228 eligibility/count behavior retained; OSM11/10, application33/32 |
+| Coverage parking-repair recovery | v83 deployed; two complete private replays succeeded with 222 prepared segments and no recovery-excluded GPS points; requested production retry is still queued, successful-v82 reuse and redundant policy-only queue cleanup remain open |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
 | Canonical display identity | Policy coverage-display-identity-v1 retained; qualified M8 acceptance remains historical |
@@ -46,7 +47,179 @@ the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
 
-The [Users menu/recovery-scope update](#users-menu-order-and-recovery-scope) owns current deployment status.
+Helm232 capitalizes the first letter of each displayed Coverage route outcome in
+Data Sync's Route runs list, replacing underscore separators with spaces. Existing
+Processing/No result fallbacks and elapsed-millisecond formatting are retained.
+The UI-only change is built and deployed directly for review. Protected evidence:
+`coverage-route-status-capitalization`.
+
+Helm231 shows the Workouts value tooltip only when the region has a generation.
+Without one, the value renders without a tooltip wrapper and inherits the row's
+hand cursor. This UI-only change is built and deployed directly for review,
+preserving the requested column widths. Protected evidence: `regions-workouts-tooltip`.
+
+Helm230 narrows Workouts by 1rem to 9rem and gives that 1rem to Status. The table
+width and all other tracks retain their Helm229 dimensions. The UI-only image is
+published under the current tag and deployed directly for user review, with no
+additional verification requested. Protected evidence: `regions-column-rebalance`.
+
+Helm229 adjusts only the Regions table layout: Workouts is 4rem wider, Status is
+2rem narrower and PBF size is 1rem narrower. Other column widths are retained;
+the overall table is 1rem wider than Helm228. The UI image is published under the
+existing current tag and its rollout completes. Further post-deployment verification
+is skipped at the user's request for direct review and possible further tweaks.
+Protected evidence: `regions-column-widths`.
+
+Helm228 removes the static region list from Helm, runtime configuration, environment
+and catalog bootstrap. The OSM region configured flag is removed; every promoted
+active region is eligible for Coverage. Version-2 catalog fingerprints invalidate
+old negative readiness proofs when active-region membership changes. The live
+app33/OSM11 patch is folded into the existing schema definitions, without new
+migration IDs or ledger changes. Actual OSM ownership is discovered rather than
+assumed; original function identities/permissions, generation numbering and map
+data are preserved. The coordinated rollout restores workers/controller after
+adoption and leaves six deployments healthy.
+
+Regions adds **Workouts** between Database usage and Status, with a 6rem track and
+no reduction in the existing column widths. Its total counts intersecting routed
+workouts across all accounts, including workouts retained after source deletion;
+the minimum-2em styled hover target reports **n coverage routes** using current
+route-input proofs and the latest regional generation. A private, cascading spatial
+membership index avoids redoing all route/boundary intersections during polling.
+Native checks cover both accounts, multi-region routes, generation reset/progress,
+route/boundary changes, retained-source workouts and access restrictions. All 88
+focused UI tests pass; candidate/deployed Chromium dark and WebKit light compare
+desktop/mobile column widths directly with Helm227. Final API migration packaging
+includes the retained-source correction; unchanged runtime/UI artifacts and each
+image's source provenance are recorded. Harbor current tags match deployed pins.
+
+The live Israel aggregate initially reports 60 workouts and zero latest-generation
+Coverage results. All 7,665 observations of the requested 5/24/2023 run are inside
+the installed Israel boundary; no private coordinates leave the application
+database for that check. The new reconciliation revision is active and its stale
+negative proof is actionable. Ordinary backfill is asynchronous and has encountered
+transient NOWAIT row contention; the requested run has not yet been observed queued.
+Protected evidence: `promoted-region-coverage`.
+
+Helm227 corrects Data Sync Coverage generation labels without restyling the existing
+region/number table. Retained per-build promotion numbers are projected through the
+catalog cache; NorCal build 62 displays regional generation **18**, including old
+jobs. Deleted/retired regions retain their recorded number; missing metadata displays
+unavailable rather than an internal ID or a substituted current generation. Build
+provenance and freshness comparisons remain unchanged. All 241 Data Sync tests,
+focused native app33/OSM11 label/history checks, Go tests/vet and generated-source
+checks pass. Chromium dark and WebKit light verify candidate/deployed desktop and
+mobile presentation. Six deployments are healthy; Harbor current tags match the
+deployed digest pins, with schemas, ledgers, configuration, Martin and active updater
+identities preserved. Protected evidence: `coverage-generation-labels`.
+
+The production v83 review at 11/22/2026 6:48 PM records 162 applied jobs, one
+no-evidence success, 35 transient failures, two OSM-unavailable failures and ten
+parameter rejections from the initial rollout. The requested route remains queued;
+these aggregate successes do not confirm that specific recovery end to end.
+
+Helm226 deploys bounded window recovery for typed local matcher limits. It retries
+smaller windows before excluding an irreducible observation and never joins across
+an excluded gap. Two complete private replays produced 222 prepared segments with
+zero recovery-excluded observations. Legacy v82 jobs retain their original policy.
+The requested production retry is queued; private replay success is not recorded as
+an applied production result. The policy name remains experimental until that
+confirmation; the intended stable name is `coverage-path-policy-v83`, with historical
+identifiers retained and naming compatibility required before activation. The
+recovery-only descriptor change also caused an unwanted broad scan. That scan is
+temporarily deferred with its checkpoint preserved; successful-v82 compatibility
+and narrowly scoped redundant-queue cleanup are not complete.
+
+The same rollout includes job/regional-generation/ruleset batch banners, complete
+download destination logging, waiting-only prestart status, current-task following
+that preserves manual scroll during stable polling, and modal-aware `/` search
+focus. Native app33/OSM11 checks and candidate/deployed light/dark browsers pass.
+The pre-follow-adjustment full UI suite passed 1,134 tests; 157 focused tests passed
+after its ResizeObserver correction. Helm225's waiting command was canceled after
+healthy worker rollout; direct binary verification and successful Helm226 activation
+confirmed the deployed images.
+
+Helm224 retains its checkpoint: locality sliver containment, failed-candidate
+cancellation and the Regions A shortcut. Four retained-candidate attribution errors
+were traced to county reassignment without geometry containment; corrected producer
+SQL excludes those invalid assignments while validation stays strict. Incompatible
+completed checkpoints require a fresh job, with a safe cancellation action now
+available. All 1,119 UI tests and native PostGIS checks pass; six deployments are healthy.
+At that checkpoint the requested private Coverage run was diagnosed as a
+parking-repair rewrite loop; the subsequent bounded recovery is recorded at Helm226.
+
+Helm223 retains its checkpoint: prefix-free OSM task errors, retained
+validation-gate causes and configurable six-hour completed/failed Job retention.
+Terminal retained pods do not hold processing slots; cleanup retries have unique
+names. Generic errors say Review the updater pod logs for this job. Existing UI
+history normalizes the old prefix/instruction. Helm/Go/native checks and 93 focused
+UI tests pass; both themes and deployed assets are verified. Six deployments are healthy.
+
+Helm222 retains its checkpoint: concise download failures and copyable URL.
+Download errors use `Failed to download <URL> | <reason>` without redundant task
+prefixes. The inline URL copies on click or keyboard activation, with shared tooltip,
+accessible success/failure feedback and mobile wrapping. Focused UI/Go and native
+controller persistence checks pass; six deployments are healthy.
+
+Helm221 retains its checkpoint: OSM executor/UI final-task completion and
+shared current/table task icons. Final validation no longer completes task 58
+before publication, cleanup, statistics and local scratch removal finish. Promoted
+maintenance retries reopen the final task, including historical 57-step requests.
+All 1,109 UI tests and disposable native protocol/maintenance checks pass; light/dark
+candidate/deployed browsers verify 24 states each. Six deployments are healthy.
+
+Helm220 retains its checkpoint: UI-only transform-free settled dialogs.
+Painted border samples now match their theme color on all four edges in the
+verified Chromium/WebKit matrix, including map scrolling. This corrects Helm219's
+coordinate-only check, which missed compositor blurring despite integral bounds.
+All 1,101 UI tests pass; schemas, configuration and non-UI pods are preserved.
+
+Helm219 retains its checkpoint: UI-only shared dialog pixel alignment.
+All modal entry points use the shared primitive, including nested confirmations,
+content-sized forms and the mobile Map sheet. Table frames retain only their
+internal residual correction and remeasure after the dialog moves. Light/dark
+browser checks cover normal/high-DPI rendering, resizing and focus/scroll behavior;
+all 1,100 UI tests pass and six deployments are healthy.
+
+Helm218 retains its checkpoint: UI-only admin sidebar caption alignment.
+Accounts/Users and OSM Maps/Regions align exactly; Operations/Settings match their
+content-heading insets. Light/dark checks cover desktop/tablet/mobile pane layouts,
+with the shared owner Stats sidebar rules untouched. All six deployments are healthy.
+
+Helm217 retains its checkpoint: UI-only monitoring-indicator alignment,
+raised by 0.25rem. Candidate/deployed light/dark checks verify the computed offset,
+table alignment and responsive fit. Schemas, configuration and non-UI pods are preserved.
+The [route markers and displayed-geometry fitting](#route-markers-and-displayed-geometry-fitting) retains its Helm216 checkpoint.
+The [monitoring indicator typography](#monitoring-indicator-typography) retains its Helm215 checkpoint.
+The [execution policy, inline indicator and OSM source consolidation](#execution-policy-inline-indicator-and-osm-source-consolidation) retains its Helm214 checkpoint.
+The [OSM storage-monitoring policy and adaptive safeguards](#osm-storage-monitoring-policy-and-adaptive-safeguards) retains its Helm213 checkpoint; its immutable-per-request policy is superseded by per-execution capture.
+The [plain-language OSM step help](#plain-language-osm-step-help) retains its Helm212 checkpoint.
+The [metrics-inclusive durations and historical reconciliation](#metrics-inclusive-durations-and-historical-reconciliation) retains its Helm211 checkpoint.
+The [short progress and completed deletion history](#short-progress-and-completed-deletion-history) retains its Helm208 checkpoint.
+The [consolidated region management and Coverage continuity](#consolidated-region-management-and-coverage-continuity) retains its Helm207 checkpoint.
+The [processed title and Coverage retention clarification](#processed-title-and-coverage-retention-clarification) retains its earlier checkpoint; its stale-on-removal description is superseded by the continuity contract.
+The [progress and typed user confirmation](#progress-and-typed-user-confirmation) retains its Helm205 checkpoint.
+The [region deletion and recovered timing](#region-deletion-and-recovered-timing) retains its Helm204 checkpoint.
+The [Finished elapsed help and historical recovery](#finished-elapsed-help-and-historical-recovery) retains its earlier recovery checkpoint.
+The [Region-local generations and build identity](#region-local-generations-and-build-identity) retains its Helm199 checkpoint.
+The [Successful elapsed totals and final UI help](#successful-elapsed-totals-and-final-ui-help) retains its Helm198 checkpoint.
+The [Region progress actions and OOM diagnosis](#region-progress-actions-and-oom-diagnosis) retains its Helm196 checkpoint.
+The [American vocabulary and updater help](#american-vocabulary-and-updater-help) retains its Helm195 checkpoint.
+The [Managed region update workflows](#managed-region-update-workflows) retain their Helm194 checkpoint.
+The [Regions live-progress tooltip dismissal](#regions-live-progress-tooltip-dismissal) retains its Helm193 checkpoint.
+The [Regions minor words, track transfer and join limit](#regions-minor-words-track-transfer-and-join-limit) retain their Helm-192 checkpoint.
+The [Regions columns, title casing and map polish](#regions-columns-title-casing-and-map-polish) retain their Helm-191 checkpoint.
+The [Regions behavior and presentation follow-up](#regions-behavior-and-presentation-follow-up) retains its Helm-190 checkpoint.
+The [Regions table and retained boundary map](#regions-table-and-retained-boundary-map) retain their Helm-189 checkpoint.
+The [Road Coverage cell-target correction](#road-coverage-cell-targets-and-checkbox-alignment) retains its Helm-188 checkpoint.
+The [inline checkbox edge correction](#symmetric-inline-checkbox-edges) retains its Helm-187 checkpoint.
+The [shared header hover-edge correction](#shared-table-header-hover-edges) retains its Helm-186 checkpoint.
+The [shared painted table outline](#shared-sticky-table-viewport-and-painted-outline) retains its Helm-185 checkpoint.
+The [shared table-header standard](#shared-table-header-and-sort-styling) retains its Helm-184 checkpoint.
+The [Road Coverage sticky-header correction](#road-coverage-sticky-header-top-border) retains its Helm-183 checkpoint.
+The [border-height correction](#road-coverage-border-height-correction) retains its Helm-182 checkpoint.
+The [OSM provider catalog refresh](#osm-provider-catalog-refresh) retains its Helm-181 checkpoint.
+The [Users menu/recovery-scope update](#users-menu-order-and-recovery-scope) retains its Helm-180 checkpoint.
 The [Accounts/source follow-ups](#accounts-and-source-follow-ups-through-helm-179) retain their Helm-179 checkpoint.
 The [account-deletion update](#account-deletion-and-in-place-users-refresh) retains its historical Helm-173 checkpoint.
 The [account/source-default update](#account-and-source-defaults) retains Helm 172.
@@ -107,7 +280,7 @@ retains its Helm-106 checkpoint. The [graph-regression closure](#coverage-graph-
 retains its Helm-104/105 worker checkpoint. The [All time/navigation follow-up](#all-time-and-range-aware-job-route-navigation)
 retains its Helm-103 API/UI checkpoint. The [SVG finish-marker follow-up](#svg-raw-route-finish-marker)
 retains its Helm-102 checkpoint. The [offline rebuild completion](#offline-osm-rebuild-and-coverage-reconciliation)
-retains its Helm-101 operational checkpoint. OSM generation 62 is promoted; all-account
+retains its Helm-101 operational checkpoint. OSM NorCal generation 18 (build ID 62) is promoted; all-account
 Coverage campaigns and queued work are terminal, with three processing-limit
 exceptions explicitly retained. The [boundary-attribution correction](#park-and-education-boundary-attribution-correction)
 retains its initial updater-publication checkpoint. The
@@ -134,6 +307,1097 @@ superseded earlier undeployed, pending-repair and old-live-contract wording at
 that stage. Dated checkpoints below retain their original evidence boundaries.
 The [independent recovery closure](#independent-yearly-recovery-closure-10202026)
 is complete for available map data; source success alone was not used as proof.
+
+## Locality Sliver Containment And Regions Shortcut
+
+Helm224 fixes the producer behind the four material locality residuals in retained
+attempt75. Sliver attribution previously assumed an admin-level8 municipality was
+geometrically contained in the neighboring admin-level6 county. Four short trail
+pieces (2.38m to 18.14m) were reassigned entirely outside that county. Each had a
+valid original municipality. The producer now requires outside-county length no
+greater than the unchanged 0.01m validation tolerance before absorbing a sliver.
+It preserves the original scope otherwise. No validation metric, geometry or
+identity rule is weakened, and valid nested slivers/road/length exclusions remain.
+
+Read-only indexed, bounded checks on the retained candidate verified all four old
+invalid reassignments would be excluded and the valid original municipalities
+retained. No production candidate data was patched. Native PostGIS fixtures run
+the actual discovery/apply SQL across checkpoint boundaries and the unchanged
+locality/park/education validation predicates. Existing completed geometry fences
+remain immutable; completed validation can still restart under its existing rules.
+
+Ordinary Resume does not rewind completed geometry/identity work. Changed producer
+SQL records a clear incompatible-checkpoint reason requiring a fresh processing
+job. Failed resumable, unpromoted requests now expose the existing audited Cancel
+processing action so candidate cleanup can precede Clear job status and a fresh
+Download/Reprocess without deleting promoted regional data. Post-promotion
+maintenance cannot use this action.
+
+The Regions checkbox declares `aria-keyshortcuts="A"`; the shared shortcut registry
+handles A/Shift+A, resets paging like a pointer toggle, suppresses repeated toggles
+and preserves text editing, modifier, menu, modal and inactive-section ownership.
+All 1,119 UI tests, production/type/CSP/CSS/format checks and Go updater/controller
+tests/vet pass. Candidate/deployed Chromium dark and WebKit light verify desktop/
+mobile shortcut guards, recovery messaging and the real cancellation command path
+using synthetic API fixtures. Only updater/UI images and the approved updater
+template checksum change; API/worker/coverage/Martin pods, schemas/ledgers, secrets,
+TTL21600, active execution identities and Harbor current tag consistency are preserved.
+Six deployments are healthy. Protected evidence is under
+`deploy-internal/osm-locality-residuals`; its disposable fixture pod/forward are removed.
+
+### Requested Coverage Failure Diagnosis
+
+The requested private Outdoor Run was inspected without changing its route or
+Coverage state. Its retained target uses Northern California attempt62; 7,333
+original points are below the route-point bound. The old log index was absent, so
+a read-only replay used the production snapshot/matcher with normal global/account/
+region/backend diagnostic admission and strict standby placement. The replay hit
+the 524,288-byte parking-repair retained-state bound. It repeatedly accepts local
+rewrites at one cursor after rejecting simpler pumping alternatives, growing the
+traversal until the memory guard stops it. This is a matcher rewrite-loop issue,
+not the updater's locality containment defect. A private input/graph reproducer
+and trace are retained under `deploy-internal/coverage-processing-limit` outside
+the repository. No matcher policy or cap changes are deployed, no partial Coverage
+is accepted, and this Coverage failure remains unresolved. Diagnostic leases,
+forwards and copied connection credentials are removed; source matcher hashes are
+verified unchanged.
+
+## Task Error Causes, Pod Logs And Job Retention
+
+Helm223 removes the redundant task-failed prefix from controller summaries,
+including SQL/detail, OOM, eviction and generic container exits. Structured logs
+retain task identity. Generic instructions now read **Review the updater pod logs
+for this job.** The dialog also normalizes the old prefix/instruction in retained
+history without rewriting its durable event records; download URL copying remains.
+
+The latest Israel/Palestine attempt75 generic exit was investigated in archived
+`fluent-bit-*` logs. Its actual final exception at 2026-11-22T19:20:46.397Z was
+`OSM validation gate: materialLocalityResiduals is 4, expected 0`. The candidate
+was not promoted. SQL validation had committed, but the later Go validation gate
+did not retain its rejection reason. The updater now records that specific cause
+using the existing stage-failure path while preserving committed SQL checkpoints
+and the resumable candidate. The controller can present that cause instead of
+only an exit code. The underlying locality residuals are not altered by this release.
+
+`osm.regionUpdates.ttlSecondsAfterFinished` defaults to **21600**. The Helm schema
+and runtime validate nonnegative integral seconds; `0` permits immediate TTL GC.
+The approved template applies it to updater, cancellation-cleanup and deletion
+Jobs. Terminal Jobs with TTL are left to Kubernetes for reclamation. Capacity and
+finalization require all request pods to be Succeeded/Failed, not physically gone;
+Pending/Running/Unknown pods remain a barrier. Cleanup retries use distinct names
+so retained failed Jobs cannot be accidentally adopted as the next attempt. Older
+Jobs without TTL preserve the previous UID-fenced deletion lifecycle, and a Job
+already reporting its outcome is not recreated if immediate TTL GC wins the UID
+capture race. Forced stopping of stale active executions remains available.
+
+Go updater/controller tests, vet, all Helm tests and 93 focused UI tests pass.
+Helm tests cover default/zero/custom retention and reject negative/fractional/
+out-of-range/string values. Disposable application33/OSM11 native checks cover
+retained terminal Jobs, processing capacity release, unique cleanup retry names,
+legacy cleanup, specific download/validation error persistence and unchanged
+committed validation checkpoints. Its test pod/forward are removed. Candidate and
+deployed Chromium dark/WebKit light each verify ten desktop/mobile error states,
+historical prefix/instruction normalization and continued URL clipboard copying.
+
+The deployed approved Job template and Helm values both contain TTL21600. Six
+deployments are healthy; schemas/ledgers, secrets, API/Martin pods, other worker/
+coverage binaries, rclone and active execution identities/policies are preserved.
+Both origins serve reviewed assets and current Harbor tags match deployed pins.
+Verified log fields/index/namespace and kubectl/archive instructions are documented
+in the region update guide. Protected archive evidence and release receipts remain
+under `deploy-internal/osm-task-errors` outside the repository.
+
+## Download Failure URLs And Clipboard Copy
+
+Helm222 formats region-download errors once at the downloader boundary as
+`Failed to download <URL> | <reason>`. The updater preserves this message rather
+than adding a source-PBF prefix; the controller recognizes the URL-specific download
+message and does not prepend the task name. Network failures retain their underlying
+error identity without repeating the HTTP client's request URL. Generic SQL and
+container/OOM summaries keep their existing task context and bounds.
+
+The progress dialog renders the URL as an inline copy action using the established
+theme, focus and tooltip patterns. Click or Enter copies only the URL, never
+navigates, announces success/failure and supports retry if clipboard access fails.
+The URL remains selectable, copy feedback resets when the error changes or the
+dialog reopens, and long URLs wrap within the mobile error panel.
+
+Ninety focused UI tests, updater/controller Go tests and vet, production/type/CSP/
+CSS/format checks pass. A disposable native controller fixture verifies the exact
+URL/pipe message persists through owned pod termination and job finalization while
+retaining OOM precedence and capability/UID/capacity fences; its pod/forward are
+removed. Candidate/deployed Chromium dark and WebKit light each verify desktop/
+mobile click/keyboard copy, denied-clipboard retry, feedback reset, wrapping and
+stable dialog geometry with synthetic API fixtures.
+
+Only the OSM updater, controller binary in the shared worker image and UI assets
+change. Other worker/coverage binaries and rclone are verified unchanged. Six
+deployments are healthy; schemas/ledgers, credentials, API/Martin pods and active
+updater execution identities/policies are preserved. Both origins serve reviewed
+assets and Harbor current tags match deployed digest references. Protected release
+receipts are under `deploy-internal/osm-download-errors` outside the repository.
+
+## OSM Final-Task Completion And Icon Agreement
+
+Helm221 corrects the Monaco observation: processing attempt 72 genuinely downloaded,
+imported and validated a fresh 704,884-byte extract in about 18.4 seconds, then spent
+another 3m23s in post-publication cleanup/statistics maintenance. Validation SQL had
+incorrectly completed the final task before that maintenance, and the current-task
+icon independently represented aggregate job state rather than its table row.
+
+Final validation reports now leave the final task Running with no Finished time.
+Completion is reported only after publication, retired-data cleanup, statistics and
+local scratch removal succeed. Failure/pause stays visible through the normal
+executor outcome path. Post-promotion retries and cancellation cleanup reopen the
+final task and settle it only after successful maintenance. Historical 57-step
+requests retain their original numbering through executor translation.
+
+Current-task and table icons now use one task-state projection, including completed
+tasks between batches, terminal outcomes and queued work. Never-started queued
+processing/deletion reserves the waiting spinner in both places; queued resume
+retains matching task history. Timing, counters, monitoring policy and dialog/table
+geometry are preserved.
+
+The minutes in finalization are not additional Monaco derivation: PostgreSQL17.6
+recursively analyzes installed partitions when refreshing shared partitioned-table
+statistics. That server has no parent-only ANALYZE syntax. This release retains
+the existing statistics policy and makes its active work accurately visible.
+
+All 1,109 UI tests, Go updater/controller tests, vet, production/type/CSP/CSS/format
+checks pass. Disposable application33/OSM11 native checks verify new/legacy final
+Running/no-Finished boundaries, post-publication failure/reopen/success, execution
+duration fencing and existing statistics recovery. The owned test pod/forward are
+removed. Candidate/deployed Chromium dark and WebKit light each verify 24 states
+covering finalization, task-boundary completion, stop/cancel, queued resume and
+download/deletion behavior, including desktop/mobile views and matching icons.
+Six deployments are healthy; only UI, approved updater image/template and controller
+template checksum change. Schemas/ledgers, credentials, API/worker/coverage/Martin
+pods and running execution identities/policies are preserved. Both origins serve
+reviewed assets and Harbor current tags match deployed pins. A transient first
+post-rollout asset 504 cleared on retry. Protected release receipts are under
+`deploy-internal/osm-final-task` outside the repository.
+
+## Transform-Free Settled Dialog Borders
+
+Helm220 corrects the follow-up shown in the user's partial boundary-dialog capture:
+the horizontal stroke was spread across two dim rows while the vertical stroke
+occupied one bright column. Helm219 could produce integral DOM bounds while its
+centering transform and compensating translation still blurred the compositor's
+rasterized layer. Checking coordinates alone did not establish crisp paint.
+
+After entry animation, shared centered dialogs now use device-pixel `left`/`top`
+layout coordinates and no persistent transform or translation. Natural dimensions,
+responsive centering, nested modal behavior and the non-centered mobile Map sheet
+remain intact. Table frames retain their independent residual correction and
+remeasure after parent positioning changes.
+
+Pixel regression checks sample three positions along every edge at six viewport
+sizes, at the beginning/middle/end of map scrolling. Candidate Chromium dark and
+WebKit light pass at DPR1/2; deployed DPR1 checks repeat all 18 states per browser.
+All sampled strokes match the computed border color exactly. Retained Helm219
+samples at 1441x1001 differ by up to 51 RGB levels in Chromium and 44 in WebKit;
+the same samples now differ by zero. Broader candidate/deployed checks preserve
+the 18-state modal, table, focus-return, content-growth and responsive matrix.
+
+All 1,101 UI tests, production/type/CSP/CSS/format checks and deployment asset/hash
+checks pass. A transient ingress 504 during the first post-rollout asset check
+cleared on verification retry; all six deployments are healthy and both origins
+serve the reviewed assets. Runtime schemas/ledgers, configuration, non-UI pod UIDs
+and Harbor current tag-to-digest consistency are preserved. Protected baseline,
+pixel-comparison and release receipts are under `deploy-internal/dialog-border-paint`.
+
+## Shared Dialog Pixel Alignment
+
+Helm219 initially aligns every dialog's outer position to device pixels through the shared
+`Dialog.Content` primitive, preserving Radix portals, focus handling, `asChild`
+forms and dismissal. Alignment waits for entry animations and updates after size,
+font, viewport or display-resolution changes. Existing transforms and responsive
+dimensions are preserved; corrections do not accumulate across measurements.
+
+`DialogTableViewport` no longer positions the ancestor dialog. It corrects only
+its own remaining internal offset and remeasures after the shared dialog reports
+a position adjustment, so parent and child corrections cannot compete. Its centered
+dialog translation mechanism is superseded by Helm220's transform-free positioning. A source
+check prevents application dialogs from bypassing the shared primitive.
+
+All 1,100 UI tests and the production/type/CSP/CSS/format checks pass. Candidate
+Chromium dark and WebKit light checks at DPR1/2 each cover 18 states: boundary and
+progress dialogs at odd/even desktop, tablet and mobile dimensions, an explicitly
+fractional internal table layout, confirmation/form dialogs, Preferences, About,
+content-sized source editing, nested source deletion and custom date ranges.
+Deployed Chromium dark/WebKit light repeat those checks against published assets
+with synthetic API fixtures. Focus return, keyboard scrolling and modal layering
+remain intact. All six deployments are healthy; configuration, schemas/ledgers,
+non-UI pods and current Harbor tag-to-digest consistency are verified. Protected
+receipts remain under `deploy-internal/dialog-pixel-alignment` outside the repository.
+
+## Route Markers And Displayed-Geometry Fitting
+
+Helm216 updates API/UI only. The ENABLED state and round route-start marker share
+the same bright green token. The centered red finish square and its outline scale
+by 1.25 on each side within the existing image canvas; the start-marker radius is
+unchanged. Indicator tracking, non-breaking spacing and disabled gray remain intact.
+
+Map selection now projects Routes-mode bounds from the stored displayed segmented
+line rather than unfiltered imported extrema. Display-rejected isolated points
+cannot expand a route fit; Coverage keeps its independently applied geometry bounds.
+Raw observations and imported summary metadata are not rewritten. The investigated
+user-provided example has one isolated older observation already excluded from its
+drawn line, explaining the prior northward fit discrepancy. Sensitive identifiers,
+coordinates and diagnostic evidence remain protected outside the repository.
+
+The API/native regression verifies authenticated owner-scoped 2D/3D visible bounds,
+their aggregate and unchanged imported metadata. The 365 focused Map/Regions tests,
+generated/format/vet/Helm checks and candidate/deployed light/dark browser checks
+pass. Marker-preview evidence confirms the exact side/stroke scaling and matching
+green. All six deployments are healthy; schema/ledger, credentials, worker/OSM
+controller and Martin are preserved. The owned verification database/forward are
+removed; current Harbor tags match deployed pins.
+
+## Monitoring Indicator Typography
+
+Helm215 changes only the UI. ENABLED/DISABLED keep the shared all-caps font and
+semantic colors while using a local `0.04em` tracking override. Two U+00A0 characters
+separate monitoring from the state; shared heading spacing is unchanged.
+Sixty-two Regions component tests and candidate/deployed Chromium dark/WebKit
+light checks confirm exact text characters, computed tracking, table alignment,
+responsive containment and retained start/resume/history behavior. All six
+deployments are healthy; schemas, configuration and non-UI pods remain unchanged.
+
+## Execution Policy, Inline Indicator And OSM Source Consolidation
+
+Helm214 captures the current global storage-monitoring default at the first
+authenticated read for each updater execution capability. Starts and paused/failed
+resumes reload the default without resetting checkpoint identity or task history.
+Repeated reads and later default changes cannot mutate a running execution;
+completed history retains its final execution's value. Existing running policies
+are protected during adoption and policy application is audited in job events.
+
+The progress indicator now shares the task/elapsed status row and aligns to the
+table's right edge. Its regular label omits the colon; ENABLED/DISABLED reuse the
+heading's all-caps typography, green or n/a-gray respectively. Narrow viewports
+wrap cleanly without overflow or losing table alignment. Settings help and the
+operator contract describe the new start/resume semantics.
+
+OSM region management is consolidated in `011_region_management.sql`, mode0644,
+with source/schema11, minimum10 and ledger0-11. Catalog refresh metadata, request
+binding, deletion receipts, generation high-watermarks and statistics receipts
+remain intact. Fresh and adopted function/security contracts match; retained
+ledger timestamps, all function identities/owners/grants/settings, trigger modes,
+region/generation data and numbering are preserved. Application schema/ledger33
+and minimum32 stay unchanged; obsolete higher OSM migration references are removed.
+
+The Go suite, 96 focused UI tests, native first-read/running/repeated-read/pause/
+failed-resume/history checks and fresh/adopted rehearsals pass. Candidate/deployed
+Chromium dark and WebKit light verify exact text, colors, heading font, desktop
+row/right-edge alignment and responsive containment. All six services are healthy;
+credentials, Martin and existing updater identities are preserved. Current Harbor
+tags match deployed pins. The owned native verification pod/forward are removed;
+protected preimages and receipts remain outside Git.
+
+## OSM Storage-Monitoring Policy And Adaptive Safeguards
+
+Helm213 implements Settings > OSM Processing > **Monitor available database
+storage**, persisted in the application database and enabled by default. Revision-
+fenced saves require administrator authentication/CSRF and create sanitized audit
+records. New region requests atomically capture the policy and settings revision;
+database enforcement makes them immutable. Coalescing, retries, pause/resume and
+later default changes retain the original request policy. Progress shows its
+saved Enabled/Disabled value; deletion does not use monitoring.
+
+Monitoring off skips all updater Prometheus storage requests/retries, background
+sampling, post-batch freshness/settle waits and storage-triggered vacuuming.
+Writer-primary checks and exclusive ownership remain independent. Temporary
+object deletion, checkpoints, limits, required indexes/statistics, validation,
+publication and final cleanup remain intact. No blanket final vacuum is added
+for temporary grouping data that has already been removed.
+
+Enabled monitoring accepts recent valid readings with at least 15% headroom,
+avoiding mandatory 30/60-second scrape barriers after healthy tiny batches. Low-
+headroom paths retain freshness checks, second observations and bounded settling;
+missing/stale/invalid required metrics still fail closed. The authoritative
+[work-unit skip matrix](osm-region-updates.md#storage-monitoring-policy) documents
+each work unit and the disabled-policy behavior.
+
+The additive canonical033 adoption is rehearsed against the prior installed
+catalog and preserves schema/ledger33, minimum32, all existing function identities,
+owners/grants/settings and original job policies. The OSM runtime contract is retained. Native
+checks cover authorization/CSRF, strict inputs, revision conflicts/idempotent saves,
+audit counts, new versus existing policy snapshots, trigger immutability and the
+capability response. Unit checks prove monitoring-off retains primary validation
+and required cleanup/statistics, and healthy versus low/invalid metric behavior.
+
+The Go suite, 94 focused UI tests, candidate/deployed Chromium dark/WebKit light
+and desktop/tablet/mobile policy/settings checks pass. All six services are healthy;
+credentials, Martin and running updater identities are preserved. Current Harbor
+tags match deployed pins. The native verification pod and forward are removed;
+protected schema/function preimages and release receipts remain outside Git.
+
+## Plain-Language OSM Step Help
+
+Helm212 updates only the UI. All 58 updater descriptions are reviewed and rewritten
+as concise, human-readable action/purpose summaries, with no more than two
+sentences each. Database/algorithm jargon is removed from the tooltip column;
+technical frequencies and surrounding specifications remain available to operators.
+Three deletion descriptions and the older combined setup/download explanation
+follow the same rule. The document remains the source of truth for current task help.
+
+Verification covers the complete description inventory, sentence limits and jargon
+checks, 61 focused UI tests, the production build and Go/document task-order
+contract. Candidate/deployed Chromium dark and WebKit light inspect all 62 help
+entries and mobile placement. All six services are healthy, unchanged schemas/
+ledger and non-UI pods are preserved, and current Harbor tags match deployed pins.
+
+## Metrics-Inclusive Durations And Historical Reconciliation
+
+Helm211 corrects task and job duration semantics. A task's Finished timestamp is
+the end of its last batch's metrics settling, and its tooltip is the active
+first-to-final span. The job total independently covers all active execution,
+including metrics waits, publication and maintenance. Paused/queued gaps are
+excluded. Revisited task spans can overlap and must not be summed into a job total.
+
+Checkpoint activity is reported before a cancellable metrics wait, but the task
+remains Running until its settled boundary is reported. Interruption captures the
+time actually spent without losing committed work. Controller finalization and
+duration reconciliation are atomic with terminal-state/capacity publication.
+Legacy executors are reconciled from their retained next-start/stop boundaries.
+
+All seven completed/terminal records and 175 started task rows are repaired from
+retained event boundaries and protected execution evidence, with preimages and
+row/event guards. The historical Svalbard stop/container-start receipts close its
+old recovery gaps without counting overnight/pause time. Monaco derive/segments
+finishes at 11:25:50 AM, spans 90.754 seconds including metrics settling, and its
+job total is 1h18m28s. The previous partial SQL-time counters are superseded.
+
+Native tests cover ninety-second repeated work with tiny SQL increments, no
+premature Finished value during settling, timestamp/span consistency, pause/queue
+exclusion, idempotent reports and old/new task inventories. Fresh/adopted function
+contracts match with schema/ledger33, existing identities and grants preserved.
+Candidate/deployed Chromium dark and WebKit light review every repaired Finished
+tooltip and timestamp. All six deployments are healthy; current Harbor tags match
+deployed pins. UI/Martin and credentials remain intact; the disposable test pod is
+removed. Detailed preimages and receipts remain protected outside Git.
+
+### Queued Progress, Preparation And Ownership
+
+Helm209 enabled View job progress from both menu and status before a queued job
+has started. New 58-step requests separate prepare-source from download, with
+operation-appropriate titles and the first step/waiting spinner. Earlier 57-step
+requests retain compatible numbering. Healthy source preparation checks a durable
+statistics receipt instead of rescanning installed regions. New generations or
+interrupted maintenance still require repair; removal preserves valid surviving
+statistics. The running clock includes active between-batch overhead.
+
+Helm210 adds stable Deployment ownership for updater/cleanup Jobs, with only a
+name-scoped Deployment GET and no owner-delete privilege. Real API admission
+under the controller service account verifies the owner reference. Pod/ReplicaSet
+rollouts do not replace the owner identity. The earlier native verification pod
+was also removed after its checks completed.
+
+## Short Progress And Completed Deletion History
+
+Helm208 updates only the UI under the current `dev-20261120` tag. Progress lists
+with twenty steps or fewer fit the actual header/rows; longer processing lists
+retain the established twenty-row viewport. Successful deletion switches the
+dialog title to **Deleted <region ID>**, both during completion polling and when
+history is reopened from Available. Focus, horizontal scrolling and recorded
+totals are preserved.
+
+Verification passes 57 Regions component tests and candidate/deployed Chromium
+dark/WebKit light checks. Browser evidence uses the actual Virgin Islands deletion
+history and its **0.39s total**. One-, three- and twenty-step lists fit without
+unused vertical space or a clipped final row; twenty-one- and fifty-seven-step
+lists retain prior sizing. Desktop/tablet/mobile bounds, open completion and
+Available-history reopening pass. All six deployments are healthy; application
+schema/ledger33, minimum32, OSM11, configurations and non-UI pods remain intact.
+Harbor's current tags match the deployed pins; protected receipts remain outside Git.
+
+## Consolidated Region Management And Coverage Continuity
+
+Helm207 deploys the consolidated application source and the revised region
+deletion/retained-Coverage contract. Canonical033 now owns public catalog refresh,
+durable region processing, successful-work timing and deletion. Canonical030 owns
+display currentness. Application source/schema33, minimum32, baseline27 and
+ledger0-33 match a fresh installation. Removed source files and obsolete higher
+migration references are absent from the repository.
+
+The adoption was rehearsed under the non-superuser migration role. Live cutover
+uses protected schema/ledger/function preimages, quiesced application writers and
+matching binaries. It preserves the retained ledger prefix and terminal timestamp,
+all pre-existing function OIDs/owners/ACLs/settings, business data, credentials and
+Martin. The resulting function contract exactly matches fresh source. Native
+validation and the deployed migration binary accept the consolidated ledger.
+
+Existing matched geometry and metadata stay current and usable after shared
+regional source removal. The account-scoped display accessor separates saved
+result freshness from prerequisites for a new calculation. Map routes remain
+enabled with the current icon and no missing-map warning. Changed route/matching
+identity or a newer accepted regional generation still makes prior Coverage stale;
+new routes without applied Coverage remain unavailable while map data is absent.
+
+OSM11 adds durable regional high-watermarks and immutable promotion numbers,
+backfilled without renumbering existing promotions. Retirement/deletion does not
+reset the counter. A fresh successful promotion increments it atomically; failed
+processing does not consume a number. Native physical-deletion/reconciliation
+checks preserve copied Coverage, cover historical results without auxiliary proof,
+reject cross-account/policy/route changes, and confirm that generation2 with an
+older timestamp still supersedes generation1. Existing-generation backfill is
+also verified with an eighteen-promotion fixture.
+
+Delete region uses the requested three logical lines and processing-job wording;
+cleanup help and human-facing operator logs avoid generic processing terminology.
+The Go suite, 52 Regions and 303 Map tests, fresh/adopted catalog comparison,
+generated/format/vet/Helm checks and candidate/deployed Chromium dark/WebKit light
+checks pass. All six deployments are healthy; current Harbor tags match all four
+deployed application image references. Protected receipts remain outside Git.
+
+## Processed Title And Coverage Retention Clarification
+
+Helm206 updates only the UI under the current `dev-20261120` tag. Successful
+processing jobs now show **Processed <region ID>**, both when opened from Ready
+and when an already-open dialog refreshes at completion. The recorded total and
+step-table focus remain intact. Active/non-successful and deletion titles retain
+their existing meanings. All six deployments are healthy; API, worker, Coverage
+worker, OSM controller and Martin pods, schema/ledger and configurations are preserved.
+
+The region guide explains that unfinished builds are temporary import/reprocess
+artifacts. Region deletion retains workouts, GPS routes and application-side
+Coverage snapshots. Deployed map tiles use saved Coverage chunks/matches and do
+not read the deleted OSM region; missing-map reconciliation retains applied
+results as stale rather than purging them. New matching needs suitable active map
+data. This is a documented existing contract, not a new retention-policy change.
+
+Verification passes 52 Regions component tests, production build, generated/
+format/vet/Helm checks and candidate/deployed Chromium dark/WebKit light checks.
+Browser checks cover both an actual completed job and the live
+Processing-to-Processed transition with recorded total and table focus preserved.
+Deployed schema/function inspection confirms cached geometry/metadata storage and
+retained-result rendering without reading private workout data or deleting a region.
+
+## Progress And Typed User Confirmation
+
+Helm205 publishes only API/UI changes under the current `dev-20261120` tag. All six
+deployments are healthy; the then-current application contract, OSM11/minimum10 and the original
+ledger/configuration remain unchanged. Worker, Coverage worker, OSM controller and
+Martin pods are preserved.
+
+- Generation reuses the shared right-aligned numeric lane and provides a minimum
+  2em styled-help target without making the entire cell a help cursor.
+- Progress names its first column Step and initially focuses its scrollable list.
+  Native Up/Down/Home/End scroll only the list, retaining the underlying workspace
+  position and the normal close-focus handoff.
+- Completed repeated steps show their stored batch counts instead of suppressing
+  them outside Running. Svalbard's actual 57-step history verifies all retained
+  repeated-batch values.
+- The current-task line adds live successful-work elapsed time and switches to the
+  recorded total after completion. The read-only API projects the active batch
+  start after the last completion/stop/resume boundary, excluding old attempts and
+  pause/queue gaps. No database migration or new batch timestamp storage is added.
+- Delete user? retains its warning and reuses the workout-range confirmation
+  field and Cancel/Yes actions. Only exact uppercase DELETE enables Yes; dismissal
+  or selecting another target clears confirmation. Existing CSRF, duplicate-submit,
+  contention-retry and inactive-session guards remain covered.
+
+Verification passes the Go suite, 93 focused UI tests, native administrator/API
+elapsed-window projection checks and candidate/deployed Chromium dark/WebKit light
+checks. Browser checks cover the actual completed Svalbard job, two-digit versus
+single-digit alignment, minimum hover area, native keyboard scrolling, ticking
+elapsed time, exact typed confirmation and desktop/tablet/mobile containment.
+Protected evidence stays outside the repository; the owned native fixture and
+forward are removed, and Harbor's current tags match deployed references.
+
+## Region Deletion And Recovered Timing
+
+Helm204 deploys the administrator region-deletion workflow and checkpoint timing
+recovery, retaining the `dev-20261120` tag with matching Harbor/deployment digests.
+All six deployments are healthy. Application the then-current application contract and OSM
+schema13/minimum10 preserve their earlier ledger rows, capability RPC identity and
+active NorCal, Virgin Islands and Svalbard data.
+
+Svalbard generation1, build66 now has **1h 17m 34s total** in its promotion tooltip.
+The recovery uses the saved job accumulator, successful batch audit boundaries,
+the committed task27 checkpoint and surviving later task counters. It excludes
+failed attempts and pause/queue gaps. Checkpoint reconciliation now adds a safely
+bounded lost batch to prior totals instead of clearing the accumulated job time;
+ambiguous intervals remain unknown.
+
+Delete region names the target in the shared confirmation and shows red Deleting
+through queued/running cleanup and retries. The approved executor detaches active
+partitions, drops the region's tables/indexes/TOAST/build schemas and records a
+verified receipt. The controller independently confirms absent resources and
+stopped pods before publishing Available. Prior checkpoints cannot resume deleted
+data. Provider boundaries, job/promotion history and neighboring regions remain
+intact. Completion respects Show all regions and returns dialog focus to the
+Regions heading if the deleted row becomes hidden.
+
+Verification covers the Go suite, 50 Regions UI tests, duration/document contracts,
+native administrator authorization/CSRF/coalescing and stale-resume rejection,
+capability-fenced executor reports, controller dispatch/retry/stop confirmation,
+and the exact previous-to-updated application/OSM migration upgrade. Interrupted
+native cleanup resumed successfully and reclaimed **34,799,616 bytes** of physical
+database storage while retaining a neighboring region and promotion history.
+Chromium dark and WebKit light pass against candidate and deployed assets at
+desktop/tablet/mobile sizes, including Svalbard's actual recovered duration data.
+Disposable PostgreSQL and migration Jobs are removed; protected receipts remain
+outside the repository. Developer workflow details live in
+[Administrator Region Updates](osm-region-updates.md).
+
+## Finished Elapsed Help And Historical Recovery
+
+**11/20/2026, Helm200:** The visible legacy runs predated timing counters and had
+null totals, so Finished values rendered without their tooltip wrapper. Finished
+timestamps now always expose the shared help cursor/tooltip; missing timing gets
+an explicit unavailable explanation instead of silently becoming plain text.
+Known successful-batch totals retain the `15m 24s total` format. Started and n/a
+values do not acquire spurious elapsed help.
+
+Retained progress audit events provide paired starts and successful completions
+for the older runs. A guarded recovery sums those pairs across all batches,
+excludes interrupted/failed attempts and resume idle gaps, handles the initial
+source-preparation start, and includes successful promotion/cleanup. Only null
+historical counters are filled; timestamps/history are preserved and a recovery
+receipt is appended. Unrun legacy steps are safely initialized to zero for later
+resume accounting. No wall-clock task-span estimates or rounded console-duration
+guesses are used.
+
+The actual Virgin Islands API response now has totals for all57 Finished rows;
+`identity-propagate/compress` shows **20m 30s total**. Both live Chromium dark and
+WebKit light compare every rendered tooltip against that real response and verify
+the help cursor/hover display. Focused UI tests cover the requested 15m24s format,
+missing legacy timing, and plain Started/n/a values. The UI-only rollout preserves
+backend/controller/Martin pods, the then-current application contract, and current image-tag pins.
+Protected audit preimages/recovery guards and real-data screenshots are retained
+under `osm-finished-elapsed-help` outside the repository.
+
+## Region-Local Generations And Build Identity
+
+**11/20/2026, Helm199:** Generation means the sequential successful-promotion
+number within one region, starting at1. A global build ID identifies an attempt
+and is never a generation number. Failed/canceled attempts do not advance regional
+generations. Virgin Islands displays generation1 with build65; NorCal displays
+generation18 with build62, based on retained promotion history.
+
+Public catalog `generation` is regional; `buildId` retains the immutable internal
+key for schemas, checkpoints, matching and duration lookup. Public job/operator
+status also names build IDs explicitly. Attempt logs use build ID only, then
+successful promotion/completion logs pair values as **generation 18; build 62**.
+Operator commands use `--build`; old `--generation`/environment spellings remain
+documented compatibility aliases for build IDs. Historical numeric notes are
+corrected with regional numbers and original build IDs; unpromoted/synthetic
+attempt references are labeled builds instead of assigning fabricated versions.
+
+Verification includes read-only live catalog checks across both promoted regions
+and failed history, promotion-log unit coverage, Go/generated/format/vet/Helm checks,
+45 focused UI tests, and live Chromium dark/WebKit light checks. A guarded public
+projection refresh updates existing cached metadata without changing build IDs or
+map data. the then-current application contract and OSM11 remain unchanged, all six deployments are
+healthy, and four pinned references match current Harbor `dev-20261120` tags.
+Protected mapping, source/image and browser evidence is retained under
+`osm-regional-generations` outside the repository.
+
+## Successful Elapsed Totals And Final UI Help
+
+**11/20/2026, Helm198:** Failed and Canceled menus keep Show boundaries first,
+View job progress second, a divider, then Resume processing/Clear job status or
+Download region/Clear job status. Ready reprocesses; Paused resumes/cancels.
+Clear dismisses only the latest terminal overlay, restoring Available or Ready
+while retaining data/audit history. Status action colors are preserved in both
+themes, with the shared accent hover.
+
+The Virgin Islands failure was a task4 importer connection routed to a read-only
+standby. The adapter now preserves each host/port and primary-only session
+selection for libpq tools. A live standby-first transactional temporary-DDL probe
+passes. The original request was resumed with the corrected approved image and
+completed all57 tasks, promoting Virgin Islands generation 1 (build ID 65); the earlier NorCal data is retained.
+
+Task Finished help and Generation help use accumulated successful execution time,
+not wall-clock gaps: **2m 40s total** and **November 8, 2026 | 16h 24m 23s total**.
+The consolidated region-management source adds nullable counters plus execution-scoped sequence deduplication.
+Successful batch/promotion/cleanup increments survive pause/failure/resume without
+counting idle time or failed attempts. No per-batch start/end records are added.
+Unknown historical totals stay omitted. The Generation lookup matches promoted
+generation history independently of newer failed/cleared attempts. Source/schema
+are35, minimum32, baseline27; the original0-34 ledger prefix and public RPC OID are
+preserved. Secrets and Martin remain intact.
+
+Summary aggregate hints now use two lines: Click to view averages; press and hold
+shift / key to hover over averages by workout type, substituting totals in both
+places when appropriate. Existing preview/Shift behavior is retained.
+
+Verification covers Go/generated/format/vet/Helm checks, 45 focused OSM UI tests,
+the existing Summary hint test, fresh the then-current application contract/native elapsed deduplication and
+resume tests, and live Chromium dark/WebKit light checks of all status colors,
+menu ordering, both elapsed tooltips, focus and responsive dialog layouts.
+Four immutable application pins match current Harbor `dev-20261120` tags; all six
+deployments are healthy. Protected backups, source/image proofs and screenshots
+are retained under `osm-elapsed-totals` outside the repository.
+
+## Region Progress Actions And OOM Diagnosis
+
+**11/20/2026, Helm196:** Eligible Downloading, Processing, Canceled, Paused, Failed
+and Ready status cells now open View progress, sharing menu availability and the
+standard full-cell action. Ready requires retained managed run history. Dismissal
+returns focus to the originating status/menu action. The current-task line uses
+**20 of 57 — clip-replacements — batch 25 of 95**.
+
+The Svalbard/Jan Mayen run started its container at 3:25:07 AM PST but did not emit
+its first task event until 3:28:36. Download completed in about two seconds; the
+kernel then killed `osmium tags-filter` and the updater together when their memory
+cgroup hit **1Gi**. A bounded, database-free reproduction using the same source
+URL/filter command succeeded with **1,101,084 KiB** peak resident filter memory.
+The updater now reserves **2Gi**, capped at **4Gi**, independently of PostgreSQL
+storage preflight.
+
+Fresh source preparation reports task activity after exclusive writer acquisition
+and before cleanup/statistics replay, closing the silent maintenance gap. Both
+active-table and open-dialog polling remain ten seconds. The controller captures
+UID-owned pod task/OOM/exit/limit evidence before Job deletion and preserves it
+through terminal finalization instead of replacing it with a generic storage
+suggestion. Raw termination messages are not copied into the UI.
+
+The original failed request retains its precise OOM cause and original timestamps.
+Its sole empty pre-import candidate schema was removed under the shared updater
+lock with exact request/generation guards; active NorCal generation 18 (build ID 62) is untouched.
+Verification includes Go/generated/format/vet/Helm checks, 35 focused UI tests,
+production assets, native PostgreSQL OOM-evidence persistence and live Chromium
+dark/WebKit light status-click/focus/responsive passes. API and Martin pod UIDs,
+Secrets, the then-current application contract and the existing OSM11 contract remain unchanged.
+Worker/controller, UI and OSM use new immutable pins under the current
+`dev-20261120` tag. Protected diagnosis, reproduction and deployment evidence is
+retained under `osm-progress-diagnostics` outside the repository.
+
+## American Vocabulary And Updater Help
+
+**11/20/2026, Helm195:** All four application images now use `dev-20261120` with
+matching immutable deployment pins. Superseded application tags/artifacts and
+their attached accessories were removed from Harbor after live/retained image
+reference checks; unrelated repositories are unaffected. Six deployments are
+healthy, Secrets/configuration and the Martin pod are preserved.
+
+Source, API fields/states, metrics and database contracts use American
+`canceled`/`canceling`. A quiet-writer backup and transactional reconciliation
+preserve all original Goose rows/timestamps, function ownership/settings/ACLs and
+trigger modes. Application source/schema/minimum remain **34/34/32**, baseline27,
+the pre-fold ledger, with no permanent spelling-only migration. Native synthetic-data preservation
+and all 289 fresh/converted function contracts match.
+
+New Coverage omits future-empty month/year buckets, including custom ranges,
+before totals/pagination. Actual future workouts retain their bucket even when
+they have no Coverage visits. Current periods resolve in the report time zone.
+Native PostgreSQL regression coverage includes both groupings and pagination.
+
+Progress titles now read **Downloading geofabrik:monaco** / **Processing
+geofabrik:monaco**, and the X shares the boundary dialog's hover border. All 57
+task names expose styled help with the question-mark cursor and keyboard-focus
+support. The UI imports the rebuild inventory's **Work and completion boundary**
+cells directly from Markdown; there is no separate maintained description list.
+
+Verification includes Go tests/generated/format/vet/Helm checks, 24 focused UI
+tests and a production build. Live Chromium dark/WebKit light compare every
+tooltip with its document cell, check help cursor/focus and confirm responsive
+dialog behavior. Both ingress origins serve the reviewed asset hashes. Protected
+backups, catalog/ledger proofs, image/SBOM manifests, screenshots and Harbor cleanup
+receipts are retained under `dev-20261120-american` outside the repository.
+
+## Managed Region Update Workflows
+
+**Deployed at Helm194.** Download/Reprocess now enqueue a coalesced audited region
+request. The dedicated controller dispatches approved UID-fenced Kubernetes Jobs
+with default concurrency1, configurable through Helm. The stronger shared OSM
+writer lock is retained; legitimate managed waiters use a distinct PostgreSQL
+application name so stale-updater recovery does not terminate them.
+
+Regions exposes Waiting, Downloading and Processing distinctly, with Pausing,
+Paused, Canceling, Canceled and Failed states and matching eligible menu actions.
+Pause stops the current unit and retains durable post-import work. Resume requeues
+behind active work with the pinned original image. Cancel explicitly discards
+only the request-bound unfinished candidate. Capacity is held until actual pod
+termination and, for Cancel, confirmed cleanup; interrupted cleanup gets an owned
+cleanup execution. Atomic promotion is not reversible by cancellation. Delete
+region remains a separate disabled future workflow.
+
+View progress polls every ten seconds, shows all 57 inventory tasks in order
+without sorting/search/paging and uses a 20-row scroll frame. The current line
+shows task order/name and known repeated-batch progress. Started/Finished are local
+logical-task timestamps; every Order cell reserves its icon position. Completed,
+running, failed, canceled and paused states use the shared circular status art.
+Stopped outcomes retain framed status/error detail and audit history.
+
+Application033/OSM11 migrations pass on isolated PostgreSQL/PostGIS. Native
+tests verify admission/CSRF/role separation, ordered cancellation history,
+single capacity, paused resume queueing, ambiguous-create adoption, stale-token
+rejection, owned-only deletion, cleanup gating and preservation of active data
+during real candidate abort. All Go/generated/format/vet/Helm checks, **1,045 UI
+tests**, and candidate/deployed Chromium dark/WebKit light workflows pass.
+Kubernetes smoke checks verify the published updater's pinned osmium1.19.0 and
+osm2pgsql2.3.1 plus its SQL/Lua inputs.
+
+Live API admission/coalescing/cancellation retains all 57 tasks. A writer-lock-
+gated live check launches two real owned Kubernetes executions through pause,
+resume and cancellation without allocating a generation or downloading a PBF.
+Both temporary verification admin sessions are revoked, promoted NorCal generation 18 (build ID 62)
+is unchanged, and no heavy public rebuild is initiated by acceptance testing.
+
+Backups include a fully read application archive and bounded OSM schema/catalog
+preimages. Two limited app runtime credentials and a primary-aware updater URL
+are added without rotating old credentials. Only the new controller receives
+Job/pod discovery permissions; Secret browsing, exec/log, RBAC/Deployment/PVC
+mutation are denied. Updater Pods carry no Kubernetes token or owner keyring.
+All six deployments are healthy; Martin and existing configuration values remain
+unchanged. Protected build/backup/native/browser/RBAC/live receipts are under
+`deploy-internal/osm-region-updates`. See [the workflow guide](osm-region-updates.md).
+
+## Regions Live-Progress Tooltip Dismissal
+
+**Deployed at Helm 193.** The refresh tooltip no longer retains focus from the
+button removed when the action becomes a status label. Portal help validates its
+focused child, dismisses on outside pointerdown/window blur/Escape and does not
+reopen after content updates. Regions also uses the existing keyboard-only focus,
+pointerdown and pointerleave dismissal controls for this action. Keyboard help
+and the shared single-tooltip owner remain supported.
+
+The owner declined a heavier boundary stroke, so the outline stays **5px** with
+round joins and `line-round-limit: 0`; geometry is not smoothed or altered. The
+same retained canvas/context and square map layout are preserved.
+
+All **1,042 UI tests**, 38 focused tooltip/Regions cases, CSS/format checks and
+production build pass. Candidate and deployed Chromium dark/WebKit light checks
+reproduce clicking Refresh, the live **270 of 554 regions cataloged** help, pointer
+exit, counter changes, outside click, Escape, blur and hover-owner transfer. They
+also verify that job completion updates the original row in place and restores
+Refresh catalogs without page reload. All five deployments are healthy; only UI
+rolls, existing backend/Martin pods and configuration/database versions remain
+unchanged, and Harbor's current UI tag matches its deployed pin. Protected
+receipts are under `deploy-internal/osm-regions-tooltip`.
+
+## Regions Minor Words, Track Transfer And Join Limit
+
+**Deployed at Helm 192.** Generic region title casing now covers mit/et/y/with/
+de/da/la/includes and the intact, case-insensitive **a.k.a.** abbreviation. Initial
+words retain their capital; parenthetical descriptions do not make includes or
+a.k.a. an initial word. Tests cover uppercase input, first-word exceptions,
+parentheses and abbreviation punctuation alongside the existing Unicode cases.
+
+Downloaded and Status each transfer exactly 10% of their prior widths to Name.
+The flexible last data track still reaches the fixed, padded ellipsis boundary.
+An inline measured width accounts for the fixed action track across responsive
+sizes; the action header, rather than WebKit's zero-width col rectangle, provides
+the physical measurement. Baseline-relative Chromium/WebKit pixel checks verify
+both reductions, their combined transfer, all other column widths and the fixed
+action boundary at desktop/tablet/mobile widths. The 80rem Regions limit remains.
+
+Boundary outlines retain `line-join: round` and now specify `line-round-limit: 0`.
+MapLibre defaults the latter to 1.05 and otherwise substitutes a miter at shallow
+turns (approximately interior angles above 145 degrees). Disabling that shortcut
+keeps obtuse joins in the round-rendering path; a 5px stroke can still make the
+rounding visually subtle near a straight segment. Canvas/context retention and
+the line layer's other geometry/paint properties are unchanged.
+
+Backend and focused Regions checks, generated/format/vet, production build and
+candidate/deployed dark/light geometry checks pass. Native/read-only API inspection
+confirms cached shapes and 554 normalized regions; temporary admin verification
+sessions are revoked. All five deployments are healthy, Martin/configuration and
+database versions remain unchanged, and current Harbor tags match deployed pins.
+Protected receipts are under `deploy-internal/osm-regions-word-track`.
+
+## Regions Columns, Title Casing And Map Polish
+
+**Deployed at Helm 191.** Database usage's relative column allocation is reduced
+25% and transferred to Name. Status consumes remaining width up to the fixed
+shared ellipsis column, so its hover track ends at the trigger's padding rather
+than leaving spare action-column space. Regions' whole aligned section is capped
+at **80rem**, independently of Workout log's unchanged 90rem. Boundary lines now
+join at rounded corners without changing their 5px width, opacity or layer order.
+
+Region display formatting is generic Unicode word-level title casing, not
+Województwo/kraj or per-region name matching. Common minor words stay lowercase
+except at segment starts, known acronyms/internal capitals are preserved and
+hyphenated components capitalize. Tests cover **Polynésie Française (French
+Polynesia)**, **Île-de-France**, **Côte d'Ivoire**, Polish/Czech labels and English
+prepositions. Native API/cache authorization and projection checks pass with the
+new generic formatting. Live inspection confirms French Polynesia and the
+localized labels among 554 regions; its temporary admin session is revoked.
+
+Candidate/deployed Chromium dark and WebKit light geometry checks pass at
+desktop/tablet/mobile sizes, including the baseline-relative allocations, 80rem
+limit and exact Status/action padded boundary. Focused Regions tests include the
+round-join layer contract. Backend tests, generated/format/vet and production
+build pass. The final frontend-only additions reuse backend images only after
+byte-verifying their source inventories remain unchanged; both build cohorts
+and the combined receipt are retained under `deploy-internal/osm-regions-columns`.
+
+No schema/configuration changes or region-data lifecycle commands are introduced.
+All five deployments are healthy and existing tag pins are consistent. Martin
+and the 18 configuration tuples remain unchanged.
+
+## Regions Behavior And Presentation Follow-Up
+
+**Deployed at Helm 190.** The Regions search explicitly permits navigation while
+unfocused, restoring admin 1-4 and arrow paging without weakening focused-editor,
+menu, modal, modifier or composition guards elsewhere. Show all regions defaults
+unchecked and the viewport always reserves 25 slots, including the current
+single-prepared-region view.
+
+Regions now owns its `osm-regions-*` CSS hooks instead of inheriting coverage
+search/footer/checkbox selectors. Identical declarations share selector groups.
+Only the Regions box omits Road Coverage's +1px offset, moving it up one pixel;
+the Road Coverage rule remains intact. Ellipsis controls align to the right so
+their top/right/bottom cell insets match. Plain unavailable values without help
+have no tooltip wrapper and inherit the clickable row's hand cursor.
+
+The retained Streets canvas is square at its existing width. The dialog scrolls
+on short screens with a sticky close heading; canvas/context reuse still passes.
+Polish Województwo and Czech/Slovak kraj labels now title-case localized words and
+hyphenated components without changing region IDs. Provider-supplied already-
+pretty labels, including District of Columbia, remain valid.
+
+An accepted/pending refresh shows yellow, non-clickable **Refreshing catalogs**
+with help cursor and **completed of total regions cataloged** progress. Partial
+metadata help uses an em dash instead of a semicolon. No automatic refresh or
+new region lifecycle action is introduced.
+
+Go/generated/format/vet checks, all **1,040 UI tests**, 83 focused Regions/admin/
+shortcut tests and candidate/deployed Chromium dark/WebKit light checks pass.
+Pixel checks cover checkbox position, square canvas, ellipsis insets, cursors,
+header labels and narrow/desktop containment; functional checks retain exact
+canvas/context identity through region/theme changes. Real API inspection finds
+554 regions, valid cached boundaries and corrected localized labels; temporary
+verification admin sessions are revoked. The image-only rollout preserves
+configuration/database versions and Martin; all five deployments are healthy.
+Protected evidence is under `deploy-internal/osm-regions-followup`.
+
+## Regions Table And Retained Boundary Map
+
+**Deployed at Helm 189 after the owner approved the current Helm-188 baseline.**
+Regions now uses the Users H2/text-action composition, Workout log maximum width
+and Road Coverage search/viewport/footer. Columns are Name, Date, PBF size,
+Downloaded, Generation, Database usage and Status, plus the standard action menu.
+The table keeps 25 stable row slots across compatible paging/search/sort/polling,
+does not shrink on a short last page and defaults Show all regions to checked.
+Date/size extents are left-anchored and their values right-aligned, with the
+requested local dates, exact tooltips and muted `n/a` values. Numeric/date sort
+defaults descend; Name starts ascending; Generation is not sortable. Provider
+HTML breaks and raw path-slug names are normalized without changing IDs.
+
+Show boundaries works from a row, native keyboard name action or menu. The modal
+uses the theme's Streets style, a magenta 25%-opacity fill and 5px outline beneath
+base labels/symbols, and fits the boundary when opened. One map, canvas and WebGL
+context survive dismissals, sequential region examinations and theme changes;
+the DOM node is parked while the normal modal portal is absent, and only actual
+workspace/session teardown disposes it. Cached geometry is fetched per region
+through an administrator-only endpoint, not returned in bulk lists or fetched
+from the provider on dialog open.
+
+The owner explicitly chose **UI and boundaries first**. Download/Reprocess/
+View progress/Delete entries are correctly selected and disabled pending their
+backend lifecycle slice. No fake jobs, reimports or map-data deletion are wired.
+Existing shared full-cell actions and checkbox/header styling from 188 remain
+the composition baseline. A narrow raw-route-ref snapshot fixes the existing
+typecheck error without changing diagnostic route behavior; the CSS contract
+check now recognizes the shared padded action primitive.
+
+Go/generated/format/vet checks, all **1,036 UI tests**, native PostgreSQL/PostGIS
+boundary authorization/projection checks and actual Streets-map Chromium dark/
+WebKit light checks pass. Browser checks verify exact tooltips, untruncated
+headers, numeric extents, fixed paging height, menu independence, focus, and
+desktop/tablet/mobile containment. They retain and compare the exact canvas and
+WebGL context across successive dialogs/themes. Real admin API verification
+finds **554** regions, humanized District of Columbia and Trøndelag labels,
+valid cached polygons for three regions, and no geometry in bulk responses.
+Its temporary admin verification session is revoked afterward.
+
+The image-only rollout preserves all 18 configuration tuples, database versions
+and Martin's pod. No catalog refresh, PBF download, reprocessing or deletion is
+needed to populate boundaries: the worker refreshes the public projection at
+startup. Protected receipts are under `deploy-internal/osm-regions-ui`. One
+post-build formatting adjustment is recorded with byte-identical TypeScript-
+emitted JavaScript; frozen build inputs and deployed asset hashes remain pinned.
+
+## Road Coverage Cell Targets And Checkbox Alignment
+
+**Deployed 11/19/2026, Helm 188.** Move only Road Coverage's unnamed-filter box
+down one pixel with relative positioning; its label and footer layout stay fixed.
+Replace text-height Road Coverage actions with the existing New visits full-cell
+pattern, generalized as `.table-action-cell`/`.table-cell-link` and shared by both.
+Action cells transfer their padding to the full-width/height native button and
+show a hand cursor throughout. Preserve Road Coverage's 42px row height, date
+eligibility, single keyboard stops, hover behavior and inset focus rings.
+
+All 332 Map/Stats tests and the production build pass. Candidate/live Chromium
+dark/WebKit light checks compare settled before/after text ranges and prove a
+one-pixel box movement with zero label displacement. Trusted clicks at top-left
+and bottom-right padded cell edges close the dialog through the existing name/
+workout actions exactly once; entity detail caching remains effective. Out-of-range
+dates keep plain, non-pointer cells. Only UI rolls; four other pods, 18 configuration
+tuples and database contracts remain unchanged. Both origins serve verified
+assets, Harbor's existing tag matches the deployed UI pin and all five deployments
+are healthy. Protected evidence is under `deploy-internal/road-coverage-cell-targets`.
+
+## Symmetric Inline Checkbox Edges
+
+**Deployed 11/19/2026, Helm 187.** Live inspection confirms Road Coverage's unnamed
+filter checkbox fits within its footer and has no CSS shadow. Native browser
+appearance at a fractional layout position produces the bevel/uneven edge effect.
+Reuse `.inline-checkbox` for this filter and the existing Data Sync artifact-failure
+filter: flat theme-token outline/fill, no bevel/shadow, nonshrinking size and a
+checked indicator. Preserve native input/label/Space behavior, Tab focus, muted
+disabled states and native forced-colors fallback. The guide records this shared
+inline-filter control composition.
+
+All 62 focused Map/Data Sync tests and the production build pass. Candidate/live
+Chromium dark/WebKit light pixel checks pass at device scales 1 and 2, comparing
+the checked/unchecked top and bottom stroke colors and rejecting paint/shadow
+outside the box. Keyboard, label, disabled and forced-colors checks pass too.
+Only UI rolls; four other pods, 18 configuration tuples and database contracts
+remain unchanged. Both origins serve verified assets, Harbor's existing tag matches
+the deployed UI pin and all five deployments are healthy. Protected before/after
+evidence is retained under `deploy-internal/coverage-checkbox-edges`.
+
+## Shared Table Header Hover Edges
+
+**Deployed 11/19/2026, Helm 186.** Live reference/dialog measurements find three
+pixels above sticky-dialog hover fills versus one in Workout log/New Coverage.
+No header/button shadow is present: fractional centered-dialog transforms blend
+the hover boundaries. Remove the redundant sticky offset/scroll padding, make
+the common one-pixel header-cell inset explicit, and align both centered table
+dialogs and their sticky viewport to device pixels after entry animation/fonts.
+The shared stationary outline remains independent of the scrolling paint layer.
+
+The production build and all 429 Map/Summary/Stats tests pass. Candidate and live
+Chromium dark/WebKit light checks compare ordinary and dialog header hover gaps,
+check one pixel above/below, and inspect screenshot pixels for sharp hover/base
+color boundaries. Shared sort/hover/focus/background checks pass across user/admin
+tables. Candidate border-paint checks and Chromium high-DPI checks also pass; an
+additional post-rollout high-DPI/border rerun was blocked by browser-server startup
+timeouts after the main live hover checks had passed. Both origins' asset hashes
+and all five healthy deployments are verified. Only UI rolls, preserving four
+other pods, 18 configuration tuples and both database contracts. Harbor initially
+returned 503, recovered, and its existing tag now matches the deployed UI pin.
+Protected reference, pixel, build and rollout receipts are retained under
+`deploy-internal/table-header-hover-edges`.
+
+## Shared Sticky Table Viewport And Painted Outline
+
+**Deployed 11/18/2026, Helm 185.** The owner again observed Road Coverage's top
+border missing despite correct geometry after 184's opaque table surfaces. Live
+Playwright pixel inspection reproduced about 69% of the expected one-pixel stroke
+after desktop scrolling: geometry-only checks had missed paint-layer occlusion.
+
+Centralize scrolling-table chrome in `DialogTableViewport`'s `stickyHeader` mode.
+Road Coverage and New visits both opt into the same scroll-container, inset,
+sticky-header and stationary-outline rules. Remove their separate header/wrapper
+style blocks. The shared frame paints a single outline above the scrolling layer,
+while a transparent layout border preserves measurement and pointer behavior.
+The guide requires reuse of this primitive rather than feature-specific chrome.
+Normal table/header surfaces and orange-text-only sorting remain unchanged.
+
+All 429 Map/Summary/Stats tests and the production build pass. Candidate/live
+Chromium dark and WebKit light pixel checks pass at device scales 1 and 2 for
+Road Coverage and New visits, before/after vertical and horizontal scrolling on
+desktop/narrow viewports. They compare original theme pixels with diagnostic
+border-color renders and measure full stroke coverage, not just bounding boxes.
+The existing user/admin table surface, sort, hover/focus and containment browser
+matrix also passes. Only UI rolls; four other pods and 18 configuration tuples
+remain unchanged, both origins serve verified assets, Harbor's current tag matches
+the deployed pin and all five deployments are healthy. Protected evidence,
+including the failing 184 pixel observations, is retained under
+`deploy-internal/road-coverage-painted-border`.
+
+## Shared Table Header And Sort Styling
+
+**Deployed 11/18/2026, Helm 184.** All shared tables use the same opaque base
+surface for headers and normal rows. Road Coverage and New visits retain sticky
+behavior/border clearance without a raised header band. Active ascending and
+descending columns use orange labels/direction indicators only, with no persistent
+sort-state fill. Active labels remain orange during hover; ordinary shared hover
+feedback and keyboard focus outlines remain intact. These are explicit standards
+in `docs/ui-style-guide.md` for user and admin interfaces.
+
+All 1,025 UI tests and the production build pass. Candidate/deployed Chromium
+dark/WebKit light checks verify Road Coverage at four viewport widths, Workout
+log, New Coverage report, New visits dialog, owner Data Sources, Data Sync history,
+admin Users and admin Regions. They compare actual header/row surfaces, reject
+sorted-cell background fills in both directions, and preserve hover/focus and
+existing sticky-border/frozen-height behavior. Only UI rolls; four other pods,
+18 configuration tuples and both database contracts remain unchanged. Both
+origins serve verified assets, Harbor's current tag matches the deployed UI pin
+and all five deployments are healthy. Protected evidence is retained under
+`deploy-internal/table-header-standard`.
+
+## Road Coverage Sticky Header Top Border
+
+**Deployed 11/18/2026, Helm 183.** The owner confirmed the bottom border after
+182 but still observed the top border covered. The outer-frame correction alone
+did not address Road Coverage's zero-offset sticky header. Match the New visits
+prior art's one-pixel sticky top inset so the header clears the scrollport border.
+
+Five focused Road Coverage tests, production build and candidate/deployed
+Chromium dark/WebKit light checks pass. Browser checks now explicitly verify the
+sticky header's top clearance at rest and after vertical/horizontal scrolling,
+alongside the prior outer-frame, frozen-filter and viewport checks. Only UI rolls;
+four other pods, all 18 configuration tuples and database contracts stay intact.
+Both origins serve verified assets, the existing Harbor tag matches the pin and
+all five deployments are healthy. Evidence is retained under
+`deploy-internal/road-coverage-sticky-border`.
+
+## Road Coverage Border Height Correction
+
+**Deployed 11/18/2026, Helm 182.** Give table dialogs a one-pixel vertical paint
+inset so the outer clipping frame does not trim the scrollport's top/bottom
+border strokes. Include the frame padding in measured reserved height, empty-state
+header/bottom offsets and the viewport cap. Retain frozen search/filter/paging
+capacity and viewport containment; Summary's non-dialog frame remains unchanged.
+
+All 429 Map/Summary/Stats UI tests, production build, candidate/deployed Chromium
+dark/WebKit light checks pass. Browser measurements prove border clearance at
+1920/1440/1280/390 widths, stable filtered/empty-result height, and the same fix
+against the New visits dialog prior art. Only UI rolls; four other pods, all 18
+configuration tuples and both database contracts remain unchanged. Both origins
+serve the verified assets and all five deployments are healthy. Protected
+evidence is retained under `deploy-internal/road-coverage-border-height`.
+
+## OSM Provider Catalog Refresh
+
+**Deployed 11/18/2026, Helm 181.** Regions now lists configured providers' cached
+catalogs with current provider size/file date and installed-generation download/
+database measurements. **Refresh provider catalogs** accepts one coalesced,
+audited admin job. The independent worker lane saves each index first, then
+enriches metadata with HEAD-only requests, bounded by
+`osm.catalogRefresh.metadataConcurrency` (default5, range1-32), independent of
+ingest slots. Browser navigation does not cancel accepted work; active polling,
+retained row nodes/search/sort and safe partial results are verified.
+
+The restricted OSM runtime login cannot update/promote generations, delete
+regions or create schemas. Primary selection uses three certificate-valid node
+Service DNS endpoints and `target_session_attrs=read-write`, with exact-name
+vcluster DNS forwarding. Existing credentials, DNS entries and app configuration
+values remain intact. This adds no worker Kubernetes privileges. Source33/OSM11
+migrations are additive; active map NorCal generation 18 (build ID 62), source SHA and downloaded bytes
+are unchanged. Completed-download timestamps and processed-size snapshots are
+recorded going forward, without inventing old timestamps. Current public storage
+projections refresh every five minutes without provider HTTP.
+
+Go tests, generated/format/vet/Helm checks, all **1,025 UI tests**, native
+PostgreSQL/PostGIS role/CSRF/coalescing/recovery/storage checks and candidate/live
+Chromium dark/WebKit light desktop/tablet/narrow checks pass. Native concurrency
+reaches exactly five; failures preserve last-known metadata and a replaced worker
+reclaims its expired lease. Application backup and bounded public OSM catalog/
+schema preimages pass full archive reading and SHA receipt retention.
+
+A real administrator API refresh discovers **554** Geofabrik regions and finishes
+in **332 seconds** with **511 successful metadata observations and 43 unavailable**,
+reported as partial success. Every region is processed; unavailable values stay
+cached/Unknown rather than zero. Duplicate requests coalesce. The active norcal
+NorCal generation 18 (build ID 62) retains its 655,461,159 downloaded bytes and reports **5,392,506,880**
+active database bytes; its historical download-completion date remains Unknown.
+The temporary verification administrator session is revoked after inspection.
+
+All five deployments are healthy, Martin's pod is unchanged, and Harbor's existing
+tags match deployed pins. Protected build, backup, native, browser, DNS/role and
+rollout receipts are under `deploy-internal/osm-provider-catalogs`. The normal
+local container store had I/O errors, so this release uses an isolated build store.
+Extract preparation/promotion UI and the remaining OSM/Operations workflows are
+still pending. See the [catalog refresh guide](osm-catalog-refresh.md).
 
 ## Users Menu Order And Recovery Scope
 
@@ -162,7 +1426,7 @@ valid expiry. Refresh it on menu open and hide the action until authoritative
 availability returns; an expiry timer also removes it from an already-open menu.
 The CSRF-protected administrator command serializes with sign-in, revokes all
 valid sessions and audits atomically, without changing password/account state,
-cancelling jobs or blocking on an ingest account lock. Repeating after revocation
+canceling jobs or blocking on an ingest account lock. Repeating after revocation
 is a no-op; future sign-in is permitted. Another owner/admin session is unaffected.
 
 The rollout changes only API/UI pins, retains schema/minimum **32/32** and all
@@ -195,8 +1459,9 @@ Earlier follow-ups retain their own evidence:
   deletion-category links redirect to Users; deletion/progress remain row actions.
 
 Richer lifecycle history/detail remains pending. Administrator-triggered password
-recovery was dropped on 11/17/2026; self-service Forgot password is implemented. OSM Maps and
-Operations are still navigation placeholders, not completed M10 workflows.
+recovery was dropped on 11/17/2026; self-service Forgot password is implemented.
+At this historical checkpoint OSM Maps and Operations were navigation placeholders;
+later Helm181 adds Regions catalog refresh, not the remaining M10 workflows.
 
 ## Account Deletion And In-Place Users Refresh
 
@@ -235,7 +1500,7 @@ chart-owned emptyDir UID acknowledges abandoned receipts. Live/unverified roots
 block purge. The worker's namespace-only Role permits **get pods**, not Secret
 reads or pod mutation; live authorization checks confirm that restriction.
 
-034 raises schema/minimum runtime to **34/34**, retaining baseline **27** and every
+the earlier account-deletion addition raises schema/minimum runtime to **34/34**, retaining baseline **27** and every
 original **0-33** Goose row/timestamp before appending 34. Old writers were drained
 before the fence. Up passed under the restricted migration login on a complete
 SHA-256-verified restored live backup. An isolated purge of the restored @foo's
@@ -301,7 +1566,7 @@ are introduced. Stored credentials remain write-only and blank edits retain them
 The last field is **Enable automated sync (<interval>)**, after Path for Server
 Path or Trust token for iCloud. It reuses the Data Sync Automated card's cadence
 formatter and schedule response, lowercased. New sources default enabled; Edit
-loads the stored flag and POST/PATCH send the actual checked value. Cancelling
+loads the stored flag and POST/PATCH send the actual checked value. Canceling
 discards a changed checkbox. Once-a-day/twice-a-day labels and disabling new local/
 iCloud sources or enabling an existing source are verified.
 
@@ -332,7 +1597,7 @@ opaque credential submission are retained.
 
 Delete source uses a transparent nested overlay so the already-dimmed base page
 does not darken again. Its exact prompt is **Delete <source-name>? Its connection
-credentials will be deleted and its active sync jobs cancelled. Imported workouts
+credentials will be deleted and its active sync jobs canceled. Imported workouts
 will be retained.** Name loses 5% of its prior width and Auto Sync receives it:
 **31.73% / 32.4% / 19.67% / 16.2%**, with Type/Status/actions otherwise unchanged.
 
@@ -478,7 +1743,7 @@ The Enable user confirmation uses the owner's corrected wording, with the select
 username interpolated in bold:
 
 > Enable @user? The user will be able to sign in again and automatic sync will
-> resume on schedule. Revoked sessions and cancelled jobs will not be restored.
+> resume on schedule. Revoked sessions and canceled jobs will not be restored.
 
 All 15 administrator component tests, Prettier and the production build pass.
 Candidate and deployed Chromium dark/WebKit light review verifies the exact text,
@@ -521,7 +1786,7 @@ invalidates outstanding scheduler admission and cancels queued account jobs or
 requests cooperative cancellation of running work. Workers retain their ordinary
 cleanup/terminalization duties. Workouts, routes, source configuration/credentials,
 preferences and valid Coverage remain retained. Enable requires a new sign-in and
-resumes normal next-due scheduling without reviving sessions or cancelled jobs,
+resumes normal next-due scheduling without reviving sessions or canceled jobs,
 regardless of unused automatic-retry allowance. The UI uses existing API-401
 confirmation/redirect handling, without adding session polling.
 
@@ -1970,7 +3235,7 @@ no PVC expansion or unrelated database cleanup was performed. Valid Longhorn
 snapshots were preserved and can continue pinning backend storage despite free
 filesystem space.
 
-The native rebuild retained generation **62**, importer **3**, derivation **21**
+The native rebuild retained NorCal generation 18 (build ID 62), importer **3**, derivation **21**
 through resumable checkpoints. A primary-pinned, verify-full TLS operator Job
 avoided query-splitting proxy read-after-write lag. Consumed staging structures
 were reclaimed only after their last consumer committed. During graph propagation,
@@ -1985,7 +3250,7 @@ fixtures still reject real shallow crossings. Completed validation may restart
 fully with corrected checks; running validation and geometry-stage fences remain
 immutable. The full Go suite, including the disposable boundary/fence integration,
 passed. Native validation then reran from initialization, passed every zero-valued
-gate and promoted generation 62. Canonical indexes and native OSM readiness passed
+gate and promoted NorCal generation 18 (build ID 62). Canonical indexes and native OSM readiness passed
 on the primary and both standbys; APP **31/31** and OSM **10/10** remain unchanged.
 
 Both active accounts' reconciliation campaigns finished. The queue drained with
@@ -1997,7 +3262,7 @@ route updates still hit the graph-layer processing guard after one isolated
 native retry each; they preserve prior evidence and remain explicitly failed/stale.
 Previously unavailable routes remain unavailable rather than being mislabeled as
 updated. Permanent rollup concurrency and dense-graph handling remain follow-ups.
-The reported park visit's copied generation-62 evidence contains the correctly
+The reported park visit's copied NorCal generation-18 evidence (build ID 62) contains the correctly
 attributed inside road piece and an independently unassigned outside piece.
 
 All five services are restored. Temporary Coverage surge replicas/resources are
@@ -2910,7 +4175,7 @@ claim/preflight/health queries remain; near-idle is not zero database traffic.
 Neither this cadence nor its acceptance target is the UI's 10-second Running-job
 poll. Necessary queued bootstrap/input/catalog/matcher updates must drain before
 assessing application-attributed idle CPU; no arbitrary five-minute guarantee is
-claimed. Failed/cancelled targets keep existing retry/cancellation authority.
+claimed. Failed/canceled targets keep existing retry/cancellation authority.
 
 Separate OSM **010** adds transactional singleton catalog-head proof and generated
 boundary SHA/area at catalog-write time. The full fingerprint remains legacy
@@ -3286,7 +4551,7 @@ together; no cache invalidation is lost. Commit tails still serialize. See the
 
 New active-ingest normal parents seal **exactly saved B new eligible matching
 targets**, default 25 (1-1000), globally across regions within ingest-root/source-
-sibling scope. Missing-map, current/live/unchanged authoritative failed/cancelled
+sibling scope. Missing-map, current/live/unchanged authoritative failed/canceled
 targets and deduplication do not count. Private prepared metadata persists across
 files/crashes with saved B and scope, with no placeholder parent; parent and B
 children seal atomically. Mixed-region parents are explicit: optional
@@ -3294,7 +4559,7 @@ children seal atomically. Mixed-region parents are explicit: optional
 `targetGeneration` are representative anchors only. Per-route vectors, claims and
 admission stay unchanged. A final partial seals only via account reconciliation
 after the visible root/all source siblings are terminal and due preparation is
-exhausted, never active EOF. Failed/cancelled roots can owe legitimate committed-
+exhausted, never active EOF. Failed/canceled roots can owe legitimate committed-
 data work; normal metadata/deduplication preserves cancellation footprints.
 
 Preparation retains bounded metadata and one coordinate route at a time. ROI
@@ -3401,7 +4666,7 @@ requires the coordinated protected database/image recovery procedure.
 - SQL counts all children, including terminal/superseded rows, against each
   parent's creation-time capacity. Only compatible queued normal roots coalesce;
   new configuration affects new parents. Retries preserve only eligible failed/
-  cancelled predecessors and inherited capacity, never fresh top-up routes. A
+  canceled predecessors and inherited capacity, never fresh top-up routes. A
   three-child retry under B=25 remains separate from a fresh 25-route normal root.
 - Durable receipts, full-input canonical CAS and lease/ownership fences protect
   replay. APP transactions close before OSM work; metadata-only cohorts retain
@@ -3409,7 +4674,7 @@ requires the coordinated protected database/image recovery procedure.
   points; the unchanged 50,000-original-point matcher ceiling produces a typed
   permanent Coverage failure rather than a source-ingest failure. No-GPS adoption
   acknowledges without a matching job.
-- Account recovery drains committed terminal failed/cancelled source obligations,
+- Account recovery drains committed terminal failed/canceled source obligations,
   protecting active underfull cohorts. Ingest cancellation does not erase those
   obligations or cancel existing Coverage jobs. Ordinary unchanged failed targets
   cannot reset retry budgets; only distinct adoption authorizes force refresh.
@@ -4188,7 +5453,7 @@ reported separately. Unknown queries still blocked closure. This is sampled
 `pg_stat_activity` evidence, not a continuous query-event audit. Closure is
 independent of the recovery executor's self-receipt; Main subsequently stopped
 only its own operator watcher after checking accepted journal admissions and
-terminal targets. No application jobs were cancelled or database/deployment
+terminal targets. No application jobs were canceled or database/deployment
 changes made by that watcher shutdown.
 
 At this checkpoint, the live release was **`dev-20261020`, Helm revision 29**, with all four

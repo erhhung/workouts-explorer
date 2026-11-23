@@ -373,17 +373,17 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 		t.Fatalf("administrator list status=%d body=%s", admin.recorder.Code, admin.recorder.Body.String())
 	}
 
-	cancelled := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/cancellation", `{}`, cookie, "jobs-csrf", true)
-	if cancelled.recorder.Code != http.StatusOK {
-		t.Fatalf("cancellation status=%d body=%s", cancelled.recorder.Code, cancelled.recorder.Body.String())
+	canceled := routeJobRequest(handler, http.MethodPost, "/api/jobs/"+accepted.JobId+"/cancellation", `{}`, cookie, "jobs-csrf", true)
+	if canceled.recorder.Code != http.StatusOK {
+		t.Fatalf("cancellation status=%d body=%s", canceled.recorder.Code, canceled.recorder.Body.String())
 	}
-	validateRecordedResponse(t, http.MethodPost, "/api/jobs/"+accepted.JobId+"/cancellation", cancelled.recorder)
+	validateRecordedResponse(t, http.MethodPost, "/api/jobs/"+accepted.JobId+"/cancellation", canceled.recorder)
 	detail = generated.JobDetail{}
-	if err := json.Unmarshal(cancelled.recorder.Body.Bytes(), &detail); err != nil {
+	if err := json.Unmarshal(canceled.recorder.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail.Status != generated.JobStatus("cancelled") || len(detail.Children) != 2 ||
-		detail.Children[0].Status != generated.JobStatus("cancelled") || detail.Children[1].Status != generated.JobStatus("cancelled") {
+	if detail.Status != generated.JobStatus("canceled") || len(detail.Children) != 2 ||
+		detail.Children[0].Status != generated.JobStatus("canceled") || detail.Children[1].Status != generated.JobStatus("canceled") {
 		t.Fatalf("unexpected cancellation detail=%#v", detail)
 	}
 	originalChildren := append([]generated.JobDetail(nil), detail.Children...)
@@ -431,7 +431,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snapshots != 0 {
-		t.Fatalf("cancelled queued children retained %d snapshots", snapshots)
+		t.Fatalf("canceled queued children retained %d snapshots", snapshots)
 	}
 	_ = tx.Rollback(ctx)
 
@@ -744,7 +744,7 @@ func TestJobOwnerAPIsIntegration(t *testing.T) {
 	finish := integrationAccountTransaction(t, adminDB, accountID)
 	defer finish.Rollback(ctx)
 	var finished bool
-	if err := finish.QueryRow(ctx, `SELECT app.finish_job($1,'jobs-running-cancel',$2,'cancelled')`, runningChild, lease).Scan(&finished); err != nil || !finished {
+	if err := finish.QueryRow(ctx, `SELECT app.finish_job($1,'jobs-running-cancel',$2,'canceled')`, runningChild, lease).Scan(&finished); err != nil || !finished {
 		t.Fatalf("running cancellation cleanup=%t err=%v", finished, err)
 	}
 	if err := finish.Commit(ctx); err != nil {
@@ -929,7 +929,7 @@ func TestJobRetryLimitAndSourceLineageIntegration(t *testing.T) {
 	if _, err = seed.Exec(ctx, `SELECT set_config('app.job_transition','cancel',true)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = seed.Exec(ctx, `UPDATE app.jobs SET status='cancelled',terminal_at=transaction_timestamp(),
+	if _, err = seed.Exec(ctx, `UPDATE app.jobs SET status='canceled',terminal_at=transaction_timestamp(),
 		cancel_requested_at=transaction_timestamp(),cancel_requested_by=$1 WHERE id=ANY($2::uuid[])`, principalID, allJobIDs); err != nil {
 		t.Fatal(err)
 	}

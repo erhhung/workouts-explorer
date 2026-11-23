@@ -24,17 +24,19 @@ const jobDetailSelect = `SELECT j.id,j.parent_job_id,j.kind,j.status,j.attempt,j
 	p.workouts_created_with_route,p.workouts_updated_with_route,
 	c.source_id,c.source_generation,c.display_name,c.source_type,
 	COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
-	COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
+	COALESCE(cp.routes_failed,0),COALESCE(cp.routes_canceled,0),COALESCE(cp.routes_superseded,0),
 	COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0),
 	cc.region_id,cc.target_osm_generation,cc.target_work_revision,cc.rules_version,cc.sampling_version,cc.path_policy_version,
 	rc.workout_id,rc.result_outcome,rc.duration_milliseconds,w.started_at,w.local_start_date,wt.provider_label,
 	CASE WHEN rc.job_id IS NULL THEN NULL ELSE (SELECT COALESCE(jsonb_agg(jsonb_build_object(
 		'regionId',target.item->>'regionId','generation',(target.item->>'generation')::bigint,
+		'regionalGeneration',(catalog.payload->'promotionNumbers'->>(target.item->>'generation'))::bigint,
 		'latest',COALESCE(region.desired_osm_generation=(target.item->>'generation')::bigint,false))
 		ORDER BY target.item->>'regionId',(target.item->>'generation')::bigint DESC),'[]'::jsonb)
 		FROM jsonb_array_elements(rc.target_generations) target(item)
 		LEFT JOIN app.workout_coverage_regions region ON region.account_id=rc.account_id AND region.workout_id=rc.workout_id
-			AND region.region_id=target.item->>'regionId') END
+			AND region.region_id=target.item->>'regionId'
+		LEFT JOIN app.osm_region_catalog catalog ON catalog.id=target.item->>'regionId') END
 	FROM app.jobs j LEFT JOIN app.job_progress p ON p.job_id=j.id AND p.account_id=j.account_id
 	LEFT JOIN app.job_source_contexts c ON c.job_id=j.id AND c.account_id=j.account_id
 	LEFT JOIN app.coverage_job_progress cp ON cp.job_id=j.id AND cp.account_id=j.account_id
@@ -85,7 +87,7 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 		COALESCE(p.workouts_created,0),COALESCE(p.workouts_updated,0),COALESCE(p.workouts_unchanged,0),COALESCE(p.workouts_rejected,0),
 		p.workouts_created_with_route,p.workouts_updated_with_route,
 		COALESCE(cp.routes_total,0),COALESCE(cp.routes_processed,0),COALESCE(cp.routes_succeeded,0),
-		COALESCE(cp.routes_failed,0),COALESCE(cp.routes_cancelled,0),COALESCE(cp.routes_superseded,0),
+		COALESCE(cp.routes_failed,0),COALESCE(cp.routes_canceled,0),COALESCE(cp.routes_superseded,0),
 		COALESCE((SELECT count(*) FROM app.jobs running_child WHERE running_child.parent_job_id=j.id AND running_child.status='running'),0),
 		history.display_status,history.total_items
 		FROM history LEFT JOIN app.jobs j ON j.id=history.job_id
@@ -112,7 +114,7 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request, params generat
 			&progress.WorkoutsCreated, &progress.WorkoutsUpdated, &progress.WorkoutsUnchanged, &progress.WorkoutsRejected,
 			&progress.WorkoutsCreatedWithRoute, &progress.WorkoutsUpdatedWithRoute,
 			&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
-			&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running, &displayStatus, &total); err != nil {
+			&routeStats.Canceled, &routeStats.Superseded, &routeStats.Running, &displayStatus, &total); err != nil {
 			writeJobUnavailable(w, r)
 			return
 		}
@@ -212,7 +214,7 @@ func (s *Server) CreateJobCancellation(w http.ResponseWriter, r *http.Request, j
 		return
 	}
 	if jobKind == "workout_deletion" {
-		writeProblem(w, r, http.StatusConflict, "Conflict", "workout deletion cannot be cancelled")
+		writeProblem(w, r, http.StatusConflict, "Conflict", "workout deletion cannot be canceled")
 		return
 	}
 	if _, err = readJobDetail(r.Context(), tx, id); errors.Is(err, pgx.ErrNoRows) {
@@ -228,7 +230,7 @@ func (s *Server) CreateJobCancellation(w http.ResponseWriter, r *http.Request, j
 		return
 	}
 	if !changed {
-		writeProblem(w, r, http.StatusConflict, "Conflict", "terminal jobs cannot be cancelled")
+		writeProblem(w, r, http.StatusConflict, "Conflict", "terminal jobs cannot be canceled")
 		return
 	}
 	detail, err := readJobDetail(r.Context(), tx, id)
@@ -288,7 +290,7 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 		}
 		return
 	}
-	if status != "failed" && status != "cancelled" && status != "partially_succeeded" {
+	if status != "failed" && status != "canceled" && status != "partially_succeeded" {
 		if kind == "coverage_update" {
 			writeCoverageRetryConflict(w, r, "not-terminal")
 		} else {
@@ -358,7 +360,7 @@ func (s *Server) CreateJobRetry(w http.ResponseWriter, r *http.Request, jobID ge
 	if parentID == nil {
 		rows, queryErr := tx.Query(r.Context(), `SELECT child.id,context.source_id,child.parameters
 			FROM app.jobs child JOIN app.job_source_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
-			WHERE child.parent_job_id=$1 AND child.status IN ('failed','cancelled') ORDER BY context.source_id`, id)
+			WHERE child.parent_job_id=$1 AND child.status IN ('failed','canceled') ORDER BY context.source_id`, id)
 		if queryErr != nil {
 			writeJobUnavailable(w, r)
 			return
@@ -1069,7 +1071,7 @@ func scanJobDetail(row jobDetailScanner) (generated.JobDetail, string, error) {
 		&progress.WorkoutsCreatedWithRoute, &progress.WorkoutsUpdatedWithRoute,
 		&sourceID, &sourceGeneration, &displayName, &sourceType,
 		&routeStats.Total, &routeStats.Processed, &routeStats.Succeeded, &routeStats.Failed,
-		&routeStats.Cancelled, &routeStats.Superseded, &routeStats.Running,
+		&routeStats.Canceled, &routeStats.Superseded, &routeStats.Running,
 		&coverageRegion, &coverageGeneration, &coverageRevision, &coverageRules, &coverageSampling, &coveragePolicy,
 		&routeWorkoutID, &routeOutcome, &routeDuration, &routeStarted, &routeLocalDate, &routeType, &routeGenerations)
 	if err != nil {

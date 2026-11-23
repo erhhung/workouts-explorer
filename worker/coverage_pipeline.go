@@ -75,11 +75,11 @@ func (r *Runner) drainIngestCoverage(ctx context.Context, job claimedJob, flush 
 				if !alive {
 					return errLeaseLost
 				}
-				cancelled, err := r.observeIngest(ctx, job)
+				canceled, err := r.observeIngest(ctx, job)
 				if err != nil {
 					return err
 				}
-				if cancelled {
+				if canceled {
 					return errCancellationRequested
 				}
 				return nil
@@ -287,7 +287,7 @@ func prepareCoverageHandoff(ctx context.Context, db *pgxpool.Pool, accountID uui
 	var outcome string
 	if err := tx.QueryRow(ctx, `SELECT outcome FROM app.apply_ingest_coverage_batch($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		accountID, authorityJob, workerID, lease, revision, encoded, string(coverage.ExperimentalRulesV1),
-		string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82), options.minimumTraversal,
+		string(coverage.ExperimentalSamplingV1), string(coverage.CurrentPathPolicyVersion), options.minimumTraversal,
 		database.SupportedSchemaVersion).Scan(&outcome); err != nil {
 		return err
 	}
@@ -583,9 +583,9 @@ func deferCoverageHandoffs(ctx context.Context, db *pgxpool.Pool, accountID uuid
 
 func transientCoverageReadinessError(err error) bool {
 	pending := []error{err}
-	var transient, deadline, queryCancelled bool
+	var transient, deadline, queryCanceled bool
 	// Inspect every branch, not just the first errors.As/Is match. Wrappers are
-	// neutral; an unknown/permanent/cancelled leaf defeats incidental deadlines.
+	// neutral; an unknown/permanent/canceled leaf defeats incidental deadlines.
 	for visited := 0; len(pending) > 0; visited++ {
 		if visited >= 256 {
 			return false
@@ -604,7 +604,7 @@ func transientCoverageReadinessError(err error) bool {
 			recognized = true
 			switch code := sql.SQLState(); {
 			case code == "57014":
-				queryCancelled = true
+				queryCanceled = true
 			case transientCoverageSQLState(code):
 				transient = true
 			default:
@@ -650,7 +650,7 @@ func transientCoverageReadinessError(err error) bool {
 			return false
 		}
 	}
-	return deadline || transient && !queryCancelled
+	return deadline || transient && !queryCanceled
 }
 
 func coverageHandoffError(err error) error {

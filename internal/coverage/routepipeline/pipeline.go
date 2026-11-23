@@ -39,11 +39,13 @@ func DefaultLimits() Limits {
 }
 
 type Config struct {
-	Rules        coverage.Rules
-	Sampling     coverage.SamplingRules
-	RoadGeometry coverage.RoadGeometryRules
-	MovementMode coverage.MovementMode
-	Limits       Limits
+	Rules                   coverage.Rules
+	Sampling                coverage.SamplingRules
+	RoadGeometry            coverage.RoadGeometryRules
+	MovementMode            coverage.MovementMode
+	Limits                  Limits
+	RecoverProcessingLimits bool
+	MemoizeSnapshot         bool
 }
 
 type Counts struct {
@@ -63,6 +65,9 @@ type Evidence struct {
 type Stats struct {
 	Windows, Candidates, Suppressed, GraphNodes, GraphEdges, InvalidClips int
 	Splits                                                                map[coverage.SplitReason]int
+	WindowLimitRetries                                                    int `json:",omitempty"`
+	LimitSkippedPoints                                                    int `json:",omitempty"`
+	LimitSkippedEnhancements                                              int `json:",omitempty"`
 }
 
 type Result struct {
@@ -109,6 +114,14 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	if cfg.MemoizeSnapshot {
+		if tuned, ok := snapshot.(interface{ OptimizeRouteQueries(context.Context) error }); ok {
+			if err := tuned.OptimizeRouteQueries(ctx); err != nil {
+				return Result{}, err
+			}
+		}
+		snapshot = newCachedSnapshot(snapshot)
+	}
 	points := coverage.SampleGeographicObservations(observations, cfg.Sampling, cfg.Rules)
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -130,6 +143,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	var windows []matchingWindow
 	windowOrdinal := 0
 	previousStatus := coverage.ObservationUnmatched
+	var lastProcessingLimit error
 	for legStart := 0; legStart < len(points); {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
@@ -138,14 +152,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 		for legEnd < len(points) && coverage.GeographicGapReason(points[legEnd-1], points[legEnd], cfg.Rules) == "" {
 			legEnd++
 		}
-		for start := legStart; start < legEnd; {
-			matched, stats, end, err := matchAdaptiveWindow(ctx, snapshot, points, cfg.Rules, options, WindowSize, func(size int) (int, int) {
-				return start, min(start+size, legEnd)
-			})
-			if err != nil {
-				return Result{}, err
-			}
-			windows = append(windows, matchingWindow{start: start, legStart: legStart, legEnd: legEnd})
+		processingStart, groupStart := legStart, len(windows)
+		appendWindow := func(start int, matched coverage.Result, stats coverage.OSMEvaluationStats, overlap bool) {
+			windows = append(windows, matchingWindow{start: start, legStart: processingStart, legEnd: legEnd})
 			result.addStats(stats, matched.Splits)
 			// The decoder no longer sees the boundary pair. Preserve its candidate
 			// precedence: rejected endpoints had candidates; unmatched endpoints did not.
@@ -155,7 +164,7 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 			}
 			previousStatus = matched.Observations[len(matched.Observations)-1].Status
 			skip := 0
-			if start > legStart {
+			if overlap {
 				skip = 1
 			}
 			for i := skip; i < len(matched.Observations); i++ {
@@ -179,19 +188,67 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 				}
 			}
 			windowOrdinal++
+		}
+		overlap := false
+		for start := legStart; start < legEnd; {
+			matched, stats, end, err := matchPipelineWindow(ctx, snapshot, points, cfg.Rules, options, WindowSize, func(size int) (int, int) {
+				return start, min(start+size, legEnd)
+			}, cfg.RecoverProcessingLimits)
+			if err != nil {
+				failure, ok := err.(*exhaustedWindow)
+				if !ok || failure.start != start || failure.end <= start || failure.end-start > 2 || (failure.end-start == 1 && overlap) {
+					return Result{}, err
+				}
+				lastProcessingLimit = failure.cause
+				result.Stats.WindowLimitRetries += failure.attempts
+				skip := start
+				if failure.end-start == 2 {
+					if overlap {
+						skip++ // The already accepted anchor is not the point to discard.
+					} else {
+						single, singleStats, singleErr := coverage.MatchOSM(ctx, snapshot, points[start:start+1], cfg.Rules, options)
+						if stopped := ctx.Err(); stopped != nil {
+							return Result{}, stopped
+						}
+						if singleErr == nil {
+							// One point can retain its status, but proves no traveled interval.
+							single.Traversals = nil
+							appendWindow(start, single, singleStats, false)
+							skip++
+						} else if recoverableProcessingLimit(singleErr) {
+							lastProcessingLimit = singleErr
+							result.Stats.WindowLimitRetries++
+						} else {
+							return Result{}, singleErr
+						}
+					}
+				}
+				result.Counts.UnmatchedPoints++
+				result.Stats.LimitSkippedPoints++
+				result.Stats.Splits[coverage.SplitProcessingLimit]++
+				// Bound all supplemental rematches to the accepted side of the gap.
+				for i := groupStart; i < len(windows); i++ {
+					windows[i].legEnd = skip
+				}
+				start, processingStart, groupStart = skip+1, skip+1, len(windows)
+				overlap, previousStatus = false, coverage.ObservationUnmatched
+				continue
+			}
+			appendWindow(start, matched, stats, overlap)
 			if end == legEnd {
 				break
 			}
 			start = end - 1
+			overlap = true
 		}
 		legStart = legEnd
 	}
-	portions, stats, err := completeCrossWindowConnectedRoadTurns(ctx, snapshot, points, windows, portions, cfg.Rules, options)
+	portions, stats, err := completeCrossWindowConnectedRoadTurns(ctx, snapshot, points, windows, portions, cfg.Rules, options, cfg.RecoverProcessingLimits)
 	if err != nil {
 		return Result{}, err
 	}
 	result.addSupplementalStats(stats)
-	portions, stats, err = replaceCrossWindowRoadTangents(ctx, snapshot, points, windows, portions, cfg.Rules, options)
+	portions, stats, err = replaceCrossWindowRoadTangents(ctx, snapshot, points, windows, portions, cfg.Rules, options, cfg.RecoverProcessingLimits)
 	if err != nil {
 		return Result{}, err
 	}
@@ -273,6 +330,9 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 		return Result{}, &LimitError{Field: "generations", Limit: cfg.Limits.Generations}
 	}
 	if len(result.Evidence) == 0 {
+		if lastProcessingLimit != nil {
+			return Result{}, lastProcessingLimit
+		}
 		regionPoints := points
 		if len(regionPoints) > 256 {
 			sampled := make([]coverage.GeographicObservation, 256)
@@ -318,6 +378,7 @@ func (r *Result) addObservation(status coverage.ObservationStatus) {
 }
 
 func (r *Result) addStats(stats coverage.OSMEvaluationStats, splits []coverage.Split) {
+	r.Stats.WindowLimitRetries += stats.WindowLimitRetries
 	r.Stats.Windows++
 	r.Stats.Candidates += stats.CandidateCount
 	r.Stats.Suppressed += stats.SuppressedPedestrianCandidates
@@ -328,7 +389,7 @@ func (r *Result) addStats(stats coverage.OSMEvaluationStats, splits []coverage.S
 	}
 }
 
-type supplementalStats struct{ windows, candidates, suppressed, graphNodes, graphEdges int }
+type supplementalStats struct{ windows, candidates, suppressed, graphNodes, graphEdges, retries, limited int }
 
 func (r *Result) addSupplementalStats(stats supplementalStats) {
 	r.Stats.Windows += stats.windows
@@ -336,6 +397,8 @@ func (r *Result) addSupplementalStats(stats supplementalStats) {
 	r.Stats.Suppressed += stats.suppressed
 	r.Stats.GraphNodes += stats.graphNodes
 	r.Stats.GraphEdges += stats.graphEdges
+	r.Stats.WindowLimitRetries += stats.retries
+	r.Stats.LimitSkippedEnhancements += stats.limited
 }
 
 func ValidClip(clip osm.MatcherClippedPortion) bool {
@@ -363,7 +426,7 @@ func ValidClip(clip osm.MatcherClippedPortion) bool {
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
 
-func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windows []matchingWindow, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]matchedPortion, supplementalStats, error) {
+func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windows []matchingWindow, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions, recovery ...bool) ([]matchedPortion, supplementalStats, error) {
 	stats := supplementalStats{}
 	for i := 0; i+1 < len(portions); i++ {
 		if i&127 == 0 {
@@ -381,9 +444,14 @@ func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapsho
 			continue
 		}
 		window := windows[after.window]
-		rematched, matchStats, _, err := matchAdaptiveWindow(ctx, snapshot, points, rules, options, WindowSize,
-			seamWindowBounds(window.legStart, window.legEnd, window.start, 1, 2))
+		rematched, matchStats, _, err := matchPipelineWindow(ctx, snapshot, points, rules, options, WindowSize,
+			seamWindowBounds(window.legStart, window.legEnd, window.start, 1, 2), len(recovery) > 0 && recovery[0])
 		if err != nil {
+			if failure, ok := err.(*exhaustedWindow); ok {
+				stats.retries += failure.attempts
+				stats.limited++
+				continue
+			}
 			return nil, stats, err
 		}
 		stats.add(matchStats)
@@ -410,7 +478,7 @@ func completeCrossWindowConnectedRoadTurns(ctx context.Context, snapshot Snapsho
 	return portions, stats, nil
 }
 
-func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windows []matchingWindow, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions) ([]matchedPortion, supplementalStats, error) {
+func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, points []coverage.GeographicObservation, windows []matchingWindow, portions []matchedPortion, rules coverage.Rules, options coverage.OSMEvaluationOptions, recovery ...bool) ([]matchedPortion, supplementalStats, error) {
 	stats := supplementalStats{}
 	present := make(map[int]map[uuid.UUID]bool)
 	for i, item := range portions {
@@ -443,9 +511,14 @@ func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, poin
 		}
 		const supplementalWindowSize = 192
 		window := windows[after.window]
-		rematched, matchStats, _, err := matchAdaptiveWindow(ctx, snapshot, points, rules, options, supplementalWindowSize,
-			seamWindowBounds(window.legStart, window.legEnd, window.start, 2, 3))
+		rematched, matchStats, _, err := matchPipelineWindow(ctx, snapshot, points, rules, options, supplementalWindowSize,
+			seamWindowBounds(window.legStart, window.legEnd, window.start, 2, 3), len(recovery) > 0 && recovery[0])
 		if err != nil {
+			if failure, ok := err.(*exhaustedWindow); ok {
+				stats.retries += failure.attempts
+				stats.limited++
+				continue
+			}
 			return nil, stats, err
 		}
 		stats.add(matchStats)
@@ -475,6 +548,7 @@ func replaceCrossWindowRoadTangents(ctx context.Context, snapshot Snapshot, poin
 }
 
 func (s *supplementalStats) add(stats coverage.OSMEvaluationStats) {
+	s.retries += stats.WindowLimitRetries
 	s.windows++
 	s.candidates += stats.CandidateCount
 	s.suppressed += stats.SuppressedPedestrianCandidates

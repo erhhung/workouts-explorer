@@ -109,7 +109,7 @@ func TestIngestCanonicalActivityLabelsPostgreSQL(t *testing.T) {
 				return
 			}
 			var finished bool
-			err = tx.QueryRow(cleanup, `SELECT app.finish_job($1,$2,$3,'cancelled')`, job.id, runner.workerID, job.lease).Scan(&finished)
+			err = tx.QueryRow(cleanup, `SELECT app.finish_job($1,$2,$3,'canceled')`, job.id, runner.workerID, job.lease).Scan(&finished)
 			if err == nil {
 				err = tx.Commit(cleanup)
 			}

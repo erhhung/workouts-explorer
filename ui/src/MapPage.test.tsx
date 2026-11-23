@@ -644,6 +644,9 @@ describe("map contract helpers", () => {
       expect(svg.querySelector("text")).toBeNull();
       expect(svg.documentElement.getAttribute("viewBox")).toBe("0 0 22 22");
       const rect = svg.querySelector("rect")!;
+      expect(Number(rect.getAttribute("width"))).toBe(15 * 1.25);
+      expect(Number(rect.getAttribute("height"))).toBe(15 * 1.25);
+      expect(Number(rect.getAttribute("stroke-width"))).toBe(1.5 * 1.25);
       expect(Number(rect.getAttribute("x")) + Number(rect.getAttribute("width")) / 2).toBe(11);
       expect(Number(rect.getAttribute("y")) + Number(rect.getAttribute("height")) / 2).toBe(11);
       expect(rect.getAttribute("stroke")).toBe(routeEndpointOutline(theme));
@@ -7404,6 +7407,10 @@ describe("MapPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Coverage by road..." }));
     expect(await screen.findByText("Page 2 of 2")).toBeVisible();
     expect(screen.getByRole("button", { name: "Low Road" })).toBeVisible();
+    screen.getByRole("button", { name: "Close Road Coverage" }).focus();
+    await userEvent.keyboard("/");
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByRole("searchbox")).toHaveValue("");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "High" } });
     await waitFor(() => expect(screen.getByText("Page 1 of 1")).toBeVisible(), { timeout: 1000 });
     expect(screen.getByRole("button", { name: "High Road" })).toBeVisible();
@@ -8614,7 +8621,7 @@ describe("MapPage", () => {
   });
 
   test.each([false, true])(
-    "dismisses route progress without cancelling preparation and shows the next request (previous pending: %s)",
+    "dismisses route progress without canceling preparation and shows the next request (previous pending: %s)",
     async (previousPending) => {
       const requests: Array<{
         signal: AbortSignal;

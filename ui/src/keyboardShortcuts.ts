@@ -4,6 +4,8 @@ export type Shortcut =
   | { kind: "tab"; path: "/" | "/map" | "/stats" | "/data-sync" }
   | { kind: "page"; delta: number }
   | { kind: "map"; action: "routes" | "coverage" | "fit" }
+  | { kind: "osm-regions"; action: "show-all" }
+  | { kind: "search" }
   | { kind: "stats"; group: "week" | "month" | "year" };
 
 type Registration = {
@@ -28,6 +30,10 @@ export function shortcutForKey(event: KeyboardEvent): Shortcut | undefined {
   if (event.key === "ArrowLeft" || event.key === "ArrowRight")
     return { kind: "page", delta: (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 5 : 1) };
   switch (event.key.toLowerCase()) {
+    case "/":
+      return { kind: "search" };
+    case "a":
+      return { kind: "osm-regions", action: "show-all" };
     case "c":
       return { kind: "map", action: "coverage" };
     case "r":
@@ -122,6 +128,10 @@ function registryFor(document: Document) {
   const prior = registries.get(document);
   if (prior) return prior;
   const registry: Registry = { entries: new Set(), dispose: () => undefined };
+  let searchKeyHeld = "";
+  const keyup = (event: KeyboardEvent) => {
+    if (event.key === "/" || event.code === searchKeyHeld) searchKeyHeld = "";
+  };
   const interacted = (event: Event) => {
     if (!(event.target instanceof Element)) return;
     const pagers = [...registry.entries].filter(
@@ -134,6 +144,14 @@ function registryFor(document: Document) {
     if (event.defaultPrevented) return;
     const shortcut = shortcutForKey(event);
     if (!shortcut) return;
+    if (shortcut.kind === "search") {
+      if (event.repeat && searchKeyHeld) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (!event.repeat) searchKeyHeld = "";
+    }
     const target = event.target instanceof Element ? event.target : document.activeElement;
     if (
       target?.closest(
@@ -153,13 +171,37 @@ function registryFor(document: Document) {
       .filter(visible)
       .at(-1);
     const area = modal ?? document.querySelector(".shell") ?? document.body;
+    if (shortcut.kind === "search") {
+      const searches = [
+        ...area.querySelectorAll<HTMLElement>('input[type="search"], [role="searchbox"]'),
+      ].filter(
+        (element) =>
+          visible(element) &&
+          !element.matches(":disabled, [readonly]") &&
+          !element.closest('[aria-disabled="true"]') &&
+          element.getAttribute("contenteditable") !== "false",
+      );
+      const focusedRegion = target?.closest("[data-paging-region]");
+      const search = searches.find((element) => focusedRegion?.contains(element)) ?? searches[0];
+      if (!search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      searchKeyHeld = event.code || "/";
+      search.focus();
+      return;
+    }
     if (
       !(modal && shortcut.kind === "page") &&
       [
         ...area.querySelectorAll(
           "input, textarea, [role='textbox'], [role='searchbox'], [contenteditable]:not([contenteditable='false'])",
         ),
-      ].some((element) => textEntry(element) && visible(element))
+      ].some(
+        (element) =>
+          textEntry(element) &&
+          visible(element) &&
+          !element.hasAttribute("data-unfocused-shortcuts"),
+      )
     )
       return;
     if (modal && shortcut.kind !== "page") return;
@@ -194,10 +236,12 @@ function registryFor(document: Document) {
     }
   };
   document.addEventListener("keydown", keydown, true);
+  document.addEventListener("keyup", keyup, true);
   document.addEventListener("focusin", interacted, true);
   document.addEventListener("pointerdown", interacted, true);
   registry.dispose = () => {
     document.removeEventListener("keydown", keydown, true);
+    document.removeEventListener("keyup", keyup, true);
     document.removeEventListener("focusin", interacted, true);
     document.removeEventListener("pointerdown", interacted, true);
     registries.delete(document);

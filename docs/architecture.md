@@ -426,7 +426,7 @@ segment excluded from path statistics can still supply context or park bounds.
 authorization and joins workout visibility, routed/applied-result eligibility,
 local start date, path names/classes/localities, park attributions and park/region
 metadata live. A logical deletion therefore disappears from fresh reads without
-waiting for physical evidence cleanup. Failed, cancelled or timed-out rematches
+waiting for physical evidence cleanup. Failed, canceled or timed-out rematches
 do not discard the old applied result. Metadata or date edits are not frozen in
 the projections. Qualified source-path/bucket rows are deduplicated to one
 display-entity/workout visit **before** range and all-time counts and extrema;
@@ -1281,9 +1281,9 @@ Every ingest request is a parent job with one child per selected source. Files a
 Parent status derives from children:
 
 - `succeeded`: every child succeeded, including no-data results.
-- `partially_succeeded`: at least one child succeeded and another failed or was cancelled.
-- `cancelled`: no child succeeded and every child was cancelled.
-- `failed`: no child succeeded and at least one child failed, including a mix of failed and cancelled children.
+- `partially_succeeded`: at least one child succeeded and another failed or was canceled.
+- `canceled`: no child succeeded and every child was canceled.
+- `failed`: no child succeeded and at least one child failed, including a mix of failed and canceled children.
 
 ### Ingest-file concurrency
 
@@ -1336,7 +1336,7 @@ describes the old same-numeric-28 contract, not this behavior. See
 file-slot cleanup, the source worker prepares normal and adopted obligations.
 During active ingest, **B newly eligible matching targets** are required globally
 across regions within the ingest-root/source-sibling scope. Missing-map,
-already-current/live, unchanged authoritative failed/cancelled targets and
+already-current/live, unchanged authoritative failed/canceled targets and
 deduplicated obligations do not count. The private durable builder saves B and
 root/sibling scope across files/crashes, with bounded metadata and no placeholder
 Coverage parent. It atomically seals the full B children and parent. With 63
@@ -1382,20 +1382,20 @@ builders, not saved cohorts; no underfull Coverage parent is filled incrementall
 Retry parents inherit capacity but contain only eligible unsuccessful predecessors,
 never fresh top-up work. For example, three failures of a 25-route root produce a
 three-child retry while a fresh 25-route batch uses a normal root. Normal imports
-preserve identical-current/live/failed/cancelled target guards and consumed retry
+preserve identical-current/live/failed/canceled target guards and consumed retry
 budgets; only a distinct proven adoption event authorizes force refresh.
 
 Leased account reconciliation recovers committed obligations from succeeded,
-failed or cancelled roots; crashed claims first follow normal lease recovery.
+failed or canceled roots; crashed claims first follow normal lease recovery.
 A final partial cohort seals **only after the visible ingest root and all source
 siblings are terminal and due preparation is exhausted**, never active EOF.
-Active underfull cohorts remain protected. Failed/cancelled roots can legitimately
+Active underfull cohorts remain protected. Failed/canceled roots can legitimately
 owe derived work for committed data without reopening ingest. Normal metadata
-updates/deduplication do not resurrect cancelled matching targets; cancellation
-footprints remain authoritative. Cancelling ingestion does not retract
+updates/deduplication do not resurrect canceled matching targets; cancellation
+footprints remain authoritative. Canceling ingestion does not retract
 committed derived-work obligations or cancel separate Coverage jobs. Verified typed
 transient readiness failures persist a one-hour deferral without acknowledgement;
-permanent/unknown/cancelled leaves surface safely. Classification checks every
+permanent/unknown/canceled leaves surface safely. Classification checks every
 joined/wrapped branch with a 256-node bound, not a convenient incidental deadline.
 Normal missing-map handoffs acknowledge readiness without a child; adopted missing
 maps retain the force obligation. Policy remains `coverage-production-v1`, 500m /
@@ -1436,12 +1436,12 @@ coverage enqueue authority after ingest but cannot claim or persist coverage.
 Coverage processing records queued, running, current, failed, and stale state with
 target/applied route revision, matcher version, OSM generations, timestamps,
 bounded progress, and a safe failure category. Parent results aggregate routes
-total, processed, succeeded, failed, cancelled, and superseded. Mixed success and
+total, processed, succeeded, failed, canceled, and superseded. Mixed success and
 failure produces `partially_succeeded`; failed targets do not advance the fully
 applied account/region watermark or automatically hot-loop. Production tiles and
 statistics read only durable application data and never invoke the matcher or query OSM.
 Retry creates a new non-forking coverage parent from only the preceding attempt's
-eligible failed or cancelled route children. Parent and corresponding route-child
+eligible failed or canceled route children. Parent and corresponding route-child
 lineage reuse the Data Sync retry root and ordinals, allowing Run detail to
 navigate First, Second, and every later attempt through the latest without
 rerunning successful or superseded routes.
@@ -2163,8 +2163,8 @@ wire-size reduction does not establish latency improvement or a need for more re
 - The browser may request approved public style resources directly. Public provider credentials delivered to the browser are not secrets and require provider-side origin restrictions, minimum privileges, quotas, monitoring, and rotation; Stadia domain authentication is preferred where available.
 - The UI content security policy permits only configured provider resource origins needed for style documents, tiles, glyphs, sprites, and images.
 - The UI permits runtime inline CSS because MapLibre positions controls and popups through element styles; scripts remain self-hosted and hash-restricted, and configured attribution never accepts operator HTML.
-- Regional road/path hierarchy comes from an ordered configuration of provider-qualified named extracts, initially Geofabrik `norcal`.
-- Runtime configuration names these datasets regions: `osm.regions` is the explicit initial list, `osm.dataProviders` is the ordered automatic-discovery catalog list, `osm.autoAddRegions` controls discovery, and `osm.maxAutoDownloadBytes` bounds each automatically selected PBF.
+- Regional road/path hierarchy comes from provider-qualified named regions managed through the administrator Regions UI. Every promoted active region is eligible for Coverage; there is no deployment allowlist or per-region configured flag.
+- Runtime configuration retains `osm.dataProviders` as the ordered catalog list, `osm.autoAddRegions` as the discovery policy, and `osm.maxAutoDownloadBytes` as the bound for each automatically selected PBF. Application startup does not seed a static list of regions.
 - Development and production use the same public-data-only `osm` database on the production PostgreSQL server; private workout matching results remain isolated in each environment's application database.
 - The updater resolves extract metadata through Geofabrik's versioned index, downloads current PBF files into ephemeral local scratch space, validates and records source metadata, and removes the files after processing.
 - `scripts/osm-update-operator.sh` is the implemented interactive entry point for a new or existing provider-qualified region. It launches `osm/manual-update-job.yaml` with the `workouts-osm` image and supports start, status, resume, unblock and abort. The Go updater filters/imports public data, runs checked-in resumable SQL stages, validates and atomically promotes a generation. Resume checks tool/version/checksum fences; operator-blocked builds do not retry without an explicit unblock. See [ADR 0008](decisions/008-osm-import-and-segment-identity.md) and the [resumable rebuild contract](osm-resumable-rebuild.md).
@@ -2179,8 +2179,9 @@ wire-size reduction does not establish latency improvement or a need for more re
 - Accepted Summary deletions, including an already-unavailable response, notify the shared shell. It prunes the Map catalog, checked IDs and deleted focus, invalidates cached Coverage views, and advances a collection revision without changing the date range or refetching the complete workout collection. Late capability/overlay results cannot restore deleted entries. An external deletion that makes an explicit capability return 404 triggers one authoritative range-catalog recovery and retains only the still-available checked IDs, preserving explicit none rather than selecting all.
 - Map capability creation validates optional focus against the actual selected rows before commit, returning 404 rather than a retryable 503 for unavailable focus. Fresh-login and deep-link recovery also covers all-range selections: it clears unavailable focus/history/overlays and reuses one unfocused catalog capability without broadening an explicit subset or changing preferences. Genuine 503 errors retain bounded retries.
 - In Routes mode, start/finish markers use the same cached raw-route owner as the direction arrows: delayed hover takes precedence over persistent focus, and both endpoint markers are moved above the magenta route and direction-marker layers.
+- Routes-mode fit bounds come from the displayed segmented geometry, not the unfiltered imported extrema. This keeps invisible isolated/rejected GPS observations from expanding a route fit while preserving raw source data; Coverage continues to use its independent matched-geometry bounds.
 - Map's Space-key isolation follows the [three-mode layer visibility contract](functional-spec.md#space-key-layer-visibility). Hidden layers fade out and back in over 400ms without source teardown; directional markers use that transition only in diagnostic Coverage, with zero-duration opacity changes in Routes mode.
-- Before a route's first match commits, the application stores a canonical route-input digest and monotonic revision plus map-data readiness. A route is `map_data_ready` when every point resolves to the deterministic smallest configured active provider region; readiness records region generation provenance, not successful matching or a covered-path claim. Separate processing and result states distinguish queued/running/failed work from durable current/stale results.
+- Before a route's first match commits, the application stores a canonical route-input digest and monotonic revision plus map-data readiness. A route is `map_data_ready` when every point resolves to the deterministic smallest active provider region; readiness records region generation provenance, not successful matching or a covered-path claim. Separate processing and result states distinguish queued/running/failed work from durable current/stale results.
 - Region updates are globally single-flight by provider-qualified region ID. Promotion advances a region generation and raises account/region coverage watermarks; initial loads target missing coverage, while refreshes target every intersecting routed workout so existing attribution is reconciled to the latest OSM generation.
 - Coverage updates are account-owned bounded parents; new ingest cohorts may mix regions, with per-route generation vectors authoritative and retry parents isolated from fresh work. Desired and applied OSM-generation watermarks ensure a promotion racing active work produces a successor rather than losing rematch work.
 - Public endpoint limits, user-agent requirements, and attribution must be respected.
@@ -2261,7 +2262,7 @@ purge history, merge ambiguous records or bypass a live owner.
   initiate durable account purges and inspect read-only effective
   configuration in `/admin`. Suspension revokes sessions and uses the existing job
   cancellation engines; reactivation resumes normal scheduling without reviving
-  cancelled jobs or old sessions. Password recovery stays self-service rather than
+  canceled jobs or old sessions. Password recovery stays self-service rather than
   an administrator-triggered reset email. Remaining M10 announcements and OSM
   workflows are planned; none grants access to
   private workout data. See [role/session separation](admin-ui-spec.md#login-identity-and-session-separation).
@@ -2632,7 +2633,7 @@ general-worker account-purge implementation. Current runner dispatch is limited
 to source checks, source-child ingest and workout deletion.
 
 - Account deletion atomically disables authentication and prevents new jobs.
-- Queued and running account jobs are cancelled before purge enumeration.
+- Queued and running account jobs are canceled before purge enumeration.
 - Purge waits for terminal jobs or expired leases, clears snapshots and staging, then captures the complete private-data target scope.
 - Purge cannot run concurrently with a job that may still commit account data.
 - Failure leaves the account disabled and resumes from durable deletion state.

@@ -95,7 +95,7 @@ CREATE TABLE app.jobs (
         )
     ),
     priority smallint NOT NULL CHECK (priority >= 0),
-    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'partially_succeeded', 'failed', 'cancelled')),
+    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'partially_succeeded', 'failed', 'canceled')),
     parameters jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(parameters) = 'object'),
     coalescing_version smallint,
     coalescing_scope text,
@@ -186,9 +186,9 @@ CREATE TABLE app.jobs (
             AND lease_expires_at IS NULL
         )
     ),
-    CHECK ((status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled')) = (terminal_at IS NOT NULL)),
+    CHECK ((status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled')) = (terminal_at IS NOT NULL)),
     CHECK (
-        status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled')
+        status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'canceled')
         OR (
             worker_id IS NULL
             AND lease_token IS NULL
@@ -271,7 +271,7 @@ BEGIN
         END IF;
         RETURN NEW;
     END IF;
-    IF OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN
+    IF OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN
         RAISE EXCEPTION 'terminal jobs are immutable' USING ERRCODE = '23514';
     END IF;
     IF OLD.id <> NEW.id OR OLD.kind <> NEW.kind OR OLD.account_id IS DISTINCT FROM NEW.account_id OR
@@ -288,9 +288,9 @@ BEGIN
     ELSE
         IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
             (transition = 'claim' AND OLD.status = 'queued' AND NEW.status = 'running') OR
-            (transition = 'recover' AND OLD.status = 'running' AND NEW.status IN ('queued', 'cancelled')) OR
-            (transition = 'finish' AND OLD.status = 'running' AND NEW.status IN ('succeeded', 'failed', 'cancelled')) OR
-            (transition = 'cancel' AND OLD.status = 'queued' AND NEW.status = 'cancelled')
+            (transition = 'recover' AND OLD.status = 'running' AND NEW.status IN ('queued', 'canceled')) OR
+            (transition = 'finish' AND OLD.status = 'running' AND NEW.status IN ('succeeded', 'failed', 'canceled')) OR
+            (transition = 'cancel' AND OLD.status = 'queued' AND NEW.status = 'canceled')
         ) THEN
             RAISE EXCEPTION 'invalid job status transition' USING ERRCODE = '23514';
         END IF;
@@ -346,12 +346,12 @@ DECLARE
     running_count integer;
     succeeded_count integer;
     failed_count integer;
-    cancelled_count integer;
+    canceled_count integer;
 BEGIN
     SELECT count( * ), count( * ) FILTER (WHERE status = 'queued'), count( * ) FILTER (WHERE status = 'running'),
            count( * ) FILTER (WHERE status = 'succeeded'), count( * ) FILTER (WHERE status = 'failed'),
-           count( * ) FILTER (WHERE status = 'cancelled')
-    INTO child_count, queued_count, running_count, succeeded_count, failed_count, cancelled_count
+           count( * ) FILTER (WHERE status = 'canceled')
+    INTO child_count, queued_count, running_count, succeeded_count, failed_count, canceled_count
     FROM app.jobs WHERE parent_job_id = parent_id AND account_id = app.current_account_id();
     IF child_count = 0 THEN
         RETURN;
@@ -360,15 +360,15 @@ BEGIN
         WHEN queued_count = child_count THEN 'queued'
         WHEN running_count > 0 OR (queued_count > 0 AND queued_count < child_count) THEN 'running'
         WHEN succeeded_count = child_count THEN 'succeeded'
-        WHEN succeeded_count > 0 AND failed_count + cancelled_count > 0 THEN 'partially_succeeded'
-        WHEN succeeded_count = 0 AND cancelled_count = child_count THEN 'cancelled'
+        WHEN succeeded_count > 0 AND failed_count + canceled_count > 0 THEN 'partially_succeeded'
+        WHEN succeeded_count = 0 AND canceled_count = child_count THEN 'canceled'
         ELSE 'failed'
     END;
     PERFORM set_config('app.job_transition', 'derive_parent', true);
     UPDATE app.jobs
     SET status = derived_status,
         started_at = CASE WHEN derived_status = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
-        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END
+        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN now() ELSE NULL END
     WHERE id = parent_id AND account_id = app.current_account_id()
       AND kind IN ('manual_ingest', 'scheduled_ingest') AND status IS DISTINCT FROM derived_status;
 END;
@@ -434,7 +434,7 @@ SET
     app AS $function$
 DECLARE parent_id uuid;
 BEGIN
-    IF terminal_status NOT IN ('succeeded', 'failed', 'cancelled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
+    IF terminal_status NOT IN ('succeeded', 'failed', 'canceled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
     PERFORM set_config('app.job_transition', 'finish', true);
     UPDATE app.jobs SET status = terminal_status, terminal_at = now(), worker_id = NULL, lease_token = NULL,
         claimed_at = NULL, heartbeat_at = NULL, lease_expires_at = NULL,
@@ -458,7 +458,7 @@ SET
 DECLARE parent_id uuid;
 BEGIN
     PERFORM set_config('app.job_transition', 'recover', true);
-    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'canceled' END,
         terminal_at = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE now() END,
         worker_id = NULL, lease_token = NULL, claimed_at = NULL, heartbeat_at = NULL, lease_expires_at = NULL
     WHERE id = job_id AND account_id = app.current_account_id() AND status = 'running' AND lease_expires_at < now()
@@ -481,18 +481,18 @@ BEGIN
     IF requester_id IS NULL THEN RAISE EXCEPTION 'requester is required' USING ERRCODE = '22023'; END IF;
     SELECT kind, status, parent_job_id INTO target_kind, target_status, parent_id FROM app.jobs
     WHERE id = job_id AND account_id = app.current_account_id() FOR UPDATE;
-    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN false; END IF;
+    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN false; END IF;
     PERFORM set_config('app.job_transition', 'cancel', true);
     IF target_kind IN ('manual_ingest', 'scheduled_ingest') THEN
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE id = job_id AND account_id = app.current_account_id();
-        UPDATE app.jobs SET status = 'cancelled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
+        UPDATE app.jobs SET status = 'canceled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'queued';
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'running';
         PERFORM app.derive_parent_status(job_id);
     ELSE
-        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'canceled' ELSE status END,
             terminal_at = CASE WHEN status = 'queued' THEN now() ELSE terminal_at END,
             cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE id = job_id AND account_id = app.current_account_id() AND status IN ('queued', 'running');

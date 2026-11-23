@@ -69,7 +69,7 @@ func TestMatcherCopySegmentsEquivalenceIntegration(t *testing.T) {
 	}
 	// Freeze the previous join as the comparison oracle; all other query clauses
 	// remain identical, so the comparison covers every returned copy column.
-	start := strings.Index(matcherCopySegmentsSQL, "LEFT JOIN LATERAL (")
+	start := strings.Index(matcherCopySegmentsSQL, "LEFT JOIN path_labels path")
 	end := strings.Index(matcherCopySegmentsSQL, "ORDER BY requested.ordinal")
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate scoped path join")

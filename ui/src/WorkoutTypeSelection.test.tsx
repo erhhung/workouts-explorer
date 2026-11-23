@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import { useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import { WorkoutTypeSelection } from "./WorkoutTypeSelection";

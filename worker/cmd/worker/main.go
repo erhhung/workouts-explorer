@@ -108,6 +108,18 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer osmDB.Close()
+	var catalog *workerapp.CatalogRefreshRunner
+	if cfg.OSM.CatalogEnabled {
+		catalogDB, err := database.OpenWithMaxConns(workerCtx, cfg.OSM.CatalogDatabaseURL, "workouts-osm-catalog-refresh", 3)
+		if err != nil {
+			return err
+		}
+		defer catalogDB.Close()
+		if err = catalogDB.Ping(workerCtx); err != nil {
+			return errors.New("OSM catalog writer is unavailable")
+		}
+		catalog = workerapp.NewCatalogRefreshRunner(db, catalogDB, cfg.OSM.DataProviders, cfg.OSM.MetadataConcurrency, logger)
+	}
 	checksRoot := filepath.Join(cfg.StagingRoot, "connection-checks")
 	if err := workerapp.ScavengeStaging(checksRoot); err != nil {
 		return errors.New("prepare connection-check staging")
@@ -153,7 +165,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		PollInterval: cfg.AutoSyncPollInterval,
 		Lease:        cfg.SchedulerLease,
 	})
-	return supervise(workerCtx, config.ShutdownTimeout(),
+	components := []supervisedComponent{
 		supervisedComponent{name: "health server", run: func(ctx context.Context) error {
 			return httpserver.Run(ctx, logger, server, config.ShutdownTimeout())
 		}},
@@ -167,5 +179,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		supervisedComponent{name: "sync scheduler", run: func(ctx context.Context) error {
 			return scheduler.Run(ctx)
 		}},
-	)
+	}
+	if catalog != nil {
+		components = append(components, supervisedComponent{name: "OSM catalog refresh", run: catalog.Run})
+	}
+	return supervise(workerCtx, config.ShutdownTimeout(), components...)
 }

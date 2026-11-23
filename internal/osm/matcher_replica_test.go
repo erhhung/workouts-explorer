@@ -224,8 +224,8 @@ func matcherReplicaTestPool(t *testing.T, firstGeneration int64) (*pgxpool.Pool,
 					backend.Send(&pgproto3.DataRow{Values: [][]byte{
 						[]byte(strconv.FormatInt(generation, 10)),
 						[]byte(`\x` + strings.Repeat("01", 32)), []byte(`\x` + strings.Repeat("02", 32)),
-						[]byte(`{"fixture:region":2,"fixture:unconfigured":3}`),
-						[]byte(`[{"regionId":"fixture:region","displayName":"Region"}]`), []byte("7"),
+						[]byte(`{"fixture:region":2,"fixture:installed":3}`),
+						[]byte(`[{"regionId":"fixture:region","displayName":"Region"},{"regionId":"fixture:installed","displayName":"Other"}]`), []byte("7"),
 					}})
 					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")})
 				case strings.Contains(lower, "with route_point"):

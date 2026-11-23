@@ -57,6 +57,60 @@ function setup(anchor = rect(140, 120, 20, 20), followPointer = false) {
 }
 
 describe("Tooltip", () => {
+  test("a swapped focused child cannot keep a live progress tooltip open", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("tooltip-content")
+        ? rect(0, 0, 180, 30)
+        : rect(100, 100, 100, 30);
+    });
+    const tooltip = (working: boolean, count: number) => (
+      <Tooltip
+        portal
+        focusable={false}
+        content={working ? `${count} of 554 regions cataloged` : "Refresh catalogs"}
+      >
+        {working ? <span>Refreshing catalogs</span> : <button>Refresh catalogs</button>}
+      </Tooltip>
+    );
+    const view = render(tooltip(false, 0)),
+      button = screen.getByRole("button"),
+      trigger = button.parentElement!;
+    act(() => button.focus());
+    expect(screen.getByRole("tooltip")).toHaveClass("is-open");
+    view.rerender(tooltip(true, 270));
+    const bubble = screen.getByRole("tooltip");
+    expect(bubble).not.toHaveClass("is-open");
+    fireEvent.pointerEnter(trigger);
+    expect(bubble).toHaveClass("is-open");
+    fireEvent.pointerLeave(trigger);
+    expect(bubble).not.toHaveClass("is-open");
+    view.rerender(tooltip(true, 280));
+    expect(bubble).not.toHaveClass("is-open");
+  });
+  test("outside clicks and Escape dismiss live help without content updates reopening it", () => {
+    const { trigger, bubble, rerender } = setup();
+    fireEvent.pointerEnter(trigger);
+    expect(bubble).toHaveClass("is-open");
+    fireEvent.pointerDown(document.body);
+    expect(bubble).not.toHaveClass("is-open");
+    rerender(
+      <div data-testid="scroller" style={{ overflow: "auto" }}>
+        <Tooltip portal content="Updated progress" label="Route status">
+          Ready
+        </Tooltip>
+      </div>,
+    );
+    expect(screen.getByRole("tooltip")).not.toHaveClass("is-open");
+    const current = screen.getByLabelText("Route status");
+    fireEvent.pointerEnter(current);
+    expect(screen.getByRole("tooltip")).toHaveClass("is-open");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("tooltip")).not.toHaveClass("is-open");
+    fireEvent(window, new Event("blur"));
+    expect(screen.getByRole("tooltip")).not.toHaveClass("is-open");
+  });
   test("cursor help follows with the shared card offset without auto-hiding or restarting ownership", () => {
     vi.useFakeTimers();
     const { trigger, bubble } = setup(undefined, true);

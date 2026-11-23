@@ -127,7 +127,7 @@ func TestDiagnosticMovementMode(t *testing.T) {
 
 func TestDiagnosticResponseReportsCurrentPathPolicy(t *testing.T) {
 	response := diagnosticResponse(diagnosticResult{unavailableRegions: []osm.MatcherUnavailableRegion{{RegionID: "geofabrik:new-york", DisplayName: "New York"}}})
-	if response.PathPolicyVersion != generated.CoveragePathPolicyExperimentalV82 {
+	if response.PathPolicyVersion != generated.CoveragePathPolicyExperimentalV83 {
 		t.Fatalf("path policy version=%q", response.PathPolicyVersion)
 	}
 	if response.Generations == nil {

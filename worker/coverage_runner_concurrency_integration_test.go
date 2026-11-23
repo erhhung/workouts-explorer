@@ -202,7 +202,7 @@ func TestCoveragePinnedReaderFixtureUnconfirmedClose(t *testing.T) {
 }
 
 func TestCoverageRunOncePhysicalCleanupIntegration(t *testing.T) {
-	for _, phase := range []string{"persisted_close_failure", "begin_close_failure", "rollback_error_closed", "cancelled_close_failure"} {
+	for _, phase := range []string{"persisted_close_failure", "begin_close_failure", "rollback_error_closed", "canceled_close_failure"} {
 		t.Run(phase, func(t *testing.T) {
 			f := newCoverageIntegrationFixture(t)
 			f.seedOSM()
@@ -242,7 +242,7 @@ func TestCoverageRunOncePhysicalCleanupIntegration(t *testing.T) {
 				case <-time.After(10 * time.Second):
 					t.Fatal("matching did not start")
 				}
-				if phase == "cancelled_close_failure" {
+				if phase == "canceled_close_failure" {
 					cancel()
 				}
 				release()

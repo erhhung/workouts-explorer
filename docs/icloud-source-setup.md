@@ -410,7 +410,7 @@ job, with cleanup before and after the file pipeline. Files remain atomic.
 
 During active ingest, a normal parent requires **exactly B new eligible matching
 targets**, globally across regions within its ingest-root/source-sibling scope.
-Missing maps, current/live/unchanged authoritative failed/cancelled targets,
+Missing maps, current/live/unchanged authoritative failed/canceled targets,
 non-GPS inputs and deduplication do not count. Durable private prepared metadata
 saves B and root/sibling scope across files/crashes; no placeholder Coverage
 parent exists. Full parent and B children seal atomically. For 63 eligible routes
@@ -431,10 +431,10 @@ fresh Coverage for otherwise identical content.
 Durable receipts survive source failure and cancellation. Only leased account
 reconciliation after the **visible ingest root and all source siblings are
 terminal and due preparation is exhausted** may seal a final partial cohort,
-never active EOF. Failed/cancelled roots may owe legitimate derived work for
+never active EOF. Failed/canceled roots may owe legitimate derived work for
 committed data without reopening ingest. Active underfull cohorts stay protected;
-normal metadata changes/deduplication do not resurrect cancelled route targets or
-erase their cancellation footprint. Cancelling ingest does not cancel separate
+normal metadata changes/deduplication do not resurrect canceled route targets or
+erase their cancellation footprint. Canceling ingest does not cancel separate
 Coverage jobs. Bounded metadata and one route's compact coordinates at a time
 keep APP transactions outside OSM work, with one efficient ROI query per route,
 not per point. A trusted fingerprint of **all catalog regions/configuration/
@@ -446,7 +446,7 @@ event, ownership epoch, content and the full canonical raw digest (0-250,000 poi
 No-GPS adoption acknowledges without a job. Matching still has its 50,000-original-
 point limit; overflow is a typed permanent Coverage failure, not failed ingestion.
 Verified typed transient readiness errors durably defer one hour; any permanent,
-unknown or cancelled error branch surfaces safely rather than silently deferring.
+unknown or canceled error branch surfaces safely rather than silently deferring.
 Policy remains `coverage-production-v1`, 500m / 256 MiB, two lanes, admission 2/2/2,
 one per reader, and the same timeout/retry budgets. This is not capacity proof.
 

@@ -110,6 +110,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Make the padded target clickable, not just a small number or a short label.
   Use a real button for an action and a real link for navigation, with an
   accessible name and a single intentional keyboard stop.
+- Table-cell actions reuse `.table-action-cell` and `.table-cell-link`: transfer
+  cell padding to the full-width action, fill the content height and keep the
+  entire padded region clickable with a hand cursor. Preserve each table's row
+  dimensions and only apply action styling when the cell has an eligible action.
 - Match existing hover borders, text colors, row highlights and selected states.
   Table actions follow Road Coverage: normal text until the pointer enters the
   cell, then accent text, without an extra cell background or default underline.
@@ -150,6 +154,11 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   is visible but unfocused. Focused text entry keeps caret/selection keys; paging
   affects only the active dialog. Keep the separate number/letter shortcut guard
   for displayed editing surfaces and preserve Tab-only focus-ring activation.
+- A persistent read-only table filter may explicitly opt into navigation while
+  unfocused, as Regions does. Its visible input must not disable tab/page commands
+  elsewhere in that workspace; focused editing and modal/menu ownership retain
+  their normal guards. Keep this exception scoped rather than relaxing every
+  displayed editor throughout the application.
 - Passive card previews have one intentional keyboard stop on the owning card.
   Preview-only hints must not insert focusable descendants into content that
   closes when the card blurs. Keep closed previews inert, and allow overflowing
@@ -194,9 +203,29 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 
 ## Tables, Sorting And Pagination
 
+- Shared table primitives own surfaces, sort states, outlines and sticky-header
+  painting. Reuse `DialogTableViewport`'s sticky-header mode for scrolling table
+  dialogs; feature styles set dimensions/columns rather than duplicating that
+  chrome. Keep the stationary outline outside the scrolling paint layer so opaque
+  headers and rows cannot erase it.
 - Begin with an existing semantic table, scoped headers, accessible sort state
   and the standard sort indicators. Use documented initial directions, stable
   tie-breaks and the established handling of unavailable values.
+- **Header rows use the same base background as normal, unhovered data rows.**
+  Apply this standard across user and admin tables. Sticky headers keep an opaque
+  version of that same surface so scrolling rows cannot show through; do not
+  introduce a lighter, darker or raised header band. Preserve borders and sticky
+  offsets that keep the table outline visible.
+- **Indicate the active sort column with orange text and the existing direction
+  indicator, never a different header background.** This applies to ascending
+  and descending sorts in every user/admin table. Keep the active label orange
+  during hover; ordinary shared hover feedback and keyboard focus outlines remain
+  available and must not become persistent sort-state fills.
+- Header hover fills retain the same crisp single-pixel inset from the table
+  outline and header separator in both ordinary and sticky/dialog tables, using
+  Workout log and New Coverage as the reference. Avoid extra sticky top spacing
+  or blurred, shadow-like edges from fractional dialog transforms. Verify the
+  painted edges after entry animations settle, including high-DPI rendering.
 - Centered loading, empty and error copy uses the shared table-message typography,
   including messages in Road Coverage and New visits viewports. Do not introduce
   per-dialog font overrides or resize the frozen table to accommodate status text.
@@ -224,6 +253,8 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Verify reserved height against the natural full-page table, not just stability
   between results. Measurement rows must match real cell padding, borders and
   controls after the complete stylesheet cascade is applied.
+  Account for the clipping frame's own padding in reserved height and empty-state
+  offsets so the scrollport's top and bottom border strokes remain fully visible.
 - Verify chart geometry with zero and very small values as well as ordinary bars.
   Tooltip wrappers must not introduce an inline text baseline that displaces
   short bars from the numeric zero axis; check the final stylesheet cascade.
@@ -322,6 +353,9 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   dismissal and return focus. Use action menus for actions, not primary navigation.
 - Keep checkbox/label activation regions coherent. Multi-select drafts use the
   established Apply/Cancel behavior; dismissing must not commit an unfinished draft.
+- Small inline filter checkboxes reuse `.inline-checkbox` for a flat, symmetric
+  outline without native bevels or bottom shadows. Retain native checkbox/label
+  and Space activation, Tab focus, disabled semantics and forced-colors fallback.
 - Use visible labels, fieldsets/legends, field errors and accessible error
   summaries. Keep submission and date validation behavior when replacing controls.
 - Source configuration values retain their fixed-width size, including Password.
@@ -391,6 +425,12 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   another override or an `!important` workaround.
 - Review beside the existing counterpart in both themes. Test pointer, keyboard,
   focus return, disabled/error/empty states, long names and long dialog histories.
+- Use the shared `Dialog` primitives for every modal. After entry animation,
+  centered dialogs use device-pixel layout coordinates without a persistent
+  centering transform; recheck on resizing. Verify actual painted border strokes,
+  since integral DOM bounds alone do not exclude compositor resampling.
+  Table frames correct only their remaining internal offset and remeasure when
+  the owning dialog moves; they must not reposition the dialog independently.
 - Exercise deliberately delayed and out-of-order responses. Check for populated
   frames during paging/grouping, stable page-control positions and sensible
   shrinkage after a shorter result arrives.

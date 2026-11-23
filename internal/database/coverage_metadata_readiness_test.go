@@ -54,7 +54,7 @@ func metadataFunction(t *testing.T, feature, name string) string {
 }
 
 func TestCoverageMetadataReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 32 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
+	if SupportedSchemaVersion != 33 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeCoverageMetadataReadinessSQL+")") {
 		t.Fatal("runtime30 must require the dedicated metadata feature readiness contract")
 	}
 	for _, required := range []string{"SELECT $1 < 29 OR (", "migration_baseline=27", "coverage_route_changes_dirty_idx",

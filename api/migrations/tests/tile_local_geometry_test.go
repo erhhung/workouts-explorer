@@ -110,7 +110,7 @@ func TestTileMigrationPreservesHistoricalSQL(t *testing.T) {
 		fmt.Fprintln(hash, file)
 		hash.Write(raw)
 	}
-	const expected = "a96cd29f1fb6c11bc77574451eaf4fadf83772a737103224a8852c2c02f7b428"
+	const expected = "7acbb131628adb3a58d2a2ea583e4ac04361acf2f2e3cd0f27629828fab5d809"
 	if got := fmt.Sprintf("%x", hash.Sum(nil)); got != expected {
 		t.Fatalf("approved 001-030 (including approved lifecycle/source 002/003 folds) changed: sha256=%s", got)
 	}

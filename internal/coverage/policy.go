@@ -16,6 +16,8 @@ const (
 type PathPolicyVersion string
 
 const ExperimentalPathPolicyV82 PathPolicyVersion = "coverage-path-policy-experimental-v82"
+const ExperimentalPathPolicyV83 PathPolicyVersion = "coverage-path-policy-experimental-v83"
+const CurrentPathPolicyVersion = ExperimentalPathPolicyV83
 
 const footRoadAttributionDistanceMeters = 5.0
 const footRoadCandidateSearchRadiusMeters = 20.0
@@ -38,7 +40,7 @@ func experimentalPathPolicy(mode MovementMode) pathPolicy {
 	if mode != MovementFoot && mode != MovementBicycle {
 		mode = MovementSharedPublic
 	}
-	return pathPolicy{ExperimentalPathPolicyV82, mode}
+	return pathPolicy{CurrentPathPolicyVersion, mode}
 }
 
 func (policy pathPolicy) transitionEligible(highway string, rawTags json.RawMessage) bool {

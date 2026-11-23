@@ -1,5 +1,6 @@
 import { type ReactNode, useRef, useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { shortcutForKey, useKeyboardShortcut } from "./keyboardShortcuts";
 import { PageNavigation } from "./PageNavigation";
@@ -45,6 +46,126 @@ function Pager({
 }
 
 describe("keyboard shortcuts", () => {
+  test("slash focuses the page search without typing it, while a focused search accepts slash", async () => {
+    const user = userEvent.setup();
+    render(
+      <Commands run={vi.fn()}>
+        <input type="search" aria-label="Page search" />
+        <input type="text" aria-label="Other input" />
+      </Commands>,
+    );
+    await user.click(screen.getByRole("button"));
+    await user.keyboard("/");
+    const search = screen.getByRole("searchbox");
+    expect(search).toHaveFocus();
+    expect(search).toHaveValue("");
+    await user.keyboard("oak/");
+    expect(search).toHaveValue("oak/");
+    await user.click(screen.getByLabelText("Other input"));
+    await user.keyboard("/");
+    expect(screen.getByLabelText("Other input")).toHaveValue("/");
+    expect(screen.getByLabelText("Other input")).toHaveFocus();
+  });
+  test("slash prefers the focused paging region and ignores disabled/read-only searches", () => {
+    render(
+      <Commands run={vi.fn()}>
+        <input type="search" aria-label="Disabled search" disabled />
+        <input type="search" aria-label="Read-only search" readOnly />
+        <section data-paging-region>
+          <input type="search" aria-label="First search" />
+        </section>
+        <section data-paging-region>
+          <button>Second table</button>
+          <input type="search" aria-label="Second search" />
+        </section>
+      </Commands>,
+    );
+    const button = screen.getByRole("button", { name: "Second table" });
+    button.focus();
+    expect(fireEvent.keyDown(button, { key: "/" })).toBe(false);
+    expect(screen.getByLabelText("Second search")).toHaveFocus();
+  });
+  test("the topmost dialog owns slash, and a dialog without search does not fall through", () => {
+    const view = render(
+      <Commands run={vi.fn()}>
+        <input type="search" aria-label="Background search" />
+        <div role="dialog">
+          <button>Modal control</button>
+          <input type="search" aria-label="Dialog search" />
+        </div>
+      </Commands>,
+    );
+    screen.getByRole("button", { name: "Modal control" }).focus();
+    fireEvent.keyDown(document.activeElement!, { key: "/" });
+    expect(screen.getByLabelText("Dialog search")).toHaveFocus();
+    view.rerender(
+      <Commands run={vi.fn()}>
+        <input type="search" aria-label="Background search" />
+        <div role="dialog">
+          <button>Modal control</button>
+        </div>
+      </Commands>,
+    );
+    screen.getByRole("button", { name: "Modal control" }).focus();
+    expect(fireEvent.keyDown(document.activeElement!, { key: "/" })).toBe(true);
+    expect(screen.getByRole("button", { name: "Modal control" })).toHaveFocus();
+  });
+  test("hidden searches, open menus, modifiers and composition retain ownership", () => {
+    render(
+      <Commands run={vi.fn()}>
+        <div hidden>
+          <input type="search" aria-label="Hidden search" />
+        </div>
+        <input type="search" aria-label="Visible search" />
+        <div role="menu">
+          <button role="menuitem">Menu item</button>
+        </div>
+      </Commands>,
+    );
+    const item = screen.getByRole("menuitem");
+    item.focus();
+    expect(fireEvent.keyDown(item, { key: "/" })).toBe(true);
+    expect(item).toHaveFocus();
+    for (const flags of [
+      { ctrlKey: true },
+      { metaKey: true },
+      { altKey: true },
+      { isComposing: true },
+      { keyCode: 229 },
+    ]) {
+      expect(fireEvent.keyDown(item, { key: "/", ...flags })).toBe(true);
+    }
+    expect(screen.getByLabelText("Visible search")).not.toHaveFocus();
+  });
+  test("holding the focus shortcut does not fill the newly focused field with slashes", () => {
+    render(
+      <Commands run={vi.fn()}>
+        <input type="search" aria-label="Search" />
+      </Commands>,
+    );
+    const search = screen.getByRole("searchbox");
+    expect(fireEvent.keyDown(document, { key: "/", code: "Slash" })).toBe(false);
+    expect(search).toHaveFocus();
+    expect(fireEvent.keyDown(search, { key: "/", code: "Slash", repeat: true })).toBe(false);
+    fireEvent.keyUp(search, { key: "/", code: "Slash" });
+    expect(fireEvent.keyDown(search, { key: "/", code: "Slash" })).toBe(true);
+  });
+  test("an opted-in persistent search permits navigation only while unfocused", () => {
+    const run = vi.fn();
+    render(
+      <Commands run={run}>
+        <input type="search" data-unfocused-shortcuts aria-label="Regions search" />
+      </Commands>,
+    );
+    const button = screen.getByRole("button"),
+      search = screen.getByRole("searchbox");
+    button.focus();
+    expect(fireEvent.keyDown(button, { key: "2" })).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    search.focus();
+    expect(fireEvent.keyDown(search, { key: "3" })).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
   test("handled shortcuts do not activate focus rings, but preserve navigation already initiated by Tab", () => {
     const dispose = installFocusVisibility(),
       run = vi.fn();
@@ -72,6 +193,9 @@ describe("keyboard shortcuts", () => {
     ["C", true, { kind: "map", action: "coverage" }],
     ["r", false, { kind: "map", action: "routes" }],
     ["f", false, { kind: "map", action: "fit" }],
+    ["a", false, { kind: "osm-regions", action: "show-all" }],
+    ["A", true, { kind: "osm-regions", action: "show-all" }],
+    ["/", false, { kind: "search" }],
     ["M", true, { kind: "stats", group: "month" }],
     ["y", false, { kind: "stats", group: "year" }],
   ])("recognizes %s with Shift=%s", (key, shiftKey, expected) => {

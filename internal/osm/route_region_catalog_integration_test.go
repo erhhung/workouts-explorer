@@ -101,12 +101,12 @@ func (f *routeCatalogSQLFixture) catalog(t *testing.T) RouteRegionCatalog {
 	return catalog
 }
 
-func (f *routeCatalogSQLFixture) region(t *testing.T, id, box string, configured bool) {
+func (f *routeCatalogSQLFixture) region(t *testing.T, id, box string) {
 	t.Helper()
 	f.exec(t, `INSERT INTO osm_catalog.regions
-		(id,provider,provider_region_id,display_name,catalog_url,source_url,boundary,configured)
+		(id,provider,provider_region_id,display_name,catalog_url,source_url,boundary)
 		VALUES ('fixture:'||$1,'fixture',$1,$1,'https://example.test/index','https://example.test/source',
-		ST_Multi(ST_GeomFromText($2,4326)),$3)`, id, box, configured)
+		ST_Multi(ST_GeomFromText($2,4326)))`, id, box)
 }
 
 func (f *routeCatalogSQLFixture) generation(t *testing.T, region string, active bool) int64 {
@@ -128,11 +128,11 @@ func (f *routeCatalogSQLFixture) generation(t *testing.T, region string, active 
 const catalogBigBox = "POLYGON((0 0,10 0,10 10,0 10,0 0))"
 const catalogSmallBox = "POLYGON((1 1,3 1,3 3,1 3,1 1))"
 
-// Keep the pre-010 encoding independent of the materialized proof expression.
+// Keep the version-2 encoding independent of the materialized proof expression.
 const legacyRouteCatalogFingerprintSQL = `SELECT pg_catalog.sha256(
-	pg_catalog.convert_to('route-region-catalog-v1','UTF8') || COALESCE(string_agg(
+	pg_catalog.convert_to('route-region-catalog-v2','UTF8') || COALESCE(string_agg(
 		pg_catalog.sha256(pg_catalog.int4send(octet_length(pg_catalog.convert_to(region.id,'UTF8'))) ||
-			pg_catalog.convert_to(region.id,'UTF8') || pg_catalog.boolsend(region.configured) ||
+			pg_catalog.convert_to(region.id,'UTF8') ||
 			pg_catalog.sha256(ST_AsEWKB(region.boundary,'NDR')) ||
 			pg_catalog.int8send(COALESCE(generation.id,0))),
 		''::bytea ORDER BY region.id COLLATE "C"),''::bytea))
@@ -141,7 +141,7 @@ const legacyRouteCatalogFingerprintSQL = `SELECT pg_catalog.sha256(
 
 func TestRouteCatalogFingerprintsIntegration(t *testing.T) {
 	f := newRouteCatalogSQLFixture(t)
-	f.region(t, "large", catalogBigBox, true)
+	f.region(t, "large", catalogBigBox)
 	f.generation(t, "large", true)
 	check := func(t *testing.T, before RouteRegionCatalog, fullChanged, selectionChanged, revisionChanged bool) RouteRegionCatalog {
 		t.Helper()
@@ -165,14 +165,12 @@ func TestRouteCatalogFingerprintsIntegration(t *testing.T) {
 		name, sql                 string
 		full, selection, revision bool
 	}{
-		{"equal region write", `UPDATE osm_catalog.regions SET configured=configured,boundary=boundary,display_name=display_name`, false, false, false},
+		{"equal region write", `UPDATE osm_catalog.regions SET boundary=boundary,display_name=display_name`, false, false, false},
 		{"unrelated region write", `UPDATE osm_catalog.regions SET updated_at=clock_timestamp(),advertised_download_bytes=123`, false, false, false},
 		{"unrelated generation write", `UPDATE osm_catalog.generations SET downloaded_bytes=123,validation='{"progress":1}'`, false, false, false},
 		{"equal generation write", `UPDATE osm_catalog.generations SET state=state,region_id=region_id`, false, false, false},
 		{"name only", `UPDATE osm_catalog.regions SET display_name='Renamed'`, false, false, true},
 		{"shape", `UPDATE osm_catalog.regions SET boundary=ST_Multi(ST_GeomFromText('POLYGON((0 0,9 0,9 9,0 9,0 0))',4326))`, true, true, true},
-		{"configuration", `UPDATE osm_catalog.regions SET configured=false`, true, true, true},
-		{"reconfigure", `UPDATE osm_catalog.regions SET configured=true`, true, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var oldXmin, newXmin string
@@ -189,10 +187,10 @@ func TestRouteCatalogFingerprintsIntegration(t *testing.T) {
 			}
 		})
 	}
-	f.region(t, "small", catalogSmallBox, true)
+	f.region(t, "small", catalogSmallBox)
 	before = check(t, before, true, true, true) // New competing boundaries, even inactive.
 	f.generation(t, "small", true)
-	before = check(t, before, true, true, true) // A smaller configured active competitor.
+	before = check(t, before, true, true, true) // A smaller active competitor.
 	var replacement int64
 	f.exec(t, `UPDATE osm_catalog.generations SET state='retired',retired_at=now() WHERE region_id='fixture:small'`)
 	before = check(t, before, true, true, true)
@@ -217,16 +215,16 @@ func TestRouteCatalogFingerprintsIntegration(t *testing.T) {
 	if before.ActiveGenerations["fixture:small"] == replacement {
 		t.Fatal("replacement head not published")
 	}
-	f.region(t, "unconfigured", catalogSmallBox, false)
+	f.region(t, "unconfigured", catalogSmallBox)
 	before = check(t, before, true, true, true)
 	f.generation(t, "unconfigured", true)
-	before = check(t, before, true, false, true)
-	if before.ActiveGenerations["fixture:unconfigured"] == 0 || len(before.ConfiguredRegions) != 2 {
-		t.Fatal("all-active and configured-name catalogs were conflated")
+	before = check(t, before, true, true, true)
+	if before.ActiveGenerations["fixture:unconfigured"] == 0 || len(before.ActiveRegions) != 3 {
+		t.Fatal("active-region names do not match active heads")
 	}
 	f.exec(t, `DELETE FROM osm_catalog.regions WHERE id='fixture:unconfigured' AND false`)
 	before = check(t, before, false, false, false)
-	f.region(t, "removed", catalogSmallBox, false)
+	f.region(t, "removed", catalogSmallBox)
 	before = check(t, before, true, true, true)
 	f.exec(t, `DELETE FROM osm_catalog.regions WHERE id='fixture:removed'`)
 	check(t, before, true, true, true)
@@ -234,7 +232,8 @@ func TestRouteCatalogFingerprintsIntegration(t *testing.T) {
 
 func TestRouteCatalogRollbackAndConcurrentRevisionIntegration(t *testing.T) {
 	f := newRouteCatalogSQLFixture(t)
-	f.region(t, "large", catalogBigBox, true)
+	f.region(t, "large", catalogBigBox)
+	f.generation(t, "large", true)
 	before := f.catalog(t)
 	first, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -287,7 +286,7 @@ func TestRouteCatalogRollbackAndConcurrentRevisionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := f.catalog(t)
-	if after.Revision != before.Revision+2 || after.ConfiguredRegions[0].DisplayName != "second" {
+	if after.Revision != before.Revision+2 || after.ActiveRegions[0].DisplayName != "second" {
 		t.Fatalf("commit-ordered revision=%+v before=%+v", after, before)
 	}
 	_, err = stale.Exec(f.ctx, f.replace.Replace(`UPDATE osm_catalog.regions SET display_name='stale'`))
@@ -302,10 +301,10 @@ func TestRouteCatalogRollbackAndConcurrentRevisionIntegration(t *testing.T) {
 
 func TestRouteCatalogStoredAreaROIParityIntegration(t *testing.T) {
 	f := newRouteCatalogSQLFixture(t)
-	f.region(t, "large", catalogBigBox, true)
-	f.region(t, "small", catalogSmallBox, true)
-	f.region(t, "tie", catalogSmallBox, true)
-	f.region(t, "inactive", "POLYGON((20 20,21 20,21 21,20 21,20 20))", true)
+	f.region(t, "large", catalogBigBox)
+	f.region(t, "small", catalogSmallBox)
+	f.region(t, "tie", catalogSmallBox)
+	f.region(t, "inactive", "POLYGON((20 20,21 20,21 21,20 21,20 20))")
 	f.generation(t, "large", true)
 	f.generation(t, "small", true)
 	f.generation(t, "tie", true)
@@ -366,15 +365,15 @@ func TestRouteCatalogMigrationACLAndBulkIntegration(t *testing.T) {
 		t.Fatalf("catalog owner/reader/private-helper ACL invalid: %v", err)
 	}
 	before := f.catalog(t)
-	f.exec(t, `INSERT INTO osm_catalog.regions(id,provider,provider_region_id,display_name,catalog_url,source_url,boundary,configured)
+	f.exec(t, `INSERT INTO osm_catalog.regions(id,provider,provider_region_id,display_name,catalog_url,source_url,boundary)
 		SELECT 'fixture:bulk-'||n,'fixture','bulk-'||n,'Bulk '||n,'https://example.test/index','https://example.test/source',
-		ST_Multi(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))',4326)),false
+		ST_Multi(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))',4326))
 		FROM generate_series(1,512) n`)
 	after := f.catalog(t)
 	if after.Revision != before.Revision+1 {
 		t.Fatalf("512-row statement refreshed per row: before=%d after=%d", before.Revision, after.Revision)
 	}
-	f.exec(t, `UPDATE osm_catalog.regions SET boundary=boundary,configured=configured,display_name=display_name`)
+	f.exec(t, `UPDATE osm_catalog.regions SET boundary=boundary,display_name=display_name`)
 	if got := f.catalog(t); !reflect.DeepEqual(got, after) {
 		t.Fatal("equal bulk update changed published state")
 	}

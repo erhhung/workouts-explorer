@@ -141,7 +141,7 @@ func (r *CoverageReconciler) observe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	configured, err := json.Marshal(catalog.ConfiguredRegions)
+	configured, err := json.Marshal(catalog.ActiveRegions)
 	if err != nil {
 		return err
 	}
@@ -465,7 +465,7 @@ func (r *CoverageReconciler) applySelection(ctx context.Context, claim reconcili
 	if err := tx.QueryRow(ctx, `SELECT app.apply_coverage_selection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		claim.accountID, claim.revision, r.workerID, claim.leaseID, route.workoutID, route.revision, route.digest, encoded,
 		string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1),
-		string(coverage.ExperimentalPathPolicyV82), r.minimumTraversal).Scan(&applied); err != nil {
+		string(coverage.CurrentPathPolicyVersion), r.minimumTraversal).Scan(&applied); err != nil {
 		return err
 	}
 	if !applied {

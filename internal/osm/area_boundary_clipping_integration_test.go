@@ -47,7 +47,7 @@ func TestAreaBoundaryClippingDisposableIntegration(t *testing.T) {
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
-		if _, err := admin.Exec(cleanup, "DROP DATABASE "+identifier+" WITH (FORCE)"); err != nil {
+		if _, err := admin.Exec(cleanup, "DROP DATABASE "+identifier); err != nil {
 			t.Error(err)
 		}
 	}()
@@ -82,6 +82,15 @@ CREATE TABLE osm_catalog.schema_metadata(singleton boolean,schema_version intege
 	command.Env = append(os.Environ(), environment...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("area boundary regression failed: %v\n%s", err, output)
+	}
+	slivers, err := filepath.Abs("../../osm/testdata/locality-scope-slivers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command = exec.CommandContext(ctx, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", slivers)
+	command.Env = append(os.Environ(), environment...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("locality scope sliver regression failed: %v\n%s", err, output)
 	}
 	poolConfig, err := pgxpool.ParseConfig(url)
 	if err != nil {

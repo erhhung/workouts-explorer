@@ -80,9 +80,9 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 				}
 			}
 			tx := beginWorkerTestAccount(t, f.api, f.account)
-			var cancelled bool
-			if err := tx.QueryRow(f.ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, f.parent, f.principal).Scan(&cancelled); err != nil || !cancelled {
-				t.Fatalf("cancel: %t %v", cancelled, err)
+			var canceled bool
+			if err := tx.QueryRow(f.ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, f.parent, f.principal).Scan(&canceled); err != nil || !canceled {
+				t.Fatalf("cancel: %t %v", canceled, err)
 			}
 			if err := tx.Commit(f.ctx); err != nil {
 				t.Fatal(err)
@@ -95,7 +95,7 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 			if running {
 				tx := beginWorkerTestAccount(t, f.worker, f.account)
 				var ok bool
-				if err := tx.QueryRow(f.ctx, `SELECT app.finish_job($1,'synthetic-retry-worker',$2,'cancelled')`, f.children[0], lease).Scan(&ok); err != nil || !ok {
+				if err := tx.QueryRow(f.ctx, `SELECT app.finish_job($1,'synthetic-retry-worker',$2,'canceled')`, f.children[0], lease).Scan(&ok); err != nil || !ok {
 					t.Fatalf("finish cancellation: %t %v", ok, err)
 				}
 				if err := tx.Commit(f.ctx); err != nil {
@@ -106,7 +106,7 @@ func testCoverageRetryReconciliation(t *testing.T, historical *coverageAutoRetry
 				}
 			}
 			assertCountQuery(t, f.admin, 1, `SELECT count(*) FROM app.jobs WHERE account_id=$1 AND kind='coverage_update'`, f.account)
-			assertCountQuery(t, f.admin, 1, `SELECT count(*) FROM app.jobs WHERE id=$1 AND status='cancelled' AND cancel_requested_at IS NOT NULL`, f.children[0])
+			assertCountQuery(t, f.admin, 1, `SELECT count(*) FROM app.jobs WHERE id=$1 AND status='canceled' AND cancel_requested_at IS NOT NULL`, f.children[0])
 			f.automatic(20, false)
 		})
 	}

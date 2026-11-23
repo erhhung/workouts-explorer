@@ -245,7 +245,7 @@ if (windows.length)
  SELECT j.*,c.duration_milliseconds,c.timeout_retry_count,c.result_outcome,w.cohort FROM app.jobs j
  JOIN app.coverage_route_job_contexts c ON c.job_id=j.id JOIN windows w ON j.created_at BETWEEN w.start_at AND w.end_at WHERE j.kind='coverage_update_route')
  SELECT jsonb_object_agg(cohort,data) FROM(SELECT cohort,jsonb_build_object('children',count(*),'succeeded',count(*) FILTER(WHERE status='succeeded'),
- 'applied',count(*) FILTER(WHERE result_outcome='applied'),'failed',count(*) FILTER(WHERE status='failed'),'cancelled',count(*) FILTER(WHERE status='cancelled'),
+ 'applied',count(*) FILTER(WHERE result_outcome='applied'),'failed',count(*) FILTER(WHERE status='failed'),'canceled',count(*) FILTER(WHERE status='canceled'),
  'timeouts',count(*) FILTER(WHERE failure_code='coverage-route-timeout'),'timeout_retries',sum(timeout_retry_count),
  'reclaimed_attempts',sum(greatest(attempt-1,0)),'retry_children',count(*) FILTER(WHERE retry_of_job_id IS NOT NULL),
  'duration_ms_p50',percentile_cont(.5) WITHIN GROUP(ORDER BY duration_milliseconds),'duration_ms_p95',percentile_cont(.95) WITHIN GROUP(ORDER BY duration_milliseconds),

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,36 @@ func TestDownloadRegionEnforcesStreamLimit(t *testing.T) {
 	}
 	if _, statErr := os.Stat(destination); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatal("oversized download was published")
+	}
+}
+
+func TestDownloadRegionReportsSourceURLAndHTTPStatus(t *testing.T) {
+	source := "https://download.geofabrik.de/europe/norway/svalbard-janmayen/svalbard-janmayen-latest.osm.pbf"
+	for _, status := range []int{http.StatusNotFound, http.StatusServiceUnavailable} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Body: ioNopCloser{strings.NewReader("")}, Header: make(http.Header)}, nil
+			})}
+			destination := filepath.Join(t.TempDir(), "region.osm.pbf")
+			_, err := DownloadRegion(context.Background(), client, Region{ID: "geofabrik:svalbard-janmayen", SourceURL: source}, destination, 1024)
+			want := "Failed to download " + source + " | unexpected HTTP status " + strconv.Itoa(status)
+			if err == nil || err.Error() != want {
+				t.Fatalf("error=%v, want %q", err, want)
+			}
+			if _, err := os.Stat(destination); !os.IsNotExist(err) {
+				t.Fatal("failed HTTP response published a PBF", err)
+			}
+		})
+	}
+}
+
+func TestDownloadRegionPreservesTransportCauseWithoutRepeatingURL(t *testing.T) {
+	source := "https://download.geofabrik.de/europe/monaco/monaco-latest.osm.pbf"
+	cause := errors.New("upstream connection reset")
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, cause })}
+	_, err := DownloadRegion(context.Background(), client, Region{ID: "geofabrik:monaco", SourceURL: source}, filepath.Join(t.TempDir(), "region.osm.pbf"), 1024)
+	if !errors.Is(err, cause) || err.Error() != "Failed to download "+source+" | "+cause.Error() {
+		t.Fatal("transport error lost its identity or duplicated context", err)
 	}
 }
 

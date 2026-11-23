@@ -408,7 +408,7 @@ func TestCoverageRetryEligibilityPostgreSQL(t *testing.T) {
 			if count(`SELECT count(*) FROM app.jobs WHERE retry_of_job_id=$1 AND parent_job_id IS NULL`, f.parent) != 1 {
 				t.Fatal("resolved ancestor must retain exactly its existing successor")
 			}
-			synthetic(`UPDATE app.jobs SET status='cancelled' WHERE id=$1`, f.parent)
+			synthetic(`UPDATE app.jobs SET status='canceled' WHERE id=$1`, f.parent)
 			assertCurrentJobs(get(f, "already_current", 0, 2, 2), current...)
 			synthetic(`UPDATE app.jobs SET status='succeeded' WHERE id=$1`, f.parent)
 			assertCurrentJobs(get(f, "not_terminal", 0, 2, 2), current...)
@@ -435,9 +435,9 @@ func TestCoverageRetryEligibilityPostgreSQL(t *testing.T) {
 			t.Fatalf("resolved limit GET/POST mutated history or state: %v", err)
 		}
 	})
-	t.Run("cancelled cleared pointer mixed with failed sibling", func(t *testing.T) {
+	t.Run("canceled cleared pointer mixed with failed sibling", func(t *testing.T) {
 		f := seed(1)
-		synthetic(`UPDATE app.jobs SET status='cancelled' WHERE id=$1`, f.children[0])
+		synthetic(`UPDATE app.jobs SET status='canceled' WHERE id=$1`, f.children[0])
 		synthetic(`UPDATE app.workout_coverage_states SET target_job_id=NULL,processing_state='stale',processing_finished_at=(SELECT terminal_at FROM app.jobs WHERE id=$1)
 			WHERE workout_id=$2`, f.children[0], f.workouts[0])
 		get(f, "eligible", 2, 2, 0)
@@ -504,7 +504,7 @@ func TestCoverageRetryEligibilityPostgreSQL(t *testing.T) {
 		current := makeCurrent(f, f.workouts)
 		synthetic(`UPDATE app.jobs SET parent_job_id=$1 WHERE parent_job_id=$2`, current[0], current[1])
 		assertCurrentJobs(get(f, "already_current", 0, 2, 2), current[0])
-		synthetic(`UPDATE app.jobs SET status='cancelled' WHERE id=$1`, f.children[0])
+		synthetic(`UPDATE app.jobs SET status='canceled' WHERE id=$1`, f.children[0])
 		assertCurrentJobs(get(f, "already_current", 0, 2, 2), current[0])
 	})
 	t.Run("newer complete healthy raw input is already current", func(t *testing.T) {
@@ -864,12 +864,12 @@ func TestCoverageRetryEligibilityPostgreSQL(t *testing.T) {
 		get(f, "already_current", 0, 2, 2)
 		checkPage(list(f, "?status=partially_succeeded"), 0, 1, 25, 0)
 		checkPage(list(f, "?status=superseded"), 25, 1, 25, 25)
-		synthetic(`UPDATE app.jobs SET status='cancelled' WHERE id=$1`, f.parent)
+		synthetic(`UPDATE app.jobs SET status='canceled' WHERE id=$1`, f.parent)
 		get(f, "already_current", 0, 2, 2)
-		cancelled := list(f, "?status=cancelled")
-		checkPage(cancelled, 1, 1, 25, 1)
-		if cancelled.Items[0].Status != generated.JobStatusCancelled || cancelled.Items[0].DisplayStatus != nil {
-			t.Fatal("cancelled parent must remain cancelled")
+		canceled := list(f, "?status=canceled")
+		checkPage(canceled, 1, 1, 25, 1)
+		if canceled.Items[0].Status != generated.JobStatusCanceled || canceled.Items[0].DisplayStatus != nil {
+			t.Fatal("canceled parent must remain canceled")
 		}
 		checkPage(list(f, "?status=superseded"), 24, 1, 25, 24)
 		synthetic(`UPDATE app.jobs SET status='succeeded' WHERE id=$1`, f.parent)
@@ -1078,7 +1078,7 @@ func TestCoverageRetryEligibilityPostgreSQL(t *testing.T) {
 		measure("?status=succeeded&page=999", 0, 25, 999, 0)
 		measure("?status=queued", 0, 0, 1, 0)
 		measure("?status=running", 0, 0, 1, 0)
-		measure("?status=cancelled", 0, 0, 1, 0)
+		measure("?status=canceled", 0, 0, 1, 0)
 		measure("?operation=manual_sync", 0, 0, 1, 0)
 		measure("?status=failed", 75, 55, 1, 25)
 		measure("?status=superseded", 75, 20, 1, 20)

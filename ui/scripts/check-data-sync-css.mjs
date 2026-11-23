@@ -53,7 +53,7 @@ const checks = [
   ],
   [
     "filled semantic statuses",
-    ["succeeded", "failed", "partially_succeeded", "cancelled", "running"].every((status) =>
+    ["succeeded", "failed", "partially_succeeded", "canceled", "running"].every((status) =>
       new RegExp(`\\.sync-status--[^}]*${status}|\\.sync-status--${status}`).test(styles),
     ) &&
       styles.includes("background: var(--status-success)") &&

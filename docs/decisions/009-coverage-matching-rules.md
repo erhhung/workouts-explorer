@@ -4,13 +4,45 @@
 
 Accepted on 9/11/2026. The accepted baseline uses matcher rules
 `coverage-experimental-v1`, adaptive sampling, and path policy
-`coverage-path-policy-experimental-v82`. Durable production Coverage persistence,
+`coverage-path-policy-experimental-v83`. Durable production Coverage persistence,
 aggregation and rendering are implemented, with a dedicated Coverage runner,
 fenced route-child checkpoints and OSM-promotion reconciliation. The retained
 diagnostic workflow remains the review and future policy-evaluation surface.
 Implementation does not establish complete multi-user capacity acceptance; see
 [architecture](../architecture.md#coverage-processing-concurrency) and the
 [acceptance evidence](../coverage-acceptance-results.md) for scope and limits.
+
+### v83: Local Processing-Limit Recovery
+
+Parking-repair and graph node/edge limits discard the entire failed matcher
+window; they never return a partially repaired traversal. Production v83 rematches
+that window at successively smaller sizes down to two observations, preserving
+the same snapshot, context, candidate precedence, scoring rules and hard bounds.
+If a pair remains irreducible, it tests its first point alone when necessary and
+excludes only one observation before continuing. Exclusions are unmatched points
+with an explicit processing-limit split. They form separate matching legs, so
+neither cross-window turn completion nor tangent repair can bridge the gap.
+
+Only typed local matcher limits qualify, and every leaf of a joined error must
+qualify. Input/payload limits, SQL/transport failures, cancellation and deadlines
+still fail the operation. An entirely unmatchable route is not falsely accepted as
+an empty/no-evidence success. Limited optional seam enhancements preserve already
+accepted primary evidence rather than aborting the workout. Recovery retries and
+excluded-point/enhancement counts are observable separately from successful-window
+matching statistics.
+
+A route-local bounded cache retains complete candidate/adjacency lookups only
+inside one pinned immutable snapshot. It does not cache failures or bypass request
+and total-response bounds, and callers cannot mutate retained entries. Candidate
+and node caches each have an 8 MiB cap plus bounded LRU entry counts. The transaction
+uses parameter-specific plans; segment-copy labels are aggregated once per distinct
+requested logical path while preserving the existing all-active-region preference
+and independent name minima. These are query-cost changes, not matching shortcuts.
+
+v82 remains a supported legacy queued-job contract. It does not silently receive
+v83 recovery semantics or get relabeled as v83; new workers are deployed before API
+activation. New target descriptors use v83 so corrected failures can be retried
+through the ordinary versioned queue without rewriting prior Coverage outcomes.
 
 ## Context
 

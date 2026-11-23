@@ -33,7 +33,7 @@ func TestEligibleCohortCombinedLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherRegion, _ := f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET configured=true,boundary=ST_Translate(boundary,20,0) WHERE id=$1`, otherRegion); err != nil {
+	if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.regions SET boundary=ST_Translate(boundary,20,0) WHERE id=$1`, otherRegion); err != nil {
 		t.Fatal(err)
 	}
 	writePipelineExport(t, filepath.Join(source.root, "HealthAutoExport-2026-08-01.json"), 0, 25)

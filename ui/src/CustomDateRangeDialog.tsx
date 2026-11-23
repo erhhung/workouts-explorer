@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { type DateRangePreference } from "./api";
 import { completeDateRangeOnBlur } from "./dateRange";

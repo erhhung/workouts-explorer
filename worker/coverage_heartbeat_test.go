@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestCoverageHeartbeatCanStopWithoutCancellingTheOperation(t *testing.T) {
+func TestCoverageHeartbeatCanStopWithoutCancelingTheOperation(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 	control := newCoverageHeartbeatControl()
@@ -24,7 +24,7 @@ func TestCoverageHeartbeatCanStopWithoutCancellingTheOperation(t *testing.T) {
 		t.Fatal("stopping the heartbeat waited for its next tick or consumed completion twice")
 	}
 	if ctx.Err() != nil {
-		t.Fatal("heartbeat shutdown cancelled the operation before persistence")
+		t.Fatal("heartbeat shutdown canceled the operation before persistence")
 	}
 }
 

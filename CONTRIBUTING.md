@@ -153,7 +153,7 @@ ledger **0-30**. Migrations **001-028 are unchanged**; **029** combines ingest
 status/reprocessing/phases and **030** combines display precomputations/canonical
 identity. See the [history mapping](docs/database-migrations.md#source-history-mapping).
 Live reconciliation is authorized but pending: the last reported actual state is
-revision **60**, schema **34/minimum 33**, ledger **0-34**, in **pre-squash historical
+revision **60**, the then-current application contract, the pre-fold ledger, in **pre-squash historical
 numbering** ([mapping](docs/database-migrations.md#source-history-mapping)). Do not
 deploy source-30 binaries against that unreconciled history or improvise ledger edits.
 Context warming changes no job, generation or matcher policy and requires no
@@ -219,7 +219,7 @@ serialize; no worker transaction retry or deadline budget is added.
 
 Active ingest seals a normal parent only with saved B (default 25, range 1-1000)
 **new eligible matching targets** globally across regions within its ingest-root/
-source-sibling scope. Missing maps, current/live/unchanged failed/cancelled targets
+source-sibling scope. Missing maps, current/live/unchanged failed/canceled targets
 and deduplication do not count. Durable prepared metadata survives files/crashes;
 there is no placeholder parent before atomic full-B sealing. Only account recovery
 after the visible root and all source siblings are terminal and due preparation is

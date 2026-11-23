@@ -57,6 +57,7 @@ export function Tooltip({
   const interaction = useRef<{
     hovered: boolean;
     focused: boolean;
+    focusedElement?: EventTarget | null;
     pointerDismissed: boolean;
     pointer?: { x: number; y: number };
   }>({ hovered: false, focused: false, pointerDismissed: false });
@@ -159,7 +160,12 @@ export function Tooltip({
   latestPlace.current = place;
 
   useEffect(() => {
-    if (interaction.current.focused && !acceptsFocus(document.activeElement)) {
+    if (
+      interaction.current.focused &&
+      (!acceptsFocus(document.activeElement) ||
+        (interaction.current.focusedElement instanceof Node &&
+          !triggerRef.current?.contains(interaction.current.focusedElement)))
+    ) {
       interaction.current.focused = false;
       if (!interaction.current.hovered) close();
     }
@@ -190,7 +196,12 @@ export function Tooltip({
   useEffect(() => {
     if (!portal || !enabled || !open) return;
     function escape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") {
+        interaction.current.focused = false;
+        interaction.current.hovered = false;
+        interaction.current.pointerDismissed = true;
+        close();
+      }
     }
     function follow() {
       // Wheel scrolling can move disabled controls without a reliable pointerleave.
@@ -201,7 +212,10 @@ export function Tooltip({
       interaction.current.focused = false;
       if (!(event.target instanceof Node && triggerRef.current?.contains(event.target)))
         interaction.current.hovered = false;
-      if (!interaction.current.hovered) close();
+      if (!interaction.current.hovered) {
+        interaction.current.pointerDismissed = true;
+        close();
+      }
     }
     function blur() {
       interaction.current.hovered = false;
@@ -211,14 +225,14 @@ export function Tooltip({
     window.addEventListener("scroll", follow, true);
     window.addEventListener("resize", follow);
     window.addEventListener("keydown", escape);
-    if (keyboardFocusOnly) window.addEventListener("pointerdown", pointerDown, true);
-    if (followPointer) window.addEventListener("blur", blur);
+    window.addEventListener("pointerdown", pointerDown, true);
+    window.addEventListener("blur", blur);
     return () => {
       window.removeEventListener("scroll", follow, true);
       window.removeEventListener("resize", follow);
       window.removeEventListener("keydown", escape);
-      if (keyboardFocusOnly) window.removeEventListener("pointerdown", pointerDown, true);
-      if (followPointer) window.removeEventListener("blur", blur);
+      window.removeEventListener("pointerdown", pointerDown, true);
+      window.removeEventListener("blur", blur);
     };
   }, [portal, enabled, open, keyboardFocusOnly, followPointer]);
 
@@ -279,6 +293,7 @@ export function Tooltip({
               },
               onFocus: (event: FocusEvent<HTMLSpanElement>) => {
                 interaction.current.focused = acceptsFocus(event.target);
+                interaction.current.focusedElement = event.target;
                 if (interaction.current.focused) interaction.current.pointerDismissed = false;
                 if (interaction.current.focused || interaction.current.hovered) place(true);
                 else close();

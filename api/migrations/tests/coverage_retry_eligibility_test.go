@@ -69,7 +69,7 @@ func TestCoverageRetryEligibilityMigration(t *testing.T) {
 	}
 	previous := -1
 	for _, branch := range []string{
-		"WHEN status NOT IN ('failed','partially_succeeded','cancelled')",
+		"WHEN status NOT IN ('failed','partially_succeeded','canceled')",
 		"WHEN eligible = 0 AND unsuccessful > 0 AND current_count = unsuccessful THEN 'already_current'",
 		"WHEN has_successor THEN 'not_latest'", "WHEN ordinal >= max_ordinal THEN 'retry_limit'", "WHEN eligible > 0 THEN 'eligible'",
 	} {

@@ -505,7 +505,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 
 - Complete the toolchain and storage spike and accept ADR 0008 before creating the OSM schema or promoting a regional extract. ADR 0008 is accepted with canonical multi-region promotion, executable overlap/replacement fixtures, and indexed xdev candidate-query evidence; the operator-run resumable updater is implemented.
 - Provision the public-data-only `osm` database on the production PostgreSQL server for shared development and production reads.
-- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The pinned importer image, failure-safe resumable generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented and exercised through derivation 20/generation 60. Administrator status/refresh API and job integration move to Milestone 10 (renumbered after the 10/4/2026 scope decision); they are not unfinished Milestone 7 operator execution.
+- Bootstrap a selective, reference-complete eligible-path and municipal-boundary import from configured Geofabrik extract `norcal`, using an ephemeral downloaded PBF. The pinned importer image, failure-safe resumable generation lifecycle, partition preparation/promotion, and retryable storage cleanup are implemented and exercised through derivation 20/NorCal generation 17 (build ID 60). Administrator status/refresh API and job integration move to Milestone 10 (renumbered after the 10/4/2026 scope decision); they are not unfinished Milestone 7 operator execution.
 - Import authoritative locality boundaries and derive deterministic locality-scoped logical paths above matching segments.
 - Add offline IANA timezone boundaries. Completed with a pinned, checksummed,
   versioned `timezone-boundary-builder` import, direct route-start lookup,
@@ -516,12 +516,12 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Add queued, running, current, failed, and stale per-workout coverage state with target/applied route revision, matcher version, OSM generation vector, timestamps, bounded progress, and safe failure categories. Preserve prior valid coverage until a replacement commits.
 - Run coverage in a dedicated deployment that claims only `coverage_update_route` children; keep general-worker capacity reserved for connection checks, deletion, and ingest rather than relying on non-preemptive queue priority. Claim fairly across active account/region parents rather than draining one large parent first.
 - Process exactly one workout revision per child under one bounded OSM snapshot and no open application write transaction. Revalidate revision, matcher version, and OSM generations in a short fenced persistence transaction; make every route result an independent checkpoint so a failed child cannot stop or roll back siblings.
-- Derive coverage-parent status from route children: all successful is `succeeded`, mixed success and failure/cancellation is `partially_succeeded`, all failed is `failed`, and all cancelled is `cancelled`. Treat no-evidence as successful and a stale target as a successful `superseded` child that cannot replace current coverage.
-- Persist parent route counters for total, processed, succeeded, failed, cancelled, and superseded. Show those counters and authorized per-workout child status, attempts, duration, and safe failure category in the Data Sync Run detail without exposing coordinates.
-- Allow a failed or partially successful coverage parent to retry only failed/cancelled eligible routes using their current route revisions and matcher/OSM target; never rerun successful or superseded routes. Reuse the linear ingest retry contract: the original parent is First, each retry links to its immediate predecessor and root, only the latest parent may be retried, and Run detail navigates every parent by First, Second, ... latest ordinal. Link each retried route child to the corresponding unsuccessful child in the preceding parent. Do not advance the fully applied account/region watermark on partial failure or automatically hot-loop the failed target; retry only by user request or after desired work/OSM state advances.
+- Derive coverage-parent status from route children: all successful is `succeeded`, mixed success and failure/cancellation is `partially_succeeded`, all failed is `failed`, and all canceled is `canceled`. Treat no-evidence as successful and a stale target as a successful `superseded` child that cannot replace current coverage.
+- Persist parent route counters for total, processed, succeeded, failed, canceled, and superseded. Show those counters and authorized per-workout child status, attempts, duration, and safe failure category in the Data Sync Run detail without exposing coordinates.
+- Allow a failed or partially successful coverage parent to retry only failed/canceled eligible routes using their current route revisions and matcher/OSM target; never rerun successful or superseded routes. Reuse the linear ingest retry contract: the original parent is First, each retry links to its immediate predecessor and root, only the latest parent may be retried, and Run detail navigates every parent by First, Second, ... latest ordinal. Link each retried route child to the corresponding unsuccessful child in the preceding parent. Do not advance the fully applied account/region watermark on partial failure or automatically hot-loop the failed target; retry only by user request or after desired work/OSM state advances.
 - Add PostgreSQL-coordinated global, per-account, and optional per-region matcher slots. Default to one active matcher route globally across production and diagnostics and one active production route per account, independent of worker or API replica count.
 - Give coverage workers dedicated least-privilege application credentials, explicit small data pools, reserved claim/heartbeat control capacity, and bounded pool-acquisition, statement, lock, query, and route-child timeouts. Dedicated OSM reader credentials for production Coverage and diagnostics belong to the final production/security milestone, Milestone 14; xdev temporarily shares the updater credential without relaxing application-database isolation.
-- Implement bounded candidate generation and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
+- Implement bounded candidate build and sequence-aware HMM/Viterbi matching using retained point quality, topology, timing, and reliable heading evidence.
 - Derive clipped positive-length segment traversals from decoded transitions; point projections alone create neither attribution nor rendered coverage.
 - Tune candidate, emission, transition, gap, and confidence thresholds against representative routes and accept ADR 0009 with concrete rules, tie-breaking, and matcher versioning. Accepted on 9/11/2026 with matcher rules `coverage-experimental-v1` and path policy `coverage-path-policy-experimental-v82`.
 - Implement the accepted ADR 010 six-bucket Coverage rendering contract and retain aggregate/visual validation evidence.
@@ -547,7 +547,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - OSM refresh failure leaves existing copied coverage usable.
 - Ingest completion and raw-route availability do not wait for coverage matching.
 - A coverage backlog cannot consume general-worker execution capacity or exceed configured database-coordinated matcher slots.
-- Each route becomes visible atomically after matching; stale, failed, cancelled, or timed-out work cannot replace prior valid coverage, block sibling routes, or falsely advance the fully applied watermark.
+- Each route becomes visible atomically after matching; stale, failed, canceled, or timed-out work cannot replace prior valid coverage, block sibling routes, or falsely advance the fully applied watermark.
 - Mixed route success and failure produces a partially successful coverage parent with accurate route totals and child outcomes in Data Sync Run detail.
 - Partial Coverage identifies checked routes omitted because processing is pending, failed, or unavailable.
 
@@ -568,7 +568,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Dedicated worker-kind claim isolation while connection checks, deletion, and ingest execute
 - Global, per-account, and per-region matcher admission races across multiple coverage workers and API replicas
 - Fair route-child claiming, cancellation, timeout, selective retry, lease recovery, and sibling progress preservation
-- Coverage-parent status derivation and total/processed/succeeded/failed/cancelled/superseded counter races for every child-terminal combination
+- Coverage-parent status derivation and total/processed/succeeded/failed/canceled/superseded counter races for every child-terminal combination
 - Per-route failure isolation, continued sibling execution, no-evidence success, superseded-result handling, and authorized Run-detail disclosure
 - Selective coverage retry across multiple ordinals, non-forking latest-only creation, parent first-to-latest navigation, and corresponding route-child lineage
 - Stale route-revision, matcher-version, and OSM-generation rejection plus desired-watermark successor coalescing
@@ -640,7 +640,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - Coverage jobs are now owner-visible through the existing Jobs API and Data Sync
   page. History supports a Coverage update filter and system trigger; detail shows
   safe account/region context, route totals, per-workout outcomes and duration,
-  events/logs, cancellation, and selective failed/cancelled-route retry. Coverage
+  events/logs, cancellation, and selective failed/canceled-route retry. Coverage
   parent retry chains use one-based First/Second/... ordinals and expose every
   attempt for direct navigation without exposing route coordinates or digests.
 - Numbered API migrations, OSM migrations, and ADR filenames use uniform
@@ -677,8 +677,8 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   `workouts_coverage_worker` role while the general worker retains enqueue-only
   authority.
 - The xdev `dev-20260913` rollout exercised the storage-constrained rebuild: it
-  preserved the OSM catalog and 419 timezone geometries, retired generation 3,
-  and promoted validated importer/derivation 2/3 generation 4 with 4,483,073
+  preserved the OSM catalog and 419 timezone geometries, retired NorCal generation 1 (build ID 3),
+  and promoted validated importer/derivation 2/3 NorCal generation 2 (build ID 4) with 4,483,073
   segments and 83,137 park-attributed segments. The application database was
   bridged in place from the shipped 22/21 migration history to cumulative 18/17
   without changing workout or diagnostic row counts. Deployment probes also
@@ -698,7 +698,7 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
 - The original national-park rollout required the schema-19 xdev hotpatch. The
   connected-path derivation requires no application schema hotpatch or function
   signature change: publish OSM/worker images as `dev-20260913`, retire active
-  generation 7 for storage, rebuild generation 8 with importer/derivation 3/5,
+  NorCal generation 4 (build ID 7) for storage, rebuild NorCal generation 5 (build ID 8) with importer/derivation 3/5,
   and let coverage reconciliation repopulate copied paths, segments, and matches.
 - OSM derivation 6 supersedes the national-park-only component pass. After park
   attribution it merges graph-connected existing logical IDs by park, municipality,
@@ -755,10 +755,10 @@ Users can see and tabulate visited roads, trails, and other paths with accurate 
   attributes only formally unnamed roads/paths to the smallest containing grounds
   polygon. Education ID defines identity scope and matcher copy exposes the campus
   name through existing name fields, so no application schema migration is needed.
-- The storage-constrained derivation-6 rollout retires active generation 8 only
+- The storage-constrained derivation-6 rollout retires active NorCal generation 5 (build ID 8) only
   after coverage/diagnostic/update workers are stopped and copied application
   coverage is preserved, removes its detached canonical leaves and stale build
-  schemas, then builds and validates generation 9 with importer/derivation 3/6.
+  schemas, then builds and validates build ID 9 with importer/derivation 3/6.
   Restarting reconciliation copies the merged IDs through existing signatures.
 - Unrestricted diagnostic OSM snapshots treat both null and empty generation
   arrays as unbounded. Production snapshots continue to fence explicit region
@@ -1393,7 +1393,7 @@ verified disabled credentials receive fixed sign-in feedback below the fields.
 The explicitly requested account-access fold into 002 preserves schema/minimum
 runtime 32/32 and ledger 0-32 after actual-backup rehearsal. Helm 173 subsequently
 delivers durable account deletion, full private purge and fresh re-registration
-through schema/minimum runtime 34/34, with Deleting/pending in-place polling.
+through the then-current application contract, with Deleting/pending in-place polling.
 Helm 174 subsequently folds lifecycle/source-check foundations into canonical
 001-032 with schema/minimum runtime 32/32; Helm 179 delivers conditional session
 revocation. The admin-triggered recovery shortcut is dropped in favor of existing

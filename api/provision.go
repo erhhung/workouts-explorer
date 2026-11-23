@@ -89,6 +89,25 @@ func ProvisionRoles(ctx context.Context, db *pgxpool.Pool) error {
 			return errors.New("security owner role membership could not be granted")
 		}
 	}
+	for _, name := range []string{"workouts_osm_controller", "workouts_osm_executor"} {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, name).Scan(&exists); err != nil {
+			return errors.New("OSM control role unavailable")
+		}
+		if !exists {
+			if _, err := tx.Exec(ctx, "CREATE ROLE "+pgx.Identifier{name}.Sanitize()+" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"); err != nil {
+				return errors.New("OSM control role could not be created")
+			}
+		}
+		var safe bool
+		if err := tx.QueryRow(ctx, `SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls
+		 AND NOT EXISTS(SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) FROM pg_roles WHERE rolname=$1`, name).Scan(&safe); err != nil || !safe {
+			return errors.New("unsafe OSM control role")
+		}
+		if _, err := tx.Exec(ctx, "ALTER ROLE "+pgx.Identifier{name}.Sanitize()+" SET statement_timeout='15s'; ALTER ROLE "+pgx.Identifier{name}.Sanitize()+" SET lock_timeout='3s'"); err != nil {
+			return errors.New("OSM control defaults unavailable")
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return errors.New("role provisioning could not be committed")
 	}

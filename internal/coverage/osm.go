@@ -57,6 +57,7 @@ func DefaultOSMEvaluationOptions() OSMEvaluationOptions {
 }
 
 type OSMEvaluationStats struct {
+	WindowLimitRetries             int `json:",omitempty"` // Discarded bounded attempts before a successful window rematch.
 	CandidateCount                 int
 	GraphNodeCount                 int
 	GraphEdgeCount                 int

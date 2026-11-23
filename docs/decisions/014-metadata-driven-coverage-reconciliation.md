@@ -41,7 +41,7 @@ There are exactly four ordinary reconciliation cases:
    relabel an old successful result as having run under the new descriptor.
 
 Interrupted-ingest recovery is a durable queue obligation, not a fifth ordinary
-invalidation case or permission to scan history. Existing failed/cancelled/live
+invalidation case or permission to scan history. Existing failed/canceled/live
 target guards, distinct adoption authority and retry lineage remain authoritative
 in all four cases.
 
@@ -143,7 +143,7 @@ not a sequence or promotion-event-only substitute for boundary/config changes.
 
 `read_coverage_reconciliation_routes` applies actionability metadata filters before
 page limiting, raw snapshots or hashing. Current/live/unchanged authoritative
-failed/cancelled targets and valid negative/pending proof are not ordinary work.
+failed/canceled targets and valid negative/pending proof are not ordinary work.
 `read_coverage_selection_metadata` can return an input-valid raw proof that is
 newer than global acceptance or whose selection catalog changed. It must first
 be checked against a catalog fenced by both its own and the accepted revision
@@ -216,7 +216,7 @@ cursors advance only after committed route handling. New committed wakes bypass
 prior queue/campaign backoff without erasing a saved campaign cursor. Existing
 bounded contention retry, typed readiness deferral and reconciliation failure
 backoff remain, not a hot loop. None is an alternate route-job retry mechanism:
-failed/cancelled identical targets retain 027/028 authority, cancellation footprints
+failed/canceled identical targets retain 027/028 authority, cancellation footprints
 and consumed automatic/manual retry budgets.
 
 ### Failure Semantics And Readiness

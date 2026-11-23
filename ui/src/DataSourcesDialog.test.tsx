@@ -299,7 +299,7 @@ test("deletion requires confirmation, retains failed rows and uses owner CSRF", 
   await user.click(screen.getByRole("menuitem", { name: "Delete source" }));
   const dialog = screen.getByRole("dialog", { name: "Delete source" });
   expect(dialog).toHaveTextContent(
-    "Delete Existing iCloud? Its connection credentials will be deleted and its active sync jobs cancelled. Imported workouts will be retained.",
+    "Delete Existing iCloud? Its connection credentials will be deleted and its active sync jobs canceled. Imported workouts will be retained.",
   );
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await user.click(within(dialog).getByRole("button", { name: "Delete" }));

@@ -1,7 +1,31 @@
 # Application Database Migrations
 
-The canonical source sequence is **001-032**, with **SupportedSchemaVersion=32**,
-minimum runtime **32**, recovery baseline **27**, and ledger **0-32**. The raw-route
+## Promoted-Region Eligibility And Administrator Counts
+
+The administrator-managed region workflow removes the static region allowlist.
+OSM001 no longer defines the region configured flag. OSM010 uses version-2 catalog
+and selection fingerprints, active-region names, and active presence independent
+of deployment settings. The live OSM11 adoption renames the cached names column,
+replaces the refresh body while preserving its identity/owner/ACL/settings,
+recreates only the two affected region triggers and removes the flag. It refreshes
+the derived catalog revision without changing map data or promotion numbering.
+
+APP033 owns the administrator-only region workout aggregates and private spatial
+membership index. Memberships follow globally unique workout IDs through cascading
+FKs, including account purge, and update when stored routes or cached boundaries
+change. The count reader checks a live administrator session and returns aggregates
+only; application roles cannot read membership rows directly. Totals retain
+workouts from deleted sources. Progress requires current input/provenance and the
+active build identity, not a regional number or successful job counter.
+
+Both patches are rehearsed against the previously deployed app33/OSM11 definitions
+and applied under their existing owners. Original ledger rows/timestamps, schema
+watermarks, function identities/permissions and OSM data remain intact. No new
+migration is introduced. Current receipts are in `promoted-region-coverage`;
+earlier fingerprint-v1/configured-region descriptions below retain historical scope.
+
+The canonical source sequence is **001-033**, with **SupportedSchemaVersion=33**,
+minimum runtime **32**, recovery baseline **27**, and ledger **0-33**. The raw-route
 spatial policy belongs to [009](#raw-route-continuity-009), and the complete private
 tile pipeline belongs to [031](#tile-rendering-031). There is one current runtime
 and function contract; no alternate migration profile or tile-function alias is
@@ -11,6 +35,51 @@ fresh source installation and retains monotonic sequence high-water values.
 Native migration tools must embed this exact complete source sequence. UI-only
 upgrades keep hooks disabled. Historical operator checkpoints remain private and
 are not additional migration compatibility contracts.
+
+## Consolidated Region Management
+
+[033_osm_region_management.sql](../api/migrations/sql/033_osm_region_management.sql)
+owns catalog refresh, durable administrator region-processing requests, ordered
+tasks/events, successful-work elapsed counters and deletion. It retains the
+capability-fenced executor RPC, restricted controller/executor roles and limited
+administrator admission/control grants. Its active-region constraint also covers
+deletion; cleanup has three tasks rather than the processing inventory.
+
+The same canonical source owns persisted OSM processing defaults and per-execution
+storage-monitoring snapshots. Existing running executions retain their original
+policy. At the first authenticated updater read for each new capability, the RPC
+captures the current global value/revision under a row lock and binds it to that
+execution hash. Repeated reads cannot change it; the next start/resume refreshes
+it. Completed requests retain their final execution's value. A capture trigger
+rejects policy edits outside this binding operation.
+Install these additive catalog changes through a protected rehearsed adoption on
+an already-applied source sequence; the maximum source/schema stays33.
+
+[030_coverage_display.sql](../api/migrations/sql/030_coverage_display.sql) owns the
+account-scoped display-currentness accessor. Unchanged applied Coverage remains
+current when regional source data is removed; changed route/matching identity or
+a newer accepted regional generation still invalidates it. New calculations keep
+their separate map-data prerequisite.
+
+Fresh installations use source/schema33, minimum runtime32, baseline27 and ledger
+0-33. Existing installations require a protected, rehearsed catalog/ledger fold:
+preserve original ledger0-32 and the original terminal ledger row/timestamp,
+business data, function OIDs/owners/settings/ACLs, triggers and sequences. Install
+the display accessor from canonical030, reconcile the ledger/schema marker and
+deploy matching images in a quiet-writer window. Ordinary Goose Up does not replay
+already-applied source files. Keep preimages and rollback receipts outside Git.
+
+OSM migrations retain request-bound cleanup receipts and add an explicit regional
+generation high-watermark in canonical011. Successful promotion allocates the next number
+atomically. Retirement/deletion retains both the counter and promotion history;
+failed processing consumes no regional generation number.
+
+## American Cancellation Vocabulary
+
+Canonical source uses canceled/canceling throughout SQL, JSON, jobs and counters.
+The earlier protected vocabulary reconciliation retained function identities,
+owners, grants, trigger modes and private data. It requires no separate permanent
+spelling-only migration in the canonical sequence.
 
 ## Raw Route Continuity (009)
 
@@ -42,20 +111,60 @@ repair results, and is rehearsed together with guarded checkpoint recovery.
 | 011-027 | Splits, time zones, Coverage, provider identity and recovery baseline |
 | [028](../api/migrations/sql/028_ingest_coverage_pipeline.sql) | Committed-route pipeline and bounded eligible cohorts |
 | [029](../api/migrations/sql/029_ingest_status_reporting.sql) | Ingest outcomes, file filtering, reprocessing, activity and metadata reconciliation |
-| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity, compact counters, exact detail, independent Coverage bounds and Stats report scopes/history reads |
+| [030](../api/migrations/sql/030_coverage_display.sql) | Canonical display identity/currentness, compact counters, exact detail, independent Coverage bounds and Stats report scopes/history reads |
 | [031](../api/migrations/sql/031_tile_rendering.sql) | Exact/LOD storage, authorization and optimized current MVT functions |
 | [032](../api/migrations/sql/032_admin_accounts.sql) | Registration/login metadata, invitation lifecycle permissions, bounded administrator usage and late-dependent purge grants/trigger guards/API write fences |
+| [033](../api/migrations/sql/033_osm_region_management.sql) | Public catalog refresh, durable region processing/timing/deletion, restricted roles and capability-fenced executor RPC |
 
 The approved route foundations and tile file are consolidated source. Other
 foundation definitions retain their established behavior. Current readiness is
 catalog-only, validates exact function/privilege contracts and rejects an
 unrecognized schema/history rather than implementing migration compatibility.
 
+## Managed Region Updates (033 / OSM 011)
+
+Application 033 adds administrator-owned region requests, 57 ordered logical
+task rows and retained events. The API has column-limited admission/control
+grants, the controller has public control/projection grants, and the executor
+can only invoke its execution-capability-fenced RPC. It has no private/control
+table SELECT or UPDATE grant. Runtime readiness verifies the new objects and
+separation. Source/schema becomes34 while minimum32/baseline27 stay intact.
+
+OSM 011 adds the request UUID binding on candidate builds and public stage
+SELECT for controller recovery. Cleanup can identify only its own unfinished
+candidate; existing active data and old generations are unchanged. OSM source is
+12, minimum10 retained. No existing stage SQL/fence changes are required, so
+paused work can keep its pinned updater image and committed checkpoints.
+
+Back up the application and the public OSM catalog/schema preimages, provision
+the two limited runtime credentials, apply OSM011/app033 with the migration
+credentials, then deploy the controller and approved updater digest. The Job
+template/controller enablement is Helm-owned. See
+[the managed-update guide](osm-region-updates.md).
+
+## OSM Provider Catalog Refresh (033 / OSM 011)
+
+Application 033 adds the administrator-owned refresh queue/public projections and
+advances source/schema to 33, retaining minimum32, baseline27 and original 0-32
+ledger rows. Readiness verifies new objects and API/worker grant separation.
+These are public OSM/admin scopes, not new account-private purge tables.
+
+OSM 011 retains minimum10 while adding catalog observation/availability, HEAD
+size/date outcomes, hierarchical provider IDs, actual download-completion times
+and a processed region-size snapshot. Existing generations are not reimported or
+promoted. A narrow size function sums the three canonical region partitions with
+indexes/TOAST. A trigger records download completion from the existing downloaded-
+bytes/checksum update too, without inventing dates for historical records.
+
+Provision `scripts/osm-catalog-role.sql` on the OSM cluster before 011 and supply
+its own runtime password through the configured Secret. OSM 011 grants only
+region INSERT/UPDATE, public metadata SELECT and the bounded size function.
+Migration credentials stay outside runtime connections. Preserve application
+backups and OSM schema/catalog preimages; these migrations do not reimport maps.
+
 ## Lifecycle And Source-Check Fold (Helm 174)
 
-The approved 11/17/2026 consolidation folds former 034's account-deletion
-foundation into 002 and former 033's source-check wrapper into 003. Installation
-that depends on 004-031 remains in 032. Neither 033 nor 034 is shipped; all final
+The approved lifecycle/source consolidation places account deletion in002, source-check claims in003, and dependent administrator installation in032. Region management is consolidated in033.
 runtime fences and readiness checks use 32.
 
 A full protected live backup was restored and the exact reconciliation rehearsed
@@ -69,7 +178,7 @@ before-image. Pre-existing structural differences from fresh are not repaired.
 Helm 174 rolled API/general/Coverage workers with hooks disabled, preserving UI,
 Martin and deployment settings. The folded migrator accepts the history and normal
 Up is a no-op. Protected before-images, verified backup, rehearsal and rollout
-receipts remain the recovery authority. Historical 033/034 installation and
+receipts remain the recovery authority. Historical installation and
 rollback descriptions below are not the current deployment contract.
 
 ## Account Access Fold (002)
@@ -101,14 +210,9 @@ constraint over newly disabled rows; recover the matching database/images throug
 the retained procedure. This exception does not authorize rewriting other applied
 migrations or historical test receipts.
 
-## Account Deletion (034)
+## Account Deletion Foundation
 
-This subsection records the historical Helm-173 checkpoint, superseded by the
-Helm-174 fold above. 034 is not a current source migration.
-
-034 advances schema/minimum runtime to 34/34, appending only Goose 34. Drain old
-API/general/Coverage writers before applying this fence. The exact 0-33 ledger is
-preserved. Its runtime adds sanitized admin-owned deletion tasks, private execution
+The historical account-deletion checkpoint is consolidated into002 and032. The runtime provides sanitized admin-owned deletion tasks, private execution
 receipts and transaction-bound purge capabilities, plus narrowly granted functions.
 Runtime roles never receive raw purge-table DELETE/capability-table access.
 
@@ -118,7 +222,7 @@ and maintenance callbacks are skipped only during that transaction; their prior
 behavior remains pinned otherwise. Readiness verifies the guarded bodies, grants,
 inventory and API write triggers. Foreign keys are never disabled. Batches commit
 monotonic progress and verify all private scopes before releasing identity keys.
-The literal ingest-phase fence advances to runtime34 in the same migration.
+The ingest-phase fence uses the matching supported runtime.
 
 Migration Up was rehearsed under the actual migration role on a complete restored
 live backup; an isolated purge of restored @foo verified zero private scopes and
@@ -131,13 +235,13 @@ Keep services quiescent and recover a matching database/runtime pair through the
 protected procedure, accounting for deletion work accepted after the backup. Never
 rewrite Goose rows or silently resurrect purged account data as a deployment fix.
 
-## Source Check Lane (033)
+## Source Check Lane (003)
 
 The compatibility/rollback notes in this subsection describe the historical
-Helm-167 checkpoint only. Both 033 and later 034 were folded at Helm 174; use the
+Helm-167 checkpoint only. The earlier source-check and account-deletion additions were folded into their foundations; use the
 current 001-032 contract and retained reconciliation recovery receipts.
 
-033 adds `app.claim_next_source_check(text,uuid,interval,integer)`, owned by
+003 owns `app.claim_next_source_check(text,uuid,interval,integer)`, owned by
 `workouts_security_owner` and executable only by `workouts_worker`. The helper
 checks the runtime fence and uses the existing check-only admission path; the
 legacy unversioned entry point remains disabled. Readiness verifies its exact body,
@@ -151,7 +255,7 @@ Live Up was rehearsed using the deployed migration binary and restricted migrati
 login on a complete restored live backup, then run through a chart-derived Job.
 Both migration and application rollout are verified at Helm 167.
 
-For an application rollback, retain the additive 033 catalog and roll matching old
+For an application rollback, retain the source-check catalog and roll matching old
 runtime32 images with migration hooks disabled; an old embedded migrator does not
 own the newer ledger. Match Harbor's current tags to the restored pins. Do not
 rewrite original Goose rows or run an old migration hook against the new ledger.
@@ -367,8 +471,8 @@ intermediate sections are not separate supported runtime contracts.
 
 The final partial-success criterion is imported or updated workouts, not successful
 file reads or skips. Durable records cover progress snapshots that lag committed
-imports. Failed source children remain failed and retryable; all-cancelled runs
-remain cancelled.
+imports. Failed source children remain failed and retryable; all-canceled runs
+remain canceled.
 Notifications distinguish file-processing failures from source-level failures,
 without promising that a bounded retry processes only failed filenames.
 
@@ -384,7 +488,7 @@ intermediate file-based contract. An unsuccessful ingest is partially successful
 only when
 `workouts_created > 0 OR workouts_updated > 0`. Successful file reads, skips and
 unchanged workouts alone do not qualify. Successful empty runs remain completed,
-all-cancelled runs remain cancelled, and Coverage/deletion outcomes are unchanged.
+all-canceled runs remain canceled, and Coverage/deletion outcomes are unchanged.
 
 The same rule projects historical ingest results in job detail, latest-job cards,
 notifications and history filters before counting/pagination. A historical stored
@@ -424,7 +528,7 @@ uniqueness, not another lock. Private receipts do not expand the public file ABI
 029's workout-based outcomes are unchanged: unsuccessful runs with zero
 created/updated workouts display **Failed** even with zero failed files; source
 discovery/authentication can fail without a failed file. Successful empty and
-all-cancelled runs retain their existing outcomes.
+all-canceled runs retain their existing outcomes.
 
 Take fresh protected backups and retain matching old images. Drain/stop
 incompatible API/general-worker/Coverage-worker runtimes, apply the full source sequence, then
@@ -844,7 +948,7 @@ not imply whole-runtime compatibility.
 During active ingest, a new normal parent seals with exactly saved **B** newly
 eligible matching targets, default 25, across regions and source siblings of the
 ingest root. Missing-map, already-current/live, unchanged authoritative failed or
-cancelled targets and deduplicated obligations do not count. Private prepared
+canceled targets and deduplicated obligations do not count. Private prepared
 metadata persists across files/crashes, with root/sibling scope and saved B; it
 does not create a placeholder Coverage parent. Full parent and children seal
 atomically. A final partial cohort is permitted only after the visible ingest root
@@ -864,7 +968,7 @@ This is not a cross-database latest-state atomicity claim.
 After cooldown and authority validation, at least one timeout/verified-transient
 eligible failed child permits an automatic successor carrying **all authoritative
 failed siblings**, including permanent, unknown and null-code failures, with valid
-descriptors. Successful siblings never rerun; cancelled siblings are not revived.
+descriptors. Successful siblings never rerun; canceled siblings are not revived.
 All-permanent/unknown failed parents stop automatically. The default one additional
 automatic attempt (0-20) is shared durably per root; manual retry does not reset it.
 Latest-only authority, retry isolation and unchanged-failed-target suppression

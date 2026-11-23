@@ -173,7 +173,7 @@ func TestCoverageReplicaWaitInterruptionIntegration(t *testing.T) {
 			}
 			f.await(done)
 			if interruption == "cancel_job" {
-				f.assertTerminal(job, "cancelled", "")
+				f.assertTerminal(job, "canceled", "")
 				return
 			}
 			tx := f.accountTx(f.ctx, f.adminDB)

@@ -39,8 +39,8 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 		"FROM PUBLIC, workouts_api, workouts_worker, workouts_coverage_worker, workouts_tiles, workouts_migration;",
 		"GRANT EXECUTE ON FUNCTION app.ingest_outcome_status(text, text, bigint, bigint) TO workouts_api;",
 		"COALESCE(sum(progress.workouts_created), 0) > 0 OR COALESCE(sum(progress.workouts_updated), 0) > 0",
-		"WHEN cancelled_count = child_count THEN 'cancelled'",
-		"WHEN failed_count + cancelled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
+		"WHEN canceled_count = child_count THEN 'canceled'",
+		"WHEN failed_count + canceled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("missing outcome migration contract: %s", required)
@@ -87,15 +87,15 @@ func TestIngestWorkoutOutcomesMigrationContract(t *testing.T) {
 		t.Fatal("child status counts/account scope changed")
 	}
 	for _, required := range []string{"WHERE id = parent_id AND account_id = app.current_account_id() FOR UPDATE;",
-		"parent_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN;",
+		"parent_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN;",
 		"FROM app.jobs WHERE parent_job_id = parent_id AND account_id = app.current_account_id();",
 		"IF child_count = 0 THEN RETURN; END IF;"} {
 		if !strings.Contains(parent, required) {
 			t.Errorf("missing parent scope/terminal contract: %s", required)
 		}
 	}
-	coverageCase := "WHEN succeeded_count > 0 AND failed_count + cancelled_count > 0 THEN 'partially_succeeded'\n" +
-		"            WHEN succeeded_count = 0 AND cancelled_count = child_count THEN 'cancelled'\n" +
+	coverageCase := "WHEN succeeded_count > 0 AND failed_count + canceled_count > 0 THEN 'partially_succeeded'\n" +
+		"            WHEN succeeded_count = 0 AND canceled_count = child_count THEN 'canceled'\n" +
 		"            ELSE 'failed' END"
 	if !strings.Contains(source, coverageCase) {
 		t.Fatal("coverage terminal status policy changed")
@@ -181,7 +181,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		rows, err := db.api.Query(db.ctx, `SELECT kind,status,created,updated,app.ingest_outcome_status(kind,status,created,updated)
 			FROM unnest(ARRAY['manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source',
 			 'coverage_update','coverage_update_route','workout_deletion','source_connection_check','unknown']) kind
-			CROSS JOIN unnest(ARRAY['failed','partially_succeeded','succeeded','cancelled','queued','running','superseded']) status
+			CROSS JOIN unnest(ARRAY['failed','partially_succeeded','succeeded','canceled','queued','running','superseded']) status
 			CROSS JOIN (VALUES (NULL::bigint,NULL::bigint),(0,0),(1,0),(0,1),(1,1),
 			 (NULL,1),(1,NULL),(-1,0),(0,-1)) counts(created,updated)`)
 		if err != nil {
@@ -306,7 +306,7 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		if err := tx.Commit(db.ctx); err != nil {
 			t.Fatal(err)
 		}
-		if status == "cancelled" && !requestCancellation(t, db, f.account, child) {
+		if status == "canceled" && !requestCancellation(t, db, f.account, child) {
 			t.Fatal("request child cancellation")
 		}
 		tx = beginAccount(t, db.ctx, db.worker, f.account)
@@ -353,11 +353,11 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 		if err := tx.QueryRow(db.ctx, `SELECT (SELECT severity FROM app.notifications WHERE job_id=$1 AND type='ingest-terminal')`, f.parent).Scan(&severity); err != nil {
 			t.Fatal(err)
 		}
-		if kind == "scheduled_ingest" && (status == "succeeded" || status == "cancelled") {
+		if kind == "scheduled_ingest" && (status == "succeeded" || status == "canceled") {
 			if severity != nil {
 				t.Fatal("scheduled success/cancellation unexpectedly notified")
 			}
-		} else if want := map[string]string{"succeeded": "info", "cancelled": "info", "failed": "error", "partially_succeeded": "warning"}[status]; severity == nil || *severity != want {
+		} else if want := map[string]string{"succeeded": "info", "canceled": "info", "failed": "error", "partially_succeeded": "warning"}[status]; severity == nil || *severity != want {
 			t.Fatalf("notification severity=%v want=%s", severity, want)
 		}
 	}
@@ -377,9 +377,9 @@ func TestIngestWorkoutOutcomesPostgreSQL(t *testing.T) {
 			{"empty_success_and_failure", "succeeded", "failed", "failed", counts{}, false},
 			{"successful_source_imported", "succeeded", "failed", "partially_succeeded", counts{created: 1}, false},
 			{"all_success_empty", "succeeded", "succeeded", "succeeded", counts{}, false},
-			{"all_cancelled_with_workouts", "cancelled", "cancelled", "cancelled", counts{created: 1, updated: 1}, false},
-			{"failed_and_cancelled_with_workouts", "failed", "cancelled", "partially_succeeded", counts{created: 1}, false},
-			{"success_and_cancelled_empty", "succeeded", "cancelled", "failed", counts{}, false},
+			{"all_canceled_with_workouts", "canceled", "canceled", "canceled", counts{created: 1, updated: 1}, false},
+			{"failed_and_canceled_with_workouts", "failed", "canceled", "partially_succeeded", counts{created: 1}, false},
+			{"success_and_canceled_empty", "succeeded", "canceled", "failed", counts{}, false},
 		} {
 			t.Run(kind+"/"+tc.name, func(t *testing.T) {
 				f := create(t, kind, 2, uuid.Nil)

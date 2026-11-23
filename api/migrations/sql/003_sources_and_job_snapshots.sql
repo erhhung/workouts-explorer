@@ -155,7 +155,7 @@ BEGIN
         RAISE EXCEPTION 'active source job requires a config snapshot' USING ERRCODE = '23514';
     END IF;
     IF (target_kind NOT IN ('source_connection_check', 'manual_ingest_source', 'scheduled_ingest_source') OR
-        target_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled')) AND snapshot_exists THEN
+        target_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled')) AND snapshot_exists THEN
         RAISE EXCEPTION 'job must not retain a config snapshot' USING ERRCODE = '23514';
     END IF;
     IF NOT snapshot_exists THEN
@@ -346,7 +346,7 @@ BEGIN
            AND source.status = 'checking-connection';
         source_updated := FOUND;
     END IF;
-    terminal_status := CASE WHEN cancellation_pending THEN 'cancelled'
+    terminal_status := CASE WHEN cancellation_pending THEN 'canceled'
                             WHEN result_status = 'connected' THEN 'succeeded'
                             ELSE 'failed' END;
     finished := app.finish_job(complete_source_connection_check.job_id, claiming_worker,
@@ -391,7 +391,7 @@ SET
     app AS $function$
 DECLARE parent_id uuid;
 BEGIN
-    IF terminal_status NOT IN ('succeeded', 'failed', 'cancelled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
+    IF terminal_status NOT IN ('succeeded', 'failed', 'canceled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
     PERFORM 1 FROM app.jobs WHERE id = job_id AND account_id = app.current_account_id()
       AND status = 'running' AND worker_id = claiming_worker AND lease_token = current_lease_token
       AND lease_expires_at >= clock_timestamp() FOR UPDATE;
@@ -427,7 +427,7 @@ BEGIN
         DELETE FROM app.job_config_snapshots snapshot WHERE snapshot.job_id = recover_expired_job.job_id;
     END IF;
     PERFORM set_config('app.job_transition', 'recover', true);
-    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'canceled' END,
         terminal_at = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE now() END,
         worker_id = NULL, lease_token = NULL, claimed_at = NULL, heartbeat_at = NULL, lease_expires_at = NULL
     WHERE id = job_id AND account_id = app.current_account_id() AND status = 'running' AND lease_expires_at < now()
@@ -450,7 +450,7 @@ BEGIN
     IF requester_id IS NULL THEN RAISE EXCEPTION 'requester is required' USING ERRCODE = '22023'; END IF;
     SELECT kind, status, parent_job_id INTO target_kind, target_status, parent_id FROM app.jobs
     WHERE id = job_id AND account_id = app.current_account_id() FOR UPDATE;
-    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN false; END IF;
+    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN false; END IF;
     PERFORM set_config('app.job_transition', 'cancel', true);
     IF target_kind IN ('manual_ingest', 'scheduled_ingest') THEN
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
@@ -458,7 +458,7 @@ BEGIN
         DELETE FROM app.job_config_snapshots snapshot USING app.jobs child
         WHERE child.parent_job_id = request_job_cancellation.job_id AND child.account_id = app.current_account_id()
           AND child.status = 'queued' AND snapshot.job_id = child.id;
-        UPDATE app.jobs SET status = 'cancelled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
+        UPDATE app.jobs SET status = 'canceled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'queued';
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'running';
@@ -467,7 +467,7 @@ BEGIN
         IF target_status = 'queued' THEN
             DELETE FROM app.job_config_snapshots snapshot WHERE snapshot.job_id = request_job_cancellation.job_id;
         END IF;
-        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'canceled' ELSE status END,
             terminal_at = CASE WHEN status = 'queued' THEN now() ELSE terminal_at END,
             cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE id = job_id AND account_id = app.current_account_id() AND status IN ('queued', 'running');
@@ -783,7 +783,7 @@ SET
     app AS $function$
 DECLARE parent_id uuid;
 BEGIN
-    IF terminal_status NOT IN ('succeeded', 'failed', 'cancelled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
+    IF terminal_status NOT IN ('succeeded', 'failed', 'canceled') THEN RAISE EXCEPTION 'invalid terminal status' USING ERRCODE = '22023'; END IF;
     PERFORM set_config('app.job_transition', 'finish', true);
     UPDATE app.jobs SET status = terminal_status, terminal_at = now(), worker_id = NULL, lease_token = NULL,
         claimed_at = NULL, heartbeat_at = NULL, lease_expires_at = NULL,
@@ -807,7 +807,7 @@ SET
 DECLARE parent_id uuid;
 BEGIN
     PERFORM set_config('app.job_transition', 'recover', true);
-    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+    UPDATE app.jobs SET status = CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'canceled' END,
         terminal_at = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE now() END,
         worker_id = NULL, lease_token = NULL, claimed_at = NULL, heartbeat_at = NULL, lease_expires_at = NULL
     WHERE id = job_id AND account_id = app.current_account_id() AND status = 'running' AND lease_expires_at < now()
@@ -830,18 +830,18 @@ BEGIN
     IF requester_id IS NULL THEN RAISE EXCEPTION 'requester is required' USING ERRCODE = '22023'; END IF;
     SELECT kind, status, parent_job_id INTO target_kind, target_status, parent_id FROM app.jobs
     WHERE id = job_id AND account_id = app.current_account_id() FOR UPDATE;
-    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN false; END IF;
+    IF NOT FOUND OR target_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN false; END IF;
     PERFORM set_config('app.job_transition', 'cancel', true);
     IF target_kind IN ('manual_ingest', 'scheduled_ingest') THEN
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE id = job_id AND account_id = app.current_account_id();
-        UPDATE app.jobs SET status = 'cancelled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
+        UPDATE app.jobs SET status = 'canceled', terminal_at = now(), cancel_requested_at = now(), cancel_requested_by = requester_id
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'queued';
         UPDATE app.jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE parent_job_id = job_id AND account_id = app.current_account_id() AND status = 'running';
         PERFORM app.derive_parent_status(job_id);
     ELSE
-        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+        UPDATE app.jobs SET status = CASE WHEN status = 'queued' THEN 'canceled' ELSE status END,
             terminal_at = CASE WHEN status = 'queued' THEN now() ELSE terminal_at END,
             cancel_requested_at = COALESCE(cancel_requested_at, now()), cancel_requested_by = COALESCE(cancel_requested_by, requester_id)
         WHERE id = job_id AND account_id = app.current_account_id() AND status IN ('queued', 'running');

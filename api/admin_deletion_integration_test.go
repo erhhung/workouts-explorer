@@ -147,7 +147,7 @@ func TestAdminAccountDeletionIntegration(t *testing.T) {
 	tx := integrationAccountTransaction(t, worker, account)
 	defer tx.Rollback(ctx)
 	var finished bool
-	if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'read-fixture',$2,'cancelled')`, fixture.jobID, fixture.childLease).Scan(&finished); err != nil || !finished {
+	if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,'read-fixture',$2,'canceled')`, fixture.jobID, fixture.childLease).Scan(&finished); err != nil || !finished {
 		t.Fatalf("finish cancellation %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

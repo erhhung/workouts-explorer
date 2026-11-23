@@ -39,7 +39,7 @@ func TestJobLifecycleJSONLogging(t *testing.T) {
 		{name: "partially completed", outcome: jobOutcome{status: "partially_succeeded"}, terminalMsg: "job processing completed", terminalLvl: "INFO", wantStatus: true},
 		{name: "connection failure persisted as success", outcome: jobOutcome{status: "succeeded"}, terminalMsg: "job processing completed", terminalLvl: "INFO", wantStatus: true},
 		{name: "failed", outcome: jobOutcome{status: "failed", failureCode: stringPointer("source-unavailable")}, terminalMsg: "job processing failed", terminalLvl: "ERROR", wantStatus: true, wantError: "job failed: source-unavailable"},
-		{name: "cancelled", outcome: jobOutcome{status: "cancelled"}, terminalMsg: "job processing cancelled", terminalLvl: "INFO", wantStatus: true},
+		{name: "canceled", outcome: jobOutcome{status: "canceled"}, terminalMsg: "job processing canceled", terminalLvl: "INFO", wantStatus: true},
 		{name: "running", outcome: jobOutcome{status: "running"}, terminalMsg: "job processing outcome unavailable", terminalLvl: "WARN", wantStatus: true},
 		{name: "queued", outcome: jobOutcome{status: "queued"}, terminalMsg: "job processing outcome unavailable", terminalLvl: "WARN", wantStatus: true},
 		{name: "no row", outcomeErr: pgx.ErrNoRows, terminalMsg: "job processing outcome unavailable", terminalLvl: "WARN", wantError: "no rows in result set"},
@@ -95,7 +95,7 @@ func TestJobLifecycleJSONLogging(t *testing.T) {
 			_, startedHasResults := started["results"]
 			terminalResults, terminalHasResults := terminal["results"]
 			wantResults := test.outcome.status == "succeeded" || test.outcome.status == "partially_succeeded" ||
-				test.outcome.status == "failed" || test.outcome.status == "cancelled"
+				test.outcome.status == "failed" || test.outcome.status == "canceled"
 			if startedHasResults || terminalHasResults != wantResults {
 				t.Fatalf("results presence started=%t terminal=%t, want terminal=%t", startedHasResults, terminalHasResults, wantResults)
 			}
@@ -229,7 +229,7 @@ func TestCheckLocalConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		result := checkLocalConnection(ctx, keys, []string{root}, accountID, jobID, []byte("private-envelope"))
-		assertSafeFailure(t, result, "connection-check-cancelled", directory, "private-envelope")
+		assertSafeFailure(t, result, "connection-check-canceled", directory, "private-envelope")
 	})
 }
 
@@ -239,7 +239,7 @@ func TestHeartbeatFailureCancelsOperationBeforeCompletion(t *testing.T) {
 		done := make(chan error, 1)
 		runHeartbeatOperation(cancel, done, func() error { return heartbeatErr })
 		if opCtx.Err() == nil {
-			t.Fatalf("operation was not cancelled for %v", heartbeatErr)
+			t.Fatalf("operation was not canceled for %v", heartbeatErr)
 		}
 		if err := <-done; !errors.Is(err, heartbeatErr) {
 			t.Fatalf("heartbeat result=%v, want %v", err, heartbeatErr)

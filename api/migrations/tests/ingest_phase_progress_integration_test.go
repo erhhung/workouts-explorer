@@ -187,7 +187,7 @@ func TestIngestPhaseProgressPostgreSQL(t *testing.T) {
 			err := tx.QueryRow(ctx, ingestPhaseCall, f.job, reprocessingWorker, f.lease, "preparing", nil, nil).Scan(&ok)
 			_ = tx.Rollback(ctx)
 			if err != nil || ok {
-				t.Fatalf("cancelled/expired phase accepted: ok=%t err=%v", ok, err)
+				t.Fatalf("canceled/expired phase accepted: ok=%t err=%v", ok, err)
 			}
 		}
 		for _, pool := range []*pgxpool.Pool{db.api, db.coverage, db.tiles} {

@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import maplibregl, {
   type GeoJSONSource,
@@ -162,7 +162,7 @@ const COVERAGE_HIGHLIGHT_IDLE_FALLBACK_MS = 30000;
 const DIAGNOSTIC_HOVER_DELAY_MS = 250;
 const ROUTE_FINISH_MARKER_SIZE = 22;
 export function routeFinishMarkerSVG(outline: string) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><rect x="3.5" y="3.5" width="15" height="15" fill="#d3423f" stroke="${outline}" stroke-width="1.5"/></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><rect x="1.625" y="1.625" width="18.75" height="18.75" fill="#d3423f" stroke="${outline}" stroke-width="1.875"/></svg>`;
 }
 const ROUTE_START_MARKER_RADIUS =
   (ROUTE_FINISH_MARKER_SIZE / Math.sqrt(Math.PI)) * 0.9 * 0.97 * 0.95;
@@ -1297,7 +1297,10 @@ function MapCanvas({
         filter: ["==", ["get", "kind"], "start"],
         layout: { visibility: "visible" },
         paint: {
-          "circle-color": "#20a464",
+          "circle-color":
+            getComputedStyle(document.documentElement)
+              .getPropertyValue("--map-route-start-color")
+              .trim() || "#20a464",
           "circle-radius": ROUTE_START_MARKER_RADIUS,
           "circle-opacity": rawRouteEndpointsVisibleRef.current ? 1 : 0,
           "circle-opacity-transition": RAW_ROUTE_FADE,
@@ -1596,11 +1599,12 @@ function MapCanvas({
   }
 
   function syncDiagnosticLayers(map: MapLibreMap) {
-    const hasMemoryRoute = Boolean(diagnosticRawRouteRef.current);
+    const route = diagnosticRawRouteRef.current;
+    const hasMemoryRoute = Boolean(route);
     const useMemoryRoute = diagnosticModeRef.current && hasMemoryRoute;
-    if (hasMemoryRoute) {
+    if (route) {
       const rawSource = map.getSource(DIAGNOSTIC_RAW_ROUTE_SOURCE) as GeoJSONSource | undefined;
-      const routeChanged = installedDiagnosticRawRouteRef.current !== diagnosticRawRouteRef.current;
+      const routeChanged = installedDiagnosticRawRouteRef.current !== route;
       if (routeChanged) {
         if (coverageHandoffTimerRef.current !== undefined)
           window.clearTimeout(coverageHandoffTimerRef.current);
@@ -1610,10 +1614,10 @@ function MapCanvas({
       if (!rawSource)
         map.addSource(DIAGNOSTIC_RAW_ROUTE_SOURCE, {
           type: "geojson",
-          data: diagnosticRawRouteRef.current,
+          data: route,
         });
-      else if (routeChanged) rawSource.setData(diagnosticRawRouteRef.current);
-      installedDiagnosticRawRouteRef.current = diagnosticRawRouteRef.current;
+      else if (routeChanged) rawSource.setData(route);
+      installedDiagnosticRawRouteRef.current = route;
       if (!map.getLayer(DIAGNOSTIC_RAW_ROUTE_LAYER))
         map.addLayer({
           id: DIAGNOSTIC_RAW_ROUTE_LAYER,
@@ -3498,7 +3502,7 @@ function RoadCoverageDialog({
     enabled ? (
       <button
         type="button"
-        className="coverage-table-link"
+        className="table-cell-link"
         key={`${workoutId}:${date}`}
         onClick={() => {
           onOpenChange(false);
@@ -3591,6 +3595,7 @@ function RoadCoverageDialog({
             />
           </div>
           <DialogTableViewport
+            stickyHeader
             scrollRef={tableWrapRef}
             className={`road-coverage-table-wrap${entities ? "" : " is-loading"}`}
             busy={loading || !entities}
@@ -3659,11 +3664,11 @@ function RoadCoverageDialog({
                             <CoverageCellValue text={entity.rangeWorkoutCount.toLocaleString()} />
                           </span>
                         </td>
-                        <td>
+                        <td className="table-action-cell">
                           <button
                             key={`${entity.entityKind}:${entity.entityId}`}
                             type="button"
-                            className="coverage-table-link"
+                            className="table-cell-link"
                             onClick={() => onShowEntity(entity)}
                           >
                             <CoverageCellValue text={coverageEntityName(entity)} />
@@ -3672,16 +3677,28 @@ function RoadCoverageDialog({
                         <td>
                           <CoverageCellValue text={coverageEntityPlace(entity)} />
                         </td>
-                        <td>{dateLink(entity.rangeFirstDate, entity.rangeFirstWorkoutId)}</td>
-                        <td>
+                        <td className="table-action-cell">
+                          {dateLink(entity.rangeFirstDate, entity.rangeFirstWorkoutId)}
+                        </td>
+                        <td
+                          className={
+                            inRange(entity.allTimeFirstDate) ? "table-action-cell" : undefined
+                          }
+                        >
                           {dateLink(
                             entity.allTimeFirstDate,
                             entity.allTimeFirstWorkoutId,
                             inRange(entity.allTimeFirstDate),
                           )}
                         </td>
-                        <td>{dateLink(entity.rangeLatestDate, entity.rangeLatestWorkoutId)}</td>
-                        <td>
+                        <td className="table-action-cell">
+                          {dateLink(entity.rangeLatestDate, entity.rangeLatestWorkoutId)}
+                        </td>
+                        <td
+                          className={
+                            inRange(entity.allTimeLatestDate) ? "table-action-cell" : undefined
+                          }
+                        >
                           {dateLink(
                             entity.allTimeLatestDate,
                             entity.allTimeLatestWorkoutId,
@@ -3701,6 +3718,7 @@ function RoadCoverageDialog({
           <footer className="road-coverage-footer">
             <label className="road-coverage-unnamed">
               <input
+                className="inline-checkbox"
                 type="checkbox"
                 checked={showUnnamed}
                 onChange={(event) => {
@@ -4161,7 +4179,7 @@ export default function MapPage({
       ).catch(() => undefined);
     const createSelection = async (workoutIds?: string[], focusId = requestFocusId) => {
       for (let attempt = 0; ; attempt++) {
-        if (!current()) throw new DOMException("Map selection cancelled", "AbortError");
+        if (!current()) throw new DOMException("Map selection canceled", "AbortError");
         try {
           return await api<MapSelection>(
             "/api/map-selections",
@@ -4181,7 +4199,7 @@ export default function MapPage({
             attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length
           )
             throw error;
-          if (!current()) throw new DOMException("Map selection cancelled", "AbortError");
+          if (!current()) throw new DOMException("Map selection canceled", "AbortError");
           await waitForDiagnosticRetry(controller.signal, MAP_SELECTION_RETRY_DELAYS_MS[attempt]);
         }
       }

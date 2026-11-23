@@ -10,7 +10,7 @@ import (
 
 func TestEligibleCohortCanonical28Contract(t *testing.T) {
 	files, err := fs.Glob(migrations.Files, "*.sql")
-	if err != nil || len(files) != 32 || files[27] != "028_ingest_coverage_pipeline.sql" || files[28] != "029_ingest_status_reporting.sql" || files[29] != "030_coverage_display.sql" || files[30] != "031_tile_rendering.sql" || files[31] != "032_admin_accounts.sql" {
+	if err != nil || len(files) != 33 || files[27] != "028_ingest_coverage_pipeline.sql" || files[28] != "029_ingest_status_reporting.sql" || files[29] != "030_coverage_display.sql" || files[30] != "031_tile_rendering.sql" || files[31] != "032_admin_accounts.sql" || files[32] != "033_osm_region_management.sql" {
 		t.Fatalf("canonical migration history must retain foundations and current preferences: %v %v", files, err)
 	}
 	raw, err := migrations.Files.ReadFile("028_ingest_coverage_pipeline.sql")

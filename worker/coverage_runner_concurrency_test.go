@@ -108,7 +108,7 @@ func TestCoverageInvalidConcurrencyFailsBeforeClaim(t *testing.T) {
 	}
 }
 
-func TestCoverageCancelledRunDoesNotClaim(t *testing.T) {
+func TestCoverageCanceledRunDoesNotClaim(t *testing.T) {
 	runner := NewCoverageRunner(nil, nil, slog.Default())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

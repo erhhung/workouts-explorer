@@ -1321,7 +1321,7 @@
     {
       "id": 15,
       "title": "Coverage timing (p95)",
-      "description": "Queue age is creation-to-first-claim (not oldest backlog age); matcher measures Evaluate only; route measures postclaim attempts including cleanup, not durable completion; admission measures the polling loop. Histograms have no measurement dimensions. Sparse observations preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures.",
+      "description": "Queue age is creation-to-first-claim (not oldest backlog age); matcher measures Evaluate only; route measures postclaim attempts including cleanup, not durable completion; admission measures the polling loop. Histograms have no measurement dimensions. Sparse observations preserve gaps. Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1463,7 +1463,7 @@
     {
       "id": 16,
       "title": "Coverage outcomes",
-      "description": "Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/cancelled are not automatically failures.",
+      "description": "Source-defined sparse Coverage instruments; all eight were absent in the 10/5/2026 six-hour audit. N/A is not zero or an empty backlog. Outcomes observe confirmed committed terminal transitions, not an exactly-once ledger; crashes, ambiguous commits and DB-only reconciliation are omitted. no_evidence can be valid; superseded/canceled are not automatically failures.",
       "type": "stat",
       "datasource": {
         "type": "prometheus",

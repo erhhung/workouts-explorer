@@ -14,7 +14,7 @@ func TestAdoptionCoverageCancellationBeforeCheckout(t *testing.T) {
 	for _, reconciliation := range []*int64{nil, new(int64)} {
 		err := replayIngestCoverage(ctx, nil, nil, uuid.New(), uuid.New(), "adoption-test", uuid.New(), reconciliation, 25, true, coverageReplayOptions{})
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled replay error = %v", err)
+			t.Fatalf("canceled replay error = %v", err)
 		}
 	}
 }

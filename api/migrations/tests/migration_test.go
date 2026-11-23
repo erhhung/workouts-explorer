@@ -76,6 +76,7 @@ var migrationFiles = []string{
 	"030_coverage_display.sql",
 	"031_tile_rendering.sql",
 	"032_admin_accounts.sql",
+	"033_osm_region_management.sql",
 }
 
 func TestMigrationFilesAreSequential(t *testing.T) {
@@ -102,7 +103,7 @@ func TestStatusAndDisplayMigrationCheckpoints(t *testing.T) {
 		functions int
 	}{
 		{"029_ingest_status_reporting.sql", 29, 34},
-		{"030_coverage_display.sql", 30, 31},
+		{"030_coverage_display.sql", 30, 32},
 	} {
 		t.Run(checkpoint.file, func(t *testing.T) {
 			raw, err := migrations.Files.ReadFile(checkpoint.file)

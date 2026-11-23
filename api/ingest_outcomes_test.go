@@ -31,7 +31,7 @@ var ingestOutcomeProgressCases = []struct {
 
 func TestIngestPresentationStatus(t *testing.T) {
 	for _, kind := range []string{"manual_ingest", "scheduled_ingest", "manual_ingest_source", "scheduled_ingest_source", "coverage_update", "coverage_update_route", "workout_deletion", "source_check", "unknown"} {
-		for _, status := range []string{"queued", "running", "succeeded", "partially_succeeded", "failed", "cancelled"} {
+		for _, status := range []string{"queued", "running", "succeeded", "partially_succeeded", "failed", "canceled"} {
 			for _, test := range ingestOutcomeProgressCases {
 				t.Run(kind+"/"+status+"/"+test.name, func(t *testing.T) {
 					want := status
@@ -103,7 +103,7 @@ func TestIngestNotificationProjectionPreservesEvidence(t *testing.T) {
 		{"current partial", "ingest-terminal", "manual_ingest", "partially_succeeded", 1, 0, true, "info", "Stored title", "Stored message"},
 		{"current failed", "ingest-terminal", "manual_ingest", "failed", 0, 0, true, "info", "Stored title", "Stored message"},
 		{"successful empty", "ingest-terminal", "manual_ingest", "succeeded", 0, 0, false, "info", "Stored title", "Stored message"},
-		{"cancelled with imports", "ingest-terminal", "manual_ingest", "cancelled", 1, 0, true, "info", "Stored title", "Stored message"},
+		{"canceled with imports", "ingest-terminal", "manual_ingest", "canceled", 1, 0, true, "info", "Stored title", "Stored message"},
 		{"source connection failure", "source-connection-failed", "manual_ingest", "failed", 1, 0, true, "info", "Stored title", "Stored message"},
 		{"deletion", "workout-deletion-terminal", "workout_deletion", "partially_succeeded", 0, 0, true, "info", "Stored title", "Stored message"},
 		{"coverage", "ingest-terminal", "coverage_update", "failed", 1, 0, true, "info", "Stored title", "Stored message"},

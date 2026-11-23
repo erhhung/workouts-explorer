@@ -804,6 +804,20 @@ WITH requested AS (
     SELECT ordinal::integer-1 AS ordinal,region_id,generation_id,segment_id
     FROM unnest($1::text[],$2::bigint[],$3::uuid[])
          WITH ORDINALITY AS input(region_id,generation_id,segment_id,ordinal)
+), logical_keys AS MATERIALIZED (
+    SELECT DISTINCT segment.logical_path_id
+    FROM requested
+    JOIN osm_canonical.path_segments segment
+      ON segment.region_id=requested.region_id AND segment.generation_id=requested.generation_id
+     AND segment.segment_id=requested.segment_id
+), path_labels AS MATERIALIZED (
+    SELECT key.logical_path_id,label.name,label.normalized_name
+    FROM logical_keys key
+    LEFT JOIN LATERAL (
+        SELECT min(member.name) AS name,min(member.normalized_name) AS normalized_name
+        FROM osm_active.path_segments member
+        WHERE member.logical_path_id=key.logical_path_id
+    ) label ON true
 )
 SELECT requested.ordinal,segment.segment_id,segment.region_id,segment.generation_id,
        segment.derivation_version,segment.logical_path_id,segment.locality_relation_id,
@@ -820,11 +834,7 @@ JOIN osm_canonical.path_segments segment
 LEFT JOIN osm_canonical.localities locality
   ON locality.region_id=segment.region_id AND locality.generation_id=segment.generation_id
  AND locality.relation_id=segment.locality_relation_id
-LEFT JOIN LATERAL (
-    SELECT min(member.name) AS name,min(member.normalized_name) AS normalized_name
-    FROM osm_active.path_segments member
-    WHERE member.logical_path_id=segment.logical_path_id
-) path ON true
+LEFT JOIN path_labels path ON path.logical_path_id=segment.logical_path_id
 ORDER BY requested.ordinal
 LIMIT $4`
 
@@ -935,7 +945,7 @@ func (s *MatcherSnapshot) UnavailableRegions(ctx context.Context, observations [
 				SELECT region.id AS region_id
 				FROM osm_catalog.regions region
 				JOIN osm_catalog.generations generation ON generation.region_id=region.id AND generation.state='active'
-				WHERE region.configured AND ST_Covers(region.boundary,point.location)
+				WHERE ST_Covers(region.boundary,point.location)
 				ORDER BY ST_Area(region.boundary::geography),region.id LIMIT 1
 			) active ON true
 			JOIN LATERAL (
@@ -962,6 +972,20 @@ func (s *MatcherSnapshot) UnavailableRegions(ctx context.Context, observations [
 		return nil, fmt.Errorf("read unavailable OSM matcher regions: %w", err)
 	}
 	return regions, nil
+}
+
+// OptimizeRouteQueries keeps parameter-sensitive spatial/array requests from
+// switching to a generic prepared plan as a long route changes neighborhoods.
+// The setting is local to the already pinned, read-only transaction.
+func (s *MatcherSnapshot) OptimizeRouteQueries(ctx context.Context) error {
+	if err := s.queryable(); err != nil {
+		return err
+	}
+	_, err := s.tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_custom_plan")
+	if err != nil {
+		return fmt.Errorf("configure OSM matcher query planning: %w", err)
+	}
+	return nil
 }
 
 func (s *MatcherSnapshot) queryable() error {

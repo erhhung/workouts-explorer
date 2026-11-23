@@ -142,77 +142,82 @@ logs as only the stage name because its empty cursor has not recorded the defaul
 phase yet. The logical phase names below are authoritative for interpreting the
 cursor and future phase-qualified logs.
 
+The final column is also shown as task help in the progress dialog. Keep each
+description in plain language and no more than two sentences; technical batch
+limits and recovery details belong in the surrounding specifications.
+
 ### Source preparation and import
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 1 | `download` | Once | Download and verify the source PBF in updater scratch. This is logged as a batch but precedes the durable database resume boundary. |
-| 2 | `tags-filter` | Once | Run `osmium tags-filter` and write the filtered PBF. |
-| 3 | `check-refs` | Once | Validate references in the filtered PBF. |
-| 4 | `osm2pgsql` | Once | Import the filtered PBF. Completion is the first durable resume boundary. |
-| 5 | `postprocess` | Once | Build boundary, locality, park, and education import structures. |
+| 1 | `prepare-source` | Once; maintenance checked again on resume | Check the required tools and prepare a workspace, including any leftover cleanup. Reuse completed database upkeep when the installed map data has not changed. |
+| 2 | `download` | Once | Download the region's map file and check that it arrived intact. Record its size and the date of the map data. |
+| 3 | `tags-filter` | Once | Keep the roads, paths and area details needed for coverage processing. Remove unrelated map features to reduce the remaining work. |
+| 4 | `check-refs` | Once | Check that the filtered map file includes the points and features its roads and boundaries refer to. |
+| 5 | `osm2pgsql` | Once | Load the filtered map data into the database. After this step, processing can resume without repeating the import. |
+| 6 | `postprocess` | Once | Prepare city boundaries, parks and school grounds so roads and paths can be assigned to the right areas. |
 
 ### Compact derivation
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 6 | `derive/init` | Once | Create durable node-usage, shared-node, physical-segment, and logical-path work tables. |
-| 7 | `derive/node-counts` | Repeated, 150,000 source ways | Count graph-node usage by source-way keyset. The empty terminal batch advances to shared-node materialization. |
-| 8 | `derive/shared-nodes` | Once | Materialize and analyze nodes used by more than one way. |
-| 9 | `derive/segments` | Repeated, 100,000 source ways | Construct physical segments and incrementally aggregate logical paths. The empty terminal batch advances to index creation. |
-| 10 | `derive/path-primary` | Once | Add the physical-segment primary key. |
-| 11 | `derive/source-unique` | Once | Add the source-way/piece uniqueness constraint. |
-| 12 | `derive/geography-index` | Once | Build the segment geography GiST index. |
-| 13 | `derive/start-index` | Once | Build the start graph-node index. |
-| 14 | `derive/end-index` | Once | Build the end graph-node index. |
-| 15 | `derive/logical-index` | Once | Build the logical-path lookup index. |
-| 16 | `derive/locality-index` | Once | Build the locality lookup index. |
-| 17 | `derive/logical-locality-index` | Once | Build the logical-path locality/name/class index. |
-| 18 | `derive/finalize` | Once | Analyze derived tables, drop node derivation work tables, and complete the stage. |
+| 7 | `derive/init` | Once | Prepare to divide roads and paths into smaller sections and identify how they connect. |
+| 8 | `derive/node-counts` | Repeated, 150,000 source ways | Count how many roads and paths use each map point to find shared connections. |
+| 9 | `derive/shared-nodes` | Once | Identify points shared by several roads or paths so junctions can be recognized correctly. |
+| 10 | `derive/segments` | Repeated, 100,000 source ways | Divide roads and paths into sections between junctions. Group related sections as parts of the same road or path. |
+| 11 | `derive/path-primary` | Once | Give each road or path section a unique reference so it can be found reliably. |
+| 12 | `derive/source-unique` | Once | Check that each section of an original road or path is stored only once. |
+| 13 | `derive/geography-index` | Once | Speed up searches for roads and paths near a location. |
+| 14 | `derive/start-index` | Once | Speed up finding sections that begin at a particular map point. |
+| 15 | `derive/end-index` | Once | Speed up finding sections that end at a particular map point. |
+| 16 | `derive/logical-index` | Once | Speed up finding all sections belonging to the same road or path. |
+| 17 | `derive/locality-index` | Once | Speed up finding roads and paths within a city or other local area. |
+| 18 | `derive/logical-locality-index` | Once | Speed up searches by area, road or path name, and type. |
+| 19 | `derive/finalize` | Once | Finish preparing the road and path sections and remove temporary data that is no longer needed. |
 
 ### Locality clipping and area attribution
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 19 | `clip-candidates` | Repeated, 200,000 segment UUIDs | Discover segments intersecting locality/park boundaries and unnamed segments intersecting education boundaries. |
-| 20 | `clip-replacements` | Repeated, 7,500 candidate UUIDs | Split at all applicable boundaries in source order, preserving repeated crossings and graph endpoints; construct replacement pieces and locality/logical-path identities. |
-| 21 | `clip-apply` | Repeated, 18,000 source UUIDs | Atomically delete original segments and insert all replacement pieces. |
-| 22 | `clip-residual` | Repeated, 10,000 segment UUIDs | Correct residual outside-locality assignments. |
-| 23 | `clip-finalize` | Once | Rebuild logical-path aggregates and remove clipping work tables. |
-| 24 | `attribute-parks-tags` | Repeated, 750,000 segment UUIDs | Apply park attribution tags and park-scoped identities. |
-| 25 | `attribute-education` | Repeated, 750,000 segment UUIDs | Apply educational-ground attribution and identities. |
-| 26 | `attribute-slivers/discover` | Repeated, 500,000 segment UUIDs | Discover short locality slivers between matching county-scoped neighbors. |
-| 27 | `attribute-slivers/apply` | Repeated, 500,000 sliver UUIDs | Apply replacement locality assignments, record statistics, and complete the stage. |
+| 20 | `clip-candidates` | Repeated, 200,000 segment UUIDs | Find sections that cross city or other area boundaries, including parks and school grounds. |
+| 21 | `clip-replacements` | Repeated, 7,500 candidate UUIDs | Split sections where they cross area boundaries so each piece can be assigned to the right area. Keep the original order and connections intact. |
+| 22 | `clip-apply` | Repeated, 18,000 source UUIDs | Insert the newly split sections and remove the originals without leaving duplicates or gaps. |
+| 23 | `clip-residual` | Repeated, 10,000 segment UUIDs | Correct sections that were assigned to an area even though they lie outside it. |
+| 24 | `clip-finalize` | Once | Update the road and path groups to include the new pieces and remove temporary work data. |
+| 25 | `attribute-parks-tags` | Repeated, 750,000 segment UUIDs | Mark sections within parks and keep their park names and details. |
+| 26 | `attribute-education` | Repeated, 750,000 segment UUIDs | Mark sections within school and university grounds and keep the relevant area details. |
+| 27 | `attribute-slivers/discover` | Repeated, 500,000 segment UUIDs | Find very short sections whose area assignments disagree with their matching neighbors. These can result from small differences in map boundaries. |
+| 28 | `attribute-slivers/apply` | Repeated, 500,000 sliver UUIDs | Correct inconsistent area assignments on very short sections when their matching neighbors agree. |
 
 ### Identity graph construction
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 28 | `identity-segments` | Repeated, 500,000 segment UUIDs | Materialize attribution group, endpoint, class, and direction metadata. |
-| 29 | `identity-edges/orientation-1` | Repeated, 500,000 left-segment UUIDs | Build start/start endpoint edges. |
-| 30 | `identity-edges/orientation-2` | Repeated, 500,000 left-segment UUIDs | Build start/end endpoint edges, then reclaim candidate-only import/index structures. |
-| 31 | `identity-edges/orientation-4` | Repeated, 500,000 left-segment UUIDs | Build end/end endpoint edges. Orientation 3 is omitted because canonical segment ordering makes it the symmetric duplicate of orientation 2. |
-| 32 | `identity-edges/finalize` | Once | Analyze the edge table and complete the stage. |
-| 33 | `identity-proximity/roads` | Repeated, 500,000 identity-segment UUIDs | Materialize named road segments and their geometry. |
-| 34 | `identity-proximity/candidates` | Repeated, 500,000 named-road UUIDs | Find bounded nearby road candidates and retain deterministic winners. |
-| 35 | `identity-proximity/edges` | Repeated, 500,000 winner UUIDs | Insert proximity edges and remove the winner work table. |
+| 29 | `identity-segments` | Repeated, 500,000 segment UUIDs | Prepare the names, types, directions and connection points needed to decide which sections belong to the same road or path. |
+| 30 | `identity-edges/orientation-1` | Repeated, 500,000 left-segment UUIDs | Find sections connected at their starting points. |
+| 31 | `identity-edges/orientation-2` | Repeated, 500,000 left-segment UUIDs | Find connections from one section's start to another's end. Remove temporary processing data that is no longer needed. |
+| 32 | `identity-edges/orientation-4` | Repeated, 500,000 left-segment UUIDs | Find sections connected at their ending points. |
+| 33 | `identity-edges/finalize` | Once | Finish preparing the connections between sections so they can be searched efficiently. |
+| 34 | `identity-proximity/roads` | Repeated, 500,000 identity-segment UUIDs | Prepare named sections for checks that link nearby parts of the same road or path. |
+| 35 | `identity-proximity/candidates` | Repeated, 500,000 named-road UUIDs | Find nearby sections that may belong to the same road and choose the best matches. |
+| 36 | `identity-proximity/edges` | Repeated, 500,000 winner UUIDs | Connect the selected nearby sections and remove temporary comparison data. |
 
 ### Components and propagation
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 36 | `identity-components/branch-nodes` | Once | Materialize graph nodes with more than two incident identity segments. |
-| 37 | `identity-components/branch-classes` | Once | Materialize two-segment class continuations at branch nodes. |
-| 38 | `identity-components/filter-edges` | Repeated, 750,000 edge keys | Delete unnamed cross-way branch edges that do not preserve a class continuation. |
-| 39 | `identity-components/components-left` | Repeated, 2,000,000 edge keys | Seed component rows from left edge members. |
-| 40 | `identity-components/components-right` | Repeated, 2,000,000 edge keys | Seed component rows from right edge members. |
-| 41 | `identity-components/component-index` | Once | Build the parent index, analyze component/edge tables, reclaim branch/proximity staging, and complete the stage. |
-| 42 | `identity-propagate/compress` | Repeated, 1,000,000 components | Compress parent pointers. A full keyspace pass can repeat at a higher iteration when changes remain. |
-| 43 | `identity-propagate/hook` | Repeated, 100,000 roots | Apply globally materialized component hooks. A changed pass returns to `compress`; a no-change pass advances to assignment. |
-| 44 | `identity-propagate/assign` | Repeated, 500,000 components | Assign merged logical-path UUIDs. The empty terminal batch writes propagation statistics, drops hook staging, and completes the stage. |
-| 45 | `identity-label-overrides/init` | Once | Create component-label and component-override work tables. |
-| 46 | `identity-label-overrides/labels` | Repeated, 250,000 segment UUIDs | Aggregate exact OSM labels and lengths by propagated component and locality. |
-| 47 | `identity-label-overrides/neighbors` | Once | Absorb a component of at most 25 m only when graph endpoints identify exactly one alternate component with the same base name and locality. |
+| 37 | `identity-components/branch-nodes` | Once | Find junctions where more than two sections meet. |
+| 38 | `identity-components/branch-classes` | Once | Identify pairs of sections that continue the same kind of road or path through a junction. |
+| 39 | `identity-components/filter-edges` | Repeated, 750,000 edge keys | Remove misleading connections between unnamed roads at junctions while preserving clear continuations. |
+| 40 | `identity-components/components-left` | Repeated, 2,000,000 edge keys | Collect the first section from each connection to start forming road and path groups. |
+| 41 | `identity-components/components-right` | Repeated, 2,000,000 edge keys | Collect the second section from each connection so both sides are included in the road and path groups. |
+| 42 | `identity-components/component-index` | Once | Prepare the groups so related sections can be joined quickly. Remove temporary junction and nearby-road data. |
+| 43 | `identity-propagate/compress` | Repeated, 1,000,000 components | Simplify the links within each road or path group. This may repeat as related groups are combined. |
+| 44 | `identity-propagate/hook` | Repeated, 100,000 roots | Combine groups that are connected parts of the same road or path. Repeat the grouping checks until no more groups need joining. |
+| 45 | `identity-propagate/assign` | Repeated, 500,000 components | Give all sections in each completed group the same road or path reference. |
+| 46 | `identity-label-overrides/init` | Once | Prepare to check road and path names within each area. |
+| 47 | `identity-label-overrides/labels` | Repeated, 250,000 segment UUIDs | Collect the names and total lengths of connected sections within each area. |
+| 48 | `identity-label-overrides/neighbors` | Once | Merge a short section of 25 meters or less into a single matching neighboring road or path. Use matching names, location and connections to avoid joining unrelated sections. |
 
 `identity-propagate/compress` and `identity-propagate/hook` form a convergence
 loop, so their order can repeat as:
@@ -227,23 +232,23 @@ hook update is substantially more expensive than a compression scan.
 
 ### Rewrite, validation, and promotion
 
-| Order | Batch name | Frequency | Work and completion boundary |
+| Step | Batch name | Frequency | Work and completion boundary |
 | ---: | --- | --- | --- |
-| 48 | `identity-rewrite` | Repeated, 250,000 segment UUIDs | Write final segment identities and incrementally build replacement logical-path aggregates. The empty terminal batch validates completeness, swaps replacement tables, and removes identity staging. |
-| 49 | `prepare-partitions` | Once | Add provenance, constraints, and canonical indexes to candidate partition tables. |
-| 50 | `validate/init` | Once | Reset validation metrics, bind prepared partition views, and record static counts/provenance gates. |
-| 51 | `validate/ways` | Once | Validate way geometry/lineage completeness and source length. |
-| 52 | `validate/segments` | Once | Validate segment geometry, source versions, orphan identities, and segment length. |
-| 53 | `validate/logical-paths` | Repeated, 50,000 logical-path UUIDs | Compare stored logical-path aggregates with indexed segment aggregates. |
-| 54 | `validate/locality-residuals` | Repeated, 100,000 segment UUIDs | Check material geometry outside assigned localities. |
-| 55 | `validate/parks` | Once | Validate park areas, tags, and material park residuals. |
-| 56 | `validate/education` | Once | Validate education tags and material education residuals. |
-| 57 | `validate/finalize` | Once | Assemble the single validation JSON report, remove validation views, and complete the stage. All validation phases are intentionally rerun before a later promotion retry. |
+| 49 | `identity-rewrite` | Repeated, 250,000 segment UUIDs | Save the final road and path groups and check that every section is included. Replace the temporary results only after those checks pass. |
+| 50 | `prepare-partitions` | Once | Prepare the processed map data for safe use, including checks that it belongs to the correct region and original map version. |
+| 51 | `validate/init` | Once | Prepare the final checks and record the totals expected for this region. |
+| 52 | `validate/ways` | Once | Check that the original roads and paths have valid shapes, complete source details and reasonable lengths. |
+| 53 | `validate/segments` | Once | Check that each section has a valid shape, source version and road or path group. Also check section lengths for inconsistencies. |
+| 54 | `validate/logical-paths` | Repeated, 50,000 logical-path UUIDs | Check that each road or path group's shape and total length agree with its individual sections. |
+| 55 | `validate/locality-residuals` | Repeated, 100,000 segment UUIDs | Check for sections that extend outside their assigned city or other local area. |
+| 56 | `validate/parks` | Once | Check that park assignments and names agree with the map boundaries. |
+| 57 | `validate/education` | Once | Check that school and university ground assignments agree with the map boundaries. |
+| 58 | `validate/finalize` | Once | Review the final checks and make the region available for coverage processing if they pass. Remove old and temporary map data and finish the remaining maintenance. |
 
 After the final logged batch, the controller performs three orchestration steps
 that are not batch SQL files and therefore do not have batch banners:
 
-1. Mark the candidate generation `validating` with its validation report.
+1. Mark the candidate build `validating` with its validation report.
 2. Atomically promote the candidate and retire the previous active generation.
 3. Process detached retired-generation storage and residual build-schema GC.
 
@@ -255,37 +260,37 @@ iterations before assignment.
 
 ## Production Batch Sizing
 
-Generation 52 provides the reference timings for the 30 GiB two-replica
+build ID 52 provides the reference timings for the 30 GiB two-replica
 PostgreSQL cluster. Initial batch sizes are deliberately conservative and must be
 tuned toward 10-15 minutes. Reduce a batch before production whenever an observed
 run exceeds 15 minutes; a naturally bounded phase that completes in less than 10
 minutes does not need artificial delay or enlargement:
 
-| Operation | Generation-52 observation | Initial resumable unit |
+| Operation | Build-52 observation (not promoted) | Initial resumable unit |
 | --- | --- | --- |
-| Compact derivation | generation 55 node batches took 19-35m at 400,000 ways; first 400,000-way segment batch exhausted over 7 GiB of temporary space | 150,000 ways for node counts; 100,000 ways for segments; one index per unit |
+| Compact derivation | build ID 55 node batches took 19-35m at 400,000 ways; first 400,000-way segment batch exhausted over 7 GiB of temporary space | 150,000 ways for node counts; 100,000 ways for segments; one index per unit |
 | Clip candidate discovery | 4,455,314 segments in 3h35m | 200,000 segment UUIDs |
 | Clip replacement construction | 42,048 candidates in 59m | 7,500 candidate UUIDs |
-| Clip replacement insertion | generation 60 processed 35,000 rows in 21m45s and the remaining 7,079 rows in 5m25s | 18,000 replacement UUIDs |
-| Outside-locality correction | generation 60 processed its first 100,000 segments in 1h46m58s | 10,000 segment UUIDs |
+| Clip replacement insertion | NorCal generation 17 (build ID 60) processed 35,000 rows in 21m45s and the remaining 7,079 rows in 5m25s | 18,000 replacement UUIDs |
+| Outside-locality correction | NorCal generation 17 (build ID 60) processed its first 100,000 segments in 1h46m58s | 10,000 segment UUIDs |
 | Park attribution | 103,454 updates in 54m after full spatial scan | 750,000 source segment UUIDs |
 | Education attribution | 109,492 updates in 37m after full spatial scan | 750,000 source segment UUIDs |
 | Connected edge orientation | each orientation completed in 2-5m | one orientation plus 500,000 source segments if needed |
-| Connected start/end edge orientation | generation 56 whole-table orientation took 38m and left 4% free | 500,000 left-segment UUIDs; omit symmetric duplicate end/start orientation |
+| Connected start/end edge orientation | NorCal generation 16 (build ID 56) whole-table orientation took 38m and left 4% free | 500,000 left-segment UUIDs; omit symmetric duplicate end/start orientation |
 | Named-road proximity | 1,551,186 named roads and 719,056 edges in 21m | 500,000 left-segment UUIDs |
 | Branch filtering/setup | approximately 4m | one durable phase |
-| Branch filtering/component setup | generation 60 filter batches at 250,000 rows took at most 3m42s; 500,000-row left/right population batches took at most 2m35s | 750,000 edge-filter rows; 2,000,000 left/right population rows; drop branch/proximity tables before propagation |
-| Component propagation | generation 60 400,000-root hook batches had a 20m median and 51m34s maximum; 1,000,000-row compression scans ranged from 1s to 12m57s | 100,000 hook roots; 1,000,000 compression rows; 500,000 assignment rows; vacuum only when the in-batch PVC low-water sample is below 15% free |
+| Branch filtering/component setup | NorCal generation 17 (build ID 60) filter batches at 250,000 rows took at most 3m42s; 500,000-row left/right population batches took at most 2m35s | 750,000 edge-filter rows; 2,000,000 left/right population rows; drop branch/proximity tables before propagation |
+| Component propagation | NorCal generation 17 (build ID 60) 400,000-root hook batches had a 20m median and 51m34s maximum; 1,000,000-row compression scans ranged from 1s to 12m57s | 100,000 hook roots; 1,000,000 compression rows; 500,000 assignment rows; vacuum only when the in-batch PVC low-water sample is below 15% free |
 | Final component assignment | 3,798,669 rows in 12m | one durable phase |
-| Segment rewrite | generation 56 reached 9% free after 2.25m of 4.5m replacement rows | 250,000 segment UUIDs using indexed nested probes; drop completed edge graph and component parent index before rewrite; retain canonical ways through promotion |
-| Validation | generation 56 monolithic validation took 1h34m48s | separate ways/segments/park/education units; 50,000 logical paths and 100,000 locality residual segments per batch; always rerun all groups before promotion |
+| Segment rewrite | NorCal generation 16 (build ID 56) reached 9% free after 2.25m of 4.5m replacement rows | 250,000 segment UUIDs using indexed nested probes; drop completed edge graph and component parent index before rewrite; retain canonical ways through promotion |
+| Validation | NorCal generation 16 (build ID 56) monolithic validation took 1h34m48s | separate ways/segments/park/education units; 50,000 logical paths and 100,000 locality residual segments per batch; always rerun all groups before promotion |
 
 After the final start/end identity orientation, the pipeline drops candidate-only
 indexes and import intermediates whose last consumers have completed. This
 includes old path/way lookup indexes, raw park/education import tables, the
 start-node identity index, and the pre-identity logical-path aggregate. Canonical
 indexes and logical-path aggregates are rebuilt by rewrite and partition
-preparation. Generation 56 required this cleanup manually because it reached the
+preparation. NorCal generation 16 (build ID 56) required this cleanup manually because it reached the
 stage using the earlier whole-orientation implementation; future generations run
 the same cleanup as a normal checkpointed identity-edge transition.
 
@@ -303,11 +308,19 @@ operator authorization.
 
 ## Failure Semantics
 
+The administrator controller distinguishes **Pause** from **Cancel**. Pause uses
+the retained-work semantics below and requeues a compatible Resume behind other
+work. Cancel explicitly aborts only the request-bound unfinished candidate after
+stopping; Canceling persists through cleanup and does not affect active data.
+The standalone CLI still retains post-import work on ordinary cancellation;
+managed discard is authorized only by the authenticated admin request. See
+[Administrator Region Updates](osm-region-updates.md).
+
 - Before the osm2pgsql checkpoint, pod-local source files make the run
   non-resumable; cleanup marks the generation failed and drops its schema.
 - After the osm2pgsql checkpoint, failure keeps the generation in `building`,
   records the failed phase/batch, and retains the schema.
-- `osm-update resume --generation <id>` is the only way to continue retained
+- `osm-update resume --build <build-id>` is the only way to continue retained
   work. `OSM_RESUME_GENERATION_ID` remains an environment default for the flag.
   A new generation cannot be reserved while a resumable build exists for the
   region.
@@ -372,9 +385,9 @@ The catalog stores the block separately from stage failure so the UI/operator
 can distinguish **Waiting for storage intervention** from a failed SQL batch.
 Operator clearance records who approved the resume, when, and an optional note.
 Clearance authorizes another preflight; it never bypasses the 10% threshold.
-Use `osm-update status --generation <id>` to inspect the cursor and block,
-`osm-update unblock --generation <id> --approved-by <operator>` to record
-clearance, and `osm-update abort --generation <id> --reason <reason>` only to
+Use `osm-update status --build <build-id>` to inspect the cursor and block,
+`osm-update unblock --build <build-id> --approved-by <operator>` to record
+clearance, and `osm-update abort --build <build-id> --reason <reason>` only to
 permanently fail the generation and remove its build schema.
 
 ### Interactive operator CLI
@@ -465,8 +478,14 @@ require explicit operator authorization.
 
 Canonical parents are partitioned by `region_id`. Each region has its own active
 generation and physical `ways`, `localities`, and `path_segments` leaf tables.
-Generation IDs are globally unique catalog IDs, not a database-wide version that
-forces all regions to advance together. One region may remain on an older active
-generation while another builds or promotes a newer generation. `osm_active`
+Generation numbers are sequential successful-promotion numbers per region, starting
+at1. Only a successful promotion advances a region's generation. A global build ID
+is a separate opaque identifier allocated to a build attempt, including failed or
+canceled attempts. Logs pair them as `generation <number>; build <id>` once promoted.
+Legacy physical names such as `osm_catalog.generations.id`, `generation_id`,
+`osm_build_<id>` and the deprecated CLI `--generation` alias carry build IDs, not
+regional generation numbers; use `--build <build-id>` in operator commands.
+One region may remain on its current generation while another successfully
+promotes its next generation. `osm_active`
 combines all active regional partitions and applies deterministic overlap
 precedence for duplicate OSM objects.

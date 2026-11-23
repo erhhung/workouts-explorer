@@ -440,6 +440,10 @@ func (f *coverageIntegrationFixture) updateRoute(workout uuid.UUID, points []cov
 }
 
 func (f *coverageIntegrationFixture) queue(workout uuid.UUID) coverageIntegrationJob {
+	return f.queuePolicy(workout, coverage.CurrentPathPolicyVersion)
+}
+
+func (f *coverageIntegrationFixture) queuePolicy(workout uuid.UUID, policy coverage.PathPolicyVersion) coverageIntegrationJob {
 	f.t.Helper()
 	job := coverageIntegrationJob{uuid.New(), uuid.New()}
 	tx := f.accountTx(f.ctx, f.apiDB)
@@ -456,7 +460,7 @@ func (f *coverageIntegrationFixture) queue(workout uuid.UUID) coverageIntegratio
 	// correctly deduplicates current work; the trusted fixture uses the private
 	// adoption force path without granting it to any runtime role.
 	f.scan(tx, `SELECT job_id,route_count,reused FROM app.enqueue_adopted_coverage_update($1,$2,$3,$4,$5,$6,$7,$8,5,$9)`,
-		[]any{f.accountID, job.parentID, f.regionID, f.generation, revision, string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82), targets}, &job.parentID, &count, &reused)
+		[]any{f.accountID, job.parentID, f.regionID, f.generation, revision, string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1), string(policy), targets}, &job.parentID, &count, &reused)
 	if count < 1 {
 		f.t.Fatal("coverage enqueue returned no routes")
 	}
@@ -616,15 +620,15 @@ func (f *coverageIntegrationFixture) assertTerminal(job coverageIntegrationJob, 
 	defer coverageIntegrationRollback(tx)
 	var childStatus, parentStatus, result string
 	var cleared, duration bool
-	var total, processed, succeeded, failed, cancelled, superseded int
+	var total, processed, succeeded, failed, canceled, superseded int
 	f.scan(tx, `SELECT child.status,parent.status,COALESCE(route.result_outcome,''),
 		child.worker_id IS NULL AND child.lease_token IS NULL AND child.lease_expires_at IS NULL,
 		route.duration_milliseconds IS NOT NULL,
-		progress.routes_total,progress.routes_processed,progress.routes_succeeded,progress.routes_failed,progress.routes_cancelled,progress.routes_superseded
+		progress.routes_total,progress.routes_processed,progress.routes_succeeded,progress.routes_failed,progress.routes_canceled,progress.routes_superseded
 		FROM app.jobs child JOIN app.jobs parent ON parent.id=child.parent_job_id
 		JOIN app.coverage_route_job_contexts route ON route.job_id=child.id
 		JOIN app.coverage_job_progress progress ON progress.job_id=parent.id WHERE child.id=$1`, []any{job.childID},
-		&childStatus, &parentStatus, &result, &cleared, &duration, &total, &processed, &succeeded, &failed, &cancelled, &superseded)
+		&childStatus, &parentStatus, &result, &cleared, &duration, &total, &processed, &succeeded, &failed, &canceled, &superseded)
 	if childStatus != status || parentStatus != status || result != outcome || !cleared || total != 1 {
 		var failureCode, failureSummary string
 		f.scan(tx, `SELECT COALESCE(state.processing_failure_code,''),COALESCE(state.processing_failure_summary,'')
@@ -633,19 +637,19 @@ func (f *coverageIntegrationFixture) assertTerminal(job coverageIntegrationJob, 
 		f.t.Logf("synthetic terminal failure: %s %s", failureCode, failureSummary)
 		f.t.Fatalf("terminal child/parent/outcome/cleared/total=%s/%s/%s/%v/%d, want %s/%s/%s/true/1", childStatus, parentStatus, result, cleared, total, status, status, outcome)
 	}
-	wantSucceeded, wantFailed, wantCancelled, wantSuperseded := 0, 0, 0, 0
+	wantSucceeded, wantFailed, wantCanceled, wantSuperseded := 0, 0, 0, 0
 	switch {
 	case status == "failed":
 		wantFailed = 1
-	case status == "cancelled":
-		wantCancelled = 1
+	case status == "canceled":
+		wantCanceled = 1
 	case outcome == "superseded":
 		wantSuperseded = 1
 	default:
 		wantSucceeded = 1
 	}
-	if processed != wantSucceeded+wantFailed+wantSuperseded || succeeded != wantSucceeded || failed != wantFailed || cancelled != wantCancelled || superseded != wantSuperseded || (status != "cancelled" && !duration) {
-		f.t.Fatalf("incorrect progress processed/succeeded/failed/cancelled/superseded=%d/%d/%d/%d/%d duration=%v", processed, succeeded, failed, cancelled, superseded, duration)
+	if processed != wantSucceeded+wantFailed+wantSuperseded || succeeded != wantSucceeded || failed != wantFailed || canceled != wantCanceled || superseded != wantSuperseded || (status != "canceled" && !duration) {
+		f.t.Fatalf("incorrect progress processed/succeeded/failed/canceled/superseded=%d/%d/%d/%d/%d duration=%v", processed, succeeded, failed, canceled, superseded, duration)
 	}
 	proofTx := f.accountTx(f.ctx, f.adminDB)
 	var stamped bool
@@ -687,7 +691,7 @@ func (f *coverageIntegrationFixture) assertCurrent(workout uuid.UUID, job covera
 		AND state.applied_generations=jsonb_build_array(jsonb_build_object('regionId',$4::text,'generation',$5::bigint))
 		AND state.applied_rules_version=$6 AND state.applied_sampling_version=$7 AND state.applied_path_policy_version=$8
 		FROM app.workout_coverage_states state WHERE workout_id=$1`, []any{workout, job.childID, revision, f.regionID, f.generation,
-		string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1), string(coverage.ExperimentalPathPolicyV82)}, &valid)
+		string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1), string(coverage.CurrentPathPolicyVersion)}, &valid)
 	if !valid {
 		f.t.Fatal("applied coverage state does not match the claimed route/generation/contract")
 	}
@@ -1237,7 +1241,7 @@ func TestCoverageRunnerRunOnceCancellationIntegration(t *testing.T) {
 	}
 	f.await(done)
 	matcher.release()
-	f.assertTerminal(job, "cancelled", "")
+	f.assertTerminal(job, "canceled", "")
 	if f.visible() != old {
 		t.Fatal("cancellation changed prior evidence")
 	}
@@ -1246,9 +1250,9 @@ func TestCoverageRunnerRunOnceCancellationIntegration(t *testing.T) {
 	var stale bool
 	f.scan(tx, `SELECT processing_state='stale' AND applied_route_input_revision=1 FROM app.workout_coverage_states WHERE workout_id=$1`, []any{workout}, &stale)
 	if !stale {
-		t.Fatal("cancelled route did not preserve prior applied state")
+		t.Fatal("canceled route did not preserve prior applied state")
 	}
-	assertCoverageIntegrationCounter(t, collectCoverageMetrics(t, reader), "coverage.route.outcomes", map[string]string{"outcome": "cancelled", "failure": "none"}, 1)
+	assertCoverageIntegrationCounter(t, collectCoverageMetrics(t, reader), "coverage.route.outcomes", map[string]string{"outcome": "canceled", "failure": "none"}, 1)
 }
 
 func TestCoverageRunnerRunOncePersistCancellationAfterEvaluationIntegration(t *testing.T) {
@@ -1262,7 +1266,7 @@ func TestCoverageRunnerRunOncePersistCancellationAfterEvaluationIntegration(t *t
 	job := f.queue(workout)
 	matcher := f.gate(f.osmAdminDB, "osm_canonical", "path_segments", "ACCESS EXCLUSIVE")
 	runner := f.runner()
-	// Evaluation must finish with an uncancelled local context. Only the
+	// Evaluation must finish with an uncanceled local context. Only the
 	// rejected persistence response can discover committed cancellation.
 	runner.heartbeatInterval = time.Minute
 	metrics, reader := coverageTestMetrics(t)
@@ -1278,13 +1282,13 @@ func TestCoverageRunnerRunOncePersistCancellationAfterEvaluationIntegration(t *t
 	}
 	matcher.release()
 	f.await(done)
-	f.assertTerminal(job, "cancelled", "")
+	f.assertTerminal(job, "canceled", "")
 	if f.visible() != old {
 		t.Fatal("cancellation rejected by persistence changed prior evidence")
 	}
 	exported := collectCoverageMetrics(t, reader)
 	assertCoverageIntegrationCounter(t, exported, "coverage.stale.rejections", map[string]string{"operation": "persist"}, 1)
-	assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "cancelled"}, 1)
+	assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "canceled"}, 1)
 	assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "failed"}, 0)
 	assertCoverageIntegrationCounter(t, exported, "coverage.control.calls", map[string]string{"operation": "heartbeat"}, 0)
 }
@@ -1303,7 +1307,7 @@ func TestCoverageRejectedCompletionCancellationIntegration(t *testing.T) {
 				t.Fatalf("claim found=%v error=%v", found, err)
 			}
 			if err := runner.rejectionCause(claim); !errors.Is(err, errLeaseLost) {
-				t.Fatalf("uncancelled ownership probe=%v, want lease-loss classification", err)
+				t.Fatalf("uncanceled ownership probe=%v, want lease-loss classification", err)
 			}
 			tx := f.accountTx(f.ctx, f.adminDB)
 			var requested bool
@@ -1321,10 +1325,10 @@ func TestCoverageRejectedCompletionCancellationIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.assertTerminal(job, "cancelled", "")
+			f.assertTerminal(job, "canceled", "")
 			exported := collectCoverageMetrics(t, reader)
 			assertCoverageIntegrationCounter(t, exported, "coverage.stale.rejections", map[string]string{"operation": operation}, 1)
-			assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "cancelled"}, 1)
+			assertCoverageIntegrationCounter(t, exported, "coverage.route.outcomes", map[string]string{"outcome": "canceled"}, 1)
 			// Terminal and deleted jobs must never authorize another cancellation.
 			if err := runner.rejectionCause(claim); !errors.Is(err, errLeaseLost) {
 				t.Fatalf("terminal ownership probe=%v, want lease lost", err)
@@ -1378,10 +1382,10 @@ func TestCoverageRejectedCompletionCannotCancelReplacementLeaseIntegration(t *te
 		FROM app.jobs WHERE id=$1`, []any{job.childID, current.workerID, replacement.leaseID}, &stillOwned)
 	f.commit(tx)
 	if !stillOwned {
-		t.Fatal("stale actor completed another worker's cancelled lease")
+		t.Fatal("stale actor completed another worker's canceled lease")
 	}
 	if err := current.failDetached(replacement, time.Now(), "coverage-osm-unavailable", "Synthetic reader failure."); err != nil {
 		t.Fatal(err)
 	}
-	f.assertTerminal(job, "cancelled", "")
+	f.assertTerminal(job, "canceled", "")
 }

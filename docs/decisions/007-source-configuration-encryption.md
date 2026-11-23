@@ -124,7 +124,7 @@ non-deleted lifecycle, captured generation, running job ID, worker identity, and
 lease token still match. The source and job rows are locked in one transaction.
 Two refreshes from one generation are deliberately first-writer-wins: the first
 increments generation and later writes are discarded. A stale, updated,
-deleted, cancelled, or lease-lost source rejects the write without making the
+deleted, canceled, or lease-lost source rejects the write without making the
 job fail solely because its refresh became obsolete. Refresh never mutates the
 job snapshot.
 

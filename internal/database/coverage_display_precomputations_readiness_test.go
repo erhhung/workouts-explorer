@@ -11,10 +11,10 @@ import (
 )
 
 func TestCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 32 {
-		t.Fatalf("supported schema = %d, want 32", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 33 {
+		t.Fatalf("supported schema = %d, want 33", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeOSMCatalogReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("full readiness must compose the version-gated display contract with all existing contracts")
 	}

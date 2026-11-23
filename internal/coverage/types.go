@@ -94,10 +94,11 @@ const (
 type SplitReason string
 
 const (
-	SplitNoCandidate SplitReason = "no_candidate"
-	SplitTemporal    SplitReason = "temporal_gap"
-	SplitSpatial     SplitReason = "spatial_gap"
-	SplitNetwork     SplitReason = "network_gap"
+	SplitNoCandidate     SplitReason = "no_candidate"
+	SplitTemporal        SplitReason = "temporal_gap"
+	SplitSpatial         SplitReason = "spatial_gap"
+	SplitNetwork         SplitReason = "network_gap"
+	SplitProcessingLimit SplitReason = "processing_limit"
 )
 
 type Split struct {

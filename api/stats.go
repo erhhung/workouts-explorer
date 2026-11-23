@@ -217,12 +217,17 @@ func queryNewCoverageBuckets(ctx context.Context, tx pgx.Tx, accountID, sessionI
 		FROM generate_series(date_trunc($5,$6::date::timestamp),date_trunc($5,$7::date::timestamp),
 			CASE WHEN $5='month' THEN interval '1 month' ELSE interval '1 year' END) bucket
 		LEFT JOIN counts ON counts.bucket_start=bucket::date
+		WHERE bucket::date<=date_trunc($5,clock_timestamp() AT TIME ZONE $10)::date
+          OR EXISTS(SELECT 1 FROM app.workouts workout WHERE workout.account_id=$1
+            AND COALESCE(workout.local_start_date,(workout.started_at AT TIME ZONE $10)::date)>=GREATEST(bucket::date,$6::date)
+            AND COALESCE(workout.local_start_date,(workout.started_at AT TIME ZONE $10)::date)<=LEAST(
+              (bucket+CASE WHEN $5='month' THEN interval '1 month' ELSE interval '1 year' END)::date-1,$7::date))
 	)
 	SELECT jsonb_build_object('total',(SELECT count(*) FROM buckets),'items',COALESCE((
 		SELECT jsonb_agg(jsonb_build_object('bucketStart',bucket_start,'allTime',all_time,'pastYear',past_year))
 		FROM (SELECT * FROM buckets ORDER BY `+order+` LIMIT $8 OFFSET $9) page
 	),'[]'::jsonb))`, accountID, sessionID, id, scope.DataGeneration, string(group), scope.Range.StartDate.Time,
-		scope.Range.EndDate.Time, size, int64(page-1)*int64(size)).Scan(&body)
+		scope.Range.EndDate.Time, size, int64(page-1)*int64(size), scope.Range.Timezone).Scan(&body)
 	result := generated.NewCoverageBucketList{Scope: scope, GroupBy: group}
 	if err != nil {
 		return result, err

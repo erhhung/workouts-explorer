@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -55,8 +55,8 @@ function connectionMessage(source: Source) {
       return "Approve iCloud access outside the app, then update the values from rclone config show.";
     case "source-config-invalid":
       return "Check the source path and the values copied from rclone config show.";
-    case "connection-check-cancelled":
-      return "The connection check was cancelled. Try saving the source again.";
+    case "connection-check-canceled":
+      return "The connection check was canceled. Try saving the source again.";
     case "source-check-timeout":
       return "The source did not respond in time. Check its connection settings and try again.";
     default:
@@ -759,7 +759,7 @@ export function DataSourcesDialog({
                 </div>
                 <Dialog.Description className="deletion-confirmation-message">
                   Delete <strong>{deleteTarget?.displayName}</strong>? Its connection credentials
-                  will be deleted and its active sync jobs cancelled. Imported workouts will be
+                  will be deleted and its active sync jobs canceled. Imported workouts will be
                   retained.
                 </Dialog.Description>
                 {deleteError && (

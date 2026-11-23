@@ -92,7 +92,7 @@ func TestDownloadCancellationCleanupFailurePreservesContext(t *testing.T) {
 			select {
 			case completed := <-result:
 				if completed.path != "" {
-					t.Fatal("cancelled download published")
+					t.Fatal("canceled download published")
 				}
 				assertCode(t, completed.err, "source-cleanup-failed")
 				if !errors.Is(completed.err, want) {
@@ -114,7 +114,7 @@ func TestDownloadCancellationCleanupFailurePreservesContext(t *testing.T) {
 			}
 			t.Setenv(helperScenario, "")
 			if _, err := s.Download(context.Background(), objects[0]); err != nil {
-				t.Fatal("source unusable after cancelled download discard")
+				t.Fatal("source unusable after canceled download discard")
 			}
 		})
 	}

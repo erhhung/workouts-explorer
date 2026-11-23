@@ -93,6 +93,9 @@ spec:
             - name: RATE_LIMIT_KEY
               valueFrom: {secretKeyRef: {name: {{ required "api.securitySecret.name is required" .Values.api.securitySecret.name }}, key: {{ .Values.api.securitySecret.rateLimitKey }}}}
             - {name: OSM_USE_READ_REPLICAS_ONLY, value: {{ .Values.osm.useReadReplicasOnly | quote }}}
+            - {name: OSM_DATA_PROVIDERS_JSON, value: {{ mustToJson .Values.osm.dataProviders | quote }}}
+            - {name: OSM_CATALOG_REFRESH_ENABLED, value: {{ .Values.osm.catalogRefresh.enabled | quote }}}
+            - {name: OSM_REGION_UPDATES_ENABLED, value: {{ .Values.osm.regionUpdates.enabled | quote }}}
             {{- if .Values.api.coverageDiagnostics.enabled }}
             - name: API_OSM_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "api.coverageDiagnostics.databaseSecret.name is required" .Values.api.coverageDiagnostics.databaseSecret.name }}, key: {{ required "api.coverageDiagnostics.databaseSecret.key is required" .Values.api.coverageDiagnostics.databaseSecret.key }}}}
@@ -258,7 +261,12 @@ spec:
             - {name: OSM_USE_READ_REPLICAS_ONLY, value: {{ .Values.osm.useReadReplicasOnly | quote }}}
             - {name: OSM_MAX_AUTO_DOWNLOAD_BYTES, value: {{ .Values.osm.maxAutoDownloadBytes | float64 | printf "%.0f" | quote }}}
             - {name: OSM_DATA_PROVIDERS_JSON, value: {{ mustToJson .Values.osm.dataProviders | quote }}}
-            - {name: OSM_REGIONS_JSON, value: {{ mustToJson .Values.osm.regions | quote }}}
+            - {name: OSM_CATALOG_REFRESH_ENABLED, value: {{ .Values.osm.catalogRefresh.enabled | quote }}}
+            - {name: OSM_CATALOG_METADATA_CONCURRENCY, value: {{ .Values.osm.catalogRefresh.metadataConcurrency | quote }}}
+            {{- if .Values.osm.catalogRefresh.enabled }}
+            - name: OSM_CATALOG_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ required "osm.catalogRefresh.databaseSecret.name is required" .Values.osm.catalogRefresh.databaseSecret.name }}, key: {{ required "osm.catalogRefresh.databaseSecret.key is required" .Values.osm.catalogRefresh.databaseSecret.key }}}}
+            {{- end }}
             - name: WORKER_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "worker.databaseSecret.name is required" .Values.worker.databaseSecret.name }}, key: {{ .Values.worker.databaseSecret.key }}}}
             - name: OSM_DATABASE_URL

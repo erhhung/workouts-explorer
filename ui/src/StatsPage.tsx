@@ -1,4 +1,4 @@
-import * as Dialog from "@radix-ui/react-dialog";
+import * as Dialog from "./Dialog";
 import { ContentBackground } from "./ContentBackground";
 import { dialogTablePageSize, dialogTableRowSlots } from "./dialogTable";
 import { DialogTableViewport } from "./DialogTableViewport";
@@ -340,7 +340,7 @@ function NewVisitsDialog({
     return inRange(date) && workoutId && onShowOnMap ? (
       <button
         type="button"
-        className="stats-cell-link"
+        className="table-cell-link"
         key={`${visit.entityId}:${workoutId}:${date}`}
         aria-disabled={updating}
         onClick={() => {
@@ -423,6 +423,7 @@ function NewVisitsDialog({
             </div>
           )}
           <DialogTableViewport
+            stickyHeader
             scrollRef={paging.ref}
             className="stats-visits-table-wrap"
             busy={result.pending || input !== search}
@@ -462,12 +463,12 @@ function NewVisitsDialog({
                     const visit = data.items[index];
                     return visit ? (
                       <tr key={index}>
-                        <td className={onShowOnMap ? "stats-action-cell" : undefined}>
+                        <td className={onShowOnMap ? "table-action-cell" : undefined}>
                           {onShowOnMap ? (
                             <button
                               key={visit.entityId}
                               type="button"
-                              className="stats-cell-link"
+                              className="table-cell-link"
                               aria-disabled={updating}
                               onClick={() => {
                                 if (updating) return;
@@ -491,7 +492,7 @@ function NewVisitsDialog({
                         </td>
                         <td
                           className={
-                            onShowOnMap && inRange(visit.newVisit) ? "stats-action-cell" : undefined
+                            onShowOnMap && inRange(visit.newVisit) ? "table-action-cell" : undefined
                           }
                         >
                           {dateCell(visit, false)}
@@ -500,7 +501,7 @@ function NewVisitsDialog({
                           <td
                             className={
                               onShowOnMap && visit.previousVisit && inRange(visit.previousVisit)
-                                ? "stats-action-cell"
+                                ? "table-action-cell"
                                 : undefined
                             }
                           >

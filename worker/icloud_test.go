@@ -265,7 +265,7 @@ func TestICloudConnectionCleanupAndRefresh(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := r.checkICloudConnection(ctx, job, snapshot); err != context.Canceled {
-		t.Fatalf("cancelled check=%v", err)
+		t.Fatalf("canceled check=%v", err)
 	}
 	assertEmptyStaging(t, staging)
 }
@@ -380,32 +380,32 @@ func TestICloudConnectionCleanupFailure(t *testing.T) {
 
 func TestICloudConstructorError(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		code      string
-		cancelled bool
-		cleanup   bool
+		name     string
+		code     string
+		canceled bool
+		cleanup  bool
 	}{
 		{"cleanup without handle", "source-cleanup-failed", false, true},
-		{"cancelled cleanup", "source-cleanup-failed", true, true},
-		{"cancelled auth classification", "source-auth-expired", true, false},
+		{"canceled cleanup", "source-cleanup-failed", true, true},
+		{"canceled auth classification", "source-auth-expired", true, false},
 		{"ordinary constructor failure", "source-unavailable", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if test.cancelled {
+			if test.canceled {
 				cancel()
 			}
 			original := &rclonesource.Error{Code: test.code, Summary: "Safe fixture failure."}
 			r := &Runner{}
 			err := r.icloudConstructorError(ctx, nil, original)
-			if errors.Is(err, errPrivateCleanup) != test.cleanup || errors.Is(err, context.Canceled) != test.cancelled {
+			if errors.Is(err, errPrivateCleanup) != test.cleanup || errors.Is(err, context.Canceled) != test.canceled {
 				t.Fatalf("constructor error=%v", err)
 			}
-			if test.cancelled && isRemoteAuthFailure(err) {
+			if test.canceled && isRemoteAuthFailure(err) {
 				t.Fatal("parent cancellation became an authentication failure")
 			}
-			if !test.cancelled && !test.cleanup && err != original {
+			if !test.canceled && !test.cleanup && err != original {
 				t.Fatal("ordinary constructor error changed")
 			}
 			if r.StagingCleanupPending() != test.cleanup {

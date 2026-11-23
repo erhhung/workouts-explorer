@@ -250,7 +250,7 @@ As an administrator, I want to delete an account without gaining access to its p
 ### Behavior
 
 1. Accepting deletion immediately disables signin, revokes sessions, and prevents new scheduled or manual work.
-2. All queued account jobs are cancelled and running jobs receive cooperative cancellation.
+2. All queued account jobs are canceled and running jobs receive cooperative cancellation.
 3. Purge waits until account jobs are terminal or their abandoned leases are recovered, then clears job-scoped source snapshots and staged files.
 4. Only after the account is quiescent does the server capture and purge the owned private-data scope.
 5. The purge removes sources and credentials, workouts, routes, provenance, coverage, preferences, notifications, private tile state, and owner-visible job diagnostics.
@@ -299,7 +299,7 @@ As an administrator, I want to delete an account without gaining access to its p
 ### Acceptance criteria
 
 - Given an active user session, when account deletion is accepted, then the next authenticated request is denied.
-- Given active ingest, when account deletion is accepted, then ingest is cancelled and drained before purge targets are captured.
+- Given active ingest, when account deletion is accepted, then ingest is canceled and drained before purge targets are captured.
 - Given a purge in progress, when the administrator reviews it, then no private workout or source details are returned.
 - Given purge failure, when the job is retried, then remaining targets are removed without recreating completed data.
 
@@ -344,7 +344,7 @@ As a data owner, I want to configure source adapters through the app or REST API
   a divider and red **Delete source**. Deletion names the selected source in a
   compact confirmation; failed deletion retains the row. Imported workouts remain.
   Its prompt is **Delete <source-name>? Its connection credentials will be deleted
-  and its active sync jobs cancelled. Imported workouts will be retained.**. A
+  and its active sync jobs canceled. Imported workouts will be retained.**. A
   transparent second-level backdrop avoids dimming the base content twice.
 - The editor is initially hidden. Add/Edit reveals **New source / Edit source**.
   Type choices, in order, are **Health Auto Export — iCloud Drive** and **Health
@@ -469,7 +469,7 @@ As a data owner, I want to delete an obsolete source without losing workouts alr
 
 1. Deletion immediately removes the source from source APIs and sync selection.
 2. The current encrypted configuration and credentials are cleared.
-3. Active and queued ingest children using the source are cancelled.
+3. Active and queued ingest children using the source are canceled.
 4. Running jobs remove staged files and clear job-scoped config snapshots at a safe cancellation boundary.
 5. Other source children in a parent ingest may continue.
 6. Imported workouts remain visible with sanitized historical source provenance.
@@ -488,7 +488,7 @@ As a data owner, I want to delete an obsolete source without losing workouts alr
 
 ### Acceptance criteria
 
-- Given a running ingest using a source, when that source is deleted, then its child job is cancelled and no later file is processed from it.
+- Given a running ingest using a source, when that source is deleted, then its child job is canceled and no later file is processed from it.
 - Given workouts imported by a deleted source, when Summary is queried, then those workouts remain available.
 - Given a deleted source ID, when its CRUD endpoint is requested, then the API returns 404.
 
@@ -629,7 +629,7 @@ The following is the **folded-028 contract deployed in `dev-20261020`**.
    default **25**, valid **1-1000**. During active ingest, each normal parent requires
    **exactly B new eligible matching targets**, globally across regions within the
    ingest-root/source-sibling scope. Normal and adopted obligations share the
-   cohort. Missing maps, current/live/unchanged authoritative failed or cancelled
+   cohort. Missing maps, current/live/unchanged authoritative failed or canceled
    targets, non-GPS imports and deduplicated obligations do not count. No-GPS
    adoption is acknowledged without a matching job.
 3. Private durable prepared metadata saves B and root/source-sibling scope across
@@ -642,7 +642,7 @@ The following is the **folded-028 contract deployed in `dev-20261020`**.
    reports the actual child-region union, including retries. Existing `regionId`/
    `targetGeneration` are representative anchors, never complete matching scope.
    Per-route generation vectors, claim fencing and admission are unchanged.
-4. Retry parents contain only the preceding attempt's eligible failed/cancelled
+4. Retry parents contain only the preceding attempt's eligible failed/canceled
    routes, preserve their chain and inherited capacity, and never accept fresh
    routes to fill spare capacity. An unchanged normal import cannot reset a failed
    target's retry budget; a distinct adoption event alone supplies force-refresh
@@ -651,9 +651,9 @@ The following is the **folded-028 contract deployed in `dev-20261020`**.
    derived-work obligations. A final partial cohort seals **only after the visible
    ingest root and all source siblings are terminal and due preparation is
    exhausted**, via leased account-reconciliation recovery, never active EOF.
-   Failed/cancelled roots can legitimately retain committed-data obligations
+   Failed/canceled roots can legitimately retain committed-data obligations
    without reopening ingest. Active underfull cohorts remain protected; normal
-   metadata updates/deduplication cannot revive cancelled route targets and retain
+   metadata updates/deduplication cannot revive canceled route targets and retain
    their cancellation footprint. Coverage jobs have their own cancellation lifecycle.
 6. Preparation keeps bounded metadata and one route's coordinates at a time, not
    unbounded payloads/metadata in memory. ROI uses one efficient query per route,
@@ -670,7 +670,7 @@ The following is the **folded-028 contract deployed in `dev-20261020`**.
   points: overflow is a typed permanent Coverage processing failure, not a failed
   source import. Stored raw routes remain available.
 - Only verified typed transient readiness errors durably defer the affected
-  obligation for one hour. Permanent, cancelled or unknown error branches surface
+  obligation for one hour. Permanent, canceled or unknown error branches surface
   safely rather than being disguised as transient success; every joined error
   branch must qualify for deferral.
 - Missing maps acknowledge normal readiness without a matching job; adoption
@@ -1288,7 +1288,11 @@ so that I can see when I explored new places or returned after a long absence.
    Month/Year receives 38% of the table width. Use the shared `.pagination` margin
    above page controls, without adding the report's section gap to that spacing.
 4. Generate every calendar bucket intersecting the inclusive selected dates,
-   even when no workouts or qualifying visits exist in it. Partial first/last
+   retaining empty past/current periods. Omit a future month/year when it has no
+   in-range workouts, including custom ranges extending into the future. Keep a
+   future period containing an actual workout even without qualifying Coverage
+   visits. Resolve the current period in the report time zone, and filter before
+   totals/pagination so the table and chart use the same buckets. Partial first/last
    buckets count only visits within the selected dates, not the entire month/year.
    3/25/2024 through 10/1/2026 therefore shows March 2024 through October 2026
    in Month mode, or 2024, 2025 and 2026 in Year mode.
@@ -1610,10 +1614,14 @@ As a user, I want to compare the exact recorded paths of selected workouts.
 
 ### Mode-Specific Route Fitting
 
-- Each routed workout has independent raw GPS bounds (`bounds`) and nullable
+- Each routed workout has independent displayed GPS bounds (`bounds`) and nullable
   applied Coverage bounds (`coverageBounds`). Coverage bounds are precomputed
   from matched path and park evidence, respecting path-display exclusions and
   name qualification, rather than inferred from raw GPS or simplified tiles.
+- Routes fitting follows the stored displayed line, using the same segmentation
+  and rejection membership as the drawn route and endpoint markers. Isolated or
+  rejected GPS observations must not broaden the fitted viewport. Original raw
+  observations and their imported summary extrema are retained unchanged.
 - A row/map focus action, restored focus, or single-workout deep link fits the
   active mode's bounds. Switching modes preserves the current camera; explicit
   fitting uses the persistent focused workout, not a transient hover preview.
@@ -1633,7 +1641,7 @@ As a user, I want to compare the exact recorded paths of selected workouts.
   a single-workout Show on map request falls back to Routes for an empty result.
 - First-time empty evaluations must record this status even when they write no
   match rows. Later successful matching changes it to `matched`; removing all
-  displayable evidence changes it back to `no_matches`. Failed or cancelled
+  displayable evidence changes it back to `no_matches`. Failed or canceled
   replacements retain the previous applied result and classification. These are
   display-result statuses: an empty evaluation is still a successfully completed
   job and does not cause an automatic retry solely for being empty. Unprocessed,
@@ -1923,7 +1931,7 @@ does not start a default/geolocation or all-routes camera fit before detail arri
 24. With coverage diagnostics enabled, the Coverage button retains the route-review workflow: it computes and displays diagnostic evidence for only the selected route and exposes the diagnostic labeling controls.
 25. Ingested workouts and raw routes become available without waiting for asynchronous coverage matching. Production Coverage uses current durable results, identifies checked routes omitted as pending, failed, or unavailable, and refreshes after a committed coverage generation rather than running the matcher from a tile or statistics request.
 25a. In production Coverage mode, each workout row replaces its workout-type color dash with an accessible status indicator. Current uses a success check, stale uses an amber clock icon, pending uses an activity ring, failed uses an exclamation mark, unavailable uses an x, and unprocessed uses a dash. A workout with no applied result is de-emphasized and cannot receive Coverage focus, but its checkbox remains available. After the standard tooltip delay, its disabled row action explains whether map data is unavailable, map data or Coverage processing is pending, or processing failed. These row indicators identify omitted checked workouts; a separate omission summary is not required. Checked transient no-result workouts are polled every ten seconds without showing foreground loading state; failed and unavailable no-result workouts alone do not keep polling active. Once every checked workout has a current or stale applied result, ten-second processing polling stops. While applied results are displayed, background generation checks continue at the public polling interval clamped to 10-60 seconds (normally 30 seconds), so committed replacements renew private capabilities even when readiness labels are unchanged. Both checks pause in hidden tabs and stop outside production Coverage mode. Unchanged capabilities are discarded without replacing map sources or resetting focus/camera state.
-26. A failed, cancelled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
+26. A failed, canceled, timed-out, or stale rematch leaves prior valid coverage visible until a current replacement commits.
 27. Coverage processing creates bounded account-owned parent runs with one child per eligible workout route. New ingest cohorts may mix regions, with per-route vectors authoritative. One child failure does not stop sibling routes; mixed success and failure makes the parent partially successful. See [committed-route pipelining](#feature-pipeline-committed-routes-to-coverage).
 28. Display precomputations preserve exact results for named periods, all-time history and arbitrary custom dates without separate year/month datasets. Compact qualification partials are deduplicated by display entity/workout before counts; educational grounds spanning source paths still count once. Regional-park context and park bounds remain independent of path exclusions. Metadata, workout-local dates, visibility and applied-result eligibility remain live joins. Logical deletion hides a workout before physical cleanup; failed rematching preserves prior applied coverage. Deferred, transaction-batched maintenance commits evidence and projections atomically. See the [030 compact-fact design](architecture.md#coverage-display-precomputations-requires-30). The same combined migration defines final canonical grouping and cache scope below; matcher policy is unchanged. Earlier backend-42/UI-43 browser receipts remain historical, not fresh squash or current acceptance evidence. See [current status](development-progress.md#current-status) and [Milestone 8 closeout](development-progress.md#milestone-8-closeout).
 
@@ -1959,7 +1967,7 @@ historical deployment receipt.
    exact-account queue-only claims. Partial sealing still requires the visible
    root/all source siblings terminal and due preparation exhausted. Queue recovery
    preserves campaign cursors and causes no ordinary follow-up scan. It neither
-   revives cancelled identical targets nor bypasses established retry budgets.
+   revives canceled identical targets nor bypasses established retry budgets.
 6. Lagged replica metadata, lost leases and changed input/descriptor CAS retain
    durable obligations without applying stale results or advancing progress.
    Acceptance combines absence of redundant work beyond the former daily interval
@@ -2083,7 +2091,7 @@ their cache validity additionally includes display policy/revision.
   and loads each reachable node's adjacency at most once. Existing node/edge,
   distance, query-response and execution bounds govern work; repeated corrections
   do not consume an independent layer allowance. Final atomic persistence must
-  not be cancelled by a competing heartbeat waiting on its own job-row lock.
+  not be canceled by a competing heartbeat waiting on its own job-row lock.
 - For identical input, OSM generations and effective matching parameters,
   diagnostics and production must make equivalent matching decisions and produce
   equivalent covered geometry, accounting for production's per-segment dissolution.
@@ -2255,9 +2263,9 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
 5. Retry creates a new job linked to the failed job.
 6. Owners can view security-redacted logs for their jobs.
 7. Admins can view logs only for admin-owned system jobs.
-8. A coverage Run detail shows routes total, processed, succeeded, failed, cancelled, and superseded, plus each authorized workout route's status, attempt, duration, and safe failure category. Persisted parent lifecycle remains monotonic internally. For the user-facing Task history and detail status, an unfinished Coverage parent is plain yellow `Running` only while it has a running child and plain light-blue `Queued` while it waits for the matcher; polling keeps this scheduler presentation current. No separate Matcher column is shown, and run-detail parent and route badges remain one-word badges. It never shows route coordinates.
+8. A coverage Run detail shows routes total, processed, succeeded, failed, canceled, and superseded, plus each authorized workout route's status, attempt, duration, and safe failure category. Persisted parent lifecycle remains monotonic internally. For the user-facing Task history and detail status, an unfinished Coverage parent is plain yellow `Running` only while it has a running child and plain light-blue `Queued` while it waits for the matcher; polling keeps this scheduler presentation current. No separate Matcher column is shown, and run-detail parent and route badges remain one-word badges. It never shows route coordinates.
 9. Coverage retries form one linear parent chain. Run detail identifies the current attempt and provides ordinal navigation across First, Second, and every subsequent retry through the latest attempt.
-10. Retrying a failed or partially successful coverage parent includes only eligible failed or cancelled routes from its immediately preceding attempt. Successful and superseded routes do not rerun, and a non-latest parent cannot fork the retry chain.
+10. Retrying a failed or partially successful coverage parent includes only eligible failed or canceled routes from its immediately preceding attempt. Successful and superseded routes do not rerun, and a non-latest parent cannot fork the retry chain.
 11. A failed or partially completed Coverage parent displays green **Superseded** when every historically unsuccessful route has proven current Coverage. This is a derived display status, not a rewrite of that attempt's stored execution status, results or timestamps. Individual routes still show the Failed or Canceled badges recorded by that attempt.
 12. Coverage Run detail exposes advisory current retry eligibility and a safe explanation. When nothing remains eligible, Retry is disabled with a reason; fully resolved history explicitly says no action is needed. Current-Coverage links lead to the owned runs providing the route results, separately from retry-ancestry links.
 13. A route has one authoritative current target, but may appear in several historical jobs/chains after genuine input, map-generation or matching-policy changes. Supersession does not authorize fabricated retry links or deletion of history. Incomplete, failed, foreign or unproven replacement work does not qualify for green Superseded presentation.
@@ -2281,7 +2289,7 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
    inactive/unmounted completions cannot redirect or focus another workspace.
 17d. Prepare authoritative menu choices before making the popup visible. Cached
    commands or a loading-only partial menu must not flash during a refresh. Pending
-   preparation can be cancelled by outside interaction, Escape, blur or tab exit;
+   preparation can be canceled by outside interaction, Escape, blur or tab exit;
    a late response cannot reopen it. Freeze prepared choices for that open menu.
 17e. On a requested run change, retain the accepted detail card at full size and
    make it inert until the new complete response is ready, then swap content in
@@ -2337,8 +2345,8 @@ and the [progress architecture](architecture.md#ingest-activity-and-refresh).
 
 ### Validation
 
-- Terminal jobs cannot be cancelled.
-- Only failed or cancelled jobs, or partially successful parents, can be manually
+- Terminal jobs cannot be canceled.
+- Only failed or canceled jobs, or partially successful parents, can be manually
   retried where supported; only the latest job in a retry lineage may create the
   next attempt.
 - Log access follows job ownership.

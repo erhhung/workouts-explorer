@@ -322,7 +322,7 @@ func TestCoverageAcceptanceDeferReconciliation(t *testing.T) {
 	}
 	rows.Close()
 	for _, l := range leases {
-		f.exec(tx, `SELECT app.finish_job($1,$2,$3,'cancelled')`, l.id, l.worker, l.token)
+		f.exec(tx, `SELECT app.finish_job($1,$2,$3,'canceled')`, l.id, l.worker, l.token)
 	}
 	f.commit(tx)
 	tx = f.accountTx(f.ctx, f.adminDB)
@@ -341,7 +341,7 @@ func TestCoverageAcceptanceDeferReconciliation(t *testing.T) {
 	rows.Close()
 	for _, l := range leases {
 		f.exec(tx, `SELECT app.request_job_cancellation($1,$2)`, l.id, uuid.New())
-		f.exec(tx, `SELECT app.finish_job($1,$2,$3,'cancelled')`, l.id, l.worker, l.token)
+		f.exec(tx, `SELECT app.finish_job($1,$2,$3,'canceled')`, l.id, l.worker, l.token)
 	}
 	f.commit(tx)
 }
@@ -1195,7 +1195,7 @@ func TestCoverageAcceptanceGeneralWorker(t *testing.T) {
 			if result.Status == "succeeded" {
 				return
 			}
-			if result.Status == "failed" || result.Status == "cancelled" {
+			if result.Status == "failed" || result.Status == "canceled" {
 				t.Fatalf("synthetic job ended %s", result.Status)
 			}
 			time.Sleep(100 * time.Millisecond)

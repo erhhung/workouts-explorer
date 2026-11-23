@@ -309,7 +309,7 @@ func (r *Runner) executeLogged(ctx context.Context, job claimedJob, execute func
 	} else {
 		terminal = append(terminal, "job_status", outcome.status)
 		if result.ingest != nil && (outcome.status == "succeeded" || outcome.status == "partially_succeeded" ||
-			((outcome.status == "failed" || outcome.status == "cancelled") && result.ingest.hasPartialData())) {
+			((outcome.status == "failed" || outcome.status == "canceled") && result.ingest.hasPartialData())) {
 			terminal = append(terminal, "results", result.ingest)
 		}
 		switch outcome.status {
@@ -329,11 +329,11 @@ func (r *Runner) executeLogged(ctx context.Context, job claimedJob, execute func
 			}
 			terminal = append(terminal, "error", failureErr)
 			r.logger.ErrorContext(ctx, "job processing failed", terminal...)
-		case "cancelled":
+		case "canceled":
 			if executionErr != nil {
 				terminal = append(terminal, "error", executionErr)
 			}
-			r.logger.InfoContext(ctx, "job processing cancelled", terminal...)
+			r.logger.InfoContext(ctx, "job processing canceled", terminal...)
 		default:
 			if executionErr != nil {
 				terminal = append(terminal, "error", executionErr)
@@ -593,7 +593,7 @@ func (r *Runner) executeConnectionCheck(ctx context.Context, job claimedJob) err
 	}
 	if heartbeatErr != nil && !errors.Is(heartbeatErr, context.Canceled) {
 		if errors.Is(heartbeatErr, errCancellationRequested) {
-			_, finishErr := r.finishCancelled(ctx, job)
+			_, finishErr := r.finishCanceled(ctx, job)
 			return finishErr
 		}
 		return heartbeatErr
@@ -664,7 +664,7 @@ func (r *Runner) readSnapshot(ctx context.Context, job claimedJob) (jobSourceSna
 
 func checkLocalConnection(ctx context.Context, keys *sourcecrypto.Keyring, roots []string, accountID, jobID uuid.UUID, envelope []byte) connectionResult {
 	if ctx.Err() != nil {
-		return connectionFailed("connection-check-cancelled", "Source connection check was cancelled.")
+		return connectionFailed("connection-check-canceled", "Source connection check was canceled.")
 	}
 	plaintext, err := keys.Decrypt(sourcecrypto.Context{
 		Purpose: sourcecrypto.JobConfigSnapshot, AccountID: accountID, RecordID: jobID,
@@ -677,7 +677,7 @@ func checkLocalConnection(ctx context.Context, keys *sourcecrypto.Keyring, roots
 		return connectionFailed("source-config-invalid", "Source configuration could not be read.")
 	}
 	if ctx.Err() != nil {
-		return connectionFailed("connection-check-cancelled", "Source connection check was cancelled.")
+		return connectionFailed("connection-check-canceled", "Source connection check was canceled.")
 	}
 	directory, err := sourceconfig.OpenDirectory(config.Path, roots)
 	if err != nil {
@@ -713,11 +713,11 @@ func (r *Runner) heartbeatLoop(ctx context.Context, job claimedJob) error {
 				return errLeaseLost
 			}
 			if isSourceJob(job.kind) {
-				cancelled, err := r.observeIngest(ctx, job)
+				canceled, err := r.observeIngest(ctx, job)
 				if err != nil {
 					return err
 				}
-				if cancelled {
+				if canceled {
 					return errCancellationRequested
 				}
 			}
@@ -762,14 +762,14 @@ func (r *Runner) complete(ctx context.Context, job claimedJob, result connection
 	return finished, nil
 }
 
-func (r *Runner) finishCancelled(ctx context.Context, job claimedJob) (bool, error) {
+func (r *Runner) finishCanceled(ctx context.Context, job claimedJob) (bool, error) {
 	tx, err := beginAccount(ctx, r.db, job.accountID)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback(ctx)
 	var finished bool
-	if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,$2,$3,'cancelled')`, job.id, r.workerID, job.lease).Scan(&finished); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT app.finish_job($1,$2,$3,'canceled')`, job.id, r.workerID, job.lease).Scan(&finished); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

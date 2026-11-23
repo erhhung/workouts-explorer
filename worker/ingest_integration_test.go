@@ -383,7 +383,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		assertTerminalIngest(t, tx, job, "succeeded", "succeeded")
 	})
 
-	t.Run("cancelled terminal log retains partial results", func(t *testing.T) {
+	t.Run("canceled terminal log retains partial results", func(t *testing.T) {
 		root := t.TempDir()
 		fixture := insertIngestSource(t, setupDB, root)
 		jobFixture := enqueueIngestJob(t, setupDB, keys, fixture)
@@ -396,7 +396,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		runner.loadJobLogContext(ctx, &job)
 		err = runner.executeLogged(ctx, job, func(ctx context.Context, job claimedJob) (executionResult, error) {
 			results := ingestResults{FilesProcessed: 1, WorkoutsProcessed: 2, WorkoutsIngested: 1, FailedProcessing: []string{}}
-			_, finishErr := runner.finishCancelled(ctx, job)
+			_, finishErr := runner.finishCanceled(ctx, job)
 			return executionResult{ingest: &results}, finishErr
 		})
 		if err != nil {
@@ -405,7 +405,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		assertIngestLogResults(t, logs.String(), 1, 2, 1, nil)
 		tx := beginWorkerTestAccount(t, setupDB, fixture.accountID)
 		defer tx.Rollback(ctx)
-		assertTerminalIngest(t, tx, jobFixture, "cancelled", "cancelled")
+		assertTerminalIngest(t, tx, jobFixture, "canceled", "canceled")
 	})
 
 	t.Run("reclaimed ingest lease does not log partial results as terminal", func(t *testing.T) {
@@ -436,7 +436,7 @@ func TestRunnerManualIngestPostgreSQL(t *testing.T) {
 		if !strings.Contains(logs.String(), `"msg":"job processing outcome unavailable"`) || strings.Contains(logs.String(), `"results"`) {
 			t.Fatalf("reclaimed ingest lifecycle log is inaccurate: %s", logs.String())
 		}
-		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,$2,$3,'cancelled')`,
+		if !workerCallBool(t, workerDB, fixture.accountID, `SELECT app.finish_job($1,$2,$3,'canceled')`,
 			job.id, replacement.workerID, replacementJob.lease) {
 			t.Fatal("replacement ingest lease cleanup failed")
 		}
@@ -495,7 +495,7 @@ func assertIngestLogResults(t *testing.T, output string, files, processed, inges
 		switch record["msg"] {
 		case "job processing started":
 			started = record
-		case "job processing completed", "job processing failed", "job processing cancelled":
+		case "job processing completed", "job processing failed", "job processing canceled":
 			terminal = record
 		}
 	}

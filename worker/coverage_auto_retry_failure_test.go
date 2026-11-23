@@ -84,10 +84,10 @@ func TestCoverageFailurePermanentPrecedenceAndUnknowns(t *testing.T) {
 	if failure := classifyCoverageFailure(expired, coverageStageEvaluate, coverageDatabaseFailure(&pgconn.PgError{Code: "57014"})); failure.code != "coverage-route-timeout" {
 		t.Fatal("actual operation deadline lost timeout identity")
 	}
-	cancelled, stop := context.WithCancel(context.Background())
+	canceled, stop := context.WithCancel(context.Background())
 	stop()
-	if failure := classifyCoverageFailure(cancelled, coverageStageEvaluate, coverageDatabaseFailure(io.EOF)); failure.code == "coverage-transient-failed" {
-		t.Fatal("cancelled operation became automatically retryable")
+	if failure := classifyCoverageFailure(canceled, coverageStageEvaluate, coverageDatabaseFailure(io.EOF)); failure.code == "coverage-transient-failed" {
+		t.Fatal("canceled operation became automatically retryable")
 	}
 }
 

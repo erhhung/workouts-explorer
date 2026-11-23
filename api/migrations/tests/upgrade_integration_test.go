@@ -472,10 +472,10 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		_ = scheduledTx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	var scheduledCancelled bool
-	if err := scheduledTx.QueryRow(ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, scheduledParent, scheduledRequester).Scan(&scheduledCancelled); err != nil || !scheduledCancelled {
+	var scheduledCanceled bool
+	if err := scheduledTx.QueryRow(ctx, `SELECT app.request_owned_job_cancellation($1,$2)`, scheduledParent, scheduledRequester).Scan(&scheduledCanceled); err != nil || !scheduledCanceled {
 		_ = scheduledTx.Rollback(ctx)
-		t.Fatalf("scheduled down-guard cleanup failed: cancelled=%t err=%v", scheduledCancelled, err)
+		t.Fatalf("scheduled down-guard cleanup failed: canceled=%t err=%v", scheduledCanceled, err)
 	}
 	if err := scheduledTx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -741,11 +741,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 	}
 	var repairedChildren int
 	if err := legacyTx.QueryRowContext(ctx, `SELECT count(*) FROM app.jobs
-		WHERE id IN ($1,$2,$3,$4) AND status='cancelled' AND terminal_at IS NOT NULL
+		WHERE id IN ($1,$2,$3,$4) AND status='canceled' AND terminal_at IS NOT NULL
 		  AND worker_id IS NULL AND lease_token IS NULL AND claimed_at IS NULL
 		  AND heartbeat_at IS NULL AND lease_expires_at IS NULL
 		  AND failure_code='source-snapshot-missing'
-		  AND failure_summary='Job cancelled during schema upgrade because its source snapshot was missing.'`,
+		  AND failure_summary='Job canceled during schema upgrade because its source snapshot was missing.'`,
 		legacyQueuedCheck, legacyRunningCheck, legacyQueuedChild, legacyRunningChild).Scan(&repairedChildren); err != nil {
 		_ = legacyTx.Rollback()
 		t.Fatal(err)
@@ -756,7 +756,7 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = legacyTx.Rollback()
-	if repairedChildren != 4 || parentStatus != "cancelled" {
+	if repairedChildren != 4 || parentStatus != "canceled" {
 		t.Fatalf("legacy orphan repair count=%d parent_status=%s", repairedChildren, parentStatus)
 	}
 
@@ -846,11 +846,11 @@ func TestCleanSchemaV1Upgrade(t *testing.T) {
 		_ = guardTx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	var cancelled bool
+	var canceled bool
 	// Migration 6 has already rolled back while migration 4's active-ingest guard stopped the downgrade.
-	if err := guardTx.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, guardParent, guardRequester).Scan(&cancelled); err != nil || !cancelled {
+	if err := guardTx.QueryRow(ctx, `SELECT app.request_job_cancellation($1,$2)`, guardParent, guardRequester).Scan(&canceled); err != nil || !canceled {
 		_ = guardTx.Rollback(ctx)
-		t.Fatalf("could not clear down-guard fixture: cancelled=%t err=%v", cancelled, err)
+		t.Fatalf("could not clear down-guard fixture: canceled=%t err=%v", canceled, err)
 	}
 	if err := guardTx.Commit(ctx); err != nil {
 		t.Fatal(err)

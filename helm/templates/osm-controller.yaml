@@ -1,0 +1,144 @@
+{{- if .Values.osm.regionUpdates.enabled }}
+{{- $updates := .Values.osm.regionUpdates }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "workouts.fullname" . }}-osm-controller
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "workouts.fullname" . }}-osm-controller
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ include "workouts.fullname" . }}-osm-controller]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "workouts.fullname" . }}-osm-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "workouts.fullname" . }}-osm-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "workouts.fullname" . }}-osm-controller
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "workouts.fullname" . }}-osm-controller
+data:
+  job-template.json: |
+    {{- include "workouts.osmUpdateTemplate" . | fromYaml | toPrettyJson | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workouts.fullname" . }}-osm-controller
+  labels: {{- include "workouts.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: osm-controller}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: osm-controller}
+      annotations:
+        checksum/template: {{ include "workouts.osmUpdateTemplate" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "workouts.fullname" . }}-osm-controller
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: osm-controller
+          image: {{ include "workouts.image" (list . .Values.worker.image) }}
+          command: [/app/osm-controller]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          env:
+            - name: OSM_CONTROLLER_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $updates.controllerDatabaseSecret.name }}, key: {{ $updates.controllerDatabaseSecret.key }}}}
+            - name: OSM_CATALOG_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.osm.catalogRefresh.databaseSecret.name }}, key: {{ .Values.osm.catalogRefresh.databaseSecret.key }}}}
+            - {name: OSM_CONTROLLER_TEMPLATE_PATH, value: /etc/osm-controller/job-template.json}
+            - {name: OSM_CONTROLLER_DEPLOYMENT, value: {{ include "workouts.fullname" . }}-osm-controller}
+            - {name: OSM_UPDATE_CONCURRENCY, value: {{ $updates.concurrency | quote }}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          ports: [{name: http, containerPort: 8082}]
+          readinessProbe: {httpGet: {path: /readyz, port: http}}
+          livenessProbe: {httpGet: {path: /healthz, port: http}}
+          resources: {{- toYaml $updates.controllerResources | nindent 12 }}
+          volumeMounts:
+            - {name: template, mountPath: /etc/osm-controller, readOnly: true}
+            - {name: tls, mountPath: /tls/prod-db, readOnly: true}
+      volumes:
+        - name: template
+          configMap: {name: {{ include "workouts.fullname" . }}-osm-controller}
+        - name: tls
+          secret: {secretName: {{ .Values.worker.databaseTLSSecret }}, defaultMode: 0440}
+{{- end }}
+
+{{- define "workouts.osmUpdateTemplate" -}}
+{{- $updates := .Values.osm.regionUpdates }}
+apiVersion: batch/v1
+kind: Job
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $updates.deadlineSeconds }}
+  ttlSecondsAfterFinished: {{ $updates.ttlSecondsAfterFinished }}
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 180
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $updates.prometheusServiceIP }}
+      hostAliases:
+        - ip: {{ $updates.prometheusServiceIP | quote }}
+          hostnames: [prometheus-stack-prometheus.monitoring.svc.cluster.local]
+      {{- end }}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: osm-update
+          image: {{ include "workouts.image" (list . "workouts-osm") }}
+          command: [/app/osm-update]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          env:
+            - name: OSM_MIGRATION_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $updates.writerDatabaseSecret.name }}, key: {{ $updates.writerDatabaseSecret.key }}}}
+            - name: OSM_EXECUTOR_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $updates.executorDatabaseSecret.name }}, key: {{ $updates.executorDatabaseSecret.key }}}}
+            - {name: OSM_UPDATE_SCRATCH, value: /scratch}
+            - {name: OSM_PIPELINE_ROOT, value: /app/osm}
+            - {name: OSM_MAX_DOWNLOAD_BYTES, value: {{ $updates.maxDownloadBytes | int64 | toString | quote }}}
+            - {name: OSM_PROMETHEUS_URL, value: {{ $updates.prometheusURL | quote }}}
+            - {name: OSM_PROMETHEUS_PVC_TEMPLATE, value: "data-{{ "{{POD}}" }}"}
+            - {name: OSM_PROMETHEUS_MAX_SAMPLE_AGE, value: 2m}
+            - {name: OSM_STORAGE_SETTLE_TIMEOUT, value: 90s}
+            - {name: OSM_LOG_TIMEZONE, value: America/Los_Angeles}
+            - {name: SSL_CERT_FILE, value: /tls/prod-db/ca.crt}
+          resources: {{- toYaml $updates.jobResources | nindent 12 }}
+          volumeMounts:
+            - {name: scratch, mountPath: /scratch}
+            - {name: tls, mountPath: /tls/prod-db, readOnly: true}
+      volumes:
+        - name: scratch
+          emptyDir: {sizeLimit: {{ $updates.scratchSizeLimit }}}
+        - name: tls
+          secret: {secretName: {{ .Values.osm.writerDatabaseTLSSecret }}, defaultMode: 0440}
+{{- end }}

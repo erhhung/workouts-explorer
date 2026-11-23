@@ -322,7 +322,14 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 		Rules:    coverage.ExperimentalRules().WithMinimumTraversalMeters(claim.minimumTraversalMeters),
 		Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: coverage.DefaultRoadGeometryRules(),
 		MovementMode: routepipeline.MovementMode(route.typeKey, route.providerLabel), Limits: routepipeline.DefaultLimits(),
+		RecoverProcessingLimits: claim.pathPolicyVersion == string(coverage.CurrentPathPolicyVersion),
+		MemoizeSnapshot:         claim.pathPolicyVersion == string(coverage.CurrentPathPolicyVersion),
 	})
+	if matchErr == nil && result.Stats.WindowLimitRetries > 0 {
+		r.logger.Info("coverage processing-limit recovery", "job_id", claim.jobID,
+			"window_retries", result.Stats.WindowLimitRetries, "excluded_points", result.Stats.LimitSkippedPoints,
+			"skipped_enhancements", result.Stats.LimitSkippedEnhancements)
+	}
 	r.metrics.matcherDuration.Record(ctx, time.Since(matcherStarted).Seconds())
 	var prepared []routepipeline.PreparedMatch
 	if matchErr == nil {
@@ -494,7 +501,7 @@ func (r *CoverageRunner) handleInterruption(claim coverageClaim, cause error) (b
 	if errors.Is(cause, errCancellationRequested) {
 		ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
-		ok, err := r.accountBool(ctx, claim.accountID, `SELECT app.finish_job($1,$2,$3,'cancelled')`,
+		ok, err := r.accountBool(ctx, claim.accountID, `SELECT app.finish_job($1,$2,$3,'canceled')`,
 			claim.jobID, r.workerID, claim.leaseID)
 		if err != nil {
 			return true, err
@@ -503,7 +510,7 @@ func (r *CoverageRunner) handleInterruption(claim coverageClaim, cause error) (b
 			r.metrics.reject(ctx, "cancel")
 			return true, errLeaseLost
 		}
-		r.metrics.terminal(ctx, "cancelled", "")
+		r.metrics.terminal(ctx, "canceled", "")
 		return true, nil
 	}
 	if errors.Is(cause, errLeaseLost) || errors.Is(cause, context.Canceled) || r.useReadReplicasOnly && errors.Is(cause, context.DeadlineExceeded) {
@@ -530,7 +537,8 @@ func (r *CoverageRunner) claim(ctx context.Context) (coverageClaim, bool, error)
 	}
 	claim.leaseID = lease
 	if len(claim.routeDigest) != 32 || claim.rulesVersion != string(coverage.ExperimentalRulesV1) ||
-		claim.samplingVersion != string(coverage.ExperimentalSamplingV1) || claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82) {
+		claim.samplingVersion != string(coverage.ExperimentalSamplingV1) ||
+		(claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82) && claim.pathPolicyVersion != string(coverage.CurrentPathPolicyVersion)) {
 		return claim, true, errors.New("unsupported coverage claim contract")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(generations))
@@ -553,7 +561,7 @@ func (r *CoverageRunner) loadRoute(ctx context.Context, claim coverageClaim, cla
 		return coverageRoute{}, coverageDatabaseFailure(err)
 	}
 	defer r.rollback(tx)
-	descriptor, err := json.Marshal(productionMatchingDescriptor(claim.minimumTraversalMeters))
+	descriptor, err := json.Marshal(productionMatchingDescriptorForPolicy(claim.minimumTraversalMeters, claim.pathPolicyVersion))
 	if err != nil {
 		return coverageRoute{}, err
 	}
@@ -649,11 +657,11 @@ func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, can
 			controlCtx, stop := context.WithTimeout(ctx, cleanupTimeout)
 			tx, err := r.beginAccount(controlCtx, claim.accountID)
 			var alive bool
-			var cancelled *bool
+			var canceled *bool
 			if err == nil {
 				err = tx.QueryRow(controlCtx, `SELECT app.heartbeat_job($1,$2,$3,$4)`, claim.jobID, r.workerID, claim.leaseID, r.leaseDuration).Scan(&alive)
 				if err == nil && alive {
-					err = tx.QueryRow(controlCtx, `SELECT app.job_cancel_requested($1,$2,$3)`, claim.jobID, r.workerID, claim.leaseID).Scan(&cancelled)
+					err = tx.QueryRow(controlCtx, `SELECT app.job_cancel_requested($1,$2,$3)`, claim.jobID, r.workerID, claim.leaseID).Scan(&canceled)
 				}
 				if err == nil {
 					err = tx.Commit(controlCtx)
@@ -667,9 +675,9 @@ func (r *CoverageRunner) heartbeat(ctx context.Context, claim coverageClaim, can
 			}
 			stop()
 			result := "renewed"
-			if err == nil && (!alive || cancelled == nil) {
+			if err == nil && (!alive || canceled == nil) {
 				result, err = "lost", errLeaseLost
-			} else if err == nil && cancelled != nil && *cancelled {
+			} else if err == nil && canceled != nil && *canceled {
 				err = errCancellationRequested
 			}
 			r.metrics.control(ctx, "heartbeat", result, metricErr)

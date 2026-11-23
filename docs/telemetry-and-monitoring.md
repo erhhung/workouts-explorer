@@ -440,8 +440,8 @@ Counter dimension domains are bounded:
 
 | Counter | Dimensions / Values |
 | --- | --- |
-| Outcomes | `outcome=applied\|no_evidence\|superseded\|failed\|cancelled`; `failure=none\|timeout\|limit\|invalid\|route_read\|persist\|osm\|other` |
-| Controls | `operation=admission\|heartbeat\|release\|rollback`; `result=acquired\|denied\|renewed\|lost\|released\|not_found\|error\|timeout\|cancelled` |
+| Outcomes | `outcome=applied\|no_evidence\|superseded\|failed\|canceled`; `failure=none\|timeout\|limit\|invalid\|route_read\|persist\|osm\|other` |
+| Controls | `operation=admission\|heartbeat\|release\|rollback`; `result=acquired\|denied\|renewed\|lost\|released\|not_found\|error\|timeout\|canceled` |
 | Retry attempts | `kind=recovery\|retry\|timeout_backoff` |
 | Stale rejections | `operation=persist\|fail\|supersede\|cancel` |
 
@@ -484,7 +484,7 @@ then export at the normal thirty-second interval.
 | `pgxpool.acquires` | `pgxpool_acquires_total` | Counter, count | Successful acquires |
 | `pgxpool.acquire_duration` | `pgxpool_acquire_duration_nanoseconds_total` | Counter, ns | Cumulative successful acquire duration |
 | `pgxpool.acquired_connections` | `pgxpool_acquired_connections` | Gauge, connections | In use |
-| `pgxpool.canceled_acquires` | `pgxpool_canceled_acquires_total` | Counter, count | Context-cancelled acquisitions |
+| `pgxpool.canceled_acquires` | `pgxpool_canceled_acquires_total` | Counter, count | Context-canceled acquisitions |
 | `pgxpool.constructing_connections` | `pgxpool_constructing_connections` | Gauge, connections | Being constructed |
 | `pgxpool.empty_acquire` | `pgxpool_empty_acquire_total` | Counter, count | Successful acquisitions that waited on an empty pool |
 | `pgxpool.idle_connections` | `pgxpool_idle_connections` | Gauge, connections | Idle |
@@ -996,7 +996,7 @@ sum by (db_client_connection_pool_name) (pgxpool_max_connections{
   exported_job="workouts-worker"
 })
 
-# Cancelled pool acquires are not failed-job counts.
+# Canceled pool acquires are not failed-job counts.
 sum by (db_client_connection_pool_name) (rate(pgxpool_canceled_acquires_total{
   exported_job="workouts-worker"
 }[5m]))
@@ -1328,7 +1328,7 @@ does not repair the provisioned correlations.
 Use monotonic counters/counts as SLI inputs, not already computed rates or a
 percentile gauge. Latency objectives use the fraction of observations meeting
 a bucket threshold. Outcome counters cannot measure a deadline for work that
-never finishes, and superseded/cancelled/no-evidence need explicit policy.
+never finishes, and superseded/canceled/no-evidence need explicit policy.
 
 ### Operational Note
 

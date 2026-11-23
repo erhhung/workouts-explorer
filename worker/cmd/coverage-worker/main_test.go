@@ -49,7 +49,7 @@ func TestSuperviseCancelsAndJoinsEveryComponent(t *testing.T) {
 						t.Fatalf("cancellation cause=%v, want component failure", cause)
 					}
 				case <-time.After(time.Second):
-					t.Fatal("component was not cancelled")
+					t.Fatal("component was not canceled")
 				}
 			}
 			select {

@@ -413,6 +413,67 @@ func TestNewCoverageStatsPostgreSQL(t *testing.T) {
 			t.Fatalf("Stats created Map capabilities: count=%d err=%v", count, err)
 		}
 	})
+	t.Run("FutureEmptyBucketsAreHiddenButActualFutureWorkoutsRemain", func(t *testing.T) {
+		var today time.Time
+		if err := adminDB.QueryRow(ctx, `SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date`).Scan(&today); err != nil {
+			t.Fatal(err)
+		}
+		read := func(scope generated.StatsReportScope, group string, page, size int) generated.NewCoverageBucketList {
+			path := fmt.Sprintf("/api/stats/report-scopes/%s/new-coverage?generation=%d&groupBy=%s&page=%d&pageSize=%d", scope.Id, scope.DataGeneration, group, page, size)
+			response := routeOwnerRead(handler, path, bearer)
+			var list generated.NewCoverageBucketList
+			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &list) != nil {
+				t.Fatalf("future buckets: %d %s", response.Code, response.Body.String())
+			}
+			return list
+		}
+		annual := create(fmt.Sprintf("%d-01-01", today.Year()), fmt.Sprintf("%d-12-31", today.Year()))
+		months := read(annual, "month", 1, 100)
+		monthStart := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC)
+		check := integrationAccountTransaction(t, adminDB, account)
+		defer check.Rollback(ctx)
+		for _, item := range months.Items {
+			if item.BucketStart.Time.After(monthStart) {
+				var present bool
+				if err := check.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.workouts WHERE account_id=$1 AND local_start_date>=$2::date AND local_start_date<($2::date+interval '1 month'))`, account, item.BucketStart.Time).Scan(&present); err != nil || !present {
+					t.Fatalf("future empty month retained: %s (%v)", item.BucketStart.String(), err)
+				}
+			}
+		}
+		distant := time.Date(today.Year()+5, time.March, 12, 0, 0, 0, 0, time.UTC)
+		empty := create(fmt.Sprintf("%d-01-01", distant.Year()), fmt.Sprintf("%d-12-31", distant.Year()))
+		for _, group := range []string{"month", "year"} {
+			list := read(empty, group, 1, 1)
+			if len(list.Items) != 0 || list.Pagination.TotalItems != 0 {
+				t.Fatalf("future empty %s retained: %+v", group, list)
+			}
+		}
+		tx := integrationAccountTransaction(t, workerDB, account)
+		defer tx.Rollback(ctx)
+		var source uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM app.fence_ingest_job($1,'read-fixture',$2,$3)`, fixture.jobID, fixture.childLease, database.SupportedSchemaVersion).Scan(&source); err != nil {
+			t.Fatal(err)
+		}
+		workout := uuid.Must(uuid.NewV7())
+		if _, err := tx.Exec(ctx, `INSERT INTO app.workouts(id,account_id,source_id,source_file_id,workout_type_id,provider_id,content_sha256,provider_label,started_at,ended_at,local_start_date,provider_duration)
+          VALUES($1,$2,$3,$4,$5,$1::uuid::text,$6,'Running',$7::date+time '08:00' AT TIME ZONE 'UTC',$7::date+time '08:05' AT TIME ZONE 'UTC',$7::date,300)`, workout, account, fixture.sourceID, fixture.fileID, fixture.runningID, fixture.hash[:], distant); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		populated := create(fmt.Sprintf("%d-01-01", distant.Year()), fmt.Sprintf("%d-12-31", distant.Year()))
+		for _, group := range []string{"month", "year"} {
+			list := read(populated, group, 1, 1)
+			if len(list.Items) != 1 || list.Pagination.TotalItems != 1 || list.Items[0].AllTime != 0 || list.Items[0].PastYear != 0 {
+				t.Fatalf("actual future workout without Coverage lost for %s: %+v", group, list)
+			}
+			tail := read(populated, group, 2, 1)
+			if len(tail.Items) != 0 || tail.Pagination.TotalItems != 1 {
+				t.Fatal("future filtering was applied after pagination")
+			}
+		}
+	})
 }
 
 func seedStatsVisits(t *testing.T, ctx context.Context, db *pgxpool.Pool, account uuid.UUID, f workoutReadFixture) {

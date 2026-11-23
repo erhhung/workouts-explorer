@@ -383,7 +383,7 @@ func TestICloudWorkerPostgreSQL(t *testing.T) {
 		if err != nil || replacementJob.id != job.id {
 			t.Fatalf("recover claim=%s err=%v", replacementJob.id, err)
 		}
-		if finished, err := replacement.finishCancelled(ctx, replacementJob); err != nil || !finished {
+		if finished, err := replacement.finishCanceled(ctx, replacementJob); err != nil || !finished {
 			t.Fatalf("fixture cleanup=%t err=%v", finished, err)
 		}
 	})
@@ -459,7 +459,7 @@ func TestICloudWorkerPostgreSQL(t *testing.T) {
 					t.Fatalf("cancellation=%v", err)
 				}
 			case <-time.After(5 * time.Second):
-				t.Fatal("download process group was not cancelled promptly")
+				t.Fatal("download process group was not canceled promptly")
 			}
 			assertEmptyStaging(t, staging)
 			if !databaseCancel {
@@ -472,7 +472,7 @@ func TestICloudWorkerPostgreSQL(t *testing.T) {
 			}
 			tx = beginWorkerTestAccount(t, setupDB, fixture.accountID)
 			defer rollbackICloudTestTx(tx)
-			assertTerminalIngest(t, tx, jobFixture, "cancelled", "cancelled")
+			assertTerminalIngest(t, tx, jobFixture, "canceled", "canceled")
 			assertCountQuery(t, tx, 0, `SELECT count(*) FROM app.ingest_file_slots WHERE job_id=$1`, job.id)
 		})
 	}

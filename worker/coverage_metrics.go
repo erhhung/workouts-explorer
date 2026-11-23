@@ -68,7 +68,7 @@ func (m coverageMetrics) loaded(ctx context.Context, claimedAt, createdAt time.T
 
 func (m coverageMetrics) terminal(ctx context.Context, outcome, code string) {
 	switch outcome {
-	case "applied", "no_evidence", "superseded", "failed", "cancelled":
+	case "applied", "no_evidence", "superseded", "failed", "canceled":
 	default:
 		return
 	}
@@ -102,7 +102,7 @@ func (m coverageMetrics) control(ctx context.Context, operation, result string, 
 		if errors.Is(err, context.DeadlineExceeded) {
 			result = "timeout"
 		} else if errors.Is(err, context.Canceled) {
-			result = "cancelled"
+			result = "canceled"
 		}
 	}
 	m.controls.Add(ctx, 1, metric.WithAttributes(attribute.String("operation", operation), attribute.String("result", result)))

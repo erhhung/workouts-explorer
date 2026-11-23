@@ -214,7 +214,7 @@ func TestCancellationRemovesActiveDownload(t *testing.T) {
 	go func() {
 		path, err := s.Download(ctx, objects[0])
 		if path != "" {
-			result <- errors.New("cancelled download published")
+			result <- errors.New("canceled download published")
 			return
 		}
 		result <- err
@@ -234,7 +234,7 @@ func TestCancellationRemovesActiveDownload(t *testing.T) {
 	}
 	for _, name := range []string{"export.partial", "export.json"} {
 		if _, err := s.root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("cancelled file survived")
+			t.Fatal("canceled file survived")
 		}
 	}
 }
@@ -301,7 +301,7 @@ func TestCancellationTimeoutAndClose(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := os.Lstat(s.dir); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("cancelled job survived Close")
+				t.Fatal("canceled job survived Close")
 			}
 		})
 	}

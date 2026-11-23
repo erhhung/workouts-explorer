@@ -1253,7 +1253,9 @@ describe("Summary", () => {
       );
       fireEvent.pointerMove(card, { clientX: 300 + index, clientY: 400 + index });
       const hint = document.querySelector<HTMLElement>(".aggregate-mode-hint")!;
-      expect(hint).toHaveTextContent("Click to see averages");
+      expect(hint).toHaveTextContent("Click to view averages; press and hold shift");
+      expect(hint).toHaveTextContent("key to hover over averages by workout type");
+      expect(hint.querySelector("br")).not.toBeNull();
       expect(hint.style.left).not.toBe("");
       expect(hint.style.top).not.toBe("");
       if (index === 0)
@@ -1268,7 +1270,7 @@ describe("Summary", () => {
     await waitFor(
       () =>
         expect(document.querySelector(".aggregate-mode-hint")).toHaveTextContent(
-          "Click to see totals",
+          "Click to view totals; press and hold shift",
         ),
       { timeout: 1200 },
     );

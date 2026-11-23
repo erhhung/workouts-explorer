@@ -86,7 +86,7 @@ func newCoveragePipelineFixture(t *testing.T, budget ...time.Duration) (*coverag
 		t.Fatal(err)
 	}
 	f.seedOSM()
-	if _, err := f.osmAdminDB.Exec(ctx, `UPDATE osm_catalog.regions SET configured=true WHERE id=$1`, f.regionID); err != nil {
+	if _, err := f.osmAdminDB.Exec(ctx, `UPDATE osm_catalog.regions SET display_name=display_name WHERE id=$1`, f.regionID); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
@@ -192,7 +192,7 @@ func pipelineParentSizes(t *testing.T, f *coverageIntegrationFixture) []int {
 func pipelineRecoverTerminalRoot(t *testing.T, f *coverageIntegrationFixture, runner *Runner, root uuid.UUID) {
 	t.Helper()
 	assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.jobs root WHERE id=$1
-	 AND status IN ('succeeded','partially_succeeded','failed','cancelled') AND NOT EXISTS
+	 AND status IN ('succeeded','partially_succeeded','failed','canceled') AND NOT EXISTS
 	 (SELECT 1 FROM app.jobs source WHERE source.parent_job_id=root.id AND source.status IN ('queued','running'))`, root)
 	reconciler := NewCoverageReconciler(f.coverageDB, f.osmDB, runner.logger, CoverageReconcilerOptions{})
 	if worked, err := reconciler.RunOnce(f.ctx); err != nil || !worked {
@@ -420,7 +420,7 @@ func TestCoveragePipelineFakeICloudCleanupIntegration(t *testing.T) {
 }
 
 func TestCoveragePipelineTerminalRecoveryIntegration(t *testing.T) {
-	for _, status := range []string{"failed", "cancelled", "succeeded"} {
+	for _, status := range []string{"failed", "canceled", "succeeded"} {
 		t.Run(status, func(t *testing.T) {
 			f, runner, source, keys := newCoveragePipelineFixture(t)
 			if err := ConfigureCoverageBatchSize(f.ctx, f.workerDB, 25); err != nil {
@@ -456,11 +456,11 @@ func TestCoveragePipelineTerminalRecoveryIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertCountQuery(t, f.adminDB, 0, `SELECT count(*) FROM app.jobs WHERE account_id=$1 AND kind='coverage_update_route'`, f.accountID)
-			if status == "cancelled" {
+			if status == "canceled" {
 				if !workerCallBool(t, f.adminDB, f.accountID, `SELECT app.request_job_cancellation($1,$2)`, job.id, uuid.New()) {
 					t.Fatal("request source cancellation")
 				}
-				if finished, err := runner.finishCancelled(f.ctx, job); err != nil || !finished {
+				if finished, err := runner.finishCanceled(f.ctx, job); err != nil || !finished {
 					t.Fatalf("cancel: %v", err)
 				}
 			} else {
@@ -537,7 +537,7 @@ func TestCoveragePipelineMissingMapsAndTransientDeferralIntegration(t *testing.T
 	}
 }
 
-func TestCoveragePipelineDiscardsCancelledAndReclaimedProducerIntegration(t *testing.T) {
+func TestCoveragePipelineDiscardsCanceledAndReclaimedProducerIntegration(t *testing.T) {
 	for _, reclaim := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reclaim=%t", reclaim), func(t *testing.T) {
 			f, runner, source, keys := newCoveragePipelineFixture(t)
@@ -595,7 +595,7 @@ func TestCoveragePipelineDiscardsCancelledAndReclaimedProducerIntegration(t *tes
 			} else {
 				reconciler := NewCoverageReconciler(f.coverageDB, f.osmDB, runner.logger, CoverageReconcilerOptions{})
 				if worked, err := reconciler.RunOnce(f.ctx); err != nil || !worked {
-					t.Fatalf("cancelled producer recovery: worked=%v err=%v", worked, err)
+					t.Fatalf("canceled producer recovery: worked=%v err=%v", worked, err)
 				}
 			}
 			assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.ingest_coverage_handoffs WHERE account_id=$1 AND acknowledged_at IS NOT NULL AND coverage_child_job_id IS NOT NULL`, f.accountID)

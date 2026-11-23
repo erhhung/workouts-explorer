@@ -60,12 +60,12 @@ const ACTIVITY_LABELS: Record<IngestActivity["phase"], string> = {
   updating_time_zones: "Determining and updating workout time zones.",
   cleanup: "Cleaning up temporary files.",
 };
-const RETRYABLE_STATUSES = new Set<JobStatus>(["failed", "cancelled", "partially_succeeded"]);
+const RETRYABLE_STATUSES = new Set<JobStatus>(["failed", "canceled", "partially_succeeded"]);
 const RETRY_EXPLANATIONS = {
   already_current:
     "All unsuccessful routes from this historical run now have current coverage. No action is needed.",
   no_eligible_routes:
-    "This run has no current failed or cancelled route targets eligible for retry. They may have been replaced or may no longer be ready for matching. Review the current runs or refresh the details.",
+    "This run has no current failed or canceled route targets eligible for retry. They may have been replaced or may no longer be ready for matching. Review the current runs or refresh the details.",
   not_latest: "A newer retry exists. Open the latest attempt in this chain.",
   retry_limit: "This run has reached its retry limit. Another retry cannot be created.",
   not_terminal: "This run is still active. Wait for it to finish before retrying.",
@@ -119,7 +119,7 @@ const STATUS_LABELS: Record<JobDisplayStatus, string> = {
   succeeded: "Completed",
   partially_succeeded: "Partially succeeded",
   failed: "Failed",
-  cancelled: "Canceled",
+  canceled: "Canceled",
   superseded: "Superseded",
 };
 const PAGE_SIZE = 25;
@@ -228,7 +228,7 @@ function CoverageResults({ job }: { job: JobDetail }) {
       </div>
       <div>
         <dt>Routes Canceled</dt>
-        <dd>{stats.cancelled}</dd>
+        <dd>{stats.canceled}</dd>
       </div>
       <div>
         <dt>Routes Superseded</dt>
@@ -390,17 +390,17 @@ function Results({
 
 function SyncActivity({
   job,
-  cancelling = false,
+  canceling = false,
   sourceName,
 }: {
   job: JobDetail;
-  cancelling?: boolean;
+  canceling?: boolean;
   sourceName?: string;
 }) {
   const active = ACTIVE_STATUSES.has(job.status);
   const values = job.results ?? job.progress;
   let message: string | undefined;
-  if (active && (cancelling || job.cancelRequested)) message = "Cancelling...";
+  if (active && (canceling || job.cancelRequested)) message = "Canceling...";
   else if (job.status === "succeeded" && (job.displayStatus ?? job.status) === "succeeded")
     message =
       (values.workoutsCreated ?? 0) + (values.workoutsUpdated ?? 0) === 0
@@ -431,7 +431,7 @@ function SyncActivity({
   const activity = job.activity;
   const routes =
     job.status === "running" &&
-    !cancelling &&
+    !canceling &&
     !job.cancelRequested &&
     (activity?.phase === "analyzing_imported_routes" ||
       activity?.phase === "analyzing_existing_routes") &&
@@ -875,6 +875,7 @@ function ArtifactDisclosure({
               {kind === "files" && (
                 <label className="artifact-failures-filter">
                   <input
+                    className="inline-checkbox"
                     type="checkbox"
                     checked={failuresOnly}
                     disabled={filesFailed === 0}
@@ -1039,7 +1040,7 @@ function JobHistoryActions({
                 disabled={busy || action.job.cancelRequested}
                 onSelect={() => onCancel(action.job)}
               >
-                {action.job.cancelRequested ? "Cancelling..." : "Cancel run"}
+                {action.job.cancelRequested ? "Canceling..." : "Cancel run"}
               </DropdownMenu.Item>
             )}
             {action?.policy.retry && (
@@ -1221,7 +1222,7 @@ function JobDetailCard({
       ) : (
         !deletion && <Results progress={job.progress} results={job.results} status={job.status} />
       )}
-      {!coverage && !deletion && <SyncActivity job={job} cancelling={busy === "cancel"} />}
+      {!coverage && !deletion && <SyncActivity job={job} canceling={busy === "cancel"} />}
       {job.failureSummary && (
         <p className="failure-copy">
           <strong>{superseded ? "Historical run issue:" : "Run issue:"}</strong>{" "}
@@ -1301,7 +1302,7 @@ function JobDetailCard({
                           <tr key={`${generation.regionId}-${generation.generation}`}>
                             <td>{generation.regionId}</td>
                             <td className={generation.latest ? "is-latest" : undefined}>
-                              {generation.generation}
+                              {generation.regionalGeneration ?? "\u2014"}
                             </td>
                           </tr>
                         ))}
@@ -1328,7 +1329,9 @@ function JobDetailCard({
               )}
               {coverage ? (
                 <p className="sync-no-data">
-                  {child.coverageRoute?.resultOutcome?.replace("_", " ") ??
+                  {child.coverageRoute?.resultOutcome
+                    ?.replaceAll("_", " ")
+                    .replace(/^./, (letter) => letter.toUpperCase()) ??
                     (ACTIVE_STATUSES.has(child.status) ? "Processing" : "No result")}
                   {child.coverageRoute?.durationMilliseconds != null
                     ? ` / ${child.coverageRoute.durationMilliseconds.toLocaleString()} ms`
@@ -1345,7 +1348,7 @@ function JobDetailCard({
                 <Results progress={child.progress} results={child.results} status={child.status} />
               )}
               {!coverage && !deletion && (
-                <SyncActivity job={child} cancelling={busy === "cancel" || job.cancelRequested} />
+                <SyncActivity job={child} canceling={busy === "cancel" || job.cancelRequested} />
               )}
               {child.failureSummary && <p className="failure-copy">{child.failureSummary}</p>}
             </article>
@@ -1361,7 +1364,7 @@ function JobDetailCard({
               disabled={commandPending || busy !== null || job.cancelRequested}
               onClick={onCancel}
             >
-              {busy === "cancel" || job.cancelRequested ? "Cancelling..." : "Cancel run"}
+              {busy === "cancel" || job.cancelRequested ? "Canceling..." : "Cancel run"}
             </button>
           )}
           {policy.retry && (

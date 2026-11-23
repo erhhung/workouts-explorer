@@ -170,7 +170,7 @@ $function$;
 -- +goose StatementEnd
 
 -- Shared only by fixed definer functions. Locks follow account -> source ->
--- parent -> child, including tombstones so cancelled checks can finish cleanup.
+-- parent -> child, including tombstones so canceled checks can finish cleanup.
 -- +goose StatementBegin
 CREATE FUNCTION app.lock_source_job_for_credentials(target_job_id uuid, claiming_worker text, current_lease_token uuid)
 RETURNS TABLE(source_id uuid, snapshot_generation bigint, current_generation bigint,
@@ -284,7 +284,7 @@ BEGIN
                 job_id = EXCLUDED.job_id, message = EXCLUDED.message, updated_at = transaction_timestamp();
         END IF;
     END IF;
-    terminal_status := CASE WHEN fence.cancellation_pending THEN 'cancelled' WHEN result_status = 'connected' THEN 'succeeded' ELSE 'failed' END;
+    terminal_status := CASE WHEN fence.cancellation_pending THEN 'canceled' WHEN result_status = 'connected' THEN 'succeeded' ELSE 'failed' END;
     finished := app.finish_job(target_job_id, claiming_worker, current_lease_token, terminal_status,
         CASE WHEN terminal_status = 'failed' THEN status_code_value END,
         CASE WHEN terminal_status = 'failed' THEN status_summary_value END);

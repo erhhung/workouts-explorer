@@ -630,16 +630,16 @@ DECLARE
     notification_message text;
 BEGIN
     IF NEW.parent_job_id IS NOT NULL OR NEW.kind NOT IN ('manual_ingest', 'scheduled_ingest') OR
-       NEW.status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OR
-       OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OR
-       (NEW.kind = 'scheduled_ingest' AND NEW.status IN ('succeeded', 'cancelled')) THEN
+       NEW.status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') OR
+       OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') OR
+       (NEW.kind = 'scheduled_ingest' AND NEW.status IN ('succeeded', 'canceled')) THEN
         RETURN NEW;
     END IF;
     SELECT severity, title, message INTO notification_severity, notification_title, notification_message FROM (VALUES
         ('succeeded', 'info', 'Data sync completed', 'Your requested data sync completed successfully.'),
         ('partially_succeeded', 'warning', 'Data sync partially completed', 'Data sync completed, but one or more sources did not finish.'),
         ('failed', 'error', 'Data sync failed', 'Data sync could not be completed. You can retry the unsuccessful sources.'),
-        ('cancelled', 'info', 'Data sync cancelled', 'Your requested data sync was cancelled.')
+        ('canceled', 'info', 'Data sync canceled', 'Your requested data sync was canceled.')
     ) policy(status, severity, title, message) WHERE status = NEW.status;
     INSERT INTO app.notifications(id, account_id, type, severity, condition_key, subject_type, subject_id, job_id, title, message)
     VALUES(gen_random_uuid(), NEW.account_id, 'ingest-terminal', notification_severity, 'job:' || NEW.id::text,
@@ -1331,7 +1331,7 @@ SET
                    (jsonb_typeof(field.value) <> 'string' OR field.value #>> '{}' NOT IN ('discover', 'import', 'persist', 'finalize')))
                OR (field.key = 'reason' AND
                    (jsonb_typeof(field.value) <> 'string' OR field.value #>> '{}' NOT IN
-                    ('cancelled', 'source-unavailable', 'invalid-data', 'read-failed', 'write-failed')))
+                    ('canceled', 'source-unavailable', 'invalid-data', 'read-failed', 'write-failed')))
        )
 $function$;
 

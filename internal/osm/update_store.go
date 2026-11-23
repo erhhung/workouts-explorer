@@ -13,13 +13,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PostgreSQLUpdateStore struct{ Pool *pgxpool.Pool }
+type PostgreSQLUpdateStore struct {
+	Pool         *pgxpool.Pool
+	ControlJobID string
+	WaitForLock  bool
+}
+
+func (s PostgreSQLUpdateStore) PromotedGenerationNumber(ctx context.Context, buildID int64, region string) (int64, error) {
+	var number int64
+	err := s.Pool.QueryRow(ctx, `SELECT `+regionalGenerationSQL+` FROM osm_catalog.generations g WHERE g.id=$1 AND g.region_id=$2 AND g.promoted_at IS NOT NULL`, buildID, region).Scan(&number)
+	return number, err
+}
 
 type GenerationStatus struct {
 	Found             bool             `json:"found"`
-	NextGenerationID  int64            `json:"nextGenerationId"`
+	NextGenerationID  int64            `json:"nextBuildId"`
 	DerivationVersion int              `json:"derivationVersion"`
-	GenerationID      int64            `json:"generationId,omitempty"`
+	GenerationID      int64            `json:"buildId,omitempty"`
+	Generation        *int64           `json:"generation,omitempty"`
 	RegionID          string           `json:"regionId,omitempty"`
 	State             string           `json:"state,omitempty"`
 	SchemaName        string           `json:"schemaName,omitempty"`
@@ -50,20 +61,56 @@ type GenerationBlock struct {
 	ClearedBy         string     `json:"clearedBy,omitempty"`
 }
 
+func (s PostgreSQLUpdateStore) VerifyWriterPrimary(ctx context.Context) error {
+	var writable bool
+	if err := s.Pool.QueryRow(ctx, `SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean`).Scan(&writable); err != nil {
+		return err
+	}
+	if !writable {
+		return errors.New("OSM writer is not a writable PostgreSQL primary")
+	}
+	return nil
+}
+
 func (s PostgreSQLUpdateStore) LockUpdater(ctx context.Context) (func(), error) {
 	connection, err := s.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
 	release := func() { connection.Release() }
+	if s.WaitForLock {
+		if _, err := connection.Exec(ctx, `SET application_name='workouts-osm-lock-wait'`); err != nil {
+			release()
+			return nil, err
+		}
+	}
 	var locked bool
 	if err := connection.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended('workouts-osm-updater',0))`).Scan(&locked); err != nil {
 		release()
 		return nil, err
 	}
+	for !locked && s.WaitForLock {
+		select {
+		case <-ctx.Done():
+			release()
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+		if err := connection.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended('workouts-osm-updater',0))`).Scan(&locked); err != nil {
+			release()
+			return nil, err
+		}
+	}
 	if !locked {
 		release()
 		return nil, errors.New("another OSM updater owns the database-wide advisory lock")
+	}
+	if s.WaitForLock {
+		if _, err := connection.Exec(ctx, `SET application_name='workouts-osm-update'`); err != nil {
+			_ = connection.Conn().Close(ctx)
+			release()
+			return nil, err
+		}
 	}
 	unlock := func() {
 		_, _ = connection.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('workouts-osm-updater',0))`)
@@ -149,11 +196,12 @@ func (s PostgreSQLUpdateStore) Resume(ctx context.Context, id int64, regionID st
 		return Generation{}, nil, fmt.Errorf("generation %d is operator-blocked; run unblock before resuming", id)
 	}
 	var generation Generation
-	err := s.Pool.QueryRow(ctx, `SELECT id,region_id,schema_name::text,source_url FROM osm_catalog.generations
-		WHERE id=$1 AND region_id=$2 AND state IN ('building','validating') AND importer_version=$3 AND derivation_version=$4
-		AND osmium_version=$5 AND osm2pgsql_version=$6 AND source_sha256 IS NOT NULL AND source_header_timestamp IS NOT NULL
-		AND EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name=generations.schema_name::text)`,
-		id, regionID, ImporterVersion, DerivationVersion, versions.Osmium, versions.Osm2pgsql).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL)
+	err := s.Pool.QueryRow(ctx, `SELECT candidate.id,candidate.region_id,candidate.schema_name::text,candidate.source_url,region.generation_high_watermark+1
+        FROM osm_catalog.generations candidate JOIN osm_catalog.regions region ON region.id=candidate.region_id
+		WHERE candidate.id=$1 AND candidate.region_id=$2 AND candidate.state IN ('building','validating') AND candidate.importer_version=$3 AND candidate.derivation_version=$4
+		AND candidate.osmium_version=$5 AND candidate.osm2pgsql_version=$6 AND candidate.source_sha256 IS NOT NULL AND candidate.source_header_timestamp IS NOT NULL
+		AND EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name=candidate.schema_name::text)`,
+		id, regionID, ImporterVersion, DerivationVersion, versions.Osmium, versions.Osm2pgsql).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration)
 	if err != nil {
 		return Generation{}, nil, fmt.Errorf("generation %d is not resumable: %w", id, err)
 	}
@@ -251,6 +299,13 @@ func (s PostgreSQLUpdateStore) Status(ctx context.Context, generationID int64, r
 		return status, err
 	}
 	status.Found = true
+	if status.State == "active" || status.State == "retired" {
+		number, err := s.PromotedGenerationNumber(ctx, status.GenerationID, status.RegionID)
+		if err != nil {
+			return status, err
+		}
+		status.Generation = &number
+	}
 	var stage GenerationStage
 	err := s.Pool.QueryRow(ctx, `SELECT stage,state,batch_count,rows_processed,cursor,checkpointed_at,coalesce(failure_summary,'')
 		FROM osm_catalog.generation_stages WHERE generation_id=$1 ORDER BY stage_order DESC LIMIT 1`, status.GenerationID).
@@ -287,10 +342,10 @@ func (s PostgreSQLUpdateStore) Abort(ctx context.Context, generationID int64, re
 	var schema string
 	if err := tx.QueryRow(ctx, `SELECT schema_name::text FROM osm_catalog.generations
 		WHERE id=$1 AND region_id=$2 AND state IN ('building','validating','evaluating') FOR UPDATE`, generationID, regionID).Scan(&schema); err != nil {
-		return fmt.Errorf("generation %d cannot be aborted: %w", generationID, err)
+		return fmt.Errorf("processing attempt %d cannot be aborted: %w", generationID, err)
 	}
 	if schema != "osm_build_"+strconv.FormatInt(generationID, 10) {
-		return errors.New("generation build schema does not match its ID")
+		return errors.New("temporary schema does not match its processing attempt ID")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE osm_catalog.generations SET state='failed',failure_summary=$2 WHERE id=$1`, generationID, safeFailure(errors.New(reason))); err != nil {
 		return err
@@ -379,19 +434,19 @@ func (s PostgreSQLUpdateStore) Reserve(ctx context.Context, regionID string, ver
 	var generation Generation
 	err = tx.QueryRow(ctx, `
 		WITH region AS (
-			SELECT id,source_url FROM osm_catalog.regions WHERE id=$1 AND configured FOR SHARE
+			SELECT id,source_url,generation_high_watermark+1 AS next_generation FROM osm_catalog.regions WHERE id=$1 AND catalog_available FOR SHARE
 		), allocated AS (
 			SELECT nextval(pg_get_serial_sequence('osm_catalog.generations','id')) AS id
 		)
 		INSERT INTO osm_catalog.generations(
 			id,region_id,state,schema_name,source_url,osmium_version,osm2pgsql_version,
-			importer_version,derivation_version
+			importer_version,derivation_version,control_job_id
 		) OVERRIDING SYSTEM VALUE
 		SELECT allocated.id,region.id,'building',('osm_build_'||allocated.id)::name,
-			region.source_url,$2,$3,$4,$5 FROM region CROSS JOIN allocated
-		RETURNING id,region_id,schema_name::text,source_url`, regionID, versions.Osmium,
-		versions.Osm2pgsql, ImporterVersion, DerivationVersion).Scan(
-		&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL)
+			region.source_url,$2,$3,$4,$5,NULLIF($6,'')::uuid FROM region CROSS JOIN allocated
+		RETURNING id,region_id,schema_name::text,source_url,(SELECT next_generation FROM region)`, regionID, versions.Osmium,
+		versions.Osm2pgsql, ImporterVersion, DerivationVersion, s.ControlJobID).Scan(
+		&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -412,7 +467,7 @@ func (s PostgreSQLUpdateStore) ReserveEvaluation(ctx context.Context, regionID s
 	defer tx.Rollback(ctx)
 	var generation Generation
 	err = tx.QueryRow(ctx, `WITH region AS (
-		SELECT id,source_url FROM osm_catalog.regions WHERE id=$1 AND configured FOR SHARE
+		SELECT id,source_url FROM osm_catalog.regions WHERE id=$1 AND catalog_available FOR SHARE
 	), allocated AS (SELECT nextval(pg_get_serial_sequence('osm_catalog.generations','id')) id)
 	INSERT INTO osm_catalog.generations(id,region_id,state,schema_name,source_url,osmium_version,osm2pgsql_version,importer_version,derivation_version)
 	OVERRIDING SYSTEM VALUE SELECT allocated.id,region.id,'evaluating',('osm_build_'||allocated.id)::name,
@@ -432,7 +487,7 @@ func (s PostgreSQLUpdateStore) ReserveEvaluation(ctx context.Context, regionID s
 }
 
 func (s PostgreSQLUpdateStore) RecordDownload(ctx context.Context, id int64, result DownloadResult, timestamp time.Time) error {
-	command, err := s.Pool.Exec(ctx, `UPDATE osm_catalog.generations SET downloaded_bytes=$2,source_sha256=$3,source_header_timestamp=$4 WHERE id=$1 AND state='building'`, id, result.Bytes, result.SHA256, timestamp)
+	command, err := s.Pool.Exec(ctx, `UPDATE osm_catalog.generations SET downloaded_bytes=$2,source_sha256=$3,source_header_timestamp=$4,downloaded_at=clock_timestamp() WHERE id=$1 AND state='building'`, id, result.Bytes, result.SHA256, timestamp)
 	if err == nil && command.RowsAffected() != 1 {
 		err = fmt.Errorf("generation %d is not building", id)
 	}
@@ -460,18 +515,22 @@ func (s PostgreSQLUpdateStore) Fail(ctx context.Context, generation Generation, 
 func (s PostgreSQLUpdateStore) DropBuildSchema(ctx context.Context, schema string) error {
 	suffix := strings.TrimPrefix(schema, "osm_build_")
 	if suffix == schema {
-		return errors.New("invalid build schema")
+		return errors.New("invalid temporary processing schema")
 	}
 	id, err := strconv.ParseInt(suffix, 10, 64)
 	if err != nil || id < 1 || strconv.FormatInt(id, 10) != suffix {
-		return errors.New("invalid build schema")
+		return errors.New("invalid temporary processing schema")
 	}
 	_, err = s.Pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	return err
 }
 
 func (s PostgreSQLUpdateStore) ProcessStorageGC(ctx context.Context) error {
-	rows, err := s.Pool.Query(ctx, `SELECT id,object_kind,schema_name::text,coalesce(object_name::text,'') FROM osm_catalog.storage_gc WHERE state IN ('queued','dropping','failed') ORDER BY id`)
+	return s.processStorageGC(ctx, nil)
+}
+
+func (s PostgreSQLUpdateStore) processStorageGC(ctx context.Context, region *string) error {
+	rows, err := s.Pool.Query(ctx, `SELECT id,object_kind,schema_name::text,coalesce(object_name::text,'') FROM osm_catalog.storage_gc WHERE state IN ('queued','dropping','failed') AND ($1::text IS NULL OR region_id=$1) ORDER BY id`, region)
 	if err != nil {
 		return err
 	}

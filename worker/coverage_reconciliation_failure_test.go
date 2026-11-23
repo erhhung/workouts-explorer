@@ -43,6 +43,6 @@ func TestReconciliationDefersOnlyTypedRouteFailures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if got := deferredRouteResolutionReason(ctx, &osm.RouteRegionResolutionError{Err: context.DeadlineExceeded, DeadlineExceeded: true}); got != "" {
-		t.Fatal("cancelled parent deferred a route")
+		t.Fatal("canceled parent deferred a route")
 	}
 }

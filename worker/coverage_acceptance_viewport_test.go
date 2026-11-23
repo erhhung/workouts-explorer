@@ -418,7 +418,7 @@ func viewportBurst(ctx context.Context, client *http.Client, token, source strin
 
 func viewportErrorClass(err error) string {
 	if errors.Is(err, context.Canceled) {
-		return "cancelled"
+		return "canceled"
 	}
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout() {

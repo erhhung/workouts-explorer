@@ -34,10 +34,10 @@ func canonicalDisplayFunctions(source string) [][]string {
 }
 
 func TestCanonicalCoverageDisplayReadinessComposition(t *testing.T) {
-	if SupportedSchemaVersion != 32 {
-		t.Fatalf("supported schema=%d, want 32", SupportedSchemaVersion)
+	if SupportedSchemaVersion != 33 {
+		t.Fatalf("supported schema=%d, want 33", SupportedSchemaVersion)
 	}
-	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
+	want := "SELECT (" + runtimeReadinessSQL + ") AND (" + runtimeDeferredReadinessSQL + ") AND (" + runtimeCohortReadinessSQL + ") AND (" + runtimeCoverageDisplayReadinessSQL + ") AND (" + runtimeCanonicalCoverageDisplayReadinessSQL + ") AND (" + runtimeIngestPhaseReadinessSQL + ") AND (" + runtimeTileReadinessSQL + ") AND (" + runtimeTileLODReadinessSQL + ") AND (" + runtimeCoverageMetadataReadinessSQL + ") AND (" + runtimeSourceCheckReadinessSQL + ") AND (" + runtimeAccountDeletionReadinessSQL + ") AND (" + runtimeOSMCatalogReadinessSQL + ") AND (" + runtimeRouteGapReadinessSQL + ")"
 	if runtimeFullReadinessSQL != want || !strings.Contains(runtimeCanonicalCoverageDisplayReadinessSQL, "SELECT $1 < 30 OR (") {
 		t.Fatal("Ready must compose all previous contracts and the version-gated canonical contract")
 	}
@@ -124,8 +124,8 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	fingerprints := regexp.MustCompile(`(?s)\('app\.([a-z_]+)\([^']*\)'.*?,'([a-f0-9]{32})'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(functions) != 28 || len(fingerprints) != len(functions) {
-		t.Fatalf("want 28 protected canonical functions including Stats/detail/MVT/focus in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
+	if len(functions) != 29 || len(fingerprints) != len(functions) {
+		t.Fatalf("want 29 protected canonical functions including display currentness in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
 	}
 	for _, function := range functions {
 		t.Run(function[1], func(t *testing.T) {
@@ -211,8 +211,8 @@ func TestCanonicalCoverageDisplayReadinessPhysicalColumns(t *testing.T) {
 
 func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 	tuples := regexp.MustCompile(`(?s)\('app\.(\w+)\(([^']*)\)','(sql|plpgsql)','([isv])',(true|false),(true|false),'([su])',(true|false),(\d+),\s*'([^']*)',\s*ARRAY\[([^]]*)\],(true|false),(true|false),'[a-f0-9]{32}'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(tuples) != 28 {
-		t.Fatalf("want 28 complete function attribute tuples, got %d", len(tuples))
+	if len(tuples) != 29 {
+		t.Fatalf("want 29 complete function attribute tuples, got %d", len(tuples))
 	}
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	tile, err := migrations.Files.ReadFile("031_tile_rendering.sql")
@@ -279,7 +279,7 @@ func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 		if workMem := regexp.MustCompile(`SET work_mem = '([^']+)'`).FindStringSubmatch(header); len(workMem) == 2 {
 			config += ",'work_mem=" + workMem[1] + "'"
 		}
-		api := function[1] == "prepare_coverage_display_context" || strings.HasPrefix(function[1], "map_selection_coverage_") ||
+		api := function[1] == "coverage_display_target_current" || function[1] == "prepare_coverage_display_context" || strings.HasPrefix(function[1], "map_selection_coverage_") ||
 			strings.HasPrefix(function[1], "stats_") && function[1] != "stats_report_scope" && function[1] != "stats_report_authorized_context"
 		want := []string{strings.Join(types, ","), language[1], volatility,
 			fmt.Sprint(strings.Contains(header, "SECURITY DEFINER")), fmt.Sprint(strings.Contains(header, "STRICT")),

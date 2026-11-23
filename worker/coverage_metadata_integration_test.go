@@ -27,7 +27,7 @@ func TestCoverageMetadataObservationMonotonicIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	heads, _ := json.Marshal(catalog.ActiveGenerations)
-	configured, _ := json.Marshal(catalog.ConfiguredRegions)
+	configured, _ := json.Marshal(catalog.ActiveRegions)
 	descriptor, _ := json.Marshal(productionMatchingDescriptor(6))
 	state := func() string {
 		t.Helper()
@@ -297,16 +297,21 @@ func TestCoverageMetadataPreparedTailIsQueueOnlyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	cursor := uuid.New()
-	if _, err := f.adminDB.Exec(f.ctx, `UPDATE app.coverage_reconciliation_accounts SET cursor_workout_id=$2,next_scan_at='infinity',
-		queue_retry_at=clock_timestamp()+interval '1 day' WHERE account_id=$1`, f.accountID, cursor); err != nil {
-		t.Fatal(err)
+	// An underfull source-owned cohort need not create an account reconciliation
+	// row. Establish the existing idle checkpoint this wake test intends to protect.
+	if result, err := f.adminDB.Exec(f.ctx, `INSERT INTO app.coverage_reconciliation_accounts
+		(account_id,desired_revision,completed_revision,active_revision,cursor_workout_id,next_scan_at,queue_retry_at)
+		SELECT $1,GREATEST(desired_revision,1),GREATEST(desired_revision,1),GREATEST(desired_revision,1),$2,'infinity',clock_timestamp()+interval '1 day'
+		FROM app.coverage_reconciliation_state WHERE singleton
+		ON CONFLICT(account_id) DO UPDATE SET cursor_workout_id=$2,next_scan_at='infinity',queue_retry_at=clock_timestamp()+interval '1 day'`, f.accountID, cursor); err != nil || result.RowsAffected() != 1 {
+		t.Fatal("missing reconciliation cursor fixture", err, result.RowsAffected())
 	}
 	if finished, err := producer.finishJob(f.ctx, job, "succeeded", nil); err != nil || !finished {
 		t.Fatalf("finish: %v", err)
 	}
 	claim, found, err := r.claim(f.ctx)
 	if err != nil || !found || claim.scanRequired || claim.cursor == nil || *claim.cursor != cursor {
-		t.Fatalf("terminal wake reset campaign or inherited backoff: claim=%+v found=%t err=%v", claim, found, err)
+		t.Fatalf("terminal wake reset campaign or inherited backoff: account=%s cursor=%s claim=%+v found=%t err=%v", f.accountID, cursor, claim, found, err)
 	}
 	if err := r.process(f.ctx, claim); err != nil {
 		t.Fatal(err)
@@ -375,7 +380,7 @@ func TestCoverageMetadataOldProducerContractRejectedIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	heads, _ := json.Marshal(catalog.ActiveGenerations)
-	configured, _ := json.Marshal(catalog.ConfiguredRegions)
+	configured, _ := json.Marshal(catalog.ActiveRegions)
 	newDescriptor := productionMatchingDescriptor(5)
 	newDescriptor.Contract = "coverage-production-v2"
 	descriptor, _ := json.Marshal(newDescriptor)

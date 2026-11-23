@@ -99,7 +99,7 @@ func (r *Runner) closeICloudSource(remote *rclonesource.Source) error {
 
 // Only the serial runner calls this, with no active CLI or staged file. Keep
 // pinned handles until cleanup succeeds, and cover orphan files on its private
-// root as well. A failure prevents even cancelled jobs from being claimed.
+// root as well. A failure prevents even canceled jobs from being claimed.
 func (r *Runner) recoverICloudStaging() error {
 	if !r.stagingDirty.Load() {
 		return nil

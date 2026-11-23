@@ -21,7 +21,7 @@ const notificationSelect = `SELECT n.id,n.type,n.severity,n.state,n.subject_type
 				SELECT 1 FROM app.source_files file WHERE file.job_id=child.id
 				AND file.account_id=child.account_id AND file.state='failed')),false)
 		FROM app.jobs child WHERE child.parent_job_id=j.id AND child.account_id=j.account_id
-		AND child.status IN ('failed','cancelled'))
+		AND child.status IN ('failed','canceled'))
 	ELSE false END
 	FROM selected_notifications n LEFT JOIN app.jobs j ON j.id=n.job_id AND j.account_id=n.account_id
 		AND n.type='ingest-terminal' AND j.parent_job_id IS NULL AND j.kind IN ('manual_ingest','scheduled_ingest')

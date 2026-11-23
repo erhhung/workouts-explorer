@@ -8,7 +8,7 @@ import (
 
 const (
 	MinimumSchemaVersion   = 10
-	SupportedSchemaVersion = 10
+	SupportedSchemaVersion = 11
 )
 
 func Ready(ctx context.Context, pool *pgxpool.Pool) bool {
@@ -35,7 +35,7 @@ const osmReadinessSQL = `
 		       WHERE singleton AND revision >= 1 AND octet_length(fingerprint) = 32
 		         AND octet_length(selection_fingerprint) = 32
 		         AND jsonb_typeof(active_generations) = 'object'
-		         AND jsonb_typeof(configured_regions) = 'array'
+		         AND jsonb_typeof(active_regions) = 'array'
 		   )
 		   AND (SELECT count(*) = 2 FROM pg_attribute
 		       WHERE attrelid = to_regclass('osm_catalog.regions')

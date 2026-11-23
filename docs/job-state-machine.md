@@ -89,7 +89,7 @@ choose the least-recently-served active parent, then its oldest eligible child.
 | `succeeded` | Yes | Completed successfully, including a no-data result |
 | `partially_succeeded` | Yes | Stored parent outcome: mixed results; ingest requires at least one imported or updated workout |
 | `failed` | Yes | Work failed; unsuccessful ingest has zero imported and zero updated workouts |
-| `cancelled` | Yes | Cancelled before completion, with no successful parent child |
+| `canceled` | Yes | Canceled before completion, with no successful parent child |
 
 Cancellation intent is stored separately as `cancel_requested_at` and
 `cancel_requested_by`. It is not a status because a running job remains owned by
@@ -101,20 +101,20 @@ Allowed status transitions are:
 
 ```text
 queued  -> running
-queued  -> cancelled
+queued  -> canceled
 running -> queued
 running -> succeeded
 running -> failed
-running -> cancelled
+running -> canceled
 ```
 
 `running -> queued` occurs only when an expired lease is recovered. Recovery
 clears the old lease, records a safe event, and leaves the job eligible for a new
 claim. A status never leaves a terminal state.
 
-A queued cancellation atomically becomes `cancelled`. A running cancellation
+A queued cancellation atomically becomes `canceled`. A running cancellation
 sets cancellation intent; the lease holder performs cleanup and then records
-`cancelled`. Completion may win a race with cancellation only if the domain
+`canceled`. Completion may win a race with cancellation only if the domain
 transaction committed before cancellation was observed. Every terminal path
 records one terminal timestamp and performs required snapshot/staging cleanup.
 
@@ -131,10 +131,10 @@ derived from child statuses:
   mixed;
 - `succeeded` when every child succeeded;
 - `partially_succeeded` when at least one child succeeded and another failed or
-  was cancelled;
-- `cancelled` when no child succeeded and every child was cancelled; and
+  was canceled;
+- `canceled` when no child succeeded and every child was canceled; and
 - `failed` when no child succeeded and at least one child failed, including a
-  mix of failed and cancelled children.
+  mix of failed and canceled children.
 
 Combined migration 029 uses workout-based partial success, matching the result
 counts shown to the owner. An unsuccessful ingest parent is
@@ -142,7 +142,7 @@ counts shown to the owner. An unsuccessful ingest parent is
 (`workouts_created`) or updated workout. Otherwise it is `failed`, even if some
 files succeeded, were skipped, or contained only unchanged workouts. All-success
 empty runs remain `succeeded`. This never makes an active run terminal early or
-changes an all-cancelled run to partial success.
+changes an all-canceled run to partial success.
 
 Failed source children stay failed for selective source retry and do not advance
 source-success freshness. Existing terminal execution history is immutable, but
@@ -174,7 +174,7 @@ whose target was superseded before commit also terminates successfully with a
 `superseded` result because it did not fail matching; desired-state advancement
 ensures a successor parent covers the new revision. One failed route does not
 cancel siblings or prevent another route child from being claimed. A mixture of
-succeeded and failed or cancelled routes therefore makes the coverage parent
+succeeded and failed or canceled routes therefore makes the coverage parent
 `partially_succeeded`; all failed routes make it `failed`.
 
 ## Ingest Activity Phases (Requires 29)
@@ -353,7 +353,7 @@ lock before account/workout/focused-membership FKs.
   validates 1-1000, and requires **B new eligible matching targets** during active
   ingest, globally across regions in the ingest-root/source-sibling scope.
   Normal/adopted obligations share this cohort. Missing maps, current/live,
-  unchanged authoritative failed/cancelled targets and deduplication do not count.
+  unchanged authoritative failed/canceled targets and deduplication do not count.
   A 63-eligible-route file may seal 25/25 during ingest; 13 await terminal recovery.
 - Metadata-only `read_ingest_coverage_batch` precedes one-route-at-a-time
   `read_ingest_coverage_route_snapshot`. Protected STABLE snapshots bind event,
@@ -386,23 +386,33 @@ lock before account/workout/focused-membership FKs.
   the actual child-region union, including retries. `regionId`/`targetGeneration`
   remain representative anchors, not complete matching scope. Each child retains
   its full generation vector; per-route claim fencing and admission are unchanged.
-- Retry construction copies only eligible failed/cancelled predecessors and
+- Data Sync displays each target's exact regional promotion number, projected as
+  `regionalGeneration` from retained OSM promotion metadata. The persisted/API
+  `generation` remains the immutable build identity for provenance and freshness.
+  Historical and deleted-region targets keep their original promotion number;
+  missing metadata displays unavailable, never the latest number or an internal
+  build ID. Preserve the existing region/number columns, spacing and bold/latest
+  treatment; do not add a colon before the number.
+- Coverage Route runs outcome text uses sentence capitalization, for example
+  `Applied / 16,487 ms`, `No evidence / 250 ms`, `No result / 29,854 ms` and
+  `Processing`. This is display formatting; stored outcome values are unchanged.
+- Retry construction copies only eligible failed/canceled predecessors and
   inherits capacity and lineage. Spare retry capacity never accepts normal work:
   three eligible failures under B=25 stay a three-route retry; 25 fresh routes
   use a normal root. Unchanged normal/current/failed work cannot reset budgets.
   Only a distinct proven adoption event can force otherwise identical work.
 - Leased account reconciliation recovers committed obligations from succeeded,
-  failed or cancelled ingest roots without reopening them. A **final partial**
+  failed or canceled ingest roots without reopening them. A **final partial**
   seals only after the visible ingest root and **all source siblings are terminal**
   and due preparation is exhausted, never at active EOF. Crashed active claims
   first follow normal lease recovery; active underfull/deferred cohorts stay
-  protected. Committed-data obligations from failed/cancelled roots are legitimate;
-  normal metadata updates/deduplication never resurrect cancelled route targets
+  protected. Committed-data obligations from failed/canceled roots are legitimate;
+  normal metadata updates/deduplication never resurrect canceled route targets
   or erase cancellation footprints. Existing Coverage jobs need their own manual
   cancellation; stopping ingest does not erase derived obligations.
 - Only typed verified transient readiness errors persist a one-hour deferral
   without acknowledgement. The classifier examines all wrapped/joined branches
-  with a 256-node bound; permanent/unknown/cancelled branches defeat incidental
+  with a 256-node bound; permanent/unknown/canceled branches defeat incidental
   deadline/network evidence and surface safely. No-GPS adoption acknowledges
   without a job. Normal missing maps acknowledge readiness without matching;
   adopted missing maps retain a deferred force request.
@@ -457,7 +467,7 @@ matching-job retry authority. See [failure semantics and readiness](decisions/01
 
 Reconciliation backoff, bounded contention retry and readiness deferral are not
 alternative route-job retry authorization. Identical authoritative failed or
-cancelled targets retain their 027/028 guards, cancellation footprints and consumed
+canceled targets retain their 027/028 guards, cancellation footprints and consumed
 budgets, including cleared-pointer cases. Existing live children are not duplicated;
 old in-flight descriptors are never rewritten to newer settings. Genuine changed
 targets and distinct proven adoption events retain their existing eligibility.
@@ -473,16 +483,16 @@ User-requested retry creates a new job linked by `retry_of_job_id`; it never
 returns a terminal row to `queued`.
 
 - Retrying an ingest parent creates a new parent containing only failed or
-  cancelled source children that support retry.
+  canceled source children that support retry.
 - Retrying a failed or partially successful coverage parent creates a new parent
-  containing only failed or cancelled workout routes that remain eligible. Each
+  containing only failed or canceled workout routes that remain eligible. Each
   new child captures the route's current revision and current matcher/OSM target
   rather than replaying stale immutable matcher input.
 - Retried source children snapshot the current validated source configuration.
 - Immutable deletion targets are copied from the failed deletion job.
 - Retry history remains navigable in both directions.
 
-Only terminal failed or cancelled work, or a partially successful parent, may be
+Only terminal failed or canceled work, or a partially successful parent, may be
 retried, and authorization is rechecked when the retry is requested.
 
 Retry lineage is linear and capped by the existing maximum ordinal. A retry may
@@ -493,7 +503,7 @@ and receives the next ordinal (`Second`, `Third`, and so on). Parent Run detail
 exposes the complete ordered lineage from first through latest and permits direct
 navigation by ordinal, with the current parent identified.
 
-Each retried coverage-route child points to the corresponding failed or cancelled
+Each retried coverage-route child points to the corresponding failed or canceled
 child from the preceding parent and inherits its new parent's retry root and
 ordinal. Successful and superseded route children have no child in a selective
 retry. This preserves per-workout attempt history while parent navigation remains
@@ -537,7 +547,7 @@ metadata limitations and the bounded-only control.
 
 Stored execution state describes the attempt that actually ran. A Coverage
 parent stored as `failed` or `partially_succeeded` has the derived display status
-`superseded` only when all historically failed/cancelled route children have
+`superseded` only when all historically failed/canceled route children have
 proven current Coverage. The parent/history label is green **Superseded**; each
 child retains its actual Failed/Canceled badge. No status, result, progress,
 timestamp or retry edge is rewritten to achieve that presentation.
@@ -548,7 +558,7 @@ matcher contract and visible non-deleting workout/source. A replacement may
 have a different input/generation/policy from the historical attempt. Its parent
 may still be running or partially successful because other routes have not
 finished. Missing or mismatched proof, or a replacement route still queued,
-running or failed, does not permit green Superseded presentation. Cancelled or
+running or failed, does not permit green Superseded presentation. Canceled or
 successful parent execution states are not relabeled by this rule.
 
 One current target per route does not mean one historical chain forever.
@@ -592,7 +602,7 @@ jobs. The existing overall retry ordinal limit remains in force.
   siblings**, including permanent, unknown and null-code failures, provided all
   failed descriptors remain valid. It must not retry only the transient subset
   and strand other failures behind a non-latest parent. Successful/superseded
-  siblings never rerun; cancelled siblings are not automatically revived.
+  siblings never rerun; canceled siblings are not automatically revived.
   A parent with only permanent/unknown failures stops automatically. Latest-only
   authority and non-forking construction remain required for every descriptor.
 - A 30-second cooldown, parent/target revalidation and durable root budget prevent
@@ -604,7 +614,7 @@ jobs. The existing overall retry ordinal limit remains in force.
   automatic third with the default count of one.
 - Historical terminal failures are not enrolled by migration. Only new failure
   transitions enter the policy. Ordinary reconciliation cannot silently create
-  fresh roots for identical failed/cancelled targets; genuine desired-work changes
+  fresh roots for identical failed/canceled targets; genuine desired-work changes
   and fresh adoption events remain distinct work.
 - Automatic retries use the same timeout-counter logic as manual retry. Only a
   timeout predecessor advances the 6/10/15-minute budget; other causes do not.
@@ -736,12 +746,12 @@ A route result commits only when the live route-child lease, target route revisi
 matcher version, and target OSM generation vector still match. A mismatch records
 or preserves stale state, produces a `superseded` child result, and cannot replace
 current coverage. A terminal child updates parent counters transactionally:
-routes total, processed, succeeded, failed, cancelled, and superseded. The parent
+routes total, processed, succeeded, failed, canceled, and superseded. The parent
 also retains bounded safe failure categories; route coordinates never appear in
 job parameters, events, summaries, or logs.
 
 `routes_processed` counts succeeded, failed, and superseded children; routes
-cancelled before completion remain separate. `routes_succeeded` includes valid
+canceled before completion remain separate. `routes_succeeded` includes valid
 no-evidence results but excludes superseded work. The parent Run detail may list
 each child by workout ID plus the already-authorized workout date/type summary,
 status, attempt, duration, and safe failure category, but never raw route points or
@@ -750,7 +760,7 @@ coordinates.
 A parent advances the applied account/region OSM generation, desired work
 revision, and matcher version only when every route child applied successfully,
 none was superseded, and desired state still equals the parent target. A parent
-with superseded, failed, or cancelled children records its attempted target but
+with superseded, failed, or canceled children records its attempted target but
 does not advance the fully applied watermark. Failed-target state suppresses
 automatic hot-loop retries; a user retry or a newer desired work/OSM target creates
 the next parent. If desired state advanced during execution, terminalization
@@ -803,10 +813,10 @@ complete row is deleted in the same transaction as every terminal outcome.
 - A stale route revision, matcher version, or OSM generation cannot replace current
   coverage.
 - Coverage parent status and route counters remain correct for every combination
-  of succeeded, failed, cancelled, and superseded children.
+  of succeeded, failed, canceled, and superseded children.
 - Coverage retry lineages are linear, ordinal navigation reaches every parent from
   first through latest, and each retry contains only the preceding parent's
-  eligible failed or cancelled route children.
+  eligible failed or canceled route children.
 
 Migration and integration tests exercise every legal transition, reject illegal
 transitions, simulate lease expiry and stale-worker fencing, race equivalent job

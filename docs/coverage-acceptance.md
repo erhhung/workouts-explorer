@@ -92,7 +92,7 @@ profile quotas:
 
 - An invented 40x40 grid near longitude/latitude (0,0), spacing 0.001 degrees,
   coordinates 0 through 0.039, 1,600 graph nodes, 3,120 physical edges and 80 named
-  roads. Canonical generation 1 belongs to `fixture:dense`.
+  roads. Canonical fixture build ID 1 belongs to `fixture:dense`.
 - `deploy/acceptance/graph.sql` defines the graph; `basemap.cjs` defines its public
   visual context. The Go grid helpers check the same topology. Changing topology
   requires coordinated edits to those files, not merely a profile JSON edit.

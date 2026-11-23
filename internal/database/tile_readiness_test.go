@@ -11,7 +11,7 @@ import (
 )
 
 func TestTileReadinessContract(t *testing.T) {
-	if SupportedSchemaVersion != 32 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileReadinessSQL+")") {
+	if SupportedSchemaVersion != 33 || !strings.Contains(runtimeFullReadinessSQL, " AND ("+runtimeTileReadinessSQL+")") {
 		t.Fatal("current runtime must enforce the tile contract")
 	}
 	for _, required := range []string{"SELECT $1 < 31 OR (", "minimum_runtime_version >= 31", "migration_baseline = 27",

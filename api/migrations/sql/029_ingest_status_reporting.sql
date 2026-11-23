@@ -11,16 +11,16 @@ DECLARE
     file_only_failure boolean;
 BEGIN
     IF NEW.parent_job_id IS NOT NULL OR NEW.kind NOT IN ('manual_ingest', 'scheduled_ingest') OR
-       NEW.status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OR
-       OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OR
-       (NEW.kind = 'scheduled_ingest' AND NEW.status IN ('succeeded', 'cancelled')) THEN
+       NEW.status NOT IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') OR
+       OLD.status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') OR
+       (NEW.kind = 'scheduled_ingest' AND NEW.status IN ('succeeded', 'canceled')) THEN
         RETURN NEW;
     END IF;
     SELECT severity, title, message INTO notification_severity, notification_title, notification_message FROM (VALUES
         ('succeeded', 'info', 'Data sync completed', 'Your requested data sync completed successfully.'),
         ('partially_succeeded', 'warning', 'Data sync partially completed', 'Data sync partially completed. One or more sources could not finish. Successfully imported data has been kept. You can retry this sync.'),
         ('failed', 'error', 'Data sync failed', 'Data sync could not be completed. Check the source details, then retry this sync.'),
-        ('cancelled', 'info', 'Data sync cancelled', 'Your requested data sync was cancelled.')
+        ('canceled', 'info', 'Data sync canceled', 'Your requested data sync was canceled.')
     ) policy(status, severity, title, message) WHERE status = NEW.status;
     IF NEW.status IN ('partially_succeeded', 'failed') THEN
         SELECT COALESCE(bool_and(
@@ -30,7 +30,7 @@ BEGIN
                   AND file.account_id = child.account_id AND file.state = 'failed'
             )), false) INTO file_only_failure
           FROM app.jobs child WHERE child.parent_job_id = NEW.id AND child.account_id = NEW.account_id
-           AND child.status IN ('failed', 'cancelled');
+           AND child.status IN ('failed', 'canceled');
         IF file_only_failure THEN
             notification_message := CASE WHEN NEW.status = 'partially_succeeded' THEN
                 'Data sync partially completed. Some source files could not be processed. Successfully imported data has been kept. You can retry this sync.'
@@ -118,7 +118,7 @@ BEGIN
                    WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                      AND contextual.code = 'coverage-route-start-context')) OR
                (log.code IN ('coverage-route-applied', 'coverage-route-no-evidence', 'coverage-route-failed',
-               'coverage-route-superseded', 'coverage-route-cancelled') AND EXISTS (
+               'coverage-route-superseded', 'coverage-route-canceled') AND EXISTS (
                    SELECT 1 FROM app.job_logs contextual
                    WHERE contextual.account_id = log.account_id AND contextual.job_id = log.job_id
                      AND contextual.code = 'coverage-route-result-context')));
@@ -162,17 +162,17 @@ GRANT EXECUTE ON FUNCTION app.ingest_outcome_status(text, text, bigint, bigint) 
 CREATE OR REPLACE FUNCTION app.derive_parent_status (parent_id uuid) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, app AS $function$
 DECLARE derived_status text; parent_kind text; parent_status text; child_count integer; queued_count integer; running_count integer;
-DECLARE succeeded_count integer; failed_count integer; cancelled_count integer; superseded_count integer;
+DECLARE succeeded_count integer; failed_count integer; canceled_count integer; superseded_count integer;
 DECLARE ingest_has_workouts boolean := false;
 BEGIN
     SELECT kind, status INTO parent_kind, parent_status FROM app.jobs
      WHERE id = parent_id AND account_id = app.current_account_id() FOR UPDATE;
     IF NOT FOUND OR parent_kind NOT IN ('manual_ingest', 'scheduled_ingest', 'coverage_update') THEN RETURN; END IF;
     IF parent_kind IN ('manual_ingest', 'scheduled_ingest') AND
-       parent_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN RETURN; END IF;
+       parent_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN RETURN; END IF;
     SELECT count( * ), count( * ) FILTER (WHERE status = 'queued'), count( * ) FILTER (WHERE status = 'running'),
-           count( * ) FILTER (WHERE status = 'succeeded'), count( * ) FILTER (WHERE status = 'failed'), count( * ) FILTER (WHERE status = 'cancelled')
-      INTO child_count, queued_count, running_count, succeeded_count, failed_count, cancelled_count
+           count( * ) FILTER (WHERE status = 'succeeded'), count( * ) FILTER (WHERE status = 'failed'), count( * ) FILTER (WHERE status = 'canceled')
+      INTO child_count, queued_count, running_count, succeeded_count, failed_count, canceled_count
       FROM app.jobs WHERE parent_job_id = parent_id AND account_id = app.current_account_id();
     IF child_count = 0 THEN RETURN; END IF;
     IF parent_kind = 'coverage_update' THEN
@@ -180,13 +180,13 @@ BEGIN
           JOIN app.coverage_route_job_contexts context ON context.job_id = child.id AND context.account_id = child.account_id
          WHERE child.parent_job_id = parent_id AND child.account_id = app.current_account_id()
            AND child.status = 'succeeded' AND context.result_outcome = 'superseded';
-        INSERT INTO app.coverage_job_progress(job_id, account_id, routes_total, routes_processed, routes_succeeded, routes_failed, routes_cancelled, routes_superseded)
+        INSERT INTO app.coverage_job_progress(job_id, account_id, routes_total, routes_processed, routes_succeeded, routes_failed, routes_canceled, routes_superseded)
         VALUES(parent_id, app.current_account_id(), child_count, succeeded_count + failed_count,
-            succeeded_count - superseded_count, failed_count, cancelled_count, superseded_count)
+            succeeded_count - superseded_count, failed_count, canceled_count, superseded_count)
         ON CONFLICT (job_id) DO UPDATE SET routes_total = EXCLUDED.routes_total, routes_processed = EXCLUDED.routes_processed,
             routes_succeeded = EXCLUDED.routes_succeeded, routes_failed = EXCLUDED.routes_failed,
-            routes_cancelled = EXCLUDED.routes_cancelled, routes_superseded = EXCLUDED.routes_superseded, updated_at = transaction_timestamp();
-    ELSIF failed_count + cancelled_count > 0 AND queued_count = 0 AND running_count = 0 THEN
+            routes_canceled = EXCLUDED.routes_canceled, routes_superseded = EXCLUDED.routes_superseded, updated_at = transaction_timestamp();
+    ELSIF failed_count + canceled_count > 0 AND queued_count = 0 AND running_count = 0 THEN
         SELECT COALESCE(sum(progress.workouts_created), 0) > 0 OR COALESCE(sum(progress.workouts_updated), 0) > 0
           INTO ingest_has_workouts
           FROM app.jobs child
@@ -199,18 +199,18 @@ BEGIN
         WHEN running_count > 0 OR (queued_count > 0 AND queued_count < child_count) THEN 'running'
         WHEN succeeded_count = child_count THEN 'succeeded'
         WHEN parent_kind = 'coverage_update' THEN CASE
-            WHEN succeeded_count > 0 AND failed_count + cancelled_count > 0 THEN 'partially_succeeded'
-            WHEN succeeded_count = 0 AND cancelled_count = child_count THEN 'cancelled'
+            WHEN succeeded_count > 0 AND failed_count + canceled_count > 0 THEN 'partially_succeeded'
+            WHEN succeeded_count = 0 AND canceled_count = child_count THEN 'canceled'
             ELSE 'failed' END
-        WHEN cancelled_count = child_count THEN 'cancelled'
-        WHEN failed_count + cancelled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'
+        WHEN canceled_count = child_count THEN 'canceled'
+        WHEN failed_count + canceled_count > 0 AND ingest_has_workouts THEN 'partially_succeeded'
         ELSE 'failed' END;
     PERFORM set_config('app.job_transition', 'derive_parent', true);
     UPDATE app.jobs SET status = derived_status,
         progress_current = CASE WHEN parent_kind = 'coverage_update' THEN succeeded_count + failed_count ELSE progress_current END,
         progress_total = CASE WHEN parent_kind = 'coverage_update' THEN child_count ELSE progress_total END,
         started_at = CASE WHEN derived_status = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
-        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END
+        terminal_at = CASE WHEN derived_status IN ('succeeded', 'partially_succeeded', 'failed', 'canceled') THEN now() ELSE NULL END
      WHERE id = parent_id AND account_id = app.current_account_id() AND status IS DISTINCT FROM derived_status;
 END;
 $function$;
@@ -239,7 +239,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
         WHERE job.account_id = app.current_account_id() AND job.parent_job_id IS NULL
           AND job.kind IN ('manual_ingest','scheduled_ingest','workout_deletion','coverage_update')
           AND page_size BETWEEN 1 AND 100 AND page_offset >= 0 AND max_ordinal BETWEEN 1 AND 100
-          AND COALESCE(status_filter,'') IN ('','queued','running','succeeded','partially_succeeded','failed','cancelled','superseded')
+          AND COALESCE(status_filter,'') IN ('','queued','running','succeeded','partially_succeeded','failed','canceled','superseded')
           AND COALESCE(operation_filter,'') IN ('','manual_sync','automated_sync','workout_deletion','coverage_update')
           AND (COALESCE(status_filter,'') NOT IN ('failed','partially_succeeded','superseded') OR job.status = status_filter
               OR (job.kind IN ('manual_ingest','scheduled_ingest') AND job.status IN ('failed','partially_succeeded')
@@ -726,7 +726,7 @@ CREATE TRIGGER ingest_coverage_handoffs_reconciliation_wake AFTER INSERT ON app.
     FOR EACH ROW EXECUTE FUNCTION app.wake_coverage_reconciliation();
 CREATE TRIGGER jobs_ingest_reconciliation_wake AFTER UPDATE OF status ON app.jobs FOR EACH ROW
     WHEN (NEW.kind IN ('manual_ingest','scheduled_ingest','manual_ingest_source','scheduled_ingest_source')
-        AND NEW.status IN ('succeeded','partially_succeeded','failed','cancelled') AND NEW.status IS DISTINCT FROM OLD.status)
+        AND NEW.status IN ('succeeded','partially_succeeded','failed','canceled') AND NEW.status IS DISTINCT FROM OLD.status)
     EXECUTE FUNCTION app.wake_coverage_reconciliation();
 
 -- No account FK here: point writes must not acquire an account-generation lock.
