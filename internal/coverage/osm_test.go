@@ -372,9 +372,9 @@ func TestRoadAccessoriesAreTransitionEligibleButNotCandidateEligible(t *testing.
 	}
 }
 
-func TestFootAndBicycleExcludeParkingAndDrivewayServiceRoads(t *testing.T) {
+func TestLegacyFootAndBicycleExcludeParkingAndDrivewayServiceRoads(t *testing.T) {
 	for _, mode := range []MovementMode{MovementFoot, MovementBicycle} {
-		policy := experimentalPathPolicy(mode)
+		policy := pathPolicyForVersion(mode,ExperimentalPathPolicyV83)
 		for _, service := range []string{"parking_aisle", "driveway", "drive-through", "emergency_access"} {
 			tags := []byte(`{"service":"` + service + `"}`)
 			transitionExpected := service == "driveway" || service == "parking_aisle"

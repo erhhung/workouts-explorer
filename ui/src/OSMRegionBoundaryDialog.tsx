@@ -293,13 +293,13 @@ export function OSMRegionBoundaryDialog({
                 aria-label={`${region?.name ?? "Region"} boundary map`}
               />
               {!visible && !boundary.isError && !mapError && family && (
-                <p className="osm-regions-boundary-state" role="status">
+                <p className="osm-regions-boundary-state content-state-message" role="status">
                   Loading region map...
                 </p>
               )}
               {(boundary.isError || mapError || !family) && (
                 <div className="osm-regions-boundary-state" role="alert">
-                  <p>
+                  <p className="content-state-message">
                     {!family
                       ? "The Streets base map is not configured."
                       : "Region boundaries could not be loaded."}

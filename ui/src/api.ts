@@ -21,6 +21,7 @@ export interface Session {
 }
 
 export interface Preferences {
+  dateFormat?: "mm/dd/yyyy" | "dd/mm/yyyy" | "yyyy/mm/dd";
   theme: "light" | "dark";
   units: "imperial" | "metric";
   timezone: string;
@@ -582,6 +583,7 @@ export interface Source {
   displayName: string;
   type: SourceType;
   autoSyncEnabled: boolean;
+  autoSyncTime?: string;
   status: SourceStatus;
   generation: number;
   config: { version: 1; path: string; clientId?: string };

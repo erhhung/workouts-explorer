@@ -58,6 +58,10 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   section heading elsewhere; report titles should use the existing title hierarchy.
 - Consume shared semantic theme and spacing tokens. Avoid isolated hardcoded
   colors, font stacks, offsets or dimensions copied from a single screenshot.
+- Success text in every table uses `--status-success-text`, shared with the Map's
+  circular route-start marker (`--map-route-start-color`). Filled badges retain
+  their separate `--status-success` green and white `--status-success-ink` text.
+  Reserve `--route-ride` for the activity palette rather than status text.
 - Every tab's content area uses the same shared background composition: the dim
   grid, theme-aware gradient and stepped corner contours. Reuse `ContentBackground`
   with the shared `content-background` surface instead of creating tab-specific
@@ -105,8 +109,9 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   [no-flash pending-state contract](functional-spec.md#feature-navigate-table-pages).
 - Disabled controls and menu items use the blocked circle-slash cursor. Keep them
   under the pointer so that cursor remains visible, while native/widget disabled
-  semantics prevent activation. Disabled danger actions use the shared unavailable
-  color rather than their enabled danger treatment.
+  semantics prevent activation. Disabled styled selects do not show hover-accent
+  borders, including during a temporary busy state. Disabled danger actions use
+  the shared unavailable color rather than their enabled danger treatment.
 - Make the padded target clickable, not just a small number or a short label.
   Use a real button for an action and a real link for navigation, with an
   accessible name and a single intentional keyboard stop.
@@ -176,6 +181,16 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   for fresh focus-navigation intent. Standalone modifiers do not imply focus loss
   or dismiss an otherwise valid hover preview.
 
+## Centered State Messages
+
+- Centered table, chart and section state messages share `content-state-message`
+  and `--table-message-font-size` (1.1rem), matching Regions. This applies to
+  loading, empty, unavailable/error and other primary text in that same reserved
+  position. Preserve the owner's height/scroll capacity and recovery controls;
+  use the centered modifier for bare section paragraphs. Inline field-value
+  placeholders, progress notices and descriptive secondary copy keep their own
+  established typography.
+
 ## Tooltips And Overflow
 
 - **Never use native HTML tooltips.** Use the application's styled tooltip
@@ -188,6 +203,11 @@ block of markup/CSS. Keep product state separate from headless widget internals.
 - Respect active interaction: pressing a control dismisses or suppresses its
   pending help where established, and opening its menu must not reveal a delayed
   tooltip over that menu. Cancel pending reveals on dismissal or context changes.
+- Dismissible message frames share `dismissible-notice`: equal top/right/bottom
+  inset around the action, with enough vertical room for the existing button.
+  Reuse it for Summary, sync feedback/notifications, Stats and shell notices;
+  map dismissal controls use the same inset without negative margins. Preserve
+  expanded notification-detail behavior and theme-specific warning/error colors.
 - Clip long table values to their padded column width with an ellipsis. Show the
   full value only when it is actually truncated, using the shared styled help.
   Recheck after resizing, font loading or text changes without replacing focus.
@@ -196,10 +216,18 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   intercept pointers or cover controls/attribution needed for interaction.
 - Keep one active tooltip owner. Scroll, resize, blur or an anchor moving away
   must remove obsolete help; a superseded tooltip cannot reopen itself.
-- Opt-in cursor help shares the established pointer offset, follows with bounded
-  frame work and keeps its original reveal delay while moving. Preserve element
-  anchoring for keyboard focus. Do not add an auto-hide timer unless the specific
-  feature requires one.
+- Pointer-triggered styled help uses both cursor coordinates, with its lower edge
+  **1.5rem above the cursor**, not above the hovered element. Map canvas popups
+  with a bottom-center triangle use a separate **1rem** offset in every mode.
+  Shared tooltips portal by default. Cursor-following help updates with bounded
+  frame work; fixed help
+  captures the cursor position at reveal and remains there. Keep the original
+  reveal delay while moving, viewport-edge protection and element anchoring for
+  keyboard focus. Do not add an auto-hide timer unless the feature requires one.
+- Source-field label help and Automated sync reuse `InfoTip`: the muted circled
+  question mark keeps its help cursor, shared delayed pointer-following portal,
+  element anchoring for keyboard focus and immediate click-to-pin behavior.
+  Preserve explicit line breaks and dismiss pinned help before its owning editor.
 
 ## Tables, Sorting And Pagination
 
@@ -306,6 +334,9 @@ block of markup/CSS. Keep product state separate from headless widget internals.
   compact and grows/shrinks to the visible Add/Edit fields, with standard divider
   insets and body scrolling only at the viewport cap. This exception does not
   revise frozen sizing for Preferences, report dialogs or other workflows.
+- Apply settled-dialog size alignment during ResizeObserver delivery, before
+  paint. Expanding/collapsing content must not paint at the previous top coordinate
+  and recenter a frame later; retain device-pixel-snapped layout coordinates.
 - Keep headers and controls usable with long content. Assign scroll ownership
   deliberately, avoid unwanted nested scrolling, and prevent sticky headers from
   obscuring borders or focused content.

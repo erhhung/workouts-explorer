@@ -44,16 +44,39 @@ function surface() {
     frames,
     disconnect,
     flush,
-    resize(x: number, y: number) {
+    resize(x: number, y: number, flushFrame = true) {
       left = x;
       top = y;
       resize?.([], {} as ResizeObserver);
-      flush();
+      if (flushFrame) flush();
     },
   };
 }
 
 describe("shared dialog pixel alignment", () => {
+  it("centers resized content in the resize delivery instead of a later animation frame", () => {
+    vi.stubGlobal("devicePixelRatio", 1);
+    vi.stubGlobal("innerWidth", 1200);
+    vi.stubGlobal("innerHeight", 900);
+    const { dialog, resize, frames } = surface();
+    dialog.className = "dialog-content";
+    let height = 300;
+    vi.mocked(dialog.getBoundingClientRect).mockImplementation(
+      () => ({ width: 600, height }) as DOMRect,
+    );
+    const dispose = installDialogPixelAlignment(dialog);
+    expect(dialog.style.getPropertyValue("--dialog-pixel-top")).toBe("300px");
+    height = 700;
+    resize(0, 0, false);
+    expect(dialog.style.getPropertyValue("--dialog-pixel-top")).toBe("100px");
+    expect(frames.size).toBe(0);
+    height = 300;
+    resize(0, 0, false);
+    expect(dialog.style.getPropertyValue("--dialog-pixel-top")).toBe("300px");
+    dispose();
+    dialog.remove();
+  });
+
   it("centers settled modals with layout coordinates rather than another compositor translation", () => {
     vi.stubGlobal("devicePixelRatio", 1);
     vi.stubGlobal("innerWidth", 1440);

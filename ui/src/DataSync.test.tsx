@@ -203,7 +203,7 @@ function json(body: unknown, status = 200) {
 }
 
 function calendarLabel(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(
     new Date(`${value}T00:00:00Z`),
   );
 }
@@ -303,6 +303,342 @@ function artifactPage(
 }
 
 describe("DataSync", () => {
+  describe("task history bulk actions", () => {
+    const run = (letter: string, overrides: Partial<JobDetail> = {}): JobDetail => ({
+      ...detail,
+      id: letter.repeat(32),
+      operation: "coverage_update",
+      routeStats: coverageFailure.routeStats,
+      retryEligibility: { ...eligibleCoverageRetry },
+      ...overrides,
+    });
+    const page = (items: JobDetail[]): JobList => ({
+      items,
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalItems: items.length,
+        totalPages: items.length ? 1 : 0,
+      },
+    });
+    const open = async () => {
+      const trigger = (await screen.findAllByRole("button", { name: "Task history actions" }))[0];
+      await userEvent.click(trigger);
+      await screen.findByRole("menuitem", { name: "Retry (partially) failed jobs" });
+      return trigger;
+    };
+    test("retries only shown failed/partial jobs with the same current row-action eligibility", async () => {
+      const items = [
+        run("A", { status: "failed" }),
+        run("B"),
+        run("C", { status: "canceled" }),
+        run("D", { status: "succeeded" }),
+        run("E", { operation: "workout_deletion", status: "failed" }),
+        run("F", { latestRetryJobId: "newer" }),
+        run("G", { displayStatus: "superseded" }),
+        run("H", {
+          retryEligibility: {
+            ...eligibleCoverageRetry,
+            canRetry: false,
+            reason: "already_current",
+          },
+        }),
+        run("I", { parentJobId: "parent" }),
+        run("J", { status: "running", cancelRequested: true }),
+      ];
+      const byId = new Map(items.map((item) => [item.id, item])),
+        posts: string[] = [];
+      const fetch = baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        if (init?.method === "POST") {
+          posts.push(path);
+          expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-data-sync");
+          const id = path.split("/")[3];
+          byId.set(id, { ...byId.get(id)!, latestRetryJobId: "accepted" });
+          return json({ jobId: "R".repeat(32), status: "queued", reused: false });
+        }
+        const job = byId.get(path.split("/")[3]);
+        if (job) return json(job);
+      });
+      const { navigate } = renderDataSync();
+      await open();
+      expect(screen.getByRole("menuitem", { name: "Cancel running/queued jobs" })).toHaveAttribute(
+        "data-disabled",
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+          "Retry all accepted.",
+        ),
+      );
+      expect(posts.sort()).toEqual([
+        `/api/jobs/${items[0].id}/retry`,
+        `/api/jobs/${items[1].id}/retry`,
+      ]);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(fetch.mock.calls.some(([path]) => String(path) === `/api/jobs/${items[2].id}`)).toBe(
+        false,
+      );
+      expect(fetch.mock.calls.some(([path]) => String(path) === `/api/jobs/${items[4].id}`)).toBe(
+        false,
+      );
+    });
+    test("cancels shown running/queued jobs once and retains the bulk acceptance notice", async () => {
+      const items = [
+        run("A", { status: "running", terminalAt: undefined }),
+        run("B", { status: "queued", terminalAt: undefined }),
+        run("C", { status: "running", cancelRequested: true }),
+        run("D", { operation: "workout_deletion", status: "running" }),
+      ];
+      const byId = new Map(items.map((item) => [item.id, item])),
+        posts: string[] = [];
+      baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const id = path.split("/")[3],
+          job = byId.get(id);
+        if (!job) return;
+        if (init?.method === "POST") {
+          posts.push(path);
+          const updated = { ...job, status: "canceled" as const, cancelRequested: true };
+          byId.set(id, updated);
+          return json(updated);
+        }
+        return json(job);
+      });
+      renderDataSync(items[0].id);
+      await open();
+      expect(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      ).toHaveAttribute("data-disabled");
+      await userEvent.click(screen.getByRole("menuitem", { name: "Cancel running/queued jobs" }));
+      await waitFor(() =>
+        expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+          "Cancel all accepted.",
+        ),
+      );
+      expect(posts).toEqual([
+        `/api/jobs/${items[0].id}/cancellation`,
+        `/api/jobs/${items[1].id}/cancellation`,
+      ]);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+        "Cancel all accepted.",
+      );
+    });
+    test("disables both actions when no shown job has an eligible row action", async () => {
+      const items = [
+        run("A", { status: "succeeded" }),
+        run("B", { status: "canceled" }),
+        run("C", {
+          retryEligibility: { ...eligibleCoverageRetry, canRetry: false, reason: "retry_limit" },
+        }),
+      ];
+      const fetch = baseFetch((path) =>
+        path.startsWith("/api/jobs?")
+          ? json(page(items))
+          : path === `/api/jobs/${items[2].id}`
+            ? json(items[2])
+            : undefined,
+      );
+      renderDataSync();
+      await open();
+      for (const name of ["Retry (partially) failed jobs", "Cancel running/queued jobs"])
+        expect(screen.getByRole("menuitem", { name })).toHaveAttribute("data-disabled");
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    });
+    test("uses at most four detail lookups and submits retries sequentially", async () => {
+      const items = Array.from({ length: 8 }, (_, i) =>
+        run(String.fromCharCode(65 + i), { status: "failed" }),
+      );
+      const releases: Array<() => void> = [];
+      let active = 0,
+        peak = 0,
+        releasePost: (() => void) | undefined;
+      const posts: string[] = [];
+      baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const job = items.find((item) => path.startsWith(`/api/jobs/${item.id}`));
+        if (!job) return;
+        if (init?.method === "POST") {
+          posts.push(path);
+          if (posts.length === 1)
+            return new Promise<Response>((resolve) => {
+              releasePost = () =>
+                resolve(json({ jobId: "R".repeat(32), status: "queued", reused: false }));
+            });
+          return json({ jobId: "R".repeat(32), status: "queued", reused: false });
+        }
+        active++;
+        peak = Math.max(peak, active);
+        return new Promise<Response>((resolve) => {
+          releases.push(() => {
+            active--;
+            resolve(json(job));
+          });
+        });
+      });
+      renderDataSync();
+      await userEvent.click(
+        (await screen.findAllByRole("button", { name: "Task history actions" }))[0],
+      );
+      await waitFor(() => expect(releases).toHaveLength(4));
+      expect(active).toBe(4);
+      await act(async () => {
+        for (const release of releases.splice(0)) release();
+      });
+      await waitFor(() => expect(releases).toHaveLength(4));
+      await act(async () => {
+        for (const release of releases.splice(0)) release();
+      });
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      );
+      await waitFor(() => expect(posts).toHaveLength(1));
+      expect(peak).toBe(4);
+      expect(screen.getAllByRole("button", { name: "Task history actions" })[0]).toBeDisabled();
+      await act(async () => {
+        releasePost!();
+      });
+      await waitFor(() =>
+        expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+          "Retry all accepted.",
+        ),
+      );
+      expect(posts).toHaveLength(8);
+    });
+    test("reports partial rejection without claiming every retry was accepted", async () => {
+      const items = [run("A", { status: "failed" }), run("B")],
+        posts: string[] = [];
+      baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const job = items.find((item) => path.startsWith(`/api/jobs/${item.id}`));
+        if (!job) return;
+        if (init?.method === "POST") {
+          posts.push(path);
+          return posts.length === 1
+            ? json({ title: "Conflict", detail: "A newer retry exists." }, 409)
+            : json({ jobId: "R".repeat(32), status: "queued", reused: false });
+        }
+        return json(job);
+      });
+      renderDataSync();
+      await open();
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+          "Retry all: 1 accepted; 1 could not be accepted.",
+        ),
+      );
+      expect(posts).toHaveLength(2);
+    });
+    test("does not open a late menu after Escape", async () => {
+      const items = [run("A", { status: "failed" }), run("B")];
+      let releaseDetail!: (response: Response) => void;
+      const fetch = baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const job = items.find((item) => path === `/api/jobs/${item.id}`);
+        if (job)
+          return new Promise<Response>((resolve) => {
+            if (job.id === items[0].id) releaseDetail = resolve;
+            else resolve(json(job));
+          });
+      });
+      const view = renderDataSync();
+      await userEvent.click(
+        (await screen.findAllByRole("button", { name: "Task history actions" }))[0],
+      );
+      await waitFor(() => expect(releaseDetail).toBeDefined());
+      fireEvent.keyDown(window, { key: "Escape" });
+      await act(async () => {
+        releaseDetail(json(items[0]));
+      });
+      expect(screen.queryByRole("menuitem", { name: "Retry (partially) failed jobs" })).toBeNull();
+      view.unmount();
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    });
+    test("does not dispatch remaining commands after unmount", async () => {
+      const items = [run("A", { status: "failed" }), run("B")],
+        posts: string[] = [];
+      let finish!: (response: Response) => void;
+      baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const job = items.find((item) => path.startsWith(`/api/jobs/${item.id}`));
+        if (!job) return;
+        if (init?.method === "POST") {
+          posts.push(path);
+          return new Promise<Response>((resolve) => {
+            finish = resolve;
+          });
+        }
+        return json(job);
+      });
+      const view = renderDataSync();
+      await open();
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      );
+      await waitFor(() => expect(posts).toHaveLength(1));
+      view.unmount();
+      await act(async () => {
+        finish(json({ jobId: "R".repeat(32), status: "queued", reused: false }));
+      });
+      expect(posts).toHaveLength(1);
+    });
+    test("offers recovery instead of guessing eligibility when a detail lookup fails", async () => {
+      const items = [run("A", { status: "failed" })];
+      let unavailable = true;
+      const fetch = baseFetch((path) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        if (path === `/api/jobs/${items[0].id}`)
+          return unavailable ? json({ title: "Unavailable" }, 503) : json(items[0]);
+      });
+      renderDataSync();
+      await open();
+      expect(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      ).toHaveAttribute("data-disabled");
+      unavailable = false;
+      await userEvent.click(screen.getByRole("menuitem", { name: "Reload actions" }));
+      await waitFor(() =>
+        expect(
+          screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+        ).not.toHaveAttribute("data-disabled"),
+      );
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    });
+    test("stops remaining commands after authentication or CSRF authority fails", async () => {
+      const items = [run("A", { status: "failed" }), run("B")],
+        posts: string[] = [];
+      baseFetch((path, init) => {
+        if (path.startsWith("/api/jobs?")) return json(page(items));
+        const job = items.find((item) => path.startsWith(`/api/jobs/${item.id}`));
+        if (!job) return;
+        if (init?.method === "POST") {
+          posts.push(path);
+          return json({ title: "Forbidden", detail: "Session changed." }, 403);
+        }
+        return json(job);
+      });
+      renderDataSync();
+      await open();
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Retry (partially) failed jobs" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("status", { name: "Sync feedback" })).toHaveTextContent(
+          "Retry all: 0 accepted; 2 could not be accepted.",
+        ),
+      );
+      expect(posts).toHaveLength(1);
+    });
+  });
+
   describe("ingest activity", () => {
     test.each(
       Object.entries(activityLabels).flatMap(([phase, label]) =>
@@ -1064,7 +1400,7 @@ describe("DataSync", () => {
     const form = checkbox.closest("form")!;
     expect([
       ...form.querySelectorAll(
-        'input[type="date"], input[name="reprocessAllFiles"], button[type="submit"]',
+        'input[data-date-entry], input[name="reprocessAllFiles"], button[type="submit"]',
       ),
     ]).toEqual([
       screen.getByLabelText("Start date"),
@@ -1165,7 +1501,7 @@ describe("DataSync", () => {
     expect(help).toHaveTextContent(content);
     expect(wrapper).toHaveClass("tooltip", "manual-reprocess");
     expect(label).toHaveClass("tooltip-trigger");
-    expect(label.nextElementSibling).toBe(help);
+    expect(help.parentElement).toBe(document.body);
     expect(label).not.toHaveAttribute("tabindex");
     expect(wrapper).not.toHaveAttribute("tabindex");
     expect(checkbox).not.toHaveAttribute("tabindex");
@@ -1234,7 +1570,9 @@ describe("DataSync", () => {
     expect(end).toHaveValue("");
     await user.tab();
     expect(end).toHaveFocus();
-    expect(end).toHaveValue("2026-08-06");
+    expect(end.closest(".date-input-control")!.querySelector("[data-date-canonical]")).toHaveValue(
+      "2026-08-06",
+    );
     await user.click(screen.getByRole("button", { name: "Start sync" }));
     await waitFor(() =>
       expect(body).toEqual({
@@ -1271,7 +1609,9 @@ describe("DataSync", () => {
       expect(end).toHaveValue(endValue);
       await user.tab();
       expect(end).toHaveFocus();
-      expect(end).toHaveValue(expected);
+      expect(
+        end.closest(".date-input-control")!.querySelector("[data-date-canonical]"),
+      ).toHaveValue(expected);
     },
   );
 
@@ -2478,7 +2818,7 @@ describe("DataSync", () => {
     expect(within(region).getByRole("heading", { name: "Route runs" })).toBeInTheDocument();
     expect(within(region).getByText("Outdoor Run")).toBeInTheDocument();
     const routeRun = region.querySelector(".coverage-route-run")!;
-    const routeDate = new Intl.DateTimeFormat(undefined, {
+    const routeDate = new Intl.DateTimeFormat("en-US", {
       dateStyle: "medium",
       timeZone: "UTC",
     }).format(new Date("2026-08-05T00:00:00Z"));
@@ -2502,7 +2842,7 @@ describe("DataSync", () => {
     expect(within(generations).getByText("12")).not.toHaveClass("is-latest");
     expect(within(generations).queryByText("62")).not.toBeInTheDocument();
     expect(within(generations).queryByText("70")).not.toBeInTheDocument();
-    expect(within(region).getByText(/applied \/ 1,234 ms/)).toBeInTheDocument();
+    expect(within(region).getByText(/Applied \/ 1,234 ms/)).toBeInTheDocument();
     expect(within(region).queryByText("Attempt")).not.toBeInTheDocument();
     expect(within(region).getByRole("link", { name: first.slice(0, 8) })).toHaveAttribute(
       "href",
@@ -4425,7 +4765,7 @@ describe("DataSync", () => {
       ["Sources enabled", "Number of sources with automated sync enabled"],
       [
         "Stale after",
-        "Show a warning after this period if no new workouts have been imported by auto-sync",
+        "Show a warning after this period if no new\nworkouts have been imported by auto-sync",
       ],
       ["Next run", "Local date/time when the next sync job will run"],
     ];
@@ -4448,6 +4788,17 @@ describe("DataSync", () => {
   });
 
   test("pins schedule help on click and dismisses it by Escape, second click, blur, or outside press", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 100,
+      left: 100,
+      top: 100,
+      right: 200,
+      bottom: 120,
+      width: 100,
+      height: 20,
+      toJSON() {},
+    });
     baseFetch();
     renderDataSync();
     const trigger = await screen.findByRole("button", { name: "About Interval" });
@@ -4515,7 +4866,7 @@ describe("DataSync", () => {
       renderDataSync(undefined, vi.fn(), 30, { ...preferences, timezone, clockFormat });
       const badge = await screen.findByLabelText(description);
       const card = badge.closest("section")!;
-      const expectedDateTime = new Intl.DateTimeFormat(undefined, {
+      const expectedDateTime = new Intl.DateTimeFormat("en-US", {
         dateStyle: "medium",
         timeStyle: "short",
         timeZone: timezone,

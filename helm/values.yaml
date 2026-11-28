@@ -492,7 +492,7 @@ osm:
   # -- Dedicated administrator region updater controller; provision credentials and a pinned workouts-osm image before enabling.
   regionUpdates:
     # -- Enable region commands and the isolated Kubernetes Job controller.
-    enabled: false
+    enabled: true
     # -- Maximum dispatched updater/cleanup Jobs; shared-database writer ownership remains stronger.
     concurrency: 1
     # -- Hard execution deadline for a long regional rebuild.
@@ -525,10 +525,24 @@ osm:
       # -- Primary-aware updater URL key.
       key: osmUpdateDatabaseUrl
 
-    # -- Authoritative primary-PVC metrics endpoint.
-    prometheusURL: https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
-    # -- Optional host-cluster metrics Service IP for an isolated vCluster.
-    prometheusServiceIP: ""
+    # -- Optional external database filesystem metrics; independent of PostgreSQL object sizes.
+    storageMetrics:
+      # -- Databases attributed to Workouts Explorer by the administrator Storage Usage page.
+      databaseNames:
+        # -- OSM map database attributed to Workouts Explorer.
+        - osm
+      # -- Opt in to external filesystem metrics. No PostgreSQL exporter is required.
+      enabled: false
+      # -- Required when enabled; no runtime endpoint is assumed when omitted.
+      prometheusURL: https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+      # -- Optional DNS override for isolated clusters; applied to the URL hostname.
+      prometheusServiceIP: ""
+      # -- Defaults select the current Kubernetes PostgreSQL volume. Other exporters are supported.
+      availableMetric: kubelet_volume_stats_available_bytes
+      # -- Filesystem capacity metric, in bytes.
+      capacityMetric: kubelet_volume_stats_capacity_bytes
+      # -- Exact filesystem labels. Empty uses the current PostgreSQL PVC for the default kubelet pair; custom maps replace that default. Use primary-aware series for HA.
+      selectorLabels: {}
 
     # -- Dedicated controller resources.
     controllerResources:
@@ -617,13 +631,15 @@ sources:
     # -- Supplemental group id used by ingestion worker pods to read the NFS export.
     supplementalGroup: 1000
 
-# -- OpenTelemetry export and optional UI/Martin metrics collector sidecars.
+# -- Optional OpenTelemetry export and bundled UI/Martin metrics collectors; requires an external OTLP backend.
 otel:
-  # -- External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting.
+  # -- Opt in to SDK export and UI/Martin collector sidecars. Disabled by default.
+  enabled: false
+  # -- External OTLP endpoint, required when otel.enabled is true; no backend is provisioned by this chart.
   endpoint: grpcs://otel-gateway-collector.observability.svc.cluster.local:4317
-  # -- Deployment environment label attached to telemetry.
+  # -- Deployment environment label attached to telemetry when enabled.
   environment: development
-  # -- OpenTelemetry service namespace label.
+  # -- Service namespace attached to telemetry when enabled.
   serviceNamespace: workouts-explorer
 
   # Empty name reuses api.trustedCASecret. Only the public CA is mounted.
@@ -634,10 +650,8 @@ otel:
     # -- PEM CA bundle key used only when otel.trustedCASecret.name is nonempty.
     key: ca.crt
 
-  # -- Metrics collector sidecars for UI and Martin; no external collector backend is provisioned.
+  # -- Bundled metrics collector settings, used for UI and Martin when otel.enabled is true.
   collector:
-    # -- Enable collector sidecars when otel.endpoint is nonempty.
-    enabled: true
     # -- Complete collector image reference, independent of application registry/tag settings.
     image: docker.io/otel/opentelemetry-collector-contrib:0.156.0@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
 

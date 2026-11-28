@@ -72,19 +72,19 @@ FROM unnest(ARRAY['clip-candidates','clip-replacements','clip-apply','clip-resid
     'attribute-parks-tags','attribute-education']) stage;
 
 -- Separate invocations reload durable cursors, as they do after process restart.
-\ir ../clip-localities-candidates.sql
-\ir ../clip-localities-candidates.sql
-\ir ../clip-localities-replacements.sql
-\ir ../clip-localities-replacements.sql
-\ir ../clip-localities-apply.sql
-\ir ../clip-localities-apply.sql
-\ir ../clip-localities-residual.sql
-\ir ../clip-localities-residual.sql
-\ir ../clip-localities-finalize.sql
-\ir ../attribute-parks-batched.sql
-\ir ../attribute-parks-batched.sql
-\ir ../attribute-education-batched.sql
-\ir ../attribute-education-batched.sql
+\ir ../batches/clip-localities-candidates.sql
+\ir ../batches/clip-localities-candidates.sql
+\ir ../batches/clip-localities-replacements.sql
+\ir ../batches/clip-localities-replacements.sql
+\ir ../batches/clip-localities-apply.sql
+\ir ../batches/clip-localities-apply.sql
+\ir ../batches/clip-localities-residual.sql
+\ir ../batches/clip-localities-residual.sql
+\ir ../batches/clip-localities-finalize.sql
+\ir ../batches/attribute-parks-batched.sql
+\ir ../batches/attribute-parks-batched.sql
+\ir ../batches/attribute-education-batched.sql
+\ir ../batches/attribute-education-batched.sql
 
 DO $test$
 DECLARE failure text;
@@ -153,7 +153,7 @@ INSERT INTO validation_metrics VALUES('materialLocalityResiduals','0'),
     ('materialParkBoundaryCrossings','0'),('materialEducationBoundaryCrossings','0');
 INSERT INTO osm_catalog.generation_stages(generation_id,stage,stage_order,fence,state,cursor)
 VALUES(1,'validate',0,repeat('0',64),'running','{"phase":"locality-residuals"}');
-\ir ../validate.sql
+\ir ../batches/validate.sql
 DO $test$
 BEGIN
     IF EXISTS (SELECT 1 FROM validation_metrics WHERE value::text::bigint<>0)
@@ -162,7 +162,7 @@ END;
 $test$;
 INSERT INTO validation_fixture SELECT * FROM originals WHERE tags->>'fixture' IN ('park-crossing','school-crossing');
 UPDATE osm_catalog.generation_stages SET cursor='{"phase":"locality-residuals"}' WHERE stage='validate';
-\ir ../validate.sql
+\ir ../batches/validate.sql
 DO $test$
 BEGIN
     IF (SELECT value::text::bigint FROM validation_metrics WHERE metric='materialParkBoundaryCrossings')<>1
@@ -190,7 +190,7 @@ CROSS JOIN LATERAL (SELECT CASE original.tags->>'fixture'
 WHERE original.tags->>'fixture' IN ('park-crossing','school-crossing','retrace-park','retrace-school');
 UPDATE validation_metrics SET value='0';
 UPDATE osm_catalog.generation_stages SET cursor='{"phase":"locality-residuals"}' WHERE stage='validate';
-\ir ../validate.sql
+\ir ../batches/validate.sql
 DO $test$
 BEGIN
     IF (SELECT value::text::bigint FROM validation_metrics WHERE metric='materialParkBoundaryCrossings')<>1

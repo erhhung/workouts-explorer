@@ -27,6 +27,7 @@ const (
 	maximumCoverageRouteTimeout   = 15 * time.Minute
 	coverageReplicaAttemptTimeout = 5 * time.Second
 	coverageReplicaPollInterval   = 2 * time.Second
+	coverageCycleErrorLogInterval = 30 * time.Second
 )
 
 type CoverageRunner struct {
@@ -45,6 +46,9 @@ type CoverageRunner struct {
 	reader              *readerplacement.Manager
 	readerInitErr       error
 	metrics             coverageMetrics
+	cycleErrorLogMu     sync.Mutex
+	nextCycleErrorLog   time.Time
+	suppressedErrors    uint64
 }
 
 type CoverageRunnerOptions struct {
@@ -171,7 +175,7 @@ func (r *CoverageRunner) runWorker(ctx context.Context, runOnce func(context.Con
 		}
 		worked, err := runOnce(ctx)
 		if err != nil && ctx.Err() == nil {
-			r.logger.Error("coverage worker cycle failed", "error", database.RedactOSMConnectionError(err))
+			r.logCycleError(err)
 		}
 		if ctx.Err() != nil {
 			return
@@ -189,6 +193,22 @@ func (r *CoverageRunner) runWorker(ctx context.Context, runOnce func(context.Con
 		case <-timer.C:
 		}
 	}
+}
+
+func (r *CoverageRunner) logCycleError(err error) {
+	// Share the cadence across matching loops and automatic retries. An idle
+	// sibling must not reset it while another loop is still failing.
+	r.cycleErrorLogMu.Lock()
+	defer r.cycleErrorLogMu.Unlock()
+	now := time.Now()
+	if now.Before(r.nextCycleErrorLog) {
+		r.suppressedErrors++
+		return
+	}
+	r.logger.Error("coverage worker cycle failed", "error", database.RedactOSMConnectionError(err),
+		"suppressed_errors", r.suppressedErrors)
+	r.nextCycleErrorLog = now.Add(coverageCycleErrorLogInterval)
+	r.suppressedErrors = 0
 }
 
 func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
@@ -319,11 +339,12 @@ func (r *CoverageRunner) RunOnce(ctx context.Context) (bool, error) {
 	failureStage := coverageStageEvaluate
 	dbSnapshot := coverageDatabaseSnapshot{snapshot}
 	result, matchErr := routepipeline.Evaluate(matchCtx, dbSnapshot, route.observations, routepipeline.Config{
-		Rules:    coverage.ExperimentalRules().WithMinimumTraversalMeters(claim.minimumTraversalMeters),
-		Sampling: coverage.ExperimentalSamplingRules(), RoadGeometry: coverage.DefaultRoadGeometryRules(),
+		PathPolicyVersion: coverage.PathPolicyVersion(claim.pathPolicyVersion),
+		Rules:             coverage.ExperimentalRules().WithMinimumTraversalMeters(claim.minimumTraversalMeters),
+		Sampling:          coverage.ExperimentalSamplingRules(), RoadGeometry: coverage.DefaultRoadGeometryRules(),
 		MovementMode: routepipeline.MovementMode(route.typeKey, route.providerLabel), Limits: routepipeline.DefaultLimits(),
-		RecoverProcessingLimits: claim.pathPolicyVersion == string(coverage.CurrentPathPolicyVersion),
-		MemoizeSnapshot:         claim.pathPolicyVersion == string(coverage.CurrentPathPolicyVersion),
+		RecoverProcessingLimits: claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82),
+		MemoizeSnapshot:         claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82),
 	})
 	if matchErr == nil && result.Stats.WindowLimitRetries > 0 {
 		r.logger.Info("coverage processing-limit recovery", "job_id", claim.jobID,
@@ -538,7 +559,7 @@ func (r *CoverageRunner) claim(ctx context.Context) (coverageClaim, bool, error)
 	claim.leaseID = lease
 	if len(claim.routeDigest) != 32 || claim.rulesVersion != string(coverage.ExperimentalRulesV1) ||
 		claim.samplingVersion != string(coverage.ExperimentalSamplingV1) ||
-		(claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82) && claim.pathPolicyVersion != string(coverage.CurrentPathPolicyVersion)) {
+		(claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV82) && claim.pathPolicyVersion != string(coverage.ExperimentalPathPolicyV83) && claim.pathPolicyVersion != string(coverage.CurrentPathPolicyVersion)) {
 		return claim, true, errors.New("unsupported coverage claim contract")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(generations))
@@ -922,6 +943,9 @@ func coveragePersistencePayload(matches []routepipeline.PreparedMatch) []map[str
 			"segmentMeters": segment.LengthMeters, "segmentGeometry": segment.GeoJSON,
 			"firstTraversedAt": match.FirstTraversedAt, "firstRouteOrder": match.FirstRouteOrder,
 			"coveredGeometry": match.CoveredGeoJSON,
+		}
+		if match.DisplayClass != "" {
+			result[i]["displayClass"] = match.DisplayClass
 		}
 	}
 	return result

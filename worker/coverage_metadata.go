@@ -27,6 +27,10 @@ func productionMatchingDescriptor(minimum float64) coverageMatchingDescriptor {
 	return productionMatchingDescriptorForPolicy(minimum, string(coverage.CurrentPathPolicyVersion))
 }
 
+func productionMapProcessingRequirements() osm.MapProcessingRequirements {
+	return osm.MapProcessingRequirements{ImporterVersion: 4, DerivationVersion: 21}
+}
+
 func productionMatchingDescriptorForPolicy(minimum float64, policy string) coverageMatchingDescriptor {
 	return coverageMatchingDescriptor{string(coverage.ExperimentalRulesV1), string(coverage.ExperimentalSamplingV1),
 		policy, minimum, coverageProductionContractV1}
@@ -66,9 +70,12 @@ func setCoverageSelectionProof(item *coverageHandoff, readiness osm.RouteRegionR
 
 // Rebinding preserves the exact selected IDs. A changed boundary, configuration,
 // or competing active-region presence must instead take the full-route ROI path.
-func rebindCoverageSelection(item *coverageHandoff, catalog osm.RouteRegionCatalog, autoAdd bool) bool {
+func rebindCoverageSelection(item *coverageHandoff, catalog osm.RouteRegionCatalog, autoAdd bool, requirements ...osm.MapProcessingRequirements) bool {
 	if item.Readiness == "" || item.SelectionPolicy != coverageSelectionPolicy(autoAdd) ||
 		item.SelectionFingerprint == "" || item.SelectionFingerprint != catalog.SelectionFingerprint {
+		return false
+	}
+	if item.Reason == "region_reprocessing_required" && item.CatalogFingerprint != catalog.Fingerprint {
 		return false
 	}
 	for _, region := range item.Generations {
@@ -80,5 +87,9 @@ func rebindCoverageSelection(item *coverageHandoff, catalog osm.RouteRegionCatal
 		item.Generations[i].Generation = catalog.ActiveGenerations[item.Generations[i].RegionID]
 	}
 	item.CatalogRevision, item.CatalogFingerprint = catalog.Revision, catalog.Fingerprint
+	if len(requirements) > 0 && item.Readiness == "map_data_ready" && !catalog.ProcessingReady(item.Generations, requirements[0]) {
+		reason := "region_reprocessing_required"
+		item.Readiness, item.Reason, item.Generations = "pending", reason, []osm.RegionGeneration{}
+	}
 	return true
 }

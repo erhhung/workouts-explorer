@@ -29,7 +29,7 @@ reinterpreted here. Documentation dates use `America/Los_Angeles` and M/D/YYYY.
 | Chart semantics | Helm194 adds a separate limited OSM controller and approved updater template, default dispatch concurrency1; existing credentials/configuration and Martin preserved |
 | Legacy route repair | Authorized repair and failed-only retries complete; all affected routes have current durable matches, with no failed/queued repair work remaining |
 | Reader policy | Strict replica-only enforcement is active; the chart default remains false |
-| Release | Helm232, current dev-20261120 pins; sentence-case Coverage route outcomes in Data Sync; Helm231 hover behavior, Helm230 column widths and Helm228 eligibility/count behavior retained; OSM11/10, application33/32 |
+| Release | Helm279, current dev-20261120 pins; immediate invalid-date feedback while typing; OSM11/10, application33/32 |
 | Coverage parking-repair recovery | v83 deployed; two complete private replays succeeded with 222 prepared segments and no recovery-excluded GPS points; requested production retry is still queued, successful-v82 reuse and redundant policy-only queue cleanup remain open |
 | Ingest-phase progress | Deployed behavior retained in source 029; actual worker phases and durable Events, source-aware detail and faster Running polling; see [follow-up](#ingest-phase-progress-follow-up-029) |
 | Click-highlight follow-up | Deployed behavior retained in source 030; full-group geometry, cancellation/cache guards and camera/tile-ready highlighting active; earlier test counts retain their original scope |
@@ -46,6 +46,858 @@ complete. Explicit user approval and the final qualified live browser pass close
 the milestone; no further owner decision is needed. Expired iCloud access was
 recovered through the API before historical ingest. Host `rclone.conf` was not
 read.
+
+Helm279 updates the invalid date frame during input rather than waiting for blur,
+matching Apply disabling. Required fields cleared through editing or the native
+picker also remain visibly invalid after interaction; untouched empty fields are
+not marked prematurely. Valid correction/picker selection clears the error in the
+same update. All114 focused date/range/Summary cases and build/CSP/dialog checks
+pass. Built/published browser fixtures confirm the3px red frame while the actual
+input still owns focus for both fields and all three date orders in both themes
+at1440/390px. Both public origins, six healthy Deployments, current tags/pins,
+effective default/local values and30 non-hook manifests agree. No Git staging or
+commit is performed.
+
+Helm277/278 keep the valid date-field border accented when the pointer enters the
+calendar's padded area, alongside the icon. Invalid date fields draw a3px inset
+overlay above both input/calendar, with unchanged measured geometry and pointer
+events passing through. Shared DateInput validity observes canonical calendar and
+native constraints, reports changes to range forms, and clears its invalid state
+on correction or picker selection. Custom-range Apply is disabled for empty/invalid
+required dates and while a submitted date-order error marks the fields invalid;
+range completion and native-picker recovery restore the enabled state correctly.
+
+All563 affected UI cases pass across the main suites and focused error-state
+regression. Built/published browser fixtures check both fields in all three date
+orders at1440/390px in each theme: shared hover colors, four3px inward edges,
+identical control dimensions, disabled Apply and valid correction, with native
+picker/ISO-form behavior intact. Build/CSP/dialog checks pass. Both public origins
+serve matching assets; six Deployments, current tags/pins, effective default/local
+values and30 non-hook manifests agree. No Git staging or commit is performed.
+
+Helm276 standardizes primary centered-state messages with content-state-message
+and the existing Regions --table-message-font-size token (1.1rem/17.6px). Loading,
+empty and unavailable/error text share this treatment across dialog-table overlays,
+Summary totals/provenance, Consistency chart placeholders, Stats table states,
+Data Sync history/run detail/artifact sections, admin settings/storage and map
+states. Bare section paragraphs use a centered modifier inheriting reserved height;
+query-error typography applies to message text while recovery controls retain
+their existing sizing. Inline field-value placeholders and progress notices keep
+their contextual treatment. Storage's unavailable pie text is width-bounded.
+
+All542 affected UI tests, build/CSP and focused CSS checks pass. Explicit held-fetch
+browser fixtures verify31 loading/empty/unavailable message instances in each theme
+against the actual Regions font, with no page errors. Table/chart text is centered
+to within0.01px horizontally and exactly vertically in its existing region. The
+same checks pass on published assets, both public origins match the build, and all
+six Deployments, current tags/pins, default/local values and30 non-hook manifests
+agree. No Git staging or commit is performed; the accumulated changes remain in
+the user's working tree pending explicit approval.
+
+Helm275 redeploys the user's manual change to12px heading padding. The stylesheet
+hash is identical before/after the build. Published-asset browser checks confirm
+12px computed padding and24.5px balanced visible whitespace in both themes and
+wide/narrow layouts; both public origins serve the verified assets. Build/CSP/Data
+Sync CSS checks pass, and all six Deployments, current tags/pins, effective default/
+local values and30 non-hook manifests agree. No additional application styling edits.
+
+Helm274 aligns the page-only menu heading with the action text's shared12px
+horizontal inset. Its vertical menu inset accounts for the first44px action's
+centered19px text line; browser range measurements show exactly20.5px visible
+whitespace above/below the heading while retaining the0.68rem header font.
+Built/published browser fixtures cover both themes at1440/390px, keyboard and
+bulk-action behavior without production mutations. Build/CSP/Data Sync CSS checks
+pass. Both public origins match the verified assets; the UI-only rollout's pins,
+effective default/local values and30 non-hook manifests agree and all six
+Deployments are healthy.
+
+Helm273 removes the generic history-action-note class from the page-only menu
+heading: its later0.85rem rule had overridden the shared0.68rem header declaration.
+Dedicated label padding preserves geometry. Browser acceptance now compares the
+actual computed heading font with both table headers and Run detail field-label
+CSS:10.88px, weight720, tracking0.6528px and uppercase in both themes.
+
+Common numeric dates and date-entry output no longer zero-pad month/day, including
+callers requesting two-digit Intl parts. July4 displays7/4/2026,4/7/2026 or2026/7/4;
+format-choice names/placeholders, four-digit years, parsing of padded inputs,
+canonical ISO values and named-month dates remain intact. Explicit Map/App test
+display selectors follow the new numeric presentation without broadening identity
+matching. All701 affected UI cases pass across focused suites, with build/CSP/CSS
+checks. Built/published-asset browser fixtures verify all three saved orders,
+unpadded field values, ISO submission, native-picker behavior and computed menu
+typography in light/dark at1440/390px. Both public origins serve matching assets;
+the UI-only rollout preserves all other pins, default/local values and30 non-hook
+manifests, with six healthy Deployments. No API, database or migration changes.
+
+Helm272 adds the per-user date-format enum mm/dd/yyyy (default), dd/mm/yyyy and
+yyyy/mm/dd. The Display grid follows Theme/Units, Time zone/Clock format,
+Date format/First weekday and Custom date ranges/Table rows per page. Shared pure
+English date helpers cover numeric, written month/day/year and month/year displays;
+timestamp zones, clock precision, recorded-offset/DST fallbacks and ISO data/sort/
+filter/query values remain independent. Retained user views use a preference
+context. Admin displays use the same helpers with the English default.
+
+DateInput renders preference-ordered text and keeps a correctly anchored invisible
+native date field for the picker and ISO FormData. It validates actual calendar
+dates, supports ISO paste/compact numeric entry and synchronously propagates range
+completion during focus transfer. Field focus selects text for replacement; the
+native picker and enlarged 44px button remain intact. Browser acceptance verifies
+all three preferences across Save/reload, English month order, placeholders, native
+picker activation and ISO form values in both themes at1440/390px.
+
+The date_format column/default and named CHECK are folded only into the existing
+002 account/preferences migration. Approved source inventories change only for
+that fold; no migration number, schema version or minimum-runtime version changes.
+Native fresh migrations, account lifecycle/default/round-trip/invalid-format tests,
+runtime readiness and a guarded predecessor-schema adoption rehearsal pass.
+The live adoption preserves existing values/timestamps, column metadata, table OID/
+relfilenode, owner/ACL/RLS, original constraints, namespace and Goose/schema ledgers;
+the two existing rows receive only the constant mm/dd/yyyy default. Duplicate
+adoption rejects rather than overwriting saved choices. No Coverage gate SQL is
+adopted; the API build retains its deployed Coverage-readiness compiler overlay.
+
+The page-only Task history menu now reads JOBS ON THIS PAGE ONLY in the same shared
+column-header typography, without a divider below, and actions read Retry
+(partially) failed jobs / Cancel running/queued jobs. Preparation results are
+ordered by the visible page before sequential submission. Shared Consistency/
+Storage disclosures extend 12px above and below the title; equal negative margins
+preserve visible spacing. Native geometry checks confirm 28px to52px targets with
+unchanged text/card/chart coordinates, and clicking both added regions works.
+
+The Go suite, modified API/database race checks and generated contracts pass. A
+full1231-test UI run passed1228 cases; three old native-date-value expectations were
+updated to assert canonical ISO fields, and all seven targeted Map cases then pass.
+Other date/preference and popup suites pass. Build, CSP and focused CSS checks pass.
+Published-asset browser fixtures verify preferences, disclosures and renamed bulk
+commands without mutating production jobs or personal preferences. Both public
+origins serve the exact HTML/CSS/JS and new API contract. All six Deployments and
+current Harbor/local/deployed pins, effective default/local values and30 non-hook
+manifests agree. The owned native fixture and port forwards are removed.
+
+Helm271 adds the Task history header ellipsis and current-page-only bulk retry/
+cancel actions using authoritative row-action eligibility, four bounded detail
+reads and sequential existing-endpoint submissions. Exact full-acceptance notices
+and partial-rejection counts preserve scope/navigation; auth/context loss or
+unmount stops remaining dispatch. It also deploys the shared padded calendar
+button and delayed styled native-picker hint across manual/custom date fields.
+All517 affected UI tests and built/published browser fixtures pass. Verification
+uses synthetic jobs only; actual user jobs are not bulk-commanded by the agent.
+
+Helm270 emphasizes available GiB and bold available percentage with the theme's
+foreground color. The used-size label now includes usable-filesystem percentage;
+the existing measured-label fit check includes the entire string and padding.
+Both themes retain their appropriate inside readability shadow, while outside
+labels keep the existing margin and no shadow. All48 affected UI tests, build and
+CSP checks pass. Built and published-asset browser checks at1920/1440/390px verify
+foreground/700-weight emphasis and a boundary case where the old padded label
+fits but the new padded143.6px label correctly moves outside an86.2px fill. Default/
+local values, all30 non-hook manifests, current Harbor/local/deployed pins and six
+healthy Deployments agree. Both public origins serve the verified entry assets.
+
+Helm269 moves Storage usage above Update history in OSM Maps navigation, keeping
+Regions first. All 37 administrator-workspace tests, the UI build and CSP checks
+pass. The UI-only rollout preserves routes/default selection and matches current
+Harbor/local/deployed pins, effective default/local values and 30 non-hook manifests.
+
+Helm267 adds optional requested capacity to Storage Usage from
+`kube_persistentvolumeclaim_resource_requests_storage_bytes`. Live Prometheus
+reports exactly53,687,091,200bytes (50GiB) for each of the three configured PVCs.
+Requested-size observations are matched by namespace/PVC and aggregated once per
+pod; missing, stale, ambiguous, unsupported or incomplete request metrics fall
+back to measured filesystem capacity without discarding usable filesystem charts.
+The right-end label now shows the requested size, with a shared tooltip explaining
+requested versus usable capacity. Used/free percentages retain the filesystem
+denominator. The API build preserves the existing deployed Coverage-readiness
+contract via its private compiler overlay; no independent gate adoption or SQL
+changes are included.
+
+Helm268 aligns automatic X-axis intervals and positions with that same displayed
+requested-or-fallback size. It does not demand or append an end tick:50GiB naturally
+includes50 in five-GiB intervals, while63GiB uses regular ticks through60. Regression
+tests distinguish a50GiB request from a49.9375GiB filesystem and confirm unchanged
+bar-fill/free-space percentages, missing-request fallback and non-forced endpoints.
+The Go suite, storage-reader race checks, generated API contract,48 affected UI
+tests, production UI build and CSP/dialog checks pass. Explicit-metric browser
+fixtures on both built and published assets verify requested labels, fallback,
+tooltips, axis positions, geometry, simulated failover polling and retained errors
+in both themes at1920/1440/390px. Both public origins serve matching assets and the
+new API schema. Releases267/268 are healthy with default/local values,30 non-hook
+manifests and current Harbor/deployed pins consistent; no dated tag aliases are
+created.
+
+Helm266 refines Storage Usage: desktop sections use 80% of the prior report width,
+the pie circle is 108px (25% smaller), and its legend group sits at the content's
+right edge. The bar receives remaining space, with twice the card padding between
+the capacity label and pie. Measurement/PVC and availability share the row above
+the track; availability aligns to the track edge, not the capacity label. The
+metadata-to-track gap matches the track-to-axis gap, and the complete bar block is
+vertically centered on the pie circle. Shared local date/time formatters produce
+the requested measured-on date/time copy. Foreground emphasis and the exact footer
+and retained-refresh error text are included. Narrow layouts preserve readability.
+
+Native df -B1 and Prometheus agree on 53,619,982,336 bytes (49.9375 GiB), which is
+64 MiB below the nominal 50-GiB provisioned volume; df -h rounds it to 50G while the
+page shows 49.9 GiB. Normal visible polling remains 30 seconds with a 15-second
+backend snapshot cache. During the outage investigation, direct read-only SQL and
+fresh exporter metrics both reported pod0 and pod1 as writable primaries; pod2
+was streaming from pod0. The unchanged API correctly rejects that ambiguous role
+snapshot instead of guessing the selected primary. A new regression case covers
+multiple-primary reports, and UI tests verify legitimate role changes and exact
+retained-data error text. Database election/rejoin state was not modified.
+
+All 44 affected UI tests, backend storage-reader tests, the UI build and CSP/dialog
+checks pass. Built and published-asset browser checks cover light/dark themes at
+1920/1440/390px, exact width/pie dimensions, twice-padding gap, metadata/axis spacing,
+foreground colors, vertical centering, polling role changes and accepted-data
+retention on errors using explicit synthetic observations. Both public origins
+serve matching HTML and entry assets. The UI-only rollout is healthy; all six
+Deployments, current Harbor tag/pin, default/local values and 30 non-hook manifests
+match. No API/database changes or new migrations are deployed.
+
+Helm265 implements OSM Maps > Storage usage with the Storage Usage content heading
+and Consistency's disclosure cards. The actual observed primary opens by default;
+replicas start collapsed. Each pod has a capacity-anchored green/yellow/orange/red
+usage bar and a two-slice used-space pie, with per-pod configured-database sizes.
+Bar thickness reuses Consistency's date-slot measurement (42px in acceptance),
+rounded ends and equal inside-label insets; low usage puts the label outside.
+Ticks use whole GiB values, with alternate narrow-screen labels omitted to avoid
+overlap. The unavailable state uses the exact two-line copy and orange frame in
+the shared placeholder's centered position, without a report heading.
+
+The new administrator-only endpoint discovers the PostgreSQL exporter cluster
+through the configured namespace/PVC, reads actual primary/replica roles and joins
+pod/PVC/filesystem metrics to each pod's own database sizes. Successful snapshots
+are cached briefly; visible-page polling retains accepted data and disclosure
+choices. Stale/ambiguous/missing metrics cannot invent zero usage or a primary;
+missing database sizes leave a visible unavailable pie. The residual slice is
+explicitly described as including shared WAL/temp/overhead, not precise ownership.
+No SQL probes, schema changes, database credentials or ledger changes are added.
+The API build retains the deployed Coverage metadata-readiness contract through
+a private compiler overlay; the independent unfinished admission-gate work remains
+in the worktree and is not implicitly adopted by this release.
+
+Go suite, modified-package race checks, generated contracts, Helm/default-value
+documentation and 80 affected UI tests pass. Native administrator authentication,
+cookie/bearer precedence and private/no-store storage responses pass. The broader
+native admin fixture's unrelated current-policy job-claim case remains blocked
+by the unfinished gate fixture prerequisites; it is not claimed as passing here.
+Built-UI browser checks cover both themes at1440/390px, bar/reference sizing,
+capacity/value alignment, transition stops, outside-label fallback, disclosures,
+no overflow and the exactly centered unavailable frame. Authenticated deployed
+browser checks confirm all three real pod sections and pies in both themes with
+no page errors. Both public origins serve the exact built HTML/CSS/JS. All six
+Deployments, current Harbor tags/pins, effective default/local values and all30
+non-hook manifests match. The owned native fixture and port forwards are removed.
+The previously requested Stats navigation-only New coverage label is included;
+the report heading remains New Coverage.
+
+Helm264 deploys the Summary data-ready reveal and OSM progress follow animation.
+Totals start their existing30%-to-full500ms/ten-step fade only when visible data
+is ready, including first entry after refreshing another tab and fast refreshes;
+card DOM/focus and reduced motion are preserved. Automatic task following past20
+uses a one-second250ms acceleration/450ms cruise/300ms deceleration profile.
+Manual scroll input interrupts it; stable polls do not restart it. Unit and
+real-browser checks verify timing, final alignment and reduced-motion behavior in
+both themes and wide/narrow viewports. The deployment's initial wait expired on
+a slow image pull; it subsequently completed with the new UI pod fully ready.
+
+Helm263 corrects disk-bound identity-label aggregation for current imports. The
+previous250000-segment label batch took18m5s with random heap/index probes and a
+full identity-table scan. Read-only EXPLAIN ANALYZE measured a sequential/hash
+aggregation at32.424seconds, compared with the live slow batch; batch keys can be
+read index-only from the immutable identity table instead of fetching wide path
+heap pages. The optimized script uses64MB work memory, disables JIT/nested-loop
+plans only for initialization/label aggregation, and bounds parallel shared-memory
+use. Initialization verifies that path and identity segment key sets agree.
+
+The unchanged legacy script retains its exact original bytes and source fence.
+Current-import script selection, invocation and fencing are generation-specific;
+all public task identities,250000-row boundaries and label/neighbor rules remain
+unchanged. Native old/new tests cover cross-batch accumulation, directional names,
+locality isolation, unnamed/path exclusions and unique/ambiguous neighbor decisions.
+On the real paused candidate, full key-set comparison found no missing/extra IDs;
+recomputing all174844 accumulated labels preserved names/grouping/scope and every
+25m short-label decision. Maximum sum-order rounding was4.37e-11metres.
+
+Normal Pause retained build82, eight stage checkpoints and1750000 processed keys.
+The active classifier backend was canceled so pause cleanup could complete. A
+native-rehearsed exact-preimage adoption changed only this paused candidate's
+label-stage source fingerprint. Resume preserves prior derived geometry and label
+accumulations. The first resumed live250000-key batch completed in39seconds, versus
+the previous18m5s. All six Deployments are healthy; current Harbor/local/deployed
+updater pins, effective values and all30 non-hook manifests agree. Go suite,
+modified-package race tests and native label equivalence checks pass. Later
+neighbors/rewrite/validation/promotion remain pending; the separate Coverage
+map-processing admission-gate work is not included in this rollout.
+
+Helm262 corrects a residential-context query-planning regression found during the
+first full regional rebuild. PostgreSQL flattened the frontage lateral subquery,
+scanning approximately3.8million building footprints and computing nearest roads
+before restricting the result to each500-road batch. NorCal had advanced through
+11000of210825 access roads, with recent batches taking approximately20minutes;
+the public postprocess task also contains this residential-context stage.
+
+A lateral planning barrier keeps the40m footprint lookup parameterized by each
+batch road and uses the existing geography GiST indexes. Classification rules,
+evidence, source inputs, importer4 and derivation21 remain unchanged. Native tests
+compare all prior/new classifications and evidence across shared/single-house,
+address, apartment, outbuilding and leaf fixtures, and require a road-parameterized
+spatial plan with20000 irrelevant footprints. A bounded500-road replay on the real
+public candidate took4.235seconds including the client round trip, with zero
+classification/evidence mismatches against previously completed work.
+
+The supported administrator Pause retained build82 and235 committed context
+batches. The disconnected psql backend was explicitly canceled after it continued
+running and blocked pause cleanup; its current uncommitted batch rolled back.
+The exact old image SQL was compared with the planning-only change. A native-
+rehearsed guarded adoption changed only this candidate stage's source fingerprint,
+preserving every other checkpoint field, candidate metadata and active head;
+duplicate/stale adoption is rejected. The SQL-only updater image overlay preserves
+all existing binaries and other scripts. The current Harbor tag, local/deployed
+pin, effective default/local values and all30 non-hook manifests match. All six
+Deployments are healthy. Normal Resume uses the same build82, skips the completed
+download/import and immediately commits frontage batches in approximately1-4seconds.
+At4:27PM PST, completed frontage increased from11000to29000roads in roughly90seconds;
+the managed request is Processing with no error, and the active map remains
+generation18/build62 while build82 continues toward generation19. The owned native
+fixture and port forwards are removed after verification.
+Promotion and later derivation/validation remain pending; this rollout does not
+include the separate in-progress Coverage map-processing admission-gate change.
+
+Helm261 adds importer4 residential building/land-use/address/entrance context from
+the normal PBF download. A bounded checkpointed stage under the existing
+postprocess task compiles shared-access classification/count/reason/provenance
+tags before derivation21. Raw context scratch is removed afterward. Importer3
+resumes retain their exact filter/style/stage/fence contract; comparison against
+the deployed legacy image confirms all20 old import/SQL files byte-identical.
+
+Matcher v84 accepts evidenced shared neighborhood roads independently of name or
+private-access tags and genuinely traversed parking aisles, while classified
+single-house/ambiguous driveways stay excluded. Aisle candidates require aligned
+nearby motion and clipped geometry needs continuous raw support. Context-confirmed
+short shared turning arms use tightly bounded bidirectional/better-fit evidence;
+ordinary/legacy short-stub thresholds are unchanged. V82/v83 remain explicit
+execution contracts, and approved ordinary-route v83 goldens stay byte-identical
+after removing only v84's additional display decision.
+
+Current jobs persist nullable `display_class` through the immutable parent-policy
+and lease fences. Current payloads require a valid class; legacy payloads cannot
+override presentation. SQL readers use one private immutable visibility helper
+instead of duplicating current eligibility. The new column/constraint/helper and
+five effective existing function bodies were rehearsed/adopted without changing
+original identities/permissions/RLS, namespace ACL or schema/Goose history. Old
+classifications/evidence are not rewritten or relabeled. Idle old Coverage
+consumers were drained before any v84 producer could publish unsupported work.
+
+Regions now expose underlying `reprocessingRequired` independently of retained
+job overlays. Outdated importer/derivation contracts show yellow Stale with exact
+shared tooltip `Updated matcher policies require reprocessing`; current maps show
+Ready. Stale retains reprocessing and historical progress actions. Clearing an
+overlay preserves underlying Stale while catalog refresh is pending. Actual built
+UI tests verify both themes at1440px/390px, exact tooltip, semantic color, retained
+progress/focus, menus and no horizontal document overflow;143 admin tests pass.
+
+Go suite, modified-package race checks, generation checks, native app read/display/
+authorization and legacy/current persistence tests pass. Real osmium/osm2pgsql
+import plus full derive/validate/promote on an independently fetched public map
+fixture succeeds as importer4/derivation21. Five authorized private replay windows
+recover the cited missing geometry with v84 while retaining existing coverage;
+these are staging receipts, not completed production rematches. Raw private replay
+input was removed and the owned two-container fixture/port forwards are deleted.
+
+All six application Deployments are healthy; both public origins serve final UI
+assets. All four current Harbor tags match local/deployed pins; installed values
+and all30 non-hook resources exactly match defaults/local. Normal authenticated
+admin admission started fresh NorCal request01A21884355A77C6968FC0D1A1D85ED7/build82
+with importer4 and storage monitoring enabled. Previous failed candidates had
+already been canceled by the user; no checkpoint was discarded by this rollout.
+Build82 is still running and its promotion/context-dependent production rematches
+remain pending. Old promoted maps and valid Coverage continue serving meanwhile.
+
+Helm260 corrects the display-only blanket driveway exclusion for matcher-approved
+named private neighborhood roads. Canonical030 display facts, entity detail,
+focused GeoJSON and legacy MVT plus031 tile-local MVT now preserve the same
+exception. A shared accepted/rejected service-road fixture checks Go foot/bicycle
+eligibility against native PostgreSQL display facts, visit counts, detail/focus
+geometry and decoded tiles. Existing driveway/parking negatives stay covered.
+The functional spec and ADR0009 require testing both policy layers whenever either
+changes; AGENTS.md is unchanged at the user's request.
+
+Native fresh APP33 installation, complete canonical-display/precomputation and
+selected tile/authorization suites pass, as do runtime-role readiness and Go race
+tests for coverage/database/migration packages. Live preimage adoption and derived
+repair were rehearsed before deployment. Four existing function bodies are replaced
+under their owner, preserving exact OIDs/ACLs/settings, namespace ACL and all
+schema/Goose metadata. Derived facts were refreshed for35 affected workouts across
+two accounts, including one already-present fact with incomplete bounds. Guarded
+receipts preserve route-cache content, match geometry/lengths and applied authority;
+normal generation invalidation renews stale UI capabilities without rematching.
+
+API/worker images contain the new exact-body readiness contract and canonical
+migrator sources. New containers start before the live SQL adoption, then all four
+affected Deployments roll out healthy. UI, Martin and updater image pins are
+unchanged. Current Harbor tags match both new pins; installed values and all30
+non-hook resources exactly match defaults/local. All six Deployments are ready;
+the disposable fixture pod and its port forwards are removed. Actual-case receipt
+is private under docs/internal and temporary adoption artifacts are outside Git.
+
+Helm259 throttles Coverage worker cycle errors across both execution loops and the
+automatic-retry loop. The first failure is logged immediately, subsequent cycle
+errors are aggregated for30 seconds, and each periodic entry includes the number
+of suppressed errors. Idle siblings do not reset the cadence. Existing error
+redaction, polling, matching, per-route outcomes, automatic-retry budgets and
+health probes are unchanged. Full worker/coverage-command race tests and reader
+placement/database tests pass, including simulated30-second concurrent polling,
+suppression counts and redaction. The worker image pin/current tag is updated;
+general worker, Coverage worker and OSM controller rollouts complete healthy.
+Installed values and all30 non-hook resources exactly match defaults/local.
+
+The associated read-only incident investigation correlates nine latest failed
+Coverage routes with PostgreSQL40001 and roughly nine standby snapshot-recovery
+conflicts in the same window. Both OSM standbys were re-cloning and repeatedly
+exited when the image's60-second startup-readiness deadline expired. They later
+recovered without configuration changes and returned to streaming with zero byte
+replay lag before the application rollout completed. Replica feedback remains off
+and recovery-conflict delays remain30 seconds. No database/replication settings
+or failed jobs were changed by this logging release; see the
+[PostgreSQL HA recommendations](internal/postgresql-ha-resilience.md).
+
+Helm258 vertically centers Map feedback text, including wrapped lines, with its
+dismiss action. The banner uses its intrinsic width bounded by the canvas instead
+of unnecessarily wrapping within half the mobile map. Initial selection creation
+now applies the existing five-delay retry budget to network failures and transient
+408/429/500/502/503/504 responses. Exhausted failures offer Retry; dismissing a route
+preparation error or returning to the failed Map workspace starts a fresh attempt.
+Pending and failed initial loads no longer claim that the range has no routes.
+Existing membership recovery, request cancellation, selection scope and compatible
+map/camera retention remain intact. Manual sync Scope reuses the date fields'
+two-column composition and gutter, with the same narrow-screen stacking, and Start
+sync uses a centered content-sized standard button with the normal form spacing.
+
+All661 affected Map, app-shell and Data Sync tests pass, including bounded failure
+exhaustion and recovery through dismissal, Retry and retained-tab return. Production
+build, type/CSS/CSP checks and diff whitespace checks pass. Actual built-UI Chromium
+fixtures verify both themes at1440px/390px: single/multiline text and dismiss centers
+match, dismissal loads route choices, Scope/date edges and widths match, Start sync
+is centered and no horizontal overflow occurs. These are synthetic presentation
+and API-response fixtures, not private production route-rendering evidence. Only
+the UI pin changes; the UI rollout is healthy, the current Harbor tag matches its
+pin, and installed values plus all30 non-hook resources exactly match defaults/local.
+Both public origins serve the exact built HTML/JavaScript/CSS. A separate live
+health check found the existing worker and Coverage worker unready with OSM reader
+preflight failures; their image pins and Deployment templates were not changed by
+this UI rollout. API and UI are ready.
+
+Helm257 replaces the progress monitoring line with a semantic two-column/two-row
+summary in the same right-hand position. The monitoring row keeps its uppercase
+state and shares the current-task line; both columns are left-aligned with cell
+padding. Database storage used shows the matching job's measured retained-build
+snapshot in bold ordinary-value mixed-case units, yellow until successful
+promotion, then the matching active-generation footprint in normal theme text.
+Known values retain exact-byte help; unknown/unmeasured or unrelated historical
+builds show n/a rather than substituting the current region's newer data. The
+catalog polling interval is five seconds while progress is open, and the dialog
+subscribes to those same cached measurements without additional size scans.
+
+All101 Regions/progress tests, production build and CSS checks pass. Actual-dialog
+Chromium fixtures verify both themes and desktop/mobile containment, two-by-two
+semantics, first-row task alignment, separate left column alignment, live snapshot
+updates, bold mixed-case formatting, pending/promoted/succeeded colors and ID-fenced
+unavailable data. Theme selection is unchanged: admin inherits the saved site
+theme/default dark; Console preferences is still unimplemented. Only the UI pin
+changes. Current defaults/local values exactly match all installed values and
+30 non-hook resources; rollout is healthy and current Harbor tag matches the pin.
+
+Helm256 restores osm.regionUpdates.enabled=true in the xdev file and removes the
+temporary review comment. That single value is the only configuration change.
+The controller Deployment/pod is recreated and healthy; lifecycle actions and the
+enabled API projection are restored. Storage metrics, OTel and existing image
+pins are unchanged. All computed installed values and30 non-hook manifests match
+the current defaults plus the local file exactly.
+
+Helm255 fixes the mixed-basis pace presentation: full and final partial unit
+intervals are built from cumulative accepted observed-leg distance/time, with
+component/invalid-time gaps contributing nothing. Each partial is normalized to
+the full preferred unit. Extrema and the mean share that same dataset; the mean
+is total observed seconds/total observed meters, not an average of unequal split
+paces or a separate provider-total ratio. Stationary tails remain represented,
+including at exact-unit endings. Two nullable cache totals and a validated
+consistency constraint bracket the mean in both units; native tests explicitly
+reject contradictory data. The API uses this basis for Workout log, extents,
+numeric filtering/sorting and map pace metadata, with provider fallback only when
+no usable GPS pace exists. Source Duration/Distance and imported observations are
+unchanged. The old12-column helper and fenced worker ABI retain their identities
+and permissions through a private v2 implementation. App33/32 and Goose metadata
+are unchanged; the adoption is rehearsed against live preimages.
+
+Historical repair checked1,907 caches:1,906 updated, one unchanged, no busy/timeouts.
+All1,906 measured pace caches satisfy the range invariant. The 11/10 walk now has
+17'25"/28'42" extrema and21'18" average; 11/8 has15'47"/34'47" and19'59" average.
+Native cases include six minutes over half a mile producing12'00"/mi, partial
+weighting, exact-unit stopped tails, gaps, duplicate/backward time, outliers,
+privacy/no-op behavior and cache constraints. API integration verifies GPS pace
+reads, extents, filter/sort behavior and legacy provider fallback.
+
+Dismissible notices share equal action insets in Summary, sync notifications/
+feedback, Regions, Stats, shell and map messages, retaining expanded-detail
+behavior and theme colors. Real browser CSS fixtures verify equal top/right/
+bottom gaps across seven compositions in light/dark desktop/mobile layouts.
+OpenTelemetry uses default-off otel.enabled; collector.enabled is removed.
+Disabled mode renders empty SDK endpoints and no UI/Martin collectors/config/CA
+mounts; standalone SDK configuration also defaults off. The xdev override keeps
+the existing gateway enabled, and both collector sidecars remain present. Region
+updates stay explicitly disabled and the controller Deployment/pods remain absent.
+
+All1,169 UI tests, Go/API/worker/config/database/migration/telemetry/Helm checks,
+native regressions and production builds pass. Current defaults/local values match
+every installed value and all25 non-hook manifests exactly. API/worker/UI current
+tags match deployed pins; the five remaining Deployments are healthy, and owned
+native fixtures/forwards are removed.
+
+Helm254 leaves the chart's region-updates default enabled but temporarily sets the
+xdev override false for review. The controller Deployment and pods are absent;
+the five remaining Deployments are healthy. Regions shows the Data Sync-style
+warning above its heading, with exact disabled-installation wording and a Dismiss
+button. Dismissal is scoped to administrator session ID in sessionStorage,
+survives compatible navigation/reloads, and resets for a new login or a subsequent
+enabled-to-disabled transition. Mutation menu items remain visible/disabled while
+boundaries and recorded progress remain readable. Real Chromium checks cover both
+themes, disabled cursors/items, no POSTs, progress access, dismissal/login scope and
+mobile containment. Storage-metrics capability remains enabled independently.
+
+Pace help returns to fastest/slowest-only formatting; the cell already contains
+the overall source average. The prior cleanup's duplicate-timestamp reset was too
+strict: the 11/10 walk's32 duplicate steps made35 short chains, and the 11/8 run
+retained only one full-mile sample (equal extrema20'38"). Equal timestamps now
+preserve continuity while their zero-time distance/elevation legs are ignored;
+backward time, rejected fixes and genuine gaps still break chains. Native tests
+cover both behaviors plus existing outlier/partial-unit invariants. Historical
+repair checked1,907 caches and changed1,794, with113 unchanged and no busy/timeouts.
+Scoped source/geometry/provider/Coverage fingerprints are preserved. Corrected
+11/10 mile extrema are1044.767004/1054.139953 seconds (17'25"/17'34"); 11/8 extrema
+are946.684197/1315.11126 (15'47"/21'55"). The original ingest authorization and all
+old function identities/ACLs/settings/schema33/32/Goose metadata are preserved.
+
+Regions97 and Summary97 tests, native PostgreSQL regression cases, Go/Helm checks
+and production builds pass. Current defaults plus the revised local values match
+every installed computed value and all25 non-hook resources exactly. API/UI tags
+match deployed pins; owned native fixtures/forwards are removed.
+
+Helm253 makes settled dialog size alignment synchronous in ResizeObserver delivery,
+avoiding a paint of expanded/collapsed source content at its old top coordinate.
+Entry animation handling, layout-based device-pixel snapping and child alignment
+events remain intact. Actual Chromium pre-paint instrumentation reproduces four
+stale-position deliveries with the former callback and zero across32 Add/Edit/
+Cancel transitions in both themes, desktop/mobile and1x/2x display scales. Four
+alignment and19 source-dialog tests plus production build/CSS checks pass.
+
+GPS-derived split/altitude/elevation caches now use existing raw display/export
+membership, workout-time validity and separate contiguous positive-time chains.
+Complete kilometer/mile accumulation resets at component/sequence/time breaks;
+partial tails and rejected fixes cannot create fake full-unit splits. Cached
+envelopes cover the existing displayed geometry. Imported points, geometry,
+source-reported totals and Coverage matching input are preserved. Canonical011
+adds the private computation helper and retains the existing fenced worker ABI;
+approved foundation source snapshots reflect that fold. Live adoption is rehearsed
+from the existing function preimage with owner/ACL/OID/settings/schema33/32 and
+Goose metadata preserved.
+
+Historical correction examined1,907 route caches:1,900 statistics updates and14
+subsequent envelope-alignment adjustments, with no busy/time-out rows. The scoped
+2026-11-19 Outdoor Walk receipt confirms unchanged observations/geometry/provider
+metrics and Coverage input revision; its cleaned fastest/slowest mile splits are
+929.926643/1294.025298 seconds (15'30"/21'34"). Native cases cover continuous/full
+units, short tails, pre-start fixes, retained geometry bounds, spatial/time gaps,
+duplicate time, walking spikes, private helper ACLs and no-op idempotence. Go
+API/worker/database/migration checks pass. API/UI tags match deployed pins; the
+current defaults/local file still match all computed values and30 non-hook
+manifests. Owned route-statistics test pods/forwards are removed.
+
+Helm252 adds overall average pace to Workout log Pace help after fastest/slowest
+split paces, using the same preferred-unit conversion and rounding as the visible
+cell. The Summary suite's97 tests and production build pass. Only the UI image
+changes; chart defaults plus the local file still match every computed installed
+value and all30 non-hook manifests exactly. The current UI tag/pin matches and
+the rollout is healthy.
+
+Helm251 deploys current defaults plus the revised values-xdev.local.yaml directly
+using --reset-values, without carrying hidden stored overrides. All computed
+values and all30 rendered non-hook manifests match the installed release exactly.
+This applies the explicit storage-metrics enablement/PVC selectors, 300-second
+ingress timeouts and local attribution URLs. Only API/UI image pins are refreshed;
+the user's other local-file revisions are preserved. All six Deployments are healthy.
+
+Region updates/controller now default enabled; optional storage metrics still
+default disabled. The xdev file explicitly enables both, supplies its Prometheus
+Service IP10.43.198.58 and selects the current writer's data-postgresql-postgresql-0
+PVC in namespace postgresql. Fresh metric samples and a verified-HTTPS request
+from a disposable pod using the real updater image/CA/DNS override confirm
+reachability and cardinality. The independent saved monitoring preference remains
+off at revision2; capability enablement does not overwrite the administrator's choice.
+
+Disabled region updates now retain boundaries and existing progress/Status-cell
+reads, disable every lifecycle menu action, close stale deletion confirmations
+and reject all seven mutation commands server-side. Native administrator checks,
+95 Regions UI tests and Helm/default-disable/resource/probe tests pass. Acceptance
+explicitly disables managed regional dispatch for its synthetic data. Controller
+probes use the shared six-failure/five-second contract. Owned native PostgreSQL
+and metrics-check pods and the native port-forward are removed.
+
+Helm250 replaces unimplemented admin sections with the shared content-sized cyan
+future-release note, centered horizontally/vertically without the Administration
+eyebrow or page heading. Storage and cleanup is renamed Storage usage; Update
+history and storage functionality remain deferred. Regions displays measured
+unpromoted build allocation in yellow beside active usage, or alone on a first
+build, with independent exact-byte tooltips. Measurements sum retained ordinary/
+unlogged table and materialized-view allocation including indexes/TOAST, after
+successful task/batch scratch cleanup and on retained failure/pause exit. The
+controller publishes completed snapshots; unmeasured/mismatched/promoted/removed
+candidates are hidden and sorting uses the displayed total. No active or eligible
+stopped builds needed an initial live backfill.
+
+OSM storage metrics move under regionUpdates.storageMetrics and default disabled.
+The URL, metric names and selector labels reach actual value/source-timestamp
+queries without exporter/pod/PVC discovery. Custom selector maps do not inherit
+Kubernetes labels. The default kubelet pair resolves the currently verified writer
+PVC; node-exporter pairs are supported. The optional Service IP overrides the
+configured hostname only. Missing/disabled integration forces the admin setting
+off and is applied to each new execution without changing existing execution
+policy. Configured missing/stale/ambiguous metrics still block monitored work.
+Manual updater/evaluator templates and operator queries use the same optional
+configuration; no Prometheus lookup is required while disabled.
+
+Native PostgreSQL tests validate post-cleanup physical sizes, removed-schema
+suppression, admin settings enforcement and legacy/new execution policy capture.
+Fresh source33 migration preserves the approved lifecycle guard with an early
+source-timer fence; application032 avoids rewrapping that capability-aware guard.
+The app/OSM adoption is rehearsed from live preimages, preserves old function
+identities/owners/ACLs/settings, namespaces and Goose ledgers, and retains schema
+33/32 and11/10. Unit Go/worker/controller/config/database/migration/Helm tests,
+134 focused UI tests, generated contracts and production builds pass. Real
+Chromium fixtures verify both themes, centered content-width frames, mobile
+containment, yellow independent byte targets, numeric column fit and forced-off
+monitoring. All six live Deployments are healthy, all555 catalog entries have the
+new snapshot fields, and the catalog role can read both new columns. API/worker/
+updater/UI current tags match deployed pins. Owned native fixtures/forward are removed.
+
+Helm249 separates cursor gaps: standard styled tooltips and Summary hints use
+1.5rem, while map route/Coverage popups with bottom-center triangles use1rem in
+all modes. Both derive pixels from the root font through the same helper, using
+separate theme tokens and matching fallbacks. Styled select hover-accent borders
+now require an enabled trigger, covering unchecked source Auto Sync and temporary
+Save/checking disablement while retaining the blocked cursor and enabled hover.
+
+The 44 focused source/tooltip/map tests, CSS checks and production build pass.
+Actual source-editor Chromium fixtures in both themes confirm unchanged resting
+borders over all three disabled time controls in both unchecked and pending-Save
+states, enabled hover accents and the stable disabled Save label. Separate fixed/
+following tooltip fixtures confirm shared24px/30px and map16px/20px offsets at
+16px/20px root sizes, in both themes, with keyboard anchoring preserved. The current
+UI tag matches the deployed digest, and the rollout is healthy.
+
+Helm248 keeps the source editor action labeled Save while saving/checking, with
+its existing disabled/busy state preventing repeat submissions. The source table
+continues conveying connection progress. The shared tooltip gap and fallback are
+reduced from3rem to2rem across standard help, Summary hints and map popups. The
+44 focused source/tooltip/map tests, CSS checks and production build pass. Actual
+shared-component Chromium fixtures confirm fixed/following modes in both themes,
+32px/40px gaps at 16px/20px root sizes and keyboard anchoring. The current UI tag
+matches the deployed digest, and the rollout is healthy.
+
+Helm247 matches source help-label input gaps to Type/Name at the shared 8px spacing
+without changing the circled markers. The daily-sync frame has equal 12px inner
+padding around its time controls, making it 8px taller at the standard root size.
+Hours/minutes/AM-PM selects opt into the shared compact panel variant: no checkmark,
+reduced horizontal item padding and nonwrapping centered numeric/period values;
+other selects retain their existing indicators. The shared cursor-tooltip gap and
+fallback increase from1rem to3rem, including map popups and Summary hints.
+
+The 44 focused source/tooltip/map tests, production build and CSS checks pass.
+Actual-component Chromium fixtures verify all source-label gaps, equal frame
+padding, unchanged marker dimensions and single-line unchecked time options in
+light/dark 12/24-hour desktop layouts, plus mobile containment. Separate fixed/
+following tooltip fixtures confirm 48px and60px gaps at 16px/20px root sizes in both
+themes and element anchoring for keyboard focus. Current UI tag and deployed digest
+match, and the rollout is healthy.
+
+Helm246 unifies pointer-triggered styled help on both cursor coordinates and a
+shared 1rem vertical gap. Tooltips portal by default, including Summary precision
+and time-zone help; Manual sync reprocess help now uses that same component while
+preserving its native checkbox, single Tab stop and immediate focus reveal.
+Cursor-following help tracks both axes; fixed help captures the latest cursor
+point through its reveal delay and freezes once visible, including coalesced
+motion across the reveal boundary. Keyboard focus stays element-anchored, pinned
+pointer help retains its captured point, and viewport/clipping guards remain.
+Summary's custom mode hint and map route/Coverage hover popups use the shared gap;
+map popups anchor above the cursor, and the old checkbox-specific -2px correction
+is removed. All 1,150 UI tests and CSS/type/build checks pass. Actual-component
+Chromium fixtures verify fixed/following modes in light/dark themes at 16px and
+20px root sizes, with the corresponding 1rem gaps and keyboard anchoring. The
+current UI tag matches the deployed digest and the rollout is healthy.
+
+Helm245 moves source field help from inputs to muted circled question marks beside
+labels. The shared InfoTip uses the existing portal/cursor-positioning owner with
+the 750ms hover delay, immediate pinning and keyboard anchoring. Source inputs
+retain their accessible descriptions without hover/focus popups. The editor
+consumes Escape for active help before the dialog can close. All Automated sync
+question-mark tooltips use the same cursor-centered positioning, with explicit
+Stale after lines: "Show a warning after this period if no new" and "workouts have
+been imported by auto-sync". Tooltip/source (39) and Data Sync (241) component
+tests, CSS/type/build checks pass. Actual-component Chromium fixtures verify all
+nine help targets in light theme plus representative Automated/source targets in
+dark, including pointer centering, normal delay, input-hover silence, two painted
+Stale lines and pin/Escape behavior without closing the editor. The current UI tag
+matches the deployed digest and the rollout is healthy. The owned disposable
+scheduler databases and their port-forward have been removed.
+
+Helm244 adds independent daily source times to Add/Edit source. The setting's
+full-width highlight holds the checkbox and right-aligned Time of day controls:
+hours/minutes and AM/PM only for 12-hour preferences. Disabled sync retains muted,
+disabled time controls. Saving uses HH:mm in the preferred zone, and Next run
+reports the earliest enabled-source timer. Existing interval sources retain their
+timing until saved with an explicit daily time. Canonical006/021 and the rehearsed
+live adoption retain source/schema33, original function metadata and Goose ledger.
+Native tests cover independent admission, wrong leases, legacy exclusion, secret
+snapshots, source-time validation/isolation, preferred-zone updates and DST. Full
+API/worker/Coverage readiness and the scheduler privilege-fault matrix pass.
+
+The Stale badge uses dark orange #b45a12 and white text at 4.76:1 contrast in both
+themes, with unchanged compact dimensions. Nineteen source-dialog tests, four
+shell source tests, Go API/database/migration checks and generated contracts pass.
+Real Chromium checks cover both themes, 12/24-hour formats and desktop/mobile
+containment, with one desktop setting row and retained values across format changes.
+The API/UI current tags match the deployed immutable digests; both rollouts are healthy.
+
+Helm243 groups Users actions with a divider after View usage for registered users,
+and separates Workout log view actions from available exports. Region boundaries
+and workout map actions use View boundaries and View on map. Task history inserts
+a divider after View detail only when another action is present, including Reload
+actions on preparation failure. All 561 affected existing component/shell tests
+pass after updating an older sentence-case outcome expectation. Real Chromium
+fixtures exercise 11 account/workout/job menu cases in each theme, confirming
+labels, painted dividers and absence of trailing or duplicate dividers. The
+current UI tag and deployed digest match.
+
+Helm242 opts the Regions Name tooltip into shared cursor-following positioning,
+centering the provider-qualified ID over the pointer instead of the full-width
+label wrapper. The hand cursor and boundary-map click action are retained.
+All 100 focused Regions/Tooltip tests and the production build pass. A real
+Chromium fixture using the actual Name tooltip markup and shared component
+confirms pointer centering at two positions, the hand cursor and click-through
+in light/dark themes. The current UI tag and deployment digest are updated.
+
+Helm241 uses displayed Name ascending as the case-insensitive tie-breaker for all
+Regions sort columns, including equal unavailable values, instead of hidden IDs.
+Primary descending sorts keep Name ties ascending. The UI image is published
+under the current tag and deployed directly for review.
+
+Helm240 makes Status start descending when selected in Regions, placing Available
+last. The initial Name-ascending order and subsequent sort toggling are retained.
+The UI image is published under the current tag and deployed directly for review.
+
+Helm238/239 correct UI cache validation after overlay image packaging used a fixed
+file timestamp. Equal-length app shells then shared nginx's size/mtime ETag, allowing
+a browser refresh to retain an old JavaScript bundle map. UI artifacts now have a
+fresh timestamp. Both image-default and Helm-mounted nginx configs serve index.html
+with no-cache and disable ETag/date conditional responses while inheriting CSP.
+Requests carrying the former ETag and date return fresh HTTP200 HTML without an
+ETag on both public origins and the Regions route. The currently served bundle
+contains the missing-region tooltip, and live NorCal progress is1667/1664/missing3.
+
+Helm237 replaces broad account-exclusive Coverage guards with shared lifecycle
+protection. Actual queue edits serialize through a private account-scoped Coverage
+admission advisory mutex, without excluding ordinary account FK checks. Readiness
+and cohort preparation take no job locks; queue mutation locks only affected live
+route jobs and the chosen destination parent. Metadata rebinds cannot upgrade into
+admission while holding route locks: a changed target retries in a fresh transaction.
+Workouts/state use non-key-update locks; cleanup derives only actually affected
+parents. Native tests cover unrelated job locks, account references, same-target
+deduplication, lifecycle exclusion, cancellation, source deletion and ownership.
+
+The new administrator progress ABI preserves the old counts ABI and adds confirmed
+missing-map route counts. The live values are NorCal1667/1664 with 3 missing additional
+regions, and Nevada6/6 with zero. Stale selection proofs do not count as confirmed
+missing maps. The Workouts tooltip appends its suffix only for incomplete coverage
+with a positive missing-map count. All 91 focused UI tests and native aggregate
+cases pass. Existing ledgers, function identities/permissions/settings and schema
+ACL are preserved by the rehearsed live patch, folded into existing definitions.
+
+All 19 active rebuild SQL files move byte-identically to osm/batches; updater paths,
+test includes and documentation follow. Content/stage fences remain unchanged.
+The manual updater/evaluator Job purposes and Lua flex importer are documented;
+manual and managed launch prefixes remain distinct, shared storage/build parameters
+are aligned, and both executables are packaged against the new batch layout.
+The published updater image is checked in an immediately removed, database-free
+Pod: both tools/importer/new SQL are present and old flat SQL is absent. API,
+worker, updater and UI images are published without a local container-image cache.
+
+Helm236 addresses slow promotion discovery. An account's ordinary UUID-ordered
+campaign previously made newly covered routes wait behind unrelated workouts, and
+brief NOWAIT collisions caused five-minute campaign backoffs. A fenced priority
+reader now uses the private region-membership index and accepted active heads to
+find missing-generation candidates before the ordinary pass. It preserves the
+ordinary checkpoint and never substitutes intersection for authoritative readiness:
+each candidate still uses the normal input snapshot, full point resolution,
+ownership checks, matching descriptor and deduplicated queue admission. Fresh
+negative proofs and routes already current for their regional generation are skipped.
+
+Readiness queries use a transaction-local custom plan and do not search the entire
+provider catalog when an active region already covers a point. Selection writes
+retry brief 55P03 collisions in fresh transactions without rereading GPS; persistent
+lock contention and shutdown recovery use a one-minute retry, other failures retain
+five minutes. Native checks exercise priority admission, ordinary-cursor preservation,
+wrong-lease denial, a real short account lock and no duplicate batches or repeated ROI.
+The reader is folded into APP033 and installed with no ledger/version changes or
+altered existing function permissions. API and worker images roll out as Helm236.
+After deployment, the old interrupted campaign's pending retry timing is explicitly
+woken without changing its cursor or inserting jobs directly. All four requested
+Nevada workouts are then observed discovered: the 2023 swim and 2024 hike are current,
+and the two 2026 hikes are running through ordinary Coverage jobs.
+
+Helm235 restores filled success badges and check circles to their original green
+and white ink. Table success text and complete Workouts values retain the route-start
+green through a separate text token. Computed-color checks in both themes confirm
+badge RGB(39,115,79), white ink and text RGB(32,164,100). The UI-only image is
+published under the current tag and deployed for review.
+
+Helm234 colors Workouts values green when a generation exists and workout/current
+Coverage counts are equal, and yellow when fewer routes are current. Zero of zero
+is complete; regions without a generation retain ordinary text and the hand cursor
+without a tooltip. Table success text, filled badges and check icons now use the
+route-start marker's exact green through the shared success token. Source Connected,
+admin Active, region Ready and Data Sync Succeeded/Superseded text no longer borrow
+the paler cycling/activity palette. Dark success-badge ink preserves legibility.
+The build and existing CSS checks pass; browser computed-color checks confirm the
+shared RGB(32,164,100) in light/dark themes and their existing yellow tokens. The
+UI-only image is published by reusing registry layers, without a local image cache,
+and deployed as Helm234.
+
+Helm233 corrects Coverage's provider-qualified region identifier grammar to match
+OSM11: provider names remain bounded to 64 characters and hierarchical region
+paths to 192, with a 257-character complete identifier. Nevada's promotion used
+`geofabrik:us/nevada`, which the former flat grammar rejected before accepting the
+catalog observation. This left application catalog revision21 behind primary22
+and prevented the six intersecting workouts from being reconsidered.
+
+Five live validators and five CHECK constraints are patched under the existing
+application owner, preserving original function identities, permissions, settings,
+indexes, schema metadata and Goose ledger0-33. Definitions are folded into their
+original migrations; no migration or matching-policy version is added. API region
+length bounds and generated OpenAPI are updated. Native rehearsal and runtime-role
+readiness checks pass. All 554 current Geofabrik IDs, including 53 hierarchical
+IDs, and the cached legacy Enfield ID pass the generation validator, all five
+region constraints and restricted-role catalog sync in bounded batches. An embedded
+public-ID regression fixture records the catalog provenance, not a runtime allowlist.
+The native first-promotion test queues previously unavailable hierarchical-region
+routes and a repeat pass creates no duplicate batches.
+
+The live catalog accepts Nevada at revision22, reconciliation revision33 begins,
+and the recurring catalog validation errors stop. Existing matching workers stay
+running. The API image is published by appending its two updated binaries to the
+existing registry layers, avoiding a reconstructed local container-image cache;
+Helm233 rolls out the API. All six deployments are healthy. Discovery of the six
+specific Nevada routes is asynchronous; their queue states are checked separately
+rather than inferred from successful catalog acceptance.
 
 Helm232 capitalizes the first letter of each displayed Coverage route outcome in
 Data Sync's Route runs list, replacing underscore separators with spaces. Existing

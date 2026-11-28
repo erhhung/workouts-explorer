@@ -96,6 +96,54 @@ func TestAdminOSMRegionCountsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(0, 2)
+	breakdown, err := owner.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer breakdown.Rollback(ctx)
+	if _, err := breakdown.Exec(ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := breakdown.Exec(ctx, `UPDATE app.osm_region_catalog SET payload=jsonb_set(payload,'{buildId}','12') WHERE id='fixture:counts-west';
+		UPDATE app.coverage_reconciliation_state SET catalog_revision=1,catalog_fingerprint=repeat('a',64),selection_fingerprint=repeat('a',64),selection_policy='route-selection-v1:auto-add=false',active_heads='{"fixture:counts-west":12,"fixture:counts-east":20}' WHERE singleton;`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"workout_coverage_states", "coverage_applied_match_proofs"} {
+		column := "applied_generations"
+		if table == "coverage_applied_match_proofs" {
+			column = "generations"
+		}
+		if _, err := breakdown.Exec(ctx, `UPDATE app.`+table+` SET `+column+`='[{"regionId":"fixture:counts-west","generation":12},{"regionId":"fixture:counts-east","generation":20}]' WHERE account_id=$1 AND workout_id=$2`, first, workouts[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := breakdown.Exec(ctx, `UPDATE app.workout_coverage_states SET readiness_state='unavailable',reason='no_provider_region',map_data_ready_at=NULL WHERE account_id=$1 AND workout_id=$2;
+	`, second, workouts[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := breakdown.Exec(ctx, `INSERT INTO app.coverage_route_selection_proofs(account_id,workout_id,content_sha256,source_id,route_input_revision,route_input_sha256,
+		mutation_version,catalog_revision,catalog_fingerprint,selection_fingerprint,selection_policy,readiness,reason,region_ids,generations)
+		SELECT w.account_id,w.id,w.content_sha256,w.source_id,s.route_input_revision,s.route_input_sha256,0,1,repeat('a',64),repeat('a',64),
+		'route-selection-v1:auto-add=false','unavailable','no_provider_region','{}','[]' FROM app.workouts w JOIN app.workout_coverage_states s ON s.workout_id=w.id AND s.account_id=w.account_id
+		WHERE w.account_id=$1 AND w.id=$2`, second, workouts[1]); err != nil {
+		t.Fatal(err)
+	}
+	var totalProgress, currentProgress, missing int64
+	if err := breakdown.QueryRow(ctx, `SELECT workout_count,coverage_route_count,missing_region_route_count FROM app.admin_osm_region_workout_progress($1) WHERE region_id='fixture:counts-west'`, session).Scan(&totalProgress, &currentProgress, &missing); err != nil || totalProgress != 2 || currentProgress != 1 || missing != 1 {
+		t.Fatal("missing-map breakdown", totalProgress, currentProgress, missing, err)
+	}
+	if err := breakdown.QueryRow(ctx, `SELECT missing_region_route_count FROM app.admin_osm_region_workout_progress($1) WHERE region_id='fixture:counts-east'`, session).Scan(&missing); err != nil || missing != 0 {
+		t.Fatal("multi-region current routes falsely counted as missing", missing, err)
+	}
+	if _, err := breakdown.Exec(ctx, `UPDATE app.coverage_reconciliation_state SET selection_fingerprint=repeat('b',64) WHERE singleton`); err != nil {
+		t.Fatal(err)
+	}
+	if err := breakdown.QueryRow(ctx, `SELECT missing_region_route_count FROM app.admin_osm_region_workout_progress($1) WHERE region_id='fixture:counts-west'`, session).Scan(&missing); err != nil || missing != 0 {
+		t.Fatal("stale readiness falsely counted as confirmed missing regions", missing, err)
+	}
+	if err := breakdown.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
 	for i, account := range []uuid.UUID{first, second} {
 		tx := integrationAccountTransaction(t, owner, account)
 		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role='replica'`); err != nil {

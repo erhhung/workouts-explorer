@@ -456,7 +456,7 @@ Users can explore selected raw workout routes efficiently on desktop and mobile.
 - Keep one MapLibre instance mounted while immutable route selections change; update the vector source in place and preserve private sources/layers through public style transforms.
 - Use one compact workout list for visibility, per-route fitting, automatic workout-family selection, synchronized hover highlighting, and delayed route detail popups.
 - Keep empty maps interactive with browser-location centering and a contiguous-US fallback.
-- Wire Show on map from the workout action menu.
+- Wire View on map from the workout action menu.
 
 ### Acceptance
 

@@ -105,6 +105,27 @@ CREATE POLICY coverage_display_dirty_owner_policy ON app.coverage_display_dirty
 
 -- NULL account is used only for the set-based migration backfill. Runtime
 -- callers first serialize the account and expand segment keys into workouts.
+-- Current-policy matches carry the matcher's decision. Only retained legacy
+-- evidence needs the frozen pre-v84 driveway/parking presentation rule.
+-- +goose StatementBegin
+CREATE FUNCTION app.coverage_match_visible(display_class text,highway text,tags jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $function$
+    SELECT CASE
+        WHEN display_class IN ('ordinary','shared_road','parking_aisle') THEN true
+        WHEN display_class IS NOT NULL AND display_class<>'legacy' THEN false
+        ELSE (NOT (highway='service' AND COALESCE(tags->>'service','') IN ('driveway','parking_aisle'))
+            OR (tags->>'service'='driveway' AND NULLIF(btrim(tags->>'name'),'') IS NOT NULL
+                AND lower(btrim(COALESCE(tags->>'access','')))='private'))
+            AND tags->>'amenity' IS DISTINCT FROM 'parking'
+    END
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.coverage_match_visible(text,text,jsonb) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.coverage_match_visible(text,text,jsonb)
+FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+
 -- +goose StatementBegin
 CREATE FUNCTION app.rebuild_coverage_display_precomputations(target_account_id uuid) RETURNS void
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
@@ -125,7 +146,7 @@ BEGIN
 
     WITH evidence AS MATERIALIZED (
         SELECT match.account_id, match.workout_id, match.logical_path_id, match.region_id,
-            match.geom, segment.highway, segment.tags
+            match.geom, match.display_class, segment.highway, segment.tags
         FROM app.coverage_display_dirty dirty
         JOIN app.workout_segment_matches match
             ON match.account_id = dirty.account_id AND match.workout_id = dirty.workout_id
@@ -142,17 +163,17 @@ BEGIN
         )
         SELECT account_id, workout_id,
             COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id), logical_path_id,
-            (tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+            (display_class='parking_aisle' OR tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                 OR NOT (tags ? 'workouts:park_id')) IS TRUE,
             min(region_id), bool_or(tags ? 'workouts:education_id'), min(tags->>'workouts:education_name'),
             ST_XMin(ST_Extent(geom)::box2d), ST_YMin(ST_Extent(geom)::box2d),
             ST_XMax(ST_Extent(geom)::box2d), ST_YMax(ST_Extent(geom)::box2d)
         FROM evidence
-        WHERE NOT (highway = 'service' AND COALESCE(tags->>'service', '') IN ('driveway', 'parking_aisle'))
-            AND tags->>'amenity' IS DISTINCT FROM 'parking'
+        -- Current matches use persisted classification; legacy evidence remains compatible.
+        WHERE app.coverage_match_visible(display_class,highway,tags)
         GROUP BY account_id, workout_id,
             COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id), logical_path_id,
-            (tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+            (display_class='parking_aisle' OR tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                 OR NOT (tags ? 'workouts:park_id')) IS TRUE
     ), path_context AS (
         INSERT INTO app.workout_path_display_context (account_id, workout_id, entity_id, locality_name)
@@ -1570,9 +1591,8 @@ AS $function$
             JOIN app.coverage_paths path ON path.account_id = match.account_id AND path.logical_path_id = match.logical_path_id
             JOIN members member ON member.source_kind = 'path'
                 AND member.source_id = COALESCE(NULLIF(segment.tags->>'workouts:education_id', '')::uuid, match.logical_path_id)
-            WHERE NOT (segment.highway = 'service' AND COALESCE(segment.tags->>'service', '') IN ('driveway', 'parking_aisle'))
-                AND segment.tags->>'amenity' IS DISTINCT FROM 'parking'
-                AND (path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+            WHERE app.coverage_match_visible(match.display_class,segment.highway,segment.tags)
+                AND (path.name IS NOT NULL OR match.display_class='parking_aisle' OR segment.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                     OR NOT (segment.tags ? 'workouts:park_id'))
             UNION ALL
             SELECT match.geom FROM eligible
@@ -1691,9 +1711,8 @@ BEGIN
         JOIN app.coverage_display_members member ON member.account_id = target_account_id
             AND member.context_id = display_context_id AND member.source_kind = 'path'
             AND member.source_id = COALESCE(NULLIF(checked.tags->>'workouts:education_id', '')::uuid, checked.logical_path_id)
-        WHERE NOT (checked.highway = 'service' AND COALESCE(checked.tags->>'service', '') IN ('driveway', 'parking_aisle'))
-            AND checked.tags->>'amenity' IS DISTINCT FROM 'parking'
-            AND (path.name IS NOT NULL OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+        WHERE app.coverage_match_visible(checked.display_class,checked.highway,checked.tags)
+            AND (path.name IS NOT NULL OR checked.display_class='parking_aisle' OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                 OR NOT (checked.tags ? 'workouts:park_id'))
         UNION ALL
         SELECT member.canonical_id, member.source_kind, member.source_id, checked.workout_id, checked.geom
@@ -1799,9 +1818,8 @@ BEGIN
         JOIN app.coverage_display_members member ON member.account_id = target_account_id
             AND member.context_id = display_context_id AND member.source_kind = 'path'
             AND member.source_id = COALESCE(NULLIF(checked.tags->>'workouts:education_id', '')::uuid, checked.logical_path_id)
-        WHERE NOT (checked.highway = 'service' AND COALESCE(checked.tags->>'service', '') IN ('driveway', 'parking_aisle'))
-            AND checked.tags->>'amenity' IS DISTINCT FROM 'parking'
-            AND (path.name IS NOT NULL OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+        WHERE app.coverage_match_visible(checked.display_class,checked.highway,checked.tags)
+            AND (path.name IS NOT NULL OR checked.display_class='parking_aisle' OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                 OR NOT (checked.tags ? 'workouts:park_id'))
         UNION ALL
         SELECT member.canonical_id, member.source_kind, member.source_id, checked.geom

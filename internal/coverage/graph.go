@@ -431,6 +431,7 @@ func (g compiledGraph) portion(id string, fromMeter, toMeter float64) TraversedP
 		LocalityID: segment.LocalityID, SourceWayID: segment.SourceWayID,
 		SourceWayVersion: segment.SourceWayVersion, Direction: segment.Direction,
 		ContinuityClass: segment.ContinuityClass,
+		DisplayClass:    segment.DisplayClass,
 	}
 	portion.PhysicalSegmentID = segment.PhysicalSegmentID
 	if portion.PhysicalSegmentID == uuid.Nil && segment.PhysicalID != "" {

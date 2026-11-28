@@ -4,13 +4,101 @@
 
 Accepted on 9/11/2026. The accepted baseline uses matcher rules
 `coverage-experimental-v1`, adaptive sampling, and path policy
-`coverage-path-policy-experimental-v83`. Durable production Coverage persistence,
+`coverage-path-policy-experimental-v84`. Durable production Coverage persistence,
 aggregation and rendering are implemented, with a dedicated Coverage runner,
 fenced route-child checkpoints and OSM-promotion reconciliation. The retained
 diagnostic workflow remains the review and future policy-evaluation surface.
 Implementation does not establish complete multi-user capacity acceptance; see
 [architecture](../architecture.md#coverage-processing-concurrency) and the
 [acceptance evidence](../coverage-acceptance-results.md) for scope and limits.
+
+### Matching And Display Changes Must Be Cross-Tested
+
+Matching policy is implemented in Go, while SQL display readers still contain
+overlapping road/path qualification rules. Until that duplication is removed,
+**any policy change on either side must run relevant tests on both sides**, even
+if the other implementation is not edited. Neither matcher-only unit tests nor
+agreement among SQL display readers is sufficient evidence of consistency.
+
+Use shared accepted/rejected fixtures, including
+`internal/coverage/testdata/service-road-policy.json`, to verify that an accepted
+ordinary road survives display precomputation, lists/visit statistics, aggregate
+tiles, focused-workout geometry and entity detail geometry. Include negative
+ordinary-driveway and parking-aisle cases so an exception cannot accidentally
+broaden eligibility. Test relevant movement modes and preserve the distinction
+between an ordinary attributable road and a transition-only connector.
+
+Display still owns date/workout scope, grouping, park/campus presentation and tile
+clipping. Intentional differences must be documented and tested explicitly; they
+must not silently override matching-policy exceptions. A named private
+neighborhood road tagged as a driveway is an ordinary-road exception and must
+remain visible after the matcher accepts its traversal.
+
+### Shared Residential Access And Parking Aisles
+
+The required next policy distinguishes shared neighborhood circulation streets
+from individual-house driveways. A shared residential access road serving many
+homes is attributable whether named or unnamed and regardless of whether OSM
+calls it a driveway. An individual-house driveway remains non-attributable.
+Neither a missing name nor a missing `access=private` tag is sufficient to reject
+a shared neighborhood street. Conversely, length, private access or a name alone
+does not prove that an otherwise ambiguous driveway serves multiple homes.
+
+Genuinely traversed parking-lot aisles may contribute covered geometry and retain
+their unnamed identity when no formal name exists. They follow the existing
+Road Coverage table's default unnamed-row hiding, rather than being globally
+discarded from map display. No invented street name or attribution to an adjacent
+named road is permitted. Nearby entrances, stationary jitter and unsupported
+shortcuts must not become covered merely because these classes are candidates.
+
+Importer v4 retains public building footprints, residential land use and
+address/entrance nodes from the same regional PBF. Its checkpointed residential
+context stage runs before derivation and attaches versioned shared-access evidence
+to source ways. Known residential types/units or addresses distinguish dwellings;
+generic building footprints qualify only in residential land use. Garages, sheds,
+commercial buildings and duplicate relation-member footprints are excluded, and
+identical addresses on multiple footprints do not create extra homes. Frontages
+are assigned to their nearest drivable way using a mapped entrance/address point
+when available, otherwise an interior building point. Shared access requires at
+least two evidenced dwelling units, at least three otherwise-untyped residential
+frontages, or explicit shared-driveway tagging. Supported upstream access links
+can inherit shared status toward a public-road boundary; one-house leaves do not.
+Insufficient evidence remains unclassified, never an automatic shared-road grant.
+
+Derived tags retain the context version, classification, counts, reason and at
+most eight public footprint references. Raw context scratch is removed before
+the larger road derivation/clipping phases. These are evidence-based map
+classifications, not a complete cadastral census. A classification/data-contract
+change requires a new importer/context version so older maps become Stale even
+when physical derivation version and identities do not change.
+
+Policy v84 accepts context-classified shared roads independently of name/access
+tags, excludes classified single-house or ambiguous driveways, and admits parking
+aisles for foot/bicycle motion. Legacy maps without the new context retain the
+older named/private exception until rebuilt. Context is trusted only for a
+generation advertising the residential importer capability. Queued v82/v83 jobs
+execute their original eligibility/recovery semantics explicitly; they are not
+silently reinterpreted or relabeled as v84.
+
+Parking observation candidates require nearby aligned movement, do not suppress
+independent pedestrian paths and cannot borrow another sidewalk's road-drift
+allowance. Clipped aisle geometry additionally requires continuous directed raw
+support within an8-meter corridor and35-degree parallel tolerance, sampled every
+five meters without crossing hard gaps. The check is cancellation-aware and
+bounded by512 observations/4096 geometry samples. It does not fill parking areas
+or graph-only shortcuts. A context-confirmed shared court's10-20-meter turning arm
+may use the existing dead-end inference only with bidirectional directed support,
+an8-meter/45-degree bound and a better tail fit than its adjacent accepted roads.
+Ordinary/legacy short-stub inference retains its20-meter floor.
+
+V84 persists `display_class` with each workout/segment match under the immutable
+job policy/lease fence. Current writes require a recognized class; legacy writes
+ignore that field and retain NULL. SQL display readers consume this decision
+through the private immutable `coverage_match_visible` helper. Its tag-based
+branch is frozen compatibility for legacy evidence, not another implementation
+of current eligibility. Date/workout scope and park/campus grouping remain
+presentation responsibilities. Cross-tests cover both code paths and versioned
+rematching is required to replace older applied results.
 
 ### v83: Local Processing-Limit Recovery
 

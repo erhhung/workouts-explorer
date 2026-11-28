@@ -47,6 +47,7 @@ type DirectedSegment struct {
 	RoadConnector         bool
 	IndependentPath       bool
 	ContinuityClass       string
+	DisplayClass          string `json:",omitempty"`
 }
 
 type SegmentDirection string
@@ -129,6 +130,7 @@ type TraversedPortion struct {
 	SourceFromFraction float64
 	SourceToFraction   float64
 	ContinuityClass    string
+	DisplayClass       string `json:",omitempty"`
 }
 
 type DecodedTraversal struct {

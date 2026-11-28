@@ -191,6 +191,7 @@ function setup(
   value: OSMCatalogs = initial,
   post?: (init: RequestInit) => Response | Promise<Response>,
   showAllForTest = true,
+  currentSession = session,
 ) {
   let snapshot = structuredClone(value),
     boundaryFailure = false;
@@ -215,12 +216,12 @@ function setup(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
   });
-  client.setQueryData(["admin-session"], session);
+  client.setQueryData(["admin-session"], currentSession);
   const tree = (active: boolean) => (
     <QueryClientProvider client={client}>
       <RetainedTab id="/admin/osm/regions" active={active}>
         <AdminOSMRegions
-          session={session}
+          session={currentSession}
           baseMaps={baseMaps}
           polling={30}
           headingId="region-heading"
@@ -248,6 +249,7 @@ function setup(
 }
 afterEach(() => {
   cleanup();
+  sessionStorage.removeItem("workouts:admin:region-updates-disabled-notice");
   maps.instances.length = 0;
   document.documentElement.dataset.theme = "dark";
   vi.unstubAllGlobals();
@@ -255,6 +257,63 @@ afterEach(() => {
 const tableRows = () => screen.getByRole("table").querySelectorAll("tbody tr:not([hidden])");
 
 describe("administrator OSM Regions", () => {
+  test("disabled notice is above the heading and stays dismissed for this login, including reload", async () => {
+    const disabled = { ...initial, updatesEnabled: false };
+    const user = userEvent.setup();
+    const first = setup(disabled);
+    const message = await screen.findByText(
+      "Region updates have been disabled in this installation.",
+    );
+    const notice = message.closest("article")!;
+    expect(notice).toHaveClass("sync-notification", "sync-notification--warning");
+    expect(
+      notice.compareDocumentPosition(screen.getByRole("heading", { name: "Regions" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss region updates disabled notice" }),
+    );
+    expect(
+      screen.queryByText("Region updates have been disabled in this installation."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Regions" })).toHaveFocus();
+    first.active(false);
+    first.active(true);
+    expect(
+      screen.queryByText("Region updates have been disabled in this installation."),
+    ).not.toBeInTheDocument();
+    first.unmount();
+    const reloaded = setup(disabled);
+    await screen.findByText(row.name);
+    expect(
+      screen.queryByText("Region updates have been disabled in this installation."),
+    ).not.toBeInTheDocument();
+    reloaded.unmount();
+    setup(disabled, undefined, true, { ...session, id: "D".repeat(32) });
+    await screen.findByText("Region updates have been disabled in this installation.");
+  });
+
+  test("notice returns when updates are enabled and disabled again in the same login", async () => {
+    const disabled = { ...initial, updatesEnabled: false };
+    const { client, set } = setup(disabled);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Dismiss region updates disabled notice" }),
+    );
+    set({ ...initial, updatesEnabled: true });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+    });
+    await waitFor(() =>
+      expect(sessionStorage.getItem("workouts:admin:region-updates-disabled-notice")).toBeNull(),
+    );
+    set(disabled);
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+    });
+    await screen.findByText("Region updates have been disabled in this installation.");
+  });
+
   test("A toggles Show all regions without intercepting search, modifiers, menus or dialogs", async () => {
     const user = userEvent.setup();
     setup(initial, undefined, false);
@@ -393,13 +452,13 @@ describe("administrator OSM Regions", () => {
         status = within(dialog).getByRole("status"),
         indicator = dialog.querySelector(".osm-update-storage-policy")!;
       expect(status.parentElement).toBe(indicator.parentElement);
-      expect(indicator).toHaveTextContent(
-        `Database storage monitoring ${enabled ? "ENABLED" : "DISABLED"}`,
+      const rows = within(indicator as HTMLElement).getAllByRole("row");
+      expect(rows).toHaveLength(2);
+      expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent(
+        "Database storage monitoring",
       );
+      expect(within(rows[1]).getByRole("rowheader")).toHaveTextContent("Database storage used");
       expect(indicator).not.toHaveTextContent(":");
-      expect(indicator.textContent).toBe(
-        `Database storage monitoring\u00a0\u00a0${enabled ? "ENABLED" : "DISABLED"}`,
-      );
       expect(
         within(indicator as HTMLElement).getByText(enabled ? "ENABLED" : "DISABLED"),
       ).toHaveClass("eyebrow", `osm-update-policy-value--${enabled ? "enabled" : "disabled"}`);
@@ -431,6 +490,180 @@ describe("administrator OSM Regions", () => {
       elapsedTotal: index === 0 ? 160 : index < 19 ? 60 : null,
     })),
   });
+  test("progress storage usage follows measured build snapshots and becomes normal only after successful promotion", async () => {
+    const user = userEvent.setup(),
+      update = { ...updateFixture(), regionId: row.id, monitorDatabaseStorage: false };
+    const running: OSMRegion = {
+      ...row,
+      status: "Processing",
+      buildId: 62,
+      update,
+      buildDatabaseId: 77,
+      buildDatabaseBytes: Math.round(245.6 * 1024 ** 2),
+      buildDatabaseMeasuredAt: "2026-11-24T01:00:00Z",
+    };
+    const view = setup({ ...initial, updatesEnabled: true, regions: [running] });
+    view.setUpdate(update);
+    await user.click(
+      await screen.findByRole("button", { name: `View job progress for ${row.name}: Processing` }),
+    );
+    const dialog = await screen.findByRole("dialog"),
+      summary = within(dialog).getByRole("table", { name: "Database storage summary" });
+    expect(within(summary).getByText("245.6 MiB")).toHaveClass("osm-update-storage-used--pending");
+    view.set({
+      ...initial,
+      updatesEnabled: true,
+      regions: [{ ...running, buildDatabaseBytes: 512 * 1024 ** 2 }],
+    });
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+    });
+    expect(await within(summary).findByText("512.0 MiB")).toHaveClass(
+      "osm-update-storage-used--pending",
+    );
+    const promoted = { ...update, promoted: true };
+    view.setUpdate(promoted);
+    view.set({
+      ...initial,
+      updatesEnabled: true,
+      regions: [
+        { ...running, buildId: 77, generation: 19, databaseBytes: 3 * 1024 ** 3, update: promoted },
+      ],
+    });
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+      await view.client.invalidateQueries({ queryKey: ["admin-osm-region-update", update.id] });
+    });
+    expect(await within(summary).findByText("3.0 GiB")).toHaveClass(
+      "osm-update-storage-used--pending",
+    );
+    view.setUpdate({ ...promoted, state: "succeeded" });
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["admin-osm-region-update", update.id] });
+    });
+    await waitFor(() =>
+      expect(within(summary).getByText("3.0 GiB")).not.toHaveClass(
+        "osm-update-storage-used--pending",
+      ),
+    );
+    const used = within(summary).getByText("3.0 GiB");
+    expect(used.tagName).toBe("STRONG");
+    expect(
+      document.getElementById(used.closest(".tooltip-trigger")!.getAttribute("aria-describedby")!),
+    ).toHaveTextContent("3,221,225,472 bytes");
+    view.set({
+      ...initial,
+      updatesEnabled: true,
+      regions: [
+        {
+          ...running,
+          buildId: 99,
+          databaseBytes: 8 * 1024 ** 3,
+          update: { ...promoted, id: "F".repeat(32) },
+        },
+      ],
+    });
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+    });
+    await waitFor(() => expect(within(summary).queryByText("3.0 GiB")).not.toBeInTheDocument());
+    expect(within(summary).getByText("n/a")).toBeInTheDocument();
+  });
+
+  test.each(["first build", "different build", "unmeasured"])(
+    "progress storage avoids unrelated or unknown allocation: %s",
+    async (mode) => {
+      const user = userEvent.setup(),
+        update = { ...updateFixture(), monitorDatabaseStorage: false };
+      const region: OSMRegion = {
+        ...available,
+        status: "Processing",
+        update,
+        buildDatabaseId: 77,
+        buildDatabaseBytes: Math.round(245.6 * 1024 ** 2),
+        buildDatabaseMeasuredAt: "2026-11-24T01:00:00Z",
+      };
+      if (mode === "different build") region.buildDatabaseId = 78;
+      if (mode === "unmeasured") region.buildDatabaseMeasuredAt = null;
+      const view = setup({ ...initial, updatesEnabled: true, regions: [region] });
+      view.setUpdate(update);
+      await user.click(
+        await screen.findByRole("button", {
+          name: `View job progress for ${available.name}: Processing`,
+        }),
+      );
+      const summary = within(await screen.findByRole("dialog")).getByRole("table", {
+        name: "Database storage summary",
+      });
+      if (mode === "first build")
+        expect(within(summary).getByText("245.6 MiB")).toHaveClass(
+          "osm-update-storage-used--pending",
+        );
+      else expect(within(summary).getByText("n/a")).toBeInTheDocument();
+    },
+  );
+  test.each([true, false])(
+    "shows measured retained build bytes with independent tooltip targets (active generation: %s)",
+    async (active) => {
+      const bytes = Math.round(245.6 * 1024 ** 2);
+      setup({
+        ...initial,
+        regions: [
+          {
+            ...row,
+            generation: active ? 18 : null,
+            databaseBytes: active ? 5 * 1024 ** 3 : null,
+            status: "Processing",
+            update: { ...updateFixture(), regionId: row.id },
+            buildDatabaseId: 77,
+            buildDatabaseBytes: bytes,
+            buildDatabaseMeasuredAt: "2026-11-24T01:00:00Z",
+          },
+        ],
+      });
+      const build = await screen.findByText("245.6 MiB");
+      expect(build).toHaveClass("osm-regions-build-usage");
+      const buildHelp = document.getElementById(
+        build.closest(".tooltip-trigger")!.getAttribute("aria-describedby")!,
+      )!;
+      expect(buildHelp).toHaveTextContent("257,530,266 bytes");
+      const cell = build.closest("td")!;
+      if (active) {
+        expect(cell).toHaveTextContent("5.0 GiB + 245.6 MiB");
+        const current = within(cell).getByText("5.0 GiB");
+        expect(current).not.toHaveClass("osm-regions-build-usage");
+        expect(
+          document.getElementById(
+            current.closest(".tooltip-trigger")!.getAttribute("aria-describedby")!,
+          )!,
+        ).toHaveTextContent("5,368,709,120 bytes");
+      } else {
+        expect(cell).toHaveTextContent(/^245.6 MiB$/);
+      }
+    },
+  );
+
+  test.each(["promoted", "different build", "no measurement", "canceled"])(
+    "does not show stale temporary usage: %s",
+    async (reason) => {
+      const region: OSMRegion = {
+        ...row,
+        status: "Processing",
+        update: { ...updateFixture(), regionId: row.id },
+        buildDatabaseId: 77,
+        buildDatabaseBytes: Math.round(245.6 * 1024 ** 2),
+        buildDatabaseMeasuredAt: "2026-11-24T01:00:00Z",
+      };
+      if (reason === "promoted") region.update!.promoted = true;
+      if (reason === "different build") region.buildDatabaseId = 76;
+      if (reason === "no measurement") region.buildDatabaseMeasuredAt = null;
+      if (reason === "canceled") region.status = "Canceled";
+      setup({ ...initial, regions: [region] });
+      await screen.findByText(region.name);
+      expect(screen.queryByText("245.6 MiB")).not.toBeInTheDocument();
+    },
+  );
+
   test("download admits with CSRF and updates the same row to Waiting", async () => {
     const user = userEvent.setup(),
       waiting = {
@@ -476,7 +709,7 @@ describe("administrator OSM Regions", () => {
     expect(screen.getByRole("menuitem", { name: "Pause processing" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Cancel processing" })).toBeInTheDocument();
     const progressAction = screen.getByRole("menuitem", { name: "View job progress" });
-    expect(progressAction.previousElementSibling).toHaveTextContent("Show boundaries");
+    expect(progressAction.previousElementSibling).toHaveTextContent("View boundaries");
     expect(progressAction.nextElementSibling).toHaveAttribute("role", "separator");
     expect(progressAction.nextElementSibling?.nextElementSibling).toHaveTextContent(
       "Pause processing",
@@ -494,7 +727,9 @@ describe("administrator OSM Regions", () => {
     expect(within(dialog).getByRole("region", { name: "Region update steps" })).toHaveFocus();
     expect(within(dialog).queryByRole("button", { name: "Task" })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("navigation")).not.toBeInTheDocument();
-    const rows = within(dialog).getByRole("table").querySelectorAll("tbody tr");
+    const rows = within(dialog)
+      .getByRole("table", { name: "Region update tasks" })
+      .querySelectorAll("tbody tr");
     expect(rows).toHaveLength(57);
     expect(rows[19]).toHaveTextContent("25 of 95");
     expect(rows[20].querySelector(".osm-update-icon-slot")).toBeEmptyDOMElement();
@@ -521,6 +756,31 @@ describe("administrator OSM Regions", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("This update was canceled.");
     expect(rows[19].querySelector(".coverage-route-status--unavailable")).not.toBeNull();
   });
+  test.each<[number, number, string]>([
+    [37, 3, "37 coverage routes | 3 missing additional regions"],
+    [37, 0, "37 coverage routes"],
+    [40, 3, "40 coverage routes"],
+  ])(
+    "Workouts help distinguishes missing maps: current=%s missing=%s",
+    async (current, missing, expected) => {
+      setup({
+        ...initial,
+        regions: [
+          {
+            ...row,
+            workoutCount: 40,
+            coverageRouteCount: current,
+            missingRegionRouteCount: missing,
+          },
+        ],
+      });
+      const cell = (await screen.findByText(row.name)).closest("tr")!.querySelectorAll("td")[6];
+      const trigger = cell.querySelector(".tooltip-trigger")!;
+      expect(document.getElementById(trigger.getAttribute("aria-describedby")!)).toHaveTextContent(
+        expected,
+      );
+    },
+  );
   test("Generation help combines promotion date and full matched job elapsed time", async () => {
     const ready = {
       ...row,
@@ -785,6 +1045,7 @@ describe("administrator OSM Regions", () => {
     ["Paused", "paused"],
     ["Failed", "failed"],
     ["Ready", "succeeded"],
+    ["Stale", "succeeded"],
     ["Waiting", "waiting"],
     ["Pausing", "pausing"],
     ["Canceling", "canceling"],
@@ -812,7 +1073,7 @@ describe("administrator OSM Regions", () => {
       await waitFor(() => expect(trigger).toHaveFocus());
     },
   );
-  test.each(["Ready", "Waiting", "Pausing", "Canceling", "Available"] as const)(
+  test.each(["Ready", "Stale", "Waiting", "Pausing", "Canceling", "Available"] as const)(
     "%s has no status action without an eligible history",
     async (status) => {
       setup({ ...initial, updatesEnabled: true, regions: [{ ...available, status }] });
@@ -824,6 +1085,86 @@ describe("administrator OSM Regions", () => {
       ).not.toBeInTheDocument();
     },
   );
+  test.each([false, true])(
+    "Stale explains reprocessing with the exact tooltip (history=%s)",
+    async (history) => {
+      setup({
+        ...initial,
+        updatesEnabled: true,
+        regions: [
+          {
+            ...available,
+            generation: 1,
+            status: "Stale",
+            update: history ? updateFixture("succeeded") : undefined,
+          },
+        ],
+      });
+      const status = history
+        ? await screen.findByRole("button", {
+            name: `View job progress for ${available.name}: Stale`,
+          })
+        : await screen.findByText("Stale");
+      expect(status).toHaveClass("osm-regions-status--stale");
+      expect(status).toHaveAccessibleDescription("Updated matcher policies require reprocessing");
+      expect(status).not.toHaveAttribute("title");
+      expect(document.getElementById(status.getAttribute("aria-describedby")!)).toHaveTextContent(
+        /^Updated matcher policies require reprocessing$/,
+      );
+      await userEvent.click(screen.getByRole("button", { name: `Actions for ${available.name}` }));
+      expect(screen.getByRole("menuitem", { name: "Reprocess region" })).toBeEnabled();
+      expect(screen.queryByRole("menuitem", { name: "Download region" })).not.toBeInTheDocument();
+    },
+  );
+  test("clearing a failed overlay preserves the underlying Stale state while the catalog refresh is pending", async () => {
+    const failed = { ...updateFixture("failed"), regionId: row.id };
+    let afterClear = false;
+    let finishRefresh: ((response: Response) => void) | undefined;
+    const view = setup(
+      {
+        ...initial,
+        updatesEnabled: true,
+        regions: [{ ...row, status: "Failed", reprocessingRequired: true, update: failed }],
+      },
+      () => {
+        afterClear = true;
+        return json({ ...failed, cleared: true });
+      },
+    );
+    const original = view.fetch.getMockImplementation()!;
+    view.fetch.mockImplementation((path: string, init?: RequestInit) =>
+      path === "/api/admin/osm/regions" && afterClear
+        ? new Promise<Response>((resolve) => {
+            finishRefresh = resolve;
+          })
+        : original(path, init),
+    );
+    await screen.findByText("Failed", { selector: ".osm-regions-status" });
+    await userEvent.click(screen.getByRole("button", { name: `Actions for ${row.name}` }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Clear job status" }));
+    await waitFor(() =>
+      expect(view.client.getQueryData<OSMCatalogs>(["admin-osm-regions"])?.regions[0].status).toBe(
+        "Stale",
+      ),
+    );
+    expect(
+      screen.queryByText("Ready", { selector: ".osm-regions-status" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(finishRefresh).toBeDefined());
+    await act(async () =>
+      finishRefresh!(
+        json({
+          ...initial,
+          updatesEnabled: true,
+          regions: [{ ...row, status: "Stale", reprocessingRequired: true }],
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText("Stale", { selector: ".osm-regions-status" }),
+    ).toHaveAccessibleDescription("Updated matcher policies require reprocessing");
+  });
+
   test("queued resume shows queue status above the paused task history", async () => {
     const user = userEvent.setup(),
       job = updateFixture("waiting");
@@ -985,12 +1326,12 @@ describe("administrator OSM Regions", () => {
       .getAllByRole("menuitem")
       .map((item) => item.textContent)
       .filter(
-        (label) => !["Show boundaries", "View job progress", "Delete region"].includes(label ?? ""),
+        (label) => !["View boundaries", "View job progress", "Delete region"].includes(label ?? ""),
       );
     expect(operations).toEqual(actions);
     const items = screen.getAllByRole("menuitem");
     expect(items.slice(0, 2).map((item) => item.textContent)).toEqual([
-      "Show boundaries",
+      "View boundaries",
       "View job progress",
     ]);
     expect(items[1].nextElementSibling).toHaveAttribute("role", "separator");
@@ -1340,6 +1681,56 @@ describe("administrator OSM Regions", () => {
       );
   });
 
+  test.each(["Ready", "Available", "Processing", "Paused", "Failed", "Canceled"] as const)(
+    "disabled updates preserve read-only actions for %s",
+    async (status) => {
+      const update =
+        status === "Available"
+          ? undefined
+          : {
+              ...updateFixture(
+                status === "Ready" ? "succeeded" : (status.toLowerCase() as RegionUpdate["state"]),
+              ),
+              regionId: row.id,
+            };
+      const region: OSMRegion = { ...row, status, update };
+      const { setUpdate, fetch } = setup({ ...initial, updatesEnabled: false, regions: [region] });
+      if (update) setUpdate(update);
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: `Actions for ${row.name}` }));
+      expect(screen.getByRole("menuitem", { name: "View boundaries" })).not.toHaveAttribute(
+        "data-disabled",
+      );
+      for (const item of screen.getAllByRole("menuitem"))
+        if (!["View boundaries", "View job progress"].includes(item.textContent!))
+          expect(item).toHaveAttribute("data-disabled");
+      if (update) {
+        const progress = screen.getByRole("menuitem", { name: "View job progress" });
+        expect(progress).not.toHaveAttribute("data-disabled");
+        await user.click(progress);
+        await screen.findByRole("dialog");
+      }
+      expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    },
+  );
+
+  test("disabling updates closes an open deletion confirmation", async () => {
+    const user = userEvent.setup(),
+      fixture = { ...initial, updatesEnabled: true, regions: [row] };
+    const { client, set, fetch } = setup(fixture);
+    await user.click(await screen.findByRole("button", { name: `Actions for ${row.name}` }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete region" }));
+    await screen.findByRole("dialog", { name: "Delete region" });
+    set({ ...fixture, updatesEnabled: false });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["admin-osm-regions"] });
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Delete region" })).not.toBeInTheDocument(),
+    );
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   test("context menus expose working boundaries and disabled lifecycle entries without row activation", async () => {
     const user = userEvent.setup();
     setup();
@@ -1347,7 +1738,7 @@ describe("administrator OSM Regions", () => {
     await user.click(screen.getByRole("button", { name: `Actions for ${row.name}` }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "Show boundaries",
+      "View boundaries",
       "Reprocess region",
       "Delete region",
     ]);
@@ -1355,7 +1746,7 @@ describe("administrator OSM Regions", () => {
       name: "Reprocess region",
     }).previousElementSibling!;
     expect(divider).toHaveAttribute("role", "separator");
-    expect(divider.previousElementSibling).toHaveTextContent("Show boundaries");
+    expect(divider.previousElementSibling).toHaveTextContent("View boundaries");
     expect(screen.getByRole("menuitem", { name: "Reprocess region" })).toHaveAttribute(
       "data-disabled",
     );

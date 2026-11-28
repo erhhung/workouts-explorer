@@ -62,12 +62,17 @@ type CatalogRegion struct {
 	GenerationElapsedSeconds *float64         `json:"generationElapsedSeconds,omitempty"`
 	DatabaseBytes            *int64           `json:"databaseBytes"`
 	DatabaseMeasuredAt       *time.Time       `json:"databaseMeasuredAt"`
+	BuildDatabaseBytes       *int64           `json:"buildDatabaseBytes"`
+	BuildDatabaseMeasuredAt  *time.Time       `json:"buildDatabaseMeasuredAt"`
+	BuildDatabaseID          *int64           `json:"buildDatabaseId"`
 	ProcessedDatabaseBytes   *int64           `json:"processedDatabaseBytes"`
 	Boundary                 json.RawMessage  `json:"boundary,omitempty"`
 	Update                   *RegionUpdate    `json:"update,omitempty"`
 	Status                   string           `json:"status,omitempty"`
+	ReprocessingRequired     bool             `json:"reprocessingRequired"`
 	WorkoutCount             int64            `json:"workoutCount"`
 	CoverageRouteCount       int64            `json:"coverageRouteCount"`
+	MissingRegionRouteCount  int64            `json:"missingRegionRouteCount"`
 }
 
 const CatalogJobJSON = `jsonb_build_object('id',upper(replace(id::text,'-','')),'state',state,'providers',providers,
@@ -82,6 +87,7 @@ func CatalogRegions(ctx context.Context, pool *pgxpool.Pool, provider string) ([
         'areaM2',r.geographic_area_m2,'pbfBytes',r.advertised_download_bytes,'pbfModifiedAt',r.source_last_modified,
         'metadataCheckedAt',r.metadata_checked_at,'metadataAttemptedAt',r.metadata_attempted_at,'metadataErrorCode',r.metadata_error_code,
         'buildId',g.id,'generation',CASE WHEN g.id IS NOT NULL THEN `+regionalGenerationSQL+` END,
+        'importerVersion',g.importer_version,'derivationVersion',g.derivation_version,
         'promotionNumbers',(SELECT COALESCE(jsonb_object_agg(history.id::text,history.promotion_number),'{}'::jsonb)
             FROM osm_catalog.generations history WHERE history.region_id=r.id AND history.promoted_at IS NOT NULL
             AND history.promotion_number IS NOT NULL),
@@ -89,8 +95,13 @@ func CatalogRegions(ctx context.Context, pool *pgxpool.Pool, provider string) ([
         'promotedAt',g.promoted_at,'processedDatabaseBytes',g.processed_database_bytes,
         'databaseBytes',CASE WHEN g.id IS NOT NULL THEN osm_catalog.region_database_bytes(r.id) END,
         'databaseMeasuredAt',CASE WHEN g.id IS NOT NULL THEN clock_timestamp() END,
+        'buildDatabaseBytes',candidate.build_database_bytes,'buildDatabaseMeasuredAt',candidate.build_database_measured_at,
+        'buildDatabaseId',candidate.id,
         'boundary',ST_AsGeoJSON(r.boundary)::jsonb)
         FROM osm_catalog.regions r LEFT JOIN osm_catalog.generations g ON g.region_id=r.id AND g.state='active'
+        LEFT JOIN LATERAL (SELECT id,build_database_bytes,build_database_measured_at FROM osm_catalog.generations b
+            WHERE b.region_id=r.id AND b.promoted_at IS NULL AND b.build_database_bytes IS NOT NULL
+                AND to_regnamespace(b.schema_name::text) IS NOT NULL ORDER BY id DESC LIMIT 1) candidate ON true
         WHERE r.provider=$1 ORDER BY lower(r.display_name),r.id`, provider)
 	if err != nil {
 		return nil, err
@@ -103,11 +114,28 @@ func CatalogRegions(ctx context.Context, pool *pgxpool.Pool, provider string) ([
 			return nil, err
 		}
 		var region CatalogRegion
-		if err = json.Unmarshal(raw, &region); err != nil {
+		wire := struct {
+			*CatalogRegion
+			ImporterVersion   int `json:"importerVersion"`
+			DerivationVersion int `json:"derivationVersion"`
+		}{CatalogRegion: &region}
+		if err = json.Unmarshal(raw, &wire); err != nil {
 			return nil, err
 		}
 		region.Name = DisplayRegionName(region.Name)
+		region.Status = RegionProcessingStatus(region.Generation != nil, wire.ImporterVersion, wire.DerivationVersion)
+		region.ReprocessingRequired = region.Status == "Stale"
 		result = append(result, region)
 	}
 	return result, rows.Err()
+}
+
+func RegionProcessingStatus(promoted bool, importerVersion, derivationVersion int) string {
+	if !promoted {
+		return "Available"
+	}
+	if importerVersion < ImporterVersion || derivationVersion < DerivationVersion {
+		return "Stale"
+	}
+	return "Ready"
 }

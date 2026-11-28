@@ -99,8 +99,9 @@ func TestManagedPreparationInventoryAndExecutionClock(t *testing.T) {
 	if err := owner.QueryRow(ctx, `SELECT principal_id FROM app.administrators LIMIT 1`).Scan(&admin); err != nil {
 		t.Fatal(err)
 	}
-	for _, legacy := range []bool{false, true} {
-		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+	for _, fixture := range []struct{ legacy, configured bool }{{false, true}, {true, true}, {false, false}} {
+		legacy, configured := fixture.legacy, fixture.configured
+		t.Run(fmt.Sprint("legacy=", legacy, "/configured=", configured), func(t *testing.T) {
 			id, token := uuid.New(), strings.Repeat("p", 43)
 			region := "geofabrik:preparation-" + id.String()[:8]
 			exec := func(q string, args ...any) {
@@ -124,15 +125,15 @@ func TestManagedPreparationInventoryAndExecutionClock(t *testing.T) {
 			}
 			control := &managedControl{db: executor, id: id, token: token, legacyTasks: legacy}
 			control.intent.Store("run")
-			state, err := control.event(ctx, osm.UpdateProgress{Type: "read"})
+			state, err := control.event(ctx, osm.UpdateProgress{Type: "read", StorageMetricsConfigured: &configured})
 			if err != nil || state.TaskCount != len(definitions) {
 				t.Fatal("inventory capability", state, err)
 			}
-			if state.MonitorDatabaseStorage == nil || !*state.MonitorDatabaseStorage {
+			if state.MonitorDatabaseStorage == nil || *state.MonitorDatabaseStorage != configured {
 				t.Fatal("execution did not capture the latest enabled policy at startup")
 			}
 			exec(`UPDATE app.osm_processing_settings SET monitor_database_storage=false,revision=revision+1 WHERE singleton`)
-			if unchanged, err := control.event(ctx, osm.UpdateProgress{Type: "read"}); err != nil || unchanged.MonitorDatabaseStorage == nil || !*unchanged.MonitorDatabaseStorage {
+			if unchanged, err := control.event(ctx, osm.UpdateProgress{Type: "read"}); err != nil || unchanged.MonitorDatabaseStorage == nil || *unchanged.MonitorDatabaseStorage != configured {
 				t.Fatal("running execution changed policy on a repeated read", err)
 			}
 			base := time.Now().UTC().Truncate(time.Millisecond)

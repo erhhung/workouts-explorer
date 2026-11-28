@@ -181,7 +181,7 @@ func TestDeferredGenerationActiveInventoryAndImmutableBaseline(t *testing.T) {
 		t.Fatalf("unexpected active migration inventory: %v", active)
 	}
 	for file, expected := range map[string]string{
-		"027_coverage_recovery_baseline.sql": "8127c37164d482b17bfea444eca2920ad87a5ccf61e096177bd76970ce4496a2",
+		"027_coverage_recovery_baseline.sql": "8053bb8d5f4984dbff1c1de6868e055430d13b6b1e5456948a3a4e0438818cce",
 	} {
 		raw, err := migrations.Files.ReadFile(file)
 		if err != nil {

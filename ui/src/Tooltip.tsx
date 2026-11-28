@@ -1,8 +1,12 @@
 import {
+  cloneElement,
+  isValidElement,
   type FocusEvent,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type ReactElement,
+  type Ref,
   useEffect,
   useId,
   useRef,
@@ -14,7 +18,20 @@ import { dateTimeFormatter } from "./formatters";
 let activePortalTooltip: { id: string; close: () => void } | undefined;
 
 export function dismissActivePortalTooltip() {
+  if (!activePortalTooltip) return false;
   activePortalTooltip?.close();
+  return true;
+}
+
+export function cursorTooltipGap(kind: "shared" | "map" = "shared") {
+  const style = getComputedStyle(document.documentElement);
+  const value = style
+    .getPropertyValue(kind === "map" ? "--map-cursor-tooltip-gap" : "--cursor-tooltip-gap")
+    .trim();
+  return (
+    (parseFloat(value) || (kind === "map" ? 1 : 1.5)) *
+    (value.endsWith("px") ? 1 : parseFloat(style.fontSize) || 16)
+  );
 }
 
 export function Tooltip({
@@ -24,15 +41,22 @@ export function Tooltip({
   className = "",
   focusable = true,
   label,
-  portal = false,
+  portal = true,
   enabled = true,
   singleLine = false,
   multiline = false,
-  offsetY = 0,
   keyboardFocusOnly = false,
   dismissOnPointerDown = false,
   dismissOnPointerLeave = false,
   followPointer = false,
+  pinned = false,
+  suppressed = false,
+  asChild = false,
+  bubbleClassName = "",
+  bubbleAriaLive,
+  rootRef,
+  onBlur,
+  onDismiss,
 }: {
   id?: string;
   content: string;
@@ -44,11 +68,18 @@ export function Tooltip({
   enabled?: boolean;
   singleLine?: boolean;
   multiline?: boolean;
-  offsetY?: number;
   keyboardFocusOnly?: boolean;
   dismissOnPointerDown?: boolean;
   dismissOnPointerLeave?: boolean;
   followPointer?: boolean;
+  pinned?: boolean;
+  suppressed?: boolean;
+  asChild?: boolean;
+  bubbleClassName?: string;
+  bubbleAriaLive?: "off" | "polite" | "assertive";
+  rootRef?: Ref<HTMLSpanElement>;
+  onBlur?: (event: FocusEvent<HTMLSpanElement>) => void;
+  onDismiss?: () => void;
 }) {
   const generatedId = useId();
   const tooltipId = id ?? generatedId;
@@ -60,6 +91,7 @@ export function Tooltip({
     focusedElement?: EventTarget | null;
     pointerDismissed: boolean;
     pointer?: { x: number; y: number };
+    placementPointer?: { x: number; y: number };
   }>({ hovered: false, focused: false, pointerDismissed: false });
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -70,6 +102,7 @@ export function Tooltip({
     pointerFrame.current = undefined;
     if (activePortalTooltip?.id === tooltipId) activePortalTooltip = undefined;
     setOpen(false);
+    if (pinned) onDismiss?.();
   }
 
   function rememberPointer(event: { clientX: number; clientY: number }) {
@@ -92,12 +125,12 @@ export function Tooltip({
   }
 
   function place(activate = false) {
-    if (!enabled || interaction.current.pointerDismissed) return;
+    if (!enabled || suppressed || (interaction.current.pointerDismissed && !pinned)) return;
     if (!activate && activePortalTooltip?.id !== tooltipId) {
       setOpen(false);
       return;
     }
-    if (!interaction.current.hovered && !interaction.current.focused) {
+    if (!interaction.current.hovered && !interaction.current.focused && !pinned) {
       close();
       return;
     }
@@ -136,14 +169,18 @@ export function Tooltip({
     }
     if (activePortalTooltip?.id !== tooltipId) activePortalTooltip?.close();
     activePortalTooltip = { id: tooltipId, close };
-    const pointer =
-      followPointer && interaction.current.hovered ? interaction.current.pointer : undefined;
-    const rootStyle = pointer ? getComputedStyle(document.documentElement) : undefined;
-    const gapValue = rootStyle?.getPropertyValue("--cursor-tooltip-gap").trim();
-    const gap = pointer
-      ? (parseFloat(gapValue ?? "") || 0.65) *
-        (gapValue?.endsWith("px") ? 1 : parseFloat(rootStyle?.fontSize ?? "") || 16)
-      : 6;
+    const hovering = interaction.current.hovered && interaction.current.pointer;
+    // Fixed help follows through the reveal delay, then retains that cursor position.
+    if (
+      hovering &&
+      (followPointer ||
+        !interaction.current.placementPointer ||
+        !open ||
+        getComputedStyle(bubbleRef.current).visibility !== "visible")
+    )
+      interaction.current.placementPointer = interaction.current.pointer;
+    const pointer = hovering || pinned ? interaction.current.placementPointer : undefined;
+    const gap = cursorTooltipGap();
     const center = pointer?.x ?? anchor.left + anchor.width / 2;
     const above = (pointer?.y ?? anchor.top) - bubble.height - gap;
     const below = (pointer?.y ?? anchor.bottom) + gap;
@@ -169,11 +206,12 @@ export function Tooltip({
       interaction.current.focused = false;
       if (!interaction.current.hovered) close();
     }
-    if (!enabled) close();
-    else if (portal && (interaction.current.hovered || interaction.current.focused)) {
+    if (!enabled || suppressed) close();
+    else if (portal && (interaction.current.hovered || interaction.current.focused || pinned)) {
       if (interaction.current.hovered) interaction.current.hovered = pointerInside();
-      if (!activePortalTooltip || activePortalTooltip.id === tooltipId) place(!activePortalTooltip);
-    }
+      if (pinned || !activePortalTooltip || activePortalTooltip.id === tooltipId)
+        place(pinned || !activePortalTooltip);
+    } else if (portal) close();
   }, [
     enabled,
     portal,
@@ -183,6 +221,8 @@ export function Tooltip({
     tooltipId,
     keyboardFocusOnly,
     followPointer,
+    pinned,
+    suppressed,
   ]);
 
   useEffect(
@@ -234,89 +274,102 @@ export function Tooltip({
       window.removeEventListener("pointerdown", pointerDown, true);
       window.removeEventListener("blur", blur);
     };
-  }, [portal, enabled, open, keyboardFocusOnly, followPointer]);
+  }, [portal, enabled, open, keyboardFocusOnly, followPointer, pinned, suppressed]);
 
   const bubble = (
     <span
       ref={portal ? bubbleRef : undefined}
-      className={`tooltip-content${portal ? " tooltip-content--portal" : ""}${singleLine ? " tooltip-content--single-line" : ""}${multiline ? " tooltip-content--multiline" : ""}${portal && open ? " is-open" : ""}`}
-      style={portal ? { ...position, top: position.top + offsetY } : undefined}
+      className={`tooltip-content${portal ? " tooltip-content--portal" : ""}${singleLine ? " tooltip-content--single-line" : ""}${multiline ? " tooltip-content--multiline" : ""}${portal && open ? " is-open" : ""}${pinned ? " is-pinned" : ""}${interaction.current.focused ? " is-focused" : ""}${bubbleClassName ? ` ${bubbleClassName}` : ""}`}
+      style={portal ? position : undefined}
       id={tooltipId}
       role="tooltip"
+      aria-live={bubbleAriaLive}
     >
       {content}
     </span>
   );
+  const triggerProps = {
+    className: "tooltip-trigger",
+    tabIndex: focusable && enabled ? 0 : undefined,
+    "aria-describedby": enabled ? tooltipId : undefined,
+    "aria-label": label,
+    ref: portal ? triggerRef : undefined,
+    ...(portal
+      ? {
+          onPointerEnter: (event: ReactPointerEvent<HTMLSpanElement>) => {
+            rememberPointer(event);
+            interaction.current.placementPointer = undefined;
+            interaction.current.hovered = true;
+            interaction.current.pointerDismissed = dismissOnPointerDown && Boolean(event.buttons);
+            place(true);
+          },
+          onPointerDownCapture: () => {
+            if (!dismissOnPointerDown) return;
+            // Cancel the CSS reveal delay and stay dismissed for this hover.
+            interaction.current.pointerDismissed = true;
+            interaction.current.focused = false;
+            close();
+          },
+          onPointerMove: (event: ReactPointerEvent<HTMLSpanElement>) => {
+            rememberPointer(event);
+            if (
+              (!followPointer &&
+                bubbleRef.current &&
+                getComputedStyle(bubbleRef.current).visibility === "visible") ||
+              !interaction.current.hovered ||
+              activePortalTooltip?.id !== tooltipId
+            )
+              return;
+            if (!followPointer) interaction.current.placementPointer = interaction.current.pointer;
+            if (pointerFrame.current !== undefined) return;
+            pointerFrame.current = requestAnimationFrame(() => {
+              pointerFrame.current = undefined;
+              latestPlace.current();
+            });
+          },
+          onPointerLeave: () => {
+            interaction.current.hovered = false;
+            if (dismissOnPointerLeave) interaction.current.focused = false;
+            if (!interaction.current.focused && !pinned) close();
+            else if (followPointer) place();
+          },
+          onFocus: (event: FocusEvent<HTMLSpanElement>) => {
+            if (!interaction.current.hovered) interaction.current.placementPointer = undefined;
+            interaction.current.focused = acceptsFocus(event.target);
+            interaction.current.focusedElement = event.target;
+            if (interaction.current.focused) interaction.current.pointerDismissed = false;
+            if (interaction.current.focused || interaction.current.hovered) place(true);
+            else close();
+          },
+          onBlur: (event: FocusEvent<HTMLSpanElement>) => {
+            if (event.currentTarget.contains(event.relatedTarget)) return;
+            interaction.current.focused = false;
+            if (!interaction.current.hovered && !pinned) close();
+          },
+        }
+      : {}),
+  };
   return (
-    <span className={`tooltip ${className}`.trim()}>
-      <span
-        className="tooltip-trigger"
-        tabIndex={focusable && enabled ? 0 : undefined}
-        aria-describedby={enabled ? tooltipId : undefined}
-        aria-label={label}
-        ref={portal ? triggerRef : undefined}
-        {...(portal
-          ? {
-              onPointerEnter: (event: ReactPointerEvent<HTMLSpanElement>) => {
-                rememberPointer(event);
-                interaction.current.hovered = true;
-                interaction.current.pointerDismissed =
-                  dismissOnPointerDown && Boolean(event.buttons);
-                place(true);
-              },
-              onPointerDownCapture: () => {
-                if (!dismissOnPointerDown) return;
-                // Cancel the CSS reveal delay and stay dismissed for this hover.
-                interaction.current.pointerDismissed = true;
-                interaction.current.focused = false;
-                close();
-              },
-              onPointerMove: (event: ReactPointerEvent<HTMLSpanElement>) => {
-                rememberPointer(event);
-                if (
-                  !followPointer ||
-                  !interaction.current.hovered ||
-                  activePortalTooltip?.id !== tooltipId ||
-                  pointerFrame.current !== undefined
-                )
-                  return;
-                pointerFrame.current = requestAnimationFrame(() => {
-                  pointerFrame.current = undefined;
-                  latestPlace.current();
-                });
-              },
-              onPointerLeave: () => {
-                interaction.current.hovered = false;
-                if (dismissOnPointerLeave) interaction.current.focused = false;
-                if (!interaction.current.focused) close();
-                else if (followPointer) place();
-              },
-              onFocus: (event: FocusEvent<HTMLSpanElement>) => {
-                interaction.current.focused = acceptsFocus(event.target);
-                interaction.current.focusedElement = event.target;
-                if (interaction.current.focused) interaction.current.pointerDismissed = false;
-                if (interaction.current.focused || interaction.current.hovered) place(true);
-                else close();
-              },
-              onBlur: (event: FocusEvent<HTMLSpanElement>) => {
-                if (event.currentTarget.contains(event.relatedTarget)) return;
-                interaction.current.focused = false;
-                if (!interaction.current.hovered) close();
-              },
-            }
-          : {})}
-      >
-        {children}
-      </span>
+    <span ref={rootRef} onBlur={onBlur} className={`tooltip ${className}`.trim()}>
+      {asChild && isValidElement(children) ? (
+        cloneElement(children as ReactElement<Record<string, unknown>>, {
+          ...triggerProps,
+          className: [(children.props as { className?: string }).className, triggerProps.className]
+            .filter(Boolean)
+            .join(" "),
+        })
+      ) : (
+        <span {...triggerProps}>{children}</span>
+      )}
       {enabled && (portal ? createPortal(bubble, document.body) : bubble)}
     </span>
   );
 }
 
-export function InfoTip({ content, label }: { content: string; label: string }) {
-  const tooltipId = useId();
+export function InfoTip({ id, content, label }: { id?: string; content: string; label: string }) {
+  const generatedId = useId();
+  const tooltipId = id ?? generatedId;
   const containerRef = useRef<HTMLSpanElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
@@ -337,7 +390,7 @@ export function InfoTip({ content, label }: { content: string; label: string }) 
     event.preventDefault();
     setOpen(false);
     setDismissed(true);
-    triggerRef.current?.focus();
+    containerRef.current?.querySelector("button")?.focus();
   }
 
   function blur(event: FocusEvent<HTMLSpanElement>) {
@@ -348,13 +401,23 @@ export function InfoTip({ content, label }: { content: string; label: string }) 
   }
 
   return (
-    <span
-      ref={containerRef}
-      className={`tooltip info-tip${open ? " is-open" : ""}${dismissed ? " is-dismissed" : ""}`}
+    <Tooltip
+      id={tooltipId}
+      rootRef={containerRef}
+      content={content}
+      label={label}
+      portal
+      followPointer
+      asChild
+      focusable={false}
+      pinned={open}
+      suppressed={dismissed}
+      bubbleClassName="info-tip-content"
+      className={`info-tip${open ? " is-open" : ""}${dismissed ? " is-dismissed" : ""}`}
       onBlur={blur}
+      onDismiss={() => setOpen(false)}
     >
       <button
-        ref={triggerRef}
         type="button"
         className="tooltip-trigger"
         aria-label={label}
@@ -368,10 +431,7 @@ export function InfoTip({ content, label }: { content: string; label: string }) 
       >
         <span aria-hidden="true">?</span>
       </button>
-      <span className="tooltip-content" id={tooltipId} role="tooltip">
-        {content}
-      </span>
-    </span>
+    </Tooltip>
   );
 }
 

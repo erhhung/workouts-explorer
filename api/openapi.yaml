@@ -396,6 +396,20 @@ paths:
       responses:
         '204': {description: Invitation revoked}
         default: {$ref: '#/components/responses/Problem'}
+  /api/admin/osm/storage-usage:
+    get:
+      operationId: getAdminOSMStorageUsage
+      description: >-
+        Returns fresh per-pod PostgreSQL PVC capacity, availability, usage and configured
+        application-database sizes from Prometheus. Requires an administrator session.
+        Cluster membership is anchored by the configured PVC; roles come from PostgreSQL
+        exporter metrics. Missing database sizes leave the application share unavailable.
+        Disabled or incomplete querying configuration returns configured=false.
+      tags: [administration]
+      security: [{adminCookieAuth: []}, {bearerAuth: []}]
+      responses:
+        '200': {description: Storage observations, content: {application/json: {schema: {$ref: '#/components/schemas/OSMStorageUsage'}}}}
+        default: {$ref: '#/components/responses/Problem'}
   /api/admin/osm/processing-settings:
     get:
       operationId: getAdminOSMProcessingSettings
@@ -1741,8 +1755,18 @@ components:
             type: object
             additionalProperties: true
             properties:
+              status: {type: string, description: Current region operation overlay or underlying Available/Ready/Stale processing state.}
+              reprocessingRequired: {type: boolean, description: "The promoted map predates current importer/derivation requirements, independently of any operation status overlay."}
+              buildDatabaseBytes: {type: integer, format: int64, minimum: 0, nullable: true, description: Allocated retained candidate table/index/TOAST bytes measured after a completed batch and its scratch cleanup.}
+              buildDatabaseId: {type: integer, format: int64, nullable: true}
+              buildDatabaseMeasuredAt: {type: string, format: date-time, nullable: true}
               workoutCount: {type: integer, format: int64, minimum: 0, description: Distinct non-deleting workouts across all accounts whose current route intersects this region.}
               coverageRouteCount: {type: integer, format: int64, minimum: 0, description: Those workouts with an applied result for their current route input and this region's latest promoted generation.}
+              missingRegionRouteCount:
+                type: integer
+                format: int64
+                minimum: 0
+                description: Remaining workouts with a current readiness proof confirming missing map data in additional regions, excluding routes merely awaiting reconciliation.
         refresh: {allOf: [{$ref: '#/components/schemas/OSMCatalogRefresh'}], nullable: true}
     AdminDirectory:
       type: object
@@ -1760,12 +1784,38 @@ components:
         workoutCount: {type: integer, format: int64, minimum: 0}
         routeCount: {type: integer, format: int64, minimum: 0}
         lastWorkoutDate: {type: string, format: date, nullable: true}
+    OSMStorageUsage:
+      type: object
+      additionalProperties: false
+      required: [configured, checkedAt, databases, nodes]
+      properties:
+        configured: {type: boolean}
+        checkedAt: {type: string, format: date-time}
+        databases: {type: array, items: {type: string}}
+        nodes: {type: array, items: {$ref: '#/components/schemas/OSMStorageUsageNode'}}
+    OSMStorageUsageNode:
+      type: object
+      additionalProperties: false
+      required: [pod, namespace, role, pvcs, capacityBytes, availableBytes, usedBytes, applicationBytes, sampledAt]
+      properties:
+        pod: {type: string}
+        namespace: {type: string}
+        role: {type: string, enum: [primary, replica]}
+        pvcs: {type: array, items: {type: string}}
+        capacityBytes: {type: integer, format: int64, minimum: 1, description: 'Measured usable filesystem capacity, used as the percentage denominator.'}
+        requestedCapacityBytes: {type: integer, format: int64, minimum: 1, nullable: true, description: Sum of requested Kubernetes PVC storage sizes. Null when fresh unambiguous request metrics are unavailable.}
+        availableBytes: {type: integer, format: int64, minimum: 0}
+        usedBytes: {type: integer, format: int64, minimum: 0}
+        applicationBytes: {type: integer, format: int64, minimum: 0, nullable: true}
+        sampledAt: {type: string, format: date-time}
+        issue: {type: string}
     OSMProcessingSettings:
       type: object
       additionalProperties: false
       required: [monitorDatabaseStorage, revision, updatedAt]
       properties:
         monitorDatabaseStorage: {type: boolean, description: Default monitoring policy captured whenever a region updater starts or resumes.}
+        storageMetricsConfigured: {type: boolean, description: Whether Helm enables and configures external storage metrics. Monitoring is forced off when false.}
         revision: {type: integer, format: int64, minimum: 1}
         updatedAt: {type: string, format: date-time}
     AdminConfig:
@@ -1864,13 +1914,14 @@ components:
     Preferences:
       type: object
       additionalProperties: false
-      required: [theme, units, timezone, firstWeekday, clockFormat, workoutColumns, pageSize, customDateRangeLimit, recentCustomDateRanges, coverageDiagnosticsEnabled, initialized]
+      required: [theme, units, timezone, firstWeekday, clockFormat, dateFormat, workoutColumns, pageSize, customDateRangeLimit, recentCustomDateRanges, coverageDiagnosticsEnabled, initialized]
       properties:
         theme: {type: string, enum: [dark, light]}
         units: {type: string, enum: [imperial, metric]}
         timezone: {type: string, minLength: 1, maxLength: 64}
         firstWeekday: {type: string, enum: [monday, sunday]}
         clockFormat: {type: string, enum: [12h, 24h]}
+        dateFormat: {type: string, enum: [mm/dd/yyyy, dd/mm/yyyy, yyyy/mm/dd], default: mm/dd/yyyy, description: English UI date ordering; API calendar dates remain ISO YYYY-MM-DD.}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
         customDateRangeLimit: {type: integer, minimum: 1, maximum: 5, default: 3}
@@ -1896,6 +1947,7 @@ components:
         timezone: {type: string, minLength: 1, maxLength: 64}
         firstWeekday: {type: string, enum: [monday, sunday]}
         clockFormat: {type: string, enum: [12h, 24h]}
+        dateFormat: {type: string, enum: [mm/dd/yyyy, dd/mm/yyyy, yyyy/mm/dd]}
         workoutColumns: {type: array, uniqueItems: true, maxItems: 12, items: {type: string, enum: [date, type, duration, distance, pace, calories, heartRate, elevationGain]}}
         pageSize: {type: integer, minimum: 10}
         customDateRangeLimit: {type: integer, minimum: 1, maximum: 5}
@@ -1925,6 +1977,7 @@ components:
         displayName: {type: string, minLength: 1, maxLength: 200}
         type: {type: string, enum: [health-auto-export-local]}
         autoSyncEnabled: {type: boolean}
+        autoSyncTime: {$ref: '#/components/schemas/SourceSyncTime'}
         config: {$ref: '#/components/schemas/HealthAutoExportLocalConfig'}
     HealthAutoExportICloudConfig:
       type: object
@@ -1946,6 +1999,7 @@ components:
         displayName: {type: string, minLength: 1, maxLength: 200}
         type: {type: string, enum: [health-auto-export-icloud]}
         autoSyncEnabled: {type: boolean}
+        autoSyncTime: {$ref: '#/components/schemas/SourceSyncTime'}
         config: {$ref: '#/components/schemas/HealthAutoExportICloudConfig'}
     HealthAutoExportICloudConfigPatch:
       type: object
@@ -1973,6 +2027,10 @@ components:
         version: {type: integer, enum: [1]}
         path: {type: string, minLength: 1, maxLength: 4096}
         clientId: {type: string, maxLength: 128, pattern: '^$|^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$'}
+    SourceSyncTime:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: 'Daily source-local wall-clock time as HH:mm in the account preferred time zone, independent of display clock format. Omission preserves the existing schedule.'
     SourcePatch:
       type: object
       additionalProperties: false
@@ -1980,6 +2038,7 @@ components:
       properties:
         displayName: {type: string, minLength: 1, maxLength: 200}
         autoSyncEnabled: {type: boolean}
+        autoSyncTime: {$ref: '#/components/schemas/SourceSyncTime'}
         config: {$ref: '#/components/schemas/SourceConfigPatch'}
     Source:
       type: object
@@ -1998,6 +2057,7 @@ components:
         displayName: {type: string}
         type: {type: string, enum: [health-auto-export-local, health-auto-export-icloud]}
         autoSyncEnabled: {type: boolean}
+        autoSyncTime: {$ref: '#/components/schemas/SourceSyncTime'}
         status: {type: string, enum: [checking-connection, connected, connection-failed], x-enum-varnames: [CheckingConnection, Connected, ConnectionFailed]}
         generation: {type: integer, format: int64, minimum: 1}
         config: {$ref: '#/components/schemas/SourcePublicConfig'}
@@ -2127,7 +2187,7 @@ components:
         entityKind: {type: string, enum: [path, park]}
         name: {type: string, nullable: true}
         localityName: {type: string, nullable: true}
-        regionId: {type: string, minLength: 1, maxLength: 129}
+        regionId: {type: string, minLength: 1, maxLength: 257}
         regionName: {type: string, minLength: 1, maxLength: 256, nullable: true}
         broadClass: {type: string, enum: [road, cycleway, footway, trail, park, other]}
         rangeWorkoutCount: {type: integer, format: int64, minimum: 1}
@@ -2157,7 +2217,7 @@ components:
         entityKind: {type: string, enum: [path, park]}
         name: {type: string, nullable: true}
         localityName: {type: string, nullable: true}
-        regionId: {type: string, minLength: 1, maxLength: 129}
+        regionId: {type: string, minLength: 1, maxLength: 257}
         regionName: {type: string, minLength: 1, maxLength: 256, nullable: true}
         broadClass: {type: string, enum: [road, cycleway, footway, trail, park, other]}
         rangeWorkoutCount: {type: integer, format: int64, minimum: 1}
@@ -2181,14 +2241,14 @@ components:
         regionId:
           type: string
           minLength: 1
-          maxLength: 129
+          maxLength: 257
           description: Representative parent anchor, not the complete region scope. Use regionIds for scope.
         regionIds:
           type: array
           readOnly: true
           uniqueItems: true
           description: Sorted unique region IDs from all child target generation vectors, regardless of status or result, including retry parents.
-          items: {type: string, minLength: 1, maxLength: 129}
+          items: {type: string, minLength: 1, maxLength: 257}
         targetOsmGeneration:
           type: integer
           format: int64
@@ -2219,7 +2279,7 @@ components:
       additionalProperties: false
       required: [regionId, generation, latest]
       properties:
-        regionId: {type: string, minLength: 1, maxLength: 129}
+        regionId: {type: string, minLength: 1, maxLength: 257}
         generation:
           type: integer
           format: int64
@@ -2599,7 +2659,7 @@ components:
           nullable: true
           description: Precomputed bounds of the applied displayable Coverage geometry, including usable stale evidence. Null when there is no displayable applied geometry. Independent of the displayed GPS route bounds.
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
-        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true, description: 'Average over the cleaned observed GPS split distance/time including partial intervals. Falls back to reported duration/distance only when usable GPS pace is absent.'}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         heartRate: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         elevationGain: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
@@ -2649,6 +2709,7 @@ components:
         unit: {type: string}
     SplitPaceRange:
       type: object
+      description: Fastest/slowest full-unit-normalized paces including the final partial interval; the distance-weighted GPS average must lie within this range.
       additionalProperties: false
       required: [fastestSeconds, slowestSeconds]
       properties:
@@ -2680,7 +2741,7 @@ components:
         indoor: {type: boolean, nullable: true}
         location: {type: string, nullable: true}
         distance: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
-        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
+        pace: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true, description: 'Average from the same cleaned observed distance/time as splitPaces, including normalized partial intervals. Reported duration and distance remain source totals.'}
         splitPaces: {$ref: '#/components/schemas/WorkoutSplitPaces'}
         calories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}
         activeCalories: {allOf: [{$ref: '#/components/schemas/ExactMetric'}], nullable: true}

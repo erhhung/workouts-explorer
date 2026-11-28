@@ -102,7 +102,7 @@ func TestCoverageReconcilerReplicaFreshnessIntegration(t *testing.T) {
 			}
 			if !afterClaim {
 				claimCampaign()
-				if err := r.failDetached(claim, "fixture-retry", "Fixture retry."); err != nil {
+				if err := r.failDetached(claim, "fixture-retry", "Fixture retry.", 5*time.Minute); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -115,7 +115,7 @@ func TestCoverageReconcilerReplicaFreshnessIntegration(t *testing.T) {
 			if afterClaim {
 				err = r.process(f.ctx, claim)
 				if err != nil {
-					if failErr := r.failDetached(claim, "coverage-reconciliation-failed", "Coverage reconciliation could not be completed."); failErr != nil {
+					if failErr := r.failDetached(claim, "coverage-reconciliation-failed", "Coverage reconciliation could not be completed.", 5*time.Minute); failErr != nil {
 						t.Fatal(failErr)
 					}
 				}

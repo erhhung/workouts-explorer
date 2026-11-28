@@ -51,7 +51,7 @@ CREATE INDEX coverage_paths_locality_name_idx ON app.coverage_paths (account_id,
 
 CREATE TABLE app.path_segments (
     account_id uuid NOT NULL,
-    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'),
+    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'),
     generation_id bigint NOT NULL CHECK (generation_id > 0),
     physical_segment_id uuid NOT NULL,
     logical_path_id uuid NOT NULL,
@@ -109,6 +109,8 @@ CREATE TABLE app.workout_segment_matches (
     ),
     created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    display_class text CONSTRAINT workout_segment_matches_display_class_check
+        CHECK (display_class IN ('ordinary','shared_road','parking_aisle','connector','legacy')),
     PRIMARY KEY (account_id, workout_id, physical_segment_id),
     UNIQUE (account_id, workout_id, logical_path_id, physical_segment_id, region_id, generation_id),
     FOREIGN KEY (workout_id, account_id) REFERENCES app.workouts (id, account_id) ON DELETE CASCADE,
@@ -250,7 +252,7 @@ SET
            SELECT 1 FROM jsonb_array_elements(value) item
             WHERE jsonb_typeof(item) <> 'object' OR (SELECT count( * ) FROM jsonb_object_keys(item)) <> 2
                OR NOT (item ?& ARRAY['regionId', 'generation'])
-               OR item->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'
+               OR item->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'
                OR item->> 'generation' !~ '^[1-9][0-9]*$'
        ) AND (SELECT count( * ) = count(DISTINCT item->> 'regionId') FROM jsonb_array_elements(value) item)
 $function$;
@@ -338,9 +340,12 @@ BEGIN
        jsonb_typeof(target_matches) <> 'array' OR jsonb_array_length(target_matches) > 4096 OR octet_length(target_matches::text) > 67108864 THEN
         RAISE EXCEPTION 'invalid coverage persistence payload' USING ERRCODE = '22023';
     END IF;
-    SELECT job.account_id, context.workout_id, context.route_input_revision, context.route_input_sha256, context.target_generations
-      INTO target FROM app.jobs job JOIN app.coverage_route_job_contexts context
-        ON context.job_id = job.id AND context.account_id = job.account_id
+    SELECT job.account_id, context.workout_id, context.route_input_revision, context.route_input_sha256, context.target_generations,
+        parent_context.path_policy_version
+       INTO target FROM app.jobs job JOIN app.coverage_route_job_contexts context
+         ON context.job_id = job.id AND context.account_id = job.account_id
+       JOIN app.coverage_job_contexts parent_context ON parent_context.job_id=job.parent_job_id
+         AND parent_context.account_id=job.account_id
      WHERE job.id = persist_coverage_route.target_job_id AND job.account_id = app.current_account_id()
        AND job.kind = 'coverage_update_route' AND job.status = 'running' AND job.worker_id = claiming_worker
        AND job.lease_token = current_lease_token AND job.lease_expires_at >= clock_timestamp() FOR UPDATE OF job, context;
@@ -371,6 +376,10 @@ BEGIN
               AND (generation->> 'generation')::bigint = (item->> 'generation')::bigint) THEN
             RAISE EXCEPTION 'coverage match is outside the target generation vector' USING ERRCODE = '22023';
         END IF;
+        IF target.path_policy_version='coverage-path-policy-experimental-v84' AND
+           (item->>'displayClass' IS NULL OR item->>'displayClass' NOT IN ('ordinary','shared_road','parking_aisle','connector','legacy')) THEN
+            RAISE EXCEPTION 'current matcher display classification is required' USING ERRCODE='22023';
+        END IF;
         segment_geometry := ST_SetSRID(ST_GeomFromGeoJSON(item->'segmentGeometry'), 4326);
         covered_geometry := ST_SetSRID(ST_GeomFromGeoJSON(item->'coveredGeometry'), 4326);
         INSERT INTO app.coverage_paths(account_id, logical_path_id, locality_relation_id, locality_relation_version, locality_name,
@@ -392,10 +401,11 @@ BEGIN
             (item->> 'segmentMeters')::double precision, segment_geometry)
         ON CONFLICT (account_id, region_id, generation_id, physical_segment_id) DO NOTHING;
         INSERT INTO app.workout_segment_matches(account_id, workout_id, physical_segment_id, region_id, generation_id,
-            logical_path_id, first_traversed_at, first_route_order, covered_meters, geom)
+            logical_path_id, first_traversed_at, first_route_order, covered_meters, geom,display_class)
         VALUES(target.account_id, target.workout_id, (item->> 'physicalSegmentId')::uuid, item->> 'regionId',
             (item->> 'generation')::bigint, (item->> 'logicalPathId')::uuid, (item->> 'firstTraversedAt')::timestamptz,
-            (item->> 'firstRouteOrder')::integer, ST_Length(covered_geometry::geography), covered_geometry);
+            (item->> 'firstRouteOrder')::integer, ST_Length(covered_geometry::geography), covered_geometry,
+            CASE WHEN target.path_policy_version='coverage-path-policy-experimental-v84' THEN item->>'displayClass' END);
         match_count := match_count + 1;
     END LOOP;
     INSERT INTO app.workout_path_attributions(account_id, workout_id, logical_path_id, first_physical_segment_id,

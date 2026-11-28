@@ -37,6 +37,8 @@ import { DataSourcesDialog } from "./DataSourcesDialog";
 import { AdminRoot } from "./AdminApp";
 import { initialRange, Summary, type AcceptedWorkoutDeletion } from "./Summary";
 import { applyTheme } from "./theme";
+import { DateFormatProvider } from "./DateFormat";
+import { DEFAULT_DATE_FORMAT, DATE_FORMATS } from "./date";
 import type {
   CoverageEntityTarget,
   MapBaseMapState,
@@ -161,6 +163,7 @@ function preferenceInitialization(preferences: Preferences) {
     timezone: browserTimeZone(),
     firstWeekday: preferences.firstWeekday,
     clockFormat: preferences.clockFormat,
+    dateFormat: preferences.dateFormat ?? DEFAULT_DATE_FORMAT,
     workoutColumns: preferences.workoutColumns,
     pageSize: preferences.pageSize,
     coverageDiagnosticsEnabled: false,
@@ -841,6 +844,7 @@ function PreferencesDialog({
       timezone: values.timezone,
       firstWeekday: values.firstWeekday as Preferences["firstWeekday"],
       clockFormat: values.clockFormat as Preferences["clockFormat"],
+      dateFormat: values.dateFormat as Preferences["dateFormat"],
       workoutColumns,
       pageSize,
       customDateRangeLimit,
@@ -940,13 +944,6 @@ function PreferencesDialog({
                     options={timeZoneOptions}
                   />
                   <SelectField
-                    label="First weekday"
-                    name="firstWeekday"
-                    id={`${id}-weekday`}
-                    value={preferences.firstWeekday}
-                    options={["monday", "sunday"]}
-                  />
-                  <SelectField
                     label="Clock format"
                     name="clockFormat"
                     id={`${id}-clock`}
@@ -954,14 +951,18 @@ function PreferencesDialog({
                     options={["12h", "24h"]}
                   />
                   <PreferenceSelect
-                    label="Table rows per page"
-                    id={`${id}-page-size`}
-                    name="pageSize"
-                    defaultValue={String(preferences.pageSize)}
-                    options={pageSizeChoices.map((choice) => ({
-                      value: String(choice),
-                      label: String(choice),
-                    }))}
+                    label="Date format"
+                    id={`${id}-date-format`}
+                    name="dateFormat"
+                    defaultValue={preferences.dateFormat ?? DEFAULT_DATE_FORMAT}
+                    options={DATE_FORMATS.map((value) => ({ value, label: value }))}
+                  />
+                  <SelectField
+                    label="First weekday"
+                    name="firstWeekday"
+                    id={`${id}-weekday`}
+                    value={preferences.firstWeekday}
+                    options={["monday", "sunday"]}
                   />
                   <PreferenceSelect
                     label="Custom date ranges"
@@ -969,6 +970,16 @@ function PreferencesDialog({
                     name="customDateRangeLimit"
                     defaultValue={String(preferences.customDateRangeLimit)}
                     options={[1, 2, 3, 4, 5].map((choice) => ({
+                      value: String(choice),
+                      label: String(choice),
+                    }))}
+                  />
+                  <PreferenceSelect
+                    label="Table rows per page"
+                    id={`${id}-page-size`}
+                    name="pageSize"
+                    defaultValue={String(preferences.pageSize)}
+                    options={pageSizeChoices.map((choice) => ({
                       value: String(choice),
                       label: String(choice),
                     }))}
@@ -1368,263 +1379,268 @@ function Shell({
     </span>
   );
   return (
-    <div className="shell" ref={shell}>
-      <header className="app-header">
-        <AppLink to="/" className="wordmark">
-          <Mark compact />
-          <span>Workouts Explorer</span>
-        </AppLink>
-        <nav aria-label="Primary">
-          <AppLink
-            to="/"
-            current={!dataSyncRoute && !mapRoute && !statsRoute}
-            onNavigate={() => prepareTabNavigation("/")}
-          >
-            Summary
+    <DateFormatProvider value={data.preferences.dateFormat}>
+      <div className="shell" ref={shell}>
+        <header className="app-header">
+          <AppLink to="/" className="wordmark">
+            <Mark compact />
+            <span>Workouts Explorer</span>
           </AppLink>
-          <AppLink
-            to="/map"
-            current={mapRoute}
-            onNavigate={() => {
-              prepareTabNavigation("/map");
-            }}
-          >
-            Map
-          </AppLink>
-          <AppLink
-            to="/stats"
-            current={statsRoute}
-            onNavigate={() => prepareTabNavigation("/stats")}
-          >
-            Stats
-          </AppLink>
-          <AppLink
-            to="/data-sync"
-            current={dataSyncRoute}
-            onNavigate={() => prepareTabNavigation("/data-sync")}
-          >
-            Data Sync
-          </AppLink>
-        </nav>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger
-            ref={avatarTriggerRef}
-            className="avatar-trigger"
-            aria-label={`Open account menu for ${data.profile.fullName}`}
-          >
-            {avatar}
-            <span className="avatar-name">{data.profile.fullName}</span>
-            <span className="menu-chevron" aria-hidden="true">
-              v
-            </span>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
-              <DropdownMenu.Label className="account-menu-label">
-                @{data.profile.username}
-              </DropdownMenu.Label>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onSelect={() => setDialog("preferences")}>
-                Preferences
-              </DropdownMenu.Item>
-              <DropdownMenu.Item onSelect={() => setDialog("sources")}>
-                Data Sources
-              </DropdownMenu.Item>
-              <DropdownMenu.Item onSelect={() => void switchTheme()}>
-                Switch to {data.preferences.theme === "dark" ? "light" : "dark"} theme
-              </DropdownMenu.Item>
-              <DropdownMenu.Item onSelect={() => setDialog("about")}>
-                About Workouts Explorer
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item
-                className="danger-item"
-                disabled={signout.isPending}
-                onSelect={() => signout.mutate()}
-              >
-                {signout.isPending ? "Signing out..." : "Sign out"}
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </header>
-      {menuError && (
-        <div className="shell-alert" role="alert">
-          {menuError}
-          <button aria-label="Dismiss message" onClick={() => setMenuError("")}>
-            &times;
-          </button>
-        </div>
-      )}
-      <PreferencesDialog
-        open={dialog === "preferences"}
-        onOpenChange={(open) => setDialog(open ? "preferences" : null)}
-        onCloseFocus={() => setContentFocusRequest((current) => current + 1)}
-        profile={data.profile}
-        preferences={data.preferences}
-        csrfToken={session.csrfToken}
-        pageSizeMaximum={config.pageSizeMaximum}
-        onSaved={(profile, preferences) => {
-          if (
-            preferences.coverageDiagnosticsEnabled !== data.preferences.coverageDiagnosticsEnabled
-          ) {
-            setStatsMapVisit(false);
-            setMapEntityRequest(undefined);
-          }
-          setData((current) =>
-            current
-              ? {
-                  profile,
-                  preferences: { ...preferences, dateRange: current.preferences.dateRange },
-                }
-              : { profile, preferences },
-          );
-        }}
-      />
-      {dialog === "sources" && (
-        <DataSourcesDialog
-          session={session}
-          onClose={() => setDialog(null)}
-          onCloseFocus={() => setContentFocusRequest((value) => value + 1)}
-        />
-      )}
-      <Modal
-        open={dialog === "about"}
-        onOpenChange={(open) => setDialog(open ? "about" : null)}
-        returnFocus={avatarTriggerRef}
-        title="About Workouts Explorer"
-        description="A private atlas for a lifetime of movement."
-      >
-        <div className="about-copy">
-          <Mark />
-          <p>
-            Workouts Explorer turns your personal activity history into routes you can revisit,
-            compare, and understand without giving up ownership of the journey.
-          </p>
-          <p className="version">Milestone 6 &middot; Raw Route Map</p>
-        </div>
-      </Modal>
-      <RetainedTab id="/data-sync" active={dataSyncRoute}>
-        <DataSync
-          csrfToken={session.csrfToken}
-          preferences={data.preferences}
-          pollingIntervalSeconds={config.pollingIntervalSeconds}
-          selectedJobId={canonicalJobId}
-          navigate={navigate}
-          onShowWorkoutOnMap={showWorkoutOnMap}
-        />
-      </RetainedTab>
-      <RetainedTab id="/stats" active={statsRoute}>
-        <StatsPage
-          accountKey={session.id}
-          preferences={data.preferences}
-          csrfToken={session.csrfToken}
-          dateRange={selectedRange}
-          onDateRangeSelected={selectDateRange}
-          onRecentDateRangesSaved={saveRecentDateRanges}
-          state={statsState}
-          onStateChange={setStatsState}
-          pollingIntervalSeconds={config.pollingIntervalSeconds}
-          deletionRevision={mapDeletions.revision}
-          onShowOnMap={showStatsOnMap}
-        />
-      </RetainedTab>
-      <RetainedTab id="/map" active={mapRoute}>
-        <Suspense
-          fallback={
-            <main
-              className="center-state content-background"
-              aria-busy="true"
-              data-app-content
-              tabIndex={-1}
+          <nav aria-label="Primary">
+            <AppLink
+              to="/"
+              current={!dataSyncRoute && !mapRoute && !statsRoute}
+              onNavigate={() => prepareTabNavigation("/")}
             >
-              <ContentBackground />
-              <Mark />
-              <p role="status">Opening your map...</p>
-            </main>
-          }
+              Summary
+            </AppLink>
+            <AppLink
+              to="/map"
+              current={mapRoute}
+              onNavigate={() => {
+                prepareTabNavigation("/map");
+              }}
+            >
+              Map
+            </AppLink>
+            <AppLink
+              to="/stats"
+              current={statsRoute}
+              onNavigate={() => prepareTabNavigation("/stats")}
+            >
+              Stats
+            </AppLink>
+            <AppLink
+              to="/data-sync"
+              current={dataSyncRoute}
+              onNavigate={() => prepareTabNavigation("/data-sync")}
+            >
+              Data Sync
+            </AppLink>
+          </nav>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              ref={avatarTriggerRef}
+              className="avatar-trigger"
+              aria-label={`Open account menu for ${data.profile.fullName}`}
+            >
+              {avatar}
+              <span className="avatar-name">{data.profile.fullName}</span>
+              <span className="menu-chevron" aria-hidden="true">
+                v
+              </span>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="menu-content" align="end" sideOffset={10}>
+                <DropdownMenu.Label className="account-menu-label">
+                  @{data.profile.username}
+                </DropdownMenu.Label>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item onSelect={() => setDialog("preferences")}>
+                  Preferences
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onSelect={() => setDialog("sources")}>
+                  Data Sources
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onSelect={() => void switchTheme()}>
+                  Switch to {data.preferences.theme === "dark" ? "light" : "dark"} theme
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onSelect={() => setDialog("about")}>
+                  About Workouts Explorer
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item
+                  className="danger-item"
+                  disabled={signout.isPending}
+                  onSelect={() => signout.mutate()}
+                >
+                  {signout.isPending ? "Signing out..." : "Sign out"}
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </header>
+        {menuError && (
+          <div className="shell-alert dismissible-notice" role="alert">
+            {menuError}
+            <button aria-label="Dismiss message" onClick={() => setMenuError("")}>
+              &times;
+            </button>
+          </div>
+        )}
+        <PreferencesDialog
+          open={dialog === "preferences"}
+          onOpenChange={(open) => setDialog(open ? "preferences" : null)}
+          onCloseFocus={() => setContentFocusRequest((current) => current + 1)}
+          profile={data.profile}
+          preferences={data.preferences}
+          csrfToken={session.csrfToken}
+          pageSizeMaximum={config.pageSizeMaximum}
+          onSaved={(profile, preferences) => {
+            if (
+              preferences.coverageDiagnosticsEnabled !== data.preferences.coverageDiagnosticsEnabled
+            ) {
+              setStatsMapVisit(false);
+              setMapEntityRequest(undefined);
+            }
+            setData((current) =>
+              current
+                ? {
+                    profile,
+                    preferences: { ...preferences, dateRange: current.preferences.dateRange },
+                  }
+                : { profile, preferences },
+            );
+          }}
+        />
+        {dialog === "sources" && (
+          <DataSourcesDialog
+            session={session}
+            preferences={data.preferences}
+            onClose={() => setDialog(null)}
+            onCloseFocus={() => setContentFocusRequest((value) => value + 1)}
+          />
+        )}
+        <Modal
+          open={dialog === "about"}
+          onOpenChange={(open) => setDialog(open ? "about" : null)}
+          returnFocus={avatarTriggerRef}
+          title="About Workouts Explorer"
+          description="A private atlas for a lifetime of movement."
         >
-          <MapPage
-            config={config}
-            preferences={mapPreferences!}
+          <div className="about-copy">
+            <Mark />
+            <p>
+              Workouts Explorer turns your personal activity history into routes you can revisit,
+              compare, and understand without giving up ownership of the journey.
+            </p>
+            <p className="version">Milestone 6 &middot; Raw Route Map</p>
+          </div>
+        </Modal>
+        <RetainedTab id="/data-sync" active={dataSyncRoute}>
+          <DataSync
+            csrfToken={session.csrfToken}
+            preferences={data.preferences}
+            pollingIntervalSeconds={config.pollingIntervalSeconds}
+            selectedJobId={canonicalJobId}
+            navigate={navigate}
+            onShowWorkoutOnMap={showWorkoutOnMap}
+          />
+        </RetainedTab>
+        <RetainedTab id="/stats" active={statsRoute}>
+          <StatsPage
+            accountKey={session.id}
+            preferences={data.preferences}
             csrfToken={session.csrfToken}
             dateRange={selectedRange}
             onDateRangeSelected={selectDateRange}
             onRecentDateRangesSaved={saveRecentDateRanges}
-            sort={workoutSort}
-            persistedWorkoutIds={mapWorkoutIds}
-            deletions={mapDeletions}
-            availableWorkoutsLoaded={mapCatalogLoaded}
-            onWorkoutSelectionChange={(ids) =>
-              setMapWorkoutIds(
-                ids?.filter(
-                  (id) =>
-                    !mapDeletionsRef.current.events.some((event) => event.workoutIds.includes(id)),
-                ),
-              )
+            state={statsState}
+            onStateChange={setStatsState}
+            pollingIntervalSeconds={config.pollingIntervalSeconds}
+            deletionRevision={mapDeletions.revision}
+            onShowOnMap={showStatsOnMap}
+          />
+        </RetainedTab>
+        <RetainedTab id="/map" active={mapRoute}>
+          <Suspense
+            fallback={
+              <main
+                className="center-state content-background"
+                aria-busy="true"
+                data-app-content
+                tabIndex={-1}
+              >
+                <ContentBackground />
+                <Mark />
+                <p role="status">Opening your map...</p>
+              </main>
             }
-            persistedAvailableWorkouts={mapAvailableWorkouts}
-            onAvailableWorkoutsChange={(workouts) => {
-              setMapCatalogLoaded(true);
-              setMapAvailableWorkouts(() =>
-                workouts.filter((workout) => !unavailableMapWorkout(workout)),
+          >
+            <MapPage
+              config={config}
+              preferences={mapPreferences!}
+              csrfToken={session.csrfToken}
+              dateRange={selectedRange}
+              onDateRangeSelected={selectDateRange}
+              onRecentDateRangesSaved={saveRecentDateRanges}
+              sort={workoutSort}
+              persistedWorkoutIds={mapWorkoutIds}
+              deletions={mapDeletions}
+              availableWorkoutsLoaded={mapCatalogLoaded}
+              onWorkoutSelectionChange={(ids) =>
+                setMapWorkoutIds(
+                  ids?.filter(
+                    (id) =>
+                      !mapDeletionsRef.current.events.some((event) =>
+                        event.workoutIds.includes(id),
+                      ),
+                  ),
+                )
+              }
+              persistedAvailableWorkouts={mapAvailableWorkouts}
+              onAvailableWorkoutsChange={(workouts) => {
+                setMapCatalogLoaded(true);
+                setMapAvailableWorkouts(() =>
+                  workouts.filter((workout) => !unavailableMapWorkout(workout)),
+                );
+              }}
+              persistedFocusedWorkoutId={mapFocusedWorkoutId}
+              onFocusedWorkoutChange={setMapFocusedWorkoutId}
+              persistedMapMode={mapMode}
+              onMapModeChange={setMapMode}
+              roadCoverageCache={roadCoverageCache}
+              onRoadCoverageCacheChange={setRoadCoverageCache}
+              explicitCanvasFocusRequest={mapCanvasFocusRequest}
+              navigationSearch={mapRoute ? (path.split("?")[1] ?? "") : undefined}
+              entityFocusRequest={mapEntityRequest}
+              cameraState={mapCameraState}
+              entryBaseMapState={statsMapVisit ? mapBaseMapState.current : undefined}
+              onBaseMapStateChange={(state) => {
+                mapBaseMapState.current = state;
+              }}
+              onEntityFocusHandled={(key) =>
+                setMapEntityRequest((current) => (current?.key === key ? undefined : current))
+              }
+            />
+          </Suspense>
+        </RetainedTab>
+        <RetainedTab id="/" active={activeTab === "/"}>
+          <Summary
+            preferences={data.preferences}
+            csrfToken={session.csrfToken}
+            selectedDateRange={visitRange}
+            onDateRangeSelected={selectDateRange}
+            onRecentDateRangesSaved={saveRecentDateRanges}
+            selectedSort={workoutSort}
+            onSortChange={setWorkoutSort}
+            selectedPage={summaryPage}
+            onPageChange={setSummaryPage}
+            onWorkoutsDeleted={acceptWorkoutDeletion}
+            onShowOnMap={(workoutId) => {
+              setStatsMapVisit(false);
+              setMapEntityRequest(undefined);
+              const canonicalID = workoutId.toUpperCase();
+              setMapWorkoutIds((current) =>
+                current === undefined || current.includes(canonicalID)
+                  ? current
+                  : [...current, canonicalID].sort(),
+              );
+              setMapFocusedWorkoutId(canonicalID);
+              navigate(`/map?workoutId=${encodeURIComponent(canonicalID)}`);
+            }}
+            onDateRangeSaved={(dateRange) => {
+              setVisitRange(dateRange);
+              setData((current) =>
+                current
+                  ? { ...current, preferences: { ...current.preferences, dateRange } }
+                  : current,
               );
             }}
-            persistedFocusedWorkoutId={mapFocusedWorkoutId}
-            onFocusedWorkoutChange={setMapFocusedWorkoutId}
-            persistedMapMode={mapMode}
-            onMapModeChange={setMapMode}
-            roadCoverageCache={roadCoverageCache}
-            onRoadCoverageCacheChange={setRoadCoverageCache}
-            explicitCanvasFocusRequest={mapCanvasFocusRequest}
-            navigationSearch={mapRoute ? (path.split("?")[1] ?? "") : undefined}
-            entityFocusRequest={mapEntityRequest}
-            cameraState={mapCameraState}
-            entryBaseMapState={statsMapVisit ? mapBaseMapState.current : undefined}
-            onBaseMapStateChange={(state) => {
-              mapBaseMapState.current = state;
-            }}
-            onEntityFocusHandled={(key) =>
-              setMapEntityRequest((current) => (current?.key === key ? undefined : current))
-            }
           />
-        </Suspense>
-      </RetainedTab>
-      <RetainedTab id="/" active={activeTab === "/"}>
-        <Summary
-          preferences={data.preferences}
-          csrfToken={session.csrfToken}
-          selectedDateRange={visitRange}
-          onDateRangeSelected={selectDateRange}
-          onRecentDateRangesSaved={saveRecentDateRanges}
-          selectedSort={workoutSort}
-          onSortChange={setWorkoutSort}
-          selectedPage={summaryPage}
-          onPageChange={setSummaryPage}
-          onWorkoutsDeleted={acceptWorkoutDeletion}
-          onShowOnMap={(workoutId) => {
-            setStatsMapVisit(false);
-            setMapEntityRequest(undefined);
-            const canonicalID = workoutId.toUpperCase();
-            setMapWorkoutIds((current) =>
-              current === undefined || current.includes(canonicalID)
-                ? current
-                : [...current, canonicalID].sort(),
-            );
-            setMapFocusedWorkoutId(canonicalID);
-            navigate(`/map?workoutId=${encodeURIComponent(canonicalID)}`);
-          }}
-          onDateRangeSaved={(dateRange) => {
-            setVisitRange(dateRange);
-            setData((current) =>
-              current
-                ? { ...current, preferences: { ...current.preferences, dateRange } }
-                : current,
-            );
-          }}
-        />
-      </RetainedTab>
-    </div>
+        </RetainedTab>
+      </div>
+    </DateFormatProvider>
   );
 }
 
@@ -1820,7 +1836,9 @@ function ExplorerApp() {
     return (
       <main className="center-state" aria-busy="true">
         <Mark />
-        <p role="status">Loading application settings...</p>
+        <p className="content-state-message" role="status">
+          Loading application settings...
+        </p>
       </main>
     );
   if (publicConfig.isError)

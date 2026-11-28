@@ -78,8 +78,8 @@ spec:
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
           ports: [{name: http, containerPort: 8082}]
-          readinessProbe: {httpGet: {path: /readyz, port: http}}
-          livenessProbe: {httpGet: {path: /healthz, port: http}}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, failureThreshold: 6, timeoutSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, failureThreshold: 6, timeoutSeconds: 5}
           resources: {{- toYaml $updates.controllerResources | nindent 12 }}
           volumeMounts:
             - {name: template, mountPath: /etc/osm-controller, readOnly: true}
@@ -93,6 +93,11 @@ spec:
 
 {{- define "workouts.osmUpdateTemplate" -}}
 {{- $updates := .Values.osm.regionUpdates }}
+{{- $metrics := $updates.storageMetrics }}
+{{- $selector := $metrics.selectorLabels }}
+{{- if and (empty $selector) (eq $metrics.availableMetric "kubelet_volume_stats_available_bytes") (eq $metrics.capacityMetric "kubelet_volume_stats_capacity_bytes") }}
+{{- $selector = dict "namespace" "postgresql" "persistentvolumeclaim" "data-postgresql-postgresql-0" }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 spec:
@@ -107,10 +112,10 @@ spec:
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if $updates.prometheusServiceIP }}
+      {{- if and $metrics.enabled $metrics.prometheusServiceIP $metrics.prometheusURL }}
       hostAliases:
-        - ip: {{ $updates.prometheusServiceIP | quote }}
-          hostnames: [prometheus-stack-prometheus.monitoring.svc.cluster.local]
+        - ip: {{ $metrics.prometheusServiceIP | quote }}
+          hostnames: [{{ (urlParse $metrics.prometheusURL).hostname | quote }}]
       {{- end }}
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
@@ -126,8 +131,11 @@ spec:
             - {name: OSM_UPDATE_SCRATCH, value: /scratch}
             - {name: OSM_PIPELINE_ROOT, value: /app/osm}
             - {name: OSM_MAX_DOWNLOAD_BYTES, value: {{ $updates.maxDownloadBytes | int64 | toString | quote }}}
-            - {name: OSM_PROMETHEUS_URL, value: {{ $updates.prometheusURL | quote }}}
-            - {name: OSM_PROMETHEUS_PVC_TEMPLATE, value: "data-{{ "{{POD}}" }}"}
+            - {name: OSM_STORAGE_METRICS_ENABLED, value: {{ $metrics.enabled | quote }}}
+            - {name: OSM_PROMETHEUS_URL, value: {{ $metrics.prometheusURL | default "" | quote }}}
+            - {name: OSM_STORAGE_AVAILABLE_METRIC, value: {{ $metrics.availableMetric | quote }}}
+            - {name: OSM_STORAGE_CAPACITY_METRIC, value: {{ $metrics.capacityMetric | quote }}}
+            - {name: OSM_STORAGE_SELECTOR_LABELS_JSON, value: {{ mustToJson $selector | quote }}}
             - {name: OSM_PROMETHEUS_MAX_SAMPLE_AGE, value: 2m}
             - {name: OSM_STORAGE_SETTLE_TIMEOUT, value: 90s}
             - {name: OSM_LOG_TIMEZONE, value: America/Los_Angeles}

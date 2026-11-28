@@ -17,7 +17,9 @@ ALTER TABLE osm_catalog.regions
 ALTER TABLE osm_catalog.generations
     ADD COLUMN downloaded_at timestamptz,
     ADD COLUMN processed_database_bytes bigint CHECK (processed_database_bytes>=0),
-    ADD COLUMN database_measured_at timestamptz;
+    ADD COLUMN database_measured_at timestamptz,
+    ADD COLUMN build_database_bytes bigint CHECK(build_database_bytes>=0),
+    ADD COLUMN build_database_measured_at timestamptz;
 
 -- Capture completion from the established RecordDownload update too, so an
 -- existing updater image does not fabricate a date from generation start time.
@@ -184,7 +186,8 @@ DROP TRIGGER generation_record_download_time ON osm_catalog.generations;
 DROP FUNCTION osm_catalog.record_download_completed_at();
 DROP FUNCTION osm_catalog.record_region_database_size();
 DROP FUNCTION osm_catalog.region_database_bytes(text);
-ALTER TABLE osm_catalog.generations DROP COLUMN downloaded_at,DROP COLUMN processed_database_bytes,DROP COLUMN database_measured_at;
+ALTER TABLE osm_catalog.generations DROP COLUMN downloaded_at,DROP COLUMN processed_database_bytes,DROP COLUMN database_measured_at,
+    DROP COLUMN build_database_bytes,DROP COLUMN build_database_measured_at;
 ALTER TABLE osm_catalog.regions DROP COLUMN provider_catalog_id,DROP COLUMN provider_parent_id,
     DROP COLUMN catalog_checked_at,DROP COLUMN catalog_available,DROP COLUMN metadata_checked_at,
     DROP COLUMN metadata_attempted_at,DROP COLUMN source_last_modified,DROP COLUMN metadata_error_code;

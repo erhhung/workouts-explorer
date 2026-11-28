@@ -56,13 +56,17 @@ type storageQueryRower interface {
 }
 
 type PrometheusStoragePreflight struct {
-	DB            storageQueryRower
-	HTTPClient    *http.Client
-	PrometheusURL string
-	PVCTemplate   string
-	MaximumAge    time.Duration
-	RetryDelays   []time.Duration
-	Now           func() time.Time
+	DB              storageQueryRower
+	HTTPClient      *http.Client
+	PrometheusURL   string
+	AvailableMetric string
+	CapacityMetric  string
+	SelectorLabels  map[string]string
+	// Legacy standalone callers can still opt into exporter discovery. Helm uses explicit selectors.
+	PVCTemplate     string
+	MaximumAge      time.Duration
+	RetryDelays     []time.Duration
+	Now             func() time.Time
 }
 
 var prometheusRetryDelays = []time.Duration{5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
@@ -80,6 +84,9 @@ type prometheusVectorResponse struct {
 }
 
 func (p PrometheusStoragePreflight) Check(ctx context.Context) (StorageObservation, error) {
+	if p.AvailableMetric != "" || p.CapacityMetric != "" {
+		return p.checkConfigured(ctx)
+	}
 	observation := StorageObservation{}
 	if p.DB == nil || p.HTTPClient == nil || p.MaximumAge <= 0 || !strings.Contains(p.PVCTemplate, "{{POD}}") {
 		return observation, preflightError(StorageMetricsUnavailable, observation, errors.New("invalid storage preflight configuration"))
@@ -218,7 +225,7 @@ func (p PrometheusStoragePreflight) queryWithTimestamps(ctx context.Context, bas
 	}
 	byIdentity := make(map[string]time.Time, len(timestamps))
 	for _, sample := range timestamps {
-		if sample.Metric[identityLabel] == "" || sample.Value < 0 || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
+		if (identityLabel != "" && sample.Metric[identityLabel] == "") || sample.Value < 0 || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
 			return nil, preflightError(StorageMetricInvalid, StorageObservation{}, errors.New("invalid Prometheus source timestamp"))
 		}
 		identity := metricIdentity(sample.Metric)
@@ -231,7 +238,7 @@ func (p PrometheusStoragePreflight) queryWithTimestamps(ctx context.Context, bas
 		return nil, preflightError(StorageMetricMissing, StorageObservation{}, errors.New("Prometheus value and timestamp series differ"))
 	}
 	for index := range values {
-		if values[index].Metric[identityLabel] == "" {
+		if identityLabel != "" && values[index].Metric[identityLabel] == "" {
 			return nil, preflightError(StorageMetricInvalid, StorageObservation{}, errors.New("Prometheus sample lacks its identity label"))
 		}
 		identity := metricIdentity(values[index].Metric)

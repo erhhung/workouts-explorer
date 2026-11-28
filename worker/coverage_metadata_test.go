@@ -90,6 +90,25 @@ func TestCoverageMatchingDescriptorIncludesEveryProductionParameter(t *testing.T
 	}
 }
 
+func TestProcessingPendingProofRechecksAfterPromotionWithoutRelabelingLegacy(t *testing.T) {
+	item := coverageHandoff{Readiness: "map_data_ready", Generations: []osm.RegionGeneration{{RegionID: "norcal", Generation: 62}},
+		CatalogFingerprint: "old", SelectionFingerprint: "selection", SelectionPolicy: coverageSelectionPolicy(true)}
+	catalog := osm.RouteRegionCatalog{Fingerprint: "old", SelectionFingerprint: "selection", Revision: 1, ActiveGenerations: map[string]int64{"norcal": 62},
+		ProcessingVersions: map[string]osm.MapProcessingVersion{"norcal": {Generation: 62, ImporterVersion: 3, DerivationVersion: 21}}}
+	if !rebindCoverageSelection(&item, catalog, true, productionMapProcessingRequirements()) || item.Readiness != "pending" || item.Reason != "region_reprocessing_required" {
+		t.Fatal("cached ready metadata bypassed processing prerequisites")
+	}
+	if !rebindCoverageSelection(&item, catalog, true, productionMapProcessingRequirements()) {
+		t.Fatal("unchanged pending proof forced repeated raw GPS lookup")
+	}
+	catalog.Fingerprint = "promoted"
+	catalog.ActiveGenerations["norcal"] = 82
+	catalog.ProcessingVersions["norcal"] = osm.MapProcessingVersion{Generation: 82, ImporterVersion: 4, DerivationVersion: 21}
+	if rebindCoverageSelection(&item, catalog, true, productionMapProcessingRequirements()) {
+		t.Fatal("negative processing proof remained reusable after promotion")
+	}
+}
+
 func TestCoverageAutoAddPolicyPreservesAllSelectionProofFields(t *testing.T) {
 	pending := osm.RouteRegionReadiness{State: "pending", Reason: "region_not_active", Regions: []osm.RegionGeneration{},
 		CatalogRevision: 19, CatalogFingerprint: strings.Repeat("a", 64), SelectionFingerprint: strings.Repeat("b", 64)}

@@ -51,7 +51,7 @@ WHERE
     OR lease_expires_at IS NOT NULL;
 
 CREATE TABLE app.coverage_region_catalog (
-    region_id text PRIMARY KEY CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'),
+    region_id text PRIMARY KEY CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'),
     display_name text NOT NULL CHECK (length(display_name) BETWEEN 1 AND 256),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp()
 );
@@ -79,12 +79,20 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM jsonb_array_elements(regions) item
         WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
-           OR (SELECT count( * ) FROM jsonb_object_keys(item)) <> 2
+           OR (SELECT count( * ) FROM jsonb_object_keys(item)) NOT IN (2,5)
            OR NOT item ?& ARRAY['regionId', 'displayName']
            OR jsonb_typeof(item->'regionId') IS DISTINCT FROM 'string'
            OR jsonb_typeof(item->'displayName') IS DISTINCT FROM 'string'
-           OR item->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'
+           OR item->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'
            OR length(item->> 'displayName') NOT BETWEEN 1 AND 256
+           OR ((SELECT count(*) FROM jsonb_object_keys(item))=5 AND (
+                NOT item ?& ARRAY['generation','importerVersion','derivationVersion']
+                OR jsonb_typeof(item->'generation') IS DISTINCT FROM 'number'
+                OR jsonb_typeof(item->'importerVersion') IS DISTINCT FROM 'number'
+                OR jsonb_typeof(item->'derivationVersion') IS DISTINCT FROM 'number'
+                OR item->>'generation' !~ '^[1-9][0-9]*$'
+                OR item->>'importerVersion' !~ '^[1-9][0-9]*$'
+                OR item->>'derivationVersion' !~ '^[1-9][0-9]*$'))
     ) OR EXISTS (
         SELECT 1 FROM jsonb_array_elements(regions) item GROUP BY item->> 'regionId' HAVING count( * ) > 1
     ) THEN
@@ -336,14 +344,15 @@ DECLARE current_state app.workout_coverage_states%ROWTYPE; ready_at timestamptz;
 DECLARE route_targets jsonb; enqueued_job uuid; enqueued_count integer; reused boolean; needs_match boolean;
 BEGIN
     IF readiness_state_value NOT IN ('pending', 'unavailable', 'map_data_ready') OR region_generations IS NULL OR
-       (readiness_state_value = 'pending' AND reason_value IS DISTINCT FROM 'region_not_active') OR
-       (readiness_state_value <> 'pending' AND reason_value = 'region_not_active') OR
+       (readiness_state_value = 'pending' AND (reason_value IS NULL OR reason_value NOT IN ('region_not_active','region_reprocessing_required'))) OR
+       (readiness_state_value <> 'pending' AND reason_value IN ('region_not_active','region_reprocessing_required')) OR
        (readiness_state_value = 'unavailable' AND reason_value IS DISTINCT FROM 'no_provider_region') OR
        (readiness_state_value <> 'unavailable' AND reason_value = 'no_provider_region') OR
        (readiness_state_value = 'map_data_ready' AND (reason_value IS NOT NULL OR NOT app.valid_coverage_generation_vector(region_generations))) OR
        (readiness_state_value <> 'map_data_ready' AND region_generations <> '[]'::jsonb) THEN
         RAISE EXCEPTION 'invalid reconciliation readiness' USING ERRCODE = '22023';
     END IF;
+    IF readiness_state_value='map_data_ready' AND NOT app.lock_coverage_admission(target_account_id) THEN RETURN false; END IF;
     PERFORM 1 FROM app.coverage_reconciliation_accounts reconciliation
      WHERE reconciliation.account_id = target_account_id AND reconciliation.active_revision = reconciliation_revision
        AND reconciliation.worker_id = claiming_worker AND reconciliation.lease_token = current_lease_token

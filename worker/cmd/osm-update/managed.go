@@ -93,7 +93,8 @@ func runManaged(ctx context.Context, getenv func(string) string, stdout io.Write
 	defer app.Close()
 	control := &managedControl{db: app, id: id, token: token}
 	control.intent.Store("run")
-	state, err := control.event(ctx, osm.UpdateProgress{Type: "read"})
+	metricsConfigured := getenv("OSM_STORAGE_METRICS_ENABLED") == "true" && strings.TrimSpace(getenv("OSM_PROMETHEUS_URL")) != ""
+	state, err := control.event(ctx, osm.UpdateProgress{Type: "read", StorageMetricsConfigured: &metricsConfigured})
 	if err != nil {
 		return err
 	}

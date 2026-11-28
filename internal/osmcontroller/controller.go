@@ -121,6 +121,9 @@ func (c *Controller) RunOnce(ctx context.Context) error {
 		return err
 	}
 	for _, e := range active {
+		if err = c.syncBuildSize(ctx, e); err != nil {
+			return err
+		}
 		if err = c.reconcileCheckpointProgress(ctx, e, false); err != nil {
 			return err
 		}
@@ -138,6 +141,34 @@ func (c *Controller) RunOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c *Controller) syncBuildSize(ctx context.Context, e execution) error {
+	if e.Generation == nil {
+		return nil
+	}
+	var size *int64
+	var measured *time.Time
+	var id *int64
+	err := c.Catalog.QueryRow(ctx, `SELECT CASE WHEN promoted_at IS NULL AND to_regnamespace(schema_name::text) IS NOT NULL THEN build_database_bytes END,
+        CASE WHEN promoted_at IS NULL AND to_regnamespace(schema_name::text) IS NOT NULL THEN build_database_measured_at END,
+        CASE WHEN promoted_at IS NULL AND to_regnamespace(schema_name::text) IS NOT NULL THEN id END
+        FROM osm_catalog.generations WHERE id=$1 AND control_job_id=$2`, *e.Generation, e.ID).Scan(&size, &measured, &id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(map[string]any{"buildDatabaseBytes": size, "buildDatabaseMeasuredAt": measured, "buildDatabaseId": id})
+	if err != nil {
+		return err
+	}
+	_, err = c.DB.Exec(ctx, `UPDATE app.osm_region_catalog SET payload=payload||$2::jsonb
+        WHERE id=$1 AND (payload->'buildDatabaseBytes' IS DISTINCT FROM ($2::jsonb)->'buildDatabaseBytes'
+            OR payload->'buildDatabaseMeasuredAt' IS DISTINCT FROM ($2::jsonb)->'buildDatabaseMeasuredAt'
+            OR payload->'buildDatabaseId' IS DISTINCT FROM ($2::jsonb)->'buildDatabaseId')`, e.Region, raw)
+	return err
 }
 
 func (c *Controller) claim(ctx context.Context) (bool, error) {

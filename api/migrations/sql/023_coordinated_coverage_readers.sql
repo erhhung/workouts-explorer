@@ -197,7 +197,7 @@ BEGIN
        OR owner_id IS NULL OR length(owner_id) NOT BETWEEN 1 AND 200 OR new_slot_token IS NULL OR request_token IS NULL
        OR requested_regions IS NULL OR cardinality(requested_regions) NOT BETWEEN 0 AND 256
        OR slot_duration IS NULL OR slot_duration < interval '1 second' OR slot_duration > interval '2 minutes'
-       OR EXISTS (SELECT 1 FROM unnest(requested_regions) region WHERE region IS NULL OR region !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$') THEN
+       OR EXISTS (SELECT 1 FROM unnest(requested_regions) region WHERE region IS NULL OR region !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$') THEN
         RAISE EXCEPTION 'invalid diagnostic matcher slot arguments' USING ERRCODE = '22023';
     END IF;
     PERFORM 1 FROM app.accounts account

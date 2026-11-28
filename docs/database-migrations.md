@@ -1,6 +1,141 @@
 # Application Database Migrations
 
+## Matcher-Owned Coverage Display Classification
+
+The v84 feature folds nullable `display_class` and its enum constraint into016,
+and the private immutable `coverage_match_visible(text,text,jsonb)` helper plus
+its consumers into030/031. The persistence writer joins immutable parent policy
+metadata: v84 payloads require a recognized classification, whereas legacy jobs
+ignore that field and store NULL. Existing display readers use the matcher-owned
+decision for current evidence and one frozen compatibility branch for legacy
+evidence. Raw geometry, lease/generation/input/cancellation fences and ABI stay
+unchanged. Runtime readiness checks the column/constraint, effective fenced
+persistence body, helper ownership/ACL/attributes and all changed reader bodies.
+
+An existing APP33 installation uses the rehearsed guarded nullable-column/body
+adoption rather than replaying ledger entries. Preserve existing table/function
+OIDs, original columns/constraints, ownership, ACL/RLS, schema33/minimum32/baseline27
+and Goose0-33. Add/validate the nullable constraint without rewriting old match
+decisions, and create the helper under the existing security owner with no public
+or runtime-role grant. This does not relabel old evidence or bulk-fill
+classifications. New policy results arrive only through versioned matching jobs.
+
+Importer v4's public residential scratch and compiled context tags need no new
+OSM ledger entry: the existing generation's importer version, source hash and
+stage fences identify that contract. Importer-v3 resumes keep their original
+style/stages and derivation21; fresh builds collect context from their PBF. A
+new context/processing contract requires a new importer/context version, separately
+from matcher policy changes and physical derivation changes.
+
+## Named Private Neighborhood Roads In Coverage Display
+
+Canonical030 and031 retain the matcher's named private neighborhood-road
+exception when `service=driveway`. The correction applies to display-fact
+precomputation, exact entity detail, focused geometry and both canonical/tile-local
+MVT definitions. Existing parking exclusions, private capabilities, date/workout
+scope, grouping identities and count semantics remain intact. Matcher policy and
+durable traversal evidence are unchanged.
+
+Existing APP33 installations require a rehearsed adoption of the four effective
+function bodies; ordinary Goose Up does not replay already-applied030/031.
+Guard exact function preimages and preserve OIDs, owners, ACLs, attributes/settings,
+namespace ACL, schema33/minimum32/baseline27 and every Goose ledger row. Refresh
+only affected derived display facts through the existing deferred invalidation
+protocol, including already-present facts with incomplete geometry bounds. Preserve
+raw routes, match geometry/lengths and applied Coverage authority, and invalidate
+account/display generations normally so existing UI caches renew.
+
+Shared `internal/coverage/testdata/service-road-policy.json` vectors exercise
+foot/bicycle matching and native PostgreSQL display precomputations, lists,
+statistics, detail, focus and tiles. Changes to either policy implementation must
+test both, as required by the functional spec and ADR0009. Source-prefix and
+runtime exact-body fingerprints include this approved correction.
+
+## Cleaned Route Statistics
+
+Canonical011 introduces private `workout_route_statistics_v2(uuid,uuid)`, consuming
+existing display/export membership and workout-time-valid positive legs. Gaps,
+omitted samples and backward time contribute nothing; duplicate timestamps keep
+continuity without zero-time distance/elevation. Full and final partial unit
+intervals use the accumulated observed distance/time, normalizing partial paces.
+The cached `pace_distance_meters`/`pace_elapsed_seconds` pair supplies the same
+distance-weighted mean; a validated cache constraint brackets it with both unit
+ranges. Stationary tails are retained, including exact-unit endings. Altitude/gain
+use observed components without cross-gap jumps, and envelopes cover the existing
+display geometry. Reported totals and immutable GPS remain preserved.
+
+The original twelve-column statistics helper remains an ABI-compatible wrapper.
+The existing worker-facing `replace_workout_split_summary(uuid)` keeps its ABI,
+owner, grants and live-ingest authorization; it updates only changed derived
+cache fields and treats an already-correct route as a successful no-op. The new
+helper has no direct runtime-role grant. No display/matcher policy changes are
+made, and the existing three display/gap function hashes remain unchanged.
+
+Live adoption is rehearsed from the actual function preimage, preserving OIDs,
+ACLs/settings, namespace ACL and schema33/32 Goose metadata. Historical correction
+uses one route per transaction, lifecycle/workout/cache row locks, bounded waits
+and changed-only updates, without disabling RLS/triggers. The 2026-11-19 scoped
+receipt confirms raw points, displayed geometry, provider metrics and Coverage
+input revision are unchanged. Source-prefix snapshots include the approved011 fold.
+
+## Optional OSM Metrics And Build Allocation Snapshots
+
+Application033 captures the deployment's metrics capability with each new updater
+execution. It can lower the global monitoring preference to disabled, but cannot
+enable a policy the administrator disabled. Existing execution hashes retain their
+captured policy. API settings expose the effective capability and reject attempts
+to enable monitoring without it. The live adoption changes only the two existing
+policy/event function bodies, preserving their identities, owners, permissions and
+settings; it does not change the schema33/32 watermark or Goose ledger.
+
+OSM011 adds nullable retained-build byte/timestamp snapshots. They are measured
+from physical relation allocation after committed task/batch scratch cleanup,
+independently of Prometheus. The adoption adds only those two columns to the
+existing generation table and retains source11/minimum10 and the ledger.
+
+Fresh application032 installation excludes the already capability-aware
+`require_active_api_account` lifecycle function from generic purge-trigger
+wrapping, including when an earlier source-timer table already uses that guard.
+The canonical guard body and its approved hash remain unchanged.
+
+## Independent Daily Source Sync
+
+Canonical006 adds nullable `sources.auto_sync_time`, the private per-source timer
+table and owner-scoped time accessors. Existing sources keep their interval
+schedule until the owner saves a daily time. The public021 scheduler freezes due
+source identities in its existing account lease, reads and validates only that
+set, and advances those timers by preferred-zone calendar days. Legacy interval
+wakes cannot include timed sources. Lease/version fences, source-generation
+checks, job coalescing, snapshot encryption and lifecycle guards are retained.
+Time and preferred-zone edits serialize through a settings-only advisory lock.
+
+The additive live adoption is rehearsed against actual deployed function bodies,
+preserving existing function identities/owners/permissions/settings, source data,
+schema ACL and Goose ledger. Source/schema remains33, minimum runtime32 and
+baseline27; no migration-number change is required. API/UI images include the
+matching contract, and runtime readiness checks the new helpers, column and trigger.
+
 ## Promoted-Region Eligibility And Administrator Counts
+
+The targeted-lock refinement keeps APP33 and folds its helpers into APP015/028.
+Shared account locks protect lifecycle/ownership; only Coverage admission takes its
+private advisory mutex. Related route jobs and destination parents replace global
+history locking, with NOWAIT acquisition preventing job/state lock-order inversions.
+Metadata rebinds that unexpectedly need admission retry rather than upgrading locks.
+APP033 adds a separate four-column administrator progress function, preserving the
+existing three-column counts function. Missing-map counts require current negative
+selection proofs; waiting/stale readiness is not classified as confirmed missing.
+The live patch preserves all original function OIDs, ACL/settings, schema ACL and
+Goose rows, and is rehearsed from the actual live function definitions.
+
+Coverage's canonical region-ID checks in APP013/015/016/017/023/028 accept the
+OSM11 hierarchical identifier format, including `geofabrik:us/nevada`. The provider
+portion is at most 64 characters and the region portion at most 192. Existing
+generation-vector, ownership, lease and admission bounds are retained. The live
+APP33 correction replaces only that regex in five existing function bodies and
+five CHECK constraints, with identity/permission and ledger preservation guards;
+it does not introduce a migration or relabel existing regions. The public test
+fixture covers the complete 554-region catalog and cached legacy IDs.
 
 The administrator-managed region workflow removes the static region allowlist.
 OSM001 no longer defines the region configured flag. OSM010 uses version-2 catalog

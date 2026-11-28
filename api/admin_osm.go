@@ -72,7 +72,7 @@ func (s *Server) GetAdminOSMRegions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows.Close()
-	counts, err := s.db.Query(r.Context(), `SELECT region_id,workout_count,coverage_route_count FROM app.admin_osm_region_workout_counts($1)`, session.sessionID)
+	counts, err := s.db.Query(r.Context(), `SELECT region_id,workout_count,coverage_route_count,missing_region_route_count FROM app.admin_osm_region_workout_progress($1)`, session.sessionID)
 	if err != nil {
 		writeAdminUnavailable(w, r)
 		return
@@ -83,14 +83,15 @@ func (s *Server) GetAdminOSMRegions(w http.ResponseWriter, r *http.Request) {
 	}
 	for counts.Next() {
 		var id string
-		var workouts, coverage int64
-		if counts.Scan(&id, &workouts, &coverage) != nil {
+		var workouts, coverage, missing int64
+		if counts.Scan(&id, &workouts, &coverage, &missing) != nil {
 			counts.Close()
 			writeAdminUnavailable(w, r)
 			return
 		}
 		if region := byID[id]; region != nil {
 			region.WorkoutCount, region.CoverageRouteCount = workouts, coverage
+			region.MissingRegionRouteCount = missing
 		}
 	}
 	err = counts.Err()
@@ -131,7 +132,9 @@ func (s *Server) GetAdminOSMRegions(w http.ResponseWriter, r *http.Request) {
 		region := &result.Regions[i]
 		region.Update = latest[region.ID]
 		if region.Update != nil {
-			region.Status = map[string]string{"waiting": "Waiting", "downloading": "Downloading", "processing": "Processing", "pausing": "Pausing", "canceling": "Canceling", "paused": "Paused", "canceled": "Canceled", "failed": "Failed", "deleting": "Deleting"}[region.Update.State]
+			if overlay := map[string]string{"waiting": "Waiting", "downloading": "Downloading", "processing": "Processing", "pausing": "Pausing", "canceling": "Canceling", "paused": "Paused", "canceled": "Canceled", "failed": "Failed", "deleting": "Deleting"}[region.Update.State]; overlay != "" {
+				region.Status = overlay
+			}
 		}
 	}
 	// Duration belongs to the promoted generation, even when a newer failed or

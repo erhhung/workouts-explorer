@@ -32,7 +32,8 @@ import { DateRangePicker, dateRangeRequest } from "./DateRangePicker";
 import { useRecentDateRanges } from "./RecentDateRanges";
 import { Tooltip } from "./Tooltip";
 import { PageNavigation } from "./PageNavigation";
-import { formatDateOnly } from "./date";
+import { formatDateOnly, formatEnglishDate, type DateFormat } from "./date";
+import { useDateFormat } from "./DateFormat";
 import { ConsistencyReport } from "./ConsistencyReport";
 import { DEFAULT_CONSISTENCY_STATE, type ConsistencyViewState } from "./consistency";
 import {
@@ -66,10 +67,14 @@ const METRIC_LABELS: Record<NewCoverageMetric, string> = {
   past_year: "New visits (past year)",
 };
 
-export function statsBucketLabel(value: string, group: StatsGrouping) {
+export function statsBucketLabel(value: string, group: StatsGrouping, order?: DateFormat) {
   return group === "year"
     ? value.slice(0, 4)
-    : `${new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`))} ${value.slice(0, 4)}`;
+    : formatEnglishDate(
+        new Date(`${value}T00:00:00Z`),
+        { month: "long", year: "numeric", timeZone: "UTC" },
+        order,
+      );
 }
 
 export type StatsMapTarget =
@@ -332,6 +337,7 @@ function NewVisitsDialog({
     else if (data && page > Math.max(1, data.pagination.totalPages))
       setPage(Math.max(1, data.pagination.totalPages));
   }, [data, page, count, result.current, result.pending]);
+  const dateFormat = useDateFormat();
   const inRange = (date: string) => date >= scope.range.startDate && date <= scope.range.endDate;
   const dateCell = (visit: NewCoverageVisit, previous: boolean) => {
     const date = previous ? visit.previousVisit : visit.newVisit;
@@ -349,10 +355,10 @@ function NewVisitsDialog({
           onShowOnMap({ kind: "workout", workoutId });
         }}
       >
-        <CoverageCellValue text={formatDateOnly(date)} />
+        <CoverageCellValue text={formatDateOnly(date, dateFormat)} />
       </button>
     ) : (
-      <CoverageCellValue text={formatDateOnly(date)} />
+      <CoverageCellValue text={formatDateOnly(date, dateFormat)} />
     );
   };
   const columns: { field: VisitField; label: string }[] = [
@@ -363,7 +369,7 @@ function NewVisitsDialog({
       ? [{ field: "previousVisit" as const, label: "Previous visit" }]
       : []),
   ];
-  const title = `${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket, group)}`;
+  const title = `${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket, group, dateFormat)}`;
   return (
     <Dialog.Root
       open
@@ -857,7 +863,7 @@ export function StatsPage({
                 onStateChange((old) => ({ ...old, activeReport: report.id }));
               }}
             >
-              {report.title}
+              {report.id === "new-coverage" ? "New coverage" : report.title}
             </button>
           ))}
         </nav>
@@ -878,7 +884,7 @@ export function StatsPage({
             </h1>
           </header>
           {rangeError && (
-            <div className="stats-message" role="status">
+            <div className="stats-message dismissible-notice" role="status">
               {rangeError}
               <button className="secondary" onClick={() => setRangeError("")}>
                 Dismiss
@@ -959,7 +965,13 @@ export function StatsPage({
                     {/* Positional rows stay mounted while grouping or paging replaces their values. */}
                     {data?.items.map((bucket, index) => (
                       <tr key={index}>
-                        <td>{statsBucketLabel(bucket.bucketStart, displayedGroup)}</td>
+                        <td>
+                          {statsBucketLabel(
+                            bucket.bucketStart,
+                            displayedGroup,
+                            preferences.dateFormat,
+                          )}
+                        </td>
                         {(["all_time", "past_year"] as const).map((metric) => {
                           const count = metric === "all_time" ? bucket.allTime : bucket.pastYear;
                           return (
@@ -969,7 +981,7 @@ export function StatsPage({
                                   type="button"
                                   className="stats-count-link"
                                   disabled={!scope || result.pending || !result.current}
-                                  aria-label={`${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket.bucketStart, displayedGroup)}: ${count.toLocaleString()}`}
+                                  aria-label={`${METRIC_LABELS[metric]} in ${statsBucketLabel(bucket.bucketStart, displayedGroup, preferences.dateFormat)}: ${count.toLocaleString()}`}
                                   onClick={(event) =>
                                     setDialog({
                                       bucket: bucket.bucketStart,
@@ -998,7 +1010,11 @@ export function StatsPage({
                     )}
                     {!data && (
                       <tr className="stats-state-row">
-                        <td colSpan={3} role={prepareError || result.error ? undefined : "status"}>
+                        <td
+                          className="content-state-message"
+                          colSpan={3}
+                          role={prepareError || result.error ? undefined : "status"}
+                        >
                           {prepareError || result.error
                             ? "Report unavailable."
                             : "Loading new coverage..."}

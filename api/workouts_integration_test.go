@@ -716,6 +716,23 @@ func insertWorkoutReadFixtures(t *testing.T, adminDB, workerDB *pgxpool.Pool, ac
 	if err != nil {
 		t.Fatal(err)
 	}
+	// This fixture covers legacy/provider fallback; GPS-derived pace has separate coverage.
+	legacy, err := adminDB.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Rollback(ctx)
+	if _, err = legacy.Exec(ctx, `SELECT set_config('app.account_id',$1,true)`, accountID.String()); err == nil {
+		_, err = legacy.Exec(ctx, `UPDATE app.workout_routes SET pace_distance_meters=NULL,pace_elapsed_seconds=NULL,
+            fastest_kilometer_split_seconds=NULL,slowest_kilometer_split_seconds=NULL,
+            fastest_mile_split_seconds=NULL,slowest_mile_split_seconds=NULL WHERE account_id=$1 AND workout_id=ANY($2)`, accountID, workouts[:2])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = legacy.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	return workoutReadFixture{workouts: workouts, sourceID: sourceID, fileID: fileID, runningID: runningID, jobID: jobID, childLease: childLease, hash: hash}
 }
 

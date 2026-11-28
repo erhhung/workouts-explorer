@@ -5,12 +5,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY worker ./worker
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-update ./worker/cmd/osm-update
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-update ./worker/cmd/osm-update && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/osm-identity-eval ./worker/cmd/osm-identity-eval
 
 # Supply an immutable approved runtime with the exact pinned osmium/osm2pgsql
-# tool versions; changing the controller does not rebuild geospatial toolchains.
+# tool versions; rebuilding the updater does not rebuild geospatial toolchains.
 FROM ${OSM_RUNTIME_IMAGE}
 COPY --from=build /out/osm-update /app/osm-update
+COPY --from=build /out/osm-identity-eval /app/osm-identity-eval
 COPY osm /app/osm
 USER 65532:65532
 ENTRYPOINT ["/app/osm-update"]

@@ -1,7 +1,9 @@
 import { dateTimeFormatter, numberFormatter } from "./formatters";
+import { formatEnglishDate } from "./date";
 
 export type RegionStatus =
   | "Ready"
+  | "Stale"
   | "Waiting"
   | "Downloading"
   | "Processing"
@@ -98,11 +100,16 @@ export type OSMRegion = {
   promotedAt: string | null;
   generationElapsedSeconds?: number | null;
   databaseBytes: number | null;
+  buildDatabaseBytes?: number | null;
+  buildDatabaseId?: number | null;
+  buildDatabaseMeasuredAt?: string | null;
   databaseMeasuredAt: string | null;
   processedDatabaseBytes: number | null;
   workoutCount: number;
   coverageRouteCount: number;
+  missingRegionRouteCount?: number;
   status?: RegionStatus;
+  reprocessingRequired?: boolean;
   update?: RegionUpdate;
 };
 export type CatalogRefresh = {
@@ -158,10 +165,16 @@ export const REGION_COLUMNS: {
   { field: "generation", label: "Generation" },
   { field: "databaseBytes", label: "Database usage", initial: "desc" },
   { field: "workoutCount", label: "Workouts", initial: "desc" },
-  { field: "status", label: "Status", initial: "asc" },
+  { field: "status", label: "Status", initial: "desc" },
 ];
+export const baseRegionStatus = (region: OSMRegion): RegionStatus =>
+  region.generation === null
+    ? "Available"
+    : (region.reprocessingRequired ?? region.status === "Stale")
+      ? "Stale"
+      : "Ready";
 export const regionStatus = (region: OSMRegion): RegionStatus =>
-  region.status ?? (region.generation !== null ? "Ready" : "Available");
+  region.status ?? baseRegionStatus(region);
 export function elapsedTotal(seconds: number | null | undefined) {
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return undefined;
   if (seconds < 10) return `${seconds.toFixed(2)}s total`;
@@ -204,13 +217,30 @@ export function osmBytes(value: number | null, fixed = false) {
 }
 export const exactBytes = (value: number | null) =>
   value === null ? undefined : `${numberFormatter("en-US").format(value)} bytes`;
+export function retainedBuildBytes(region: OSMRegion) {
+  return region.update &&
+    !region.update.promoted &&
+    region.update.operation !== "delete" &&
+    region.update.buildId === region.buildDatabaseId &&
+    ["Processing", "Pausing", "Paused", "Failed", "Canceling"].includes(regionStatus(region)) &&
+    region.buildDatabaseMeasuredAt &&
+    region.buildDatabaseBytes != null
+    ? region.buildDatabaseBytes
+    : null;
+}
+export function regionDatabaseTotalBytes(region: OSMRegion) {
+  const build = retainedBuildBytes(region);
+  return region.databaseBytes === null && build === null
+    ? null
+    : (region.databaseBytes ?? 0) + (build ?? 0);
+}
 export const regionDate = (value: string | null, long = false) =>
   value
-    ? dateTimeFormatter("en-US", {
+    ? formatEnglishDate(new Date(value), {
         month: long ? "long" : "short",
         day: "numeric",
         year: "numeric",
-      }).format(new Date(value))
+      })
     : "n/a";
 export const regionExactTime = (value: string | null) =>
   value
@@ -229,7 +259,9 @@ export function regionValue(region: OSMRegion, field: RegionSort | "generation")
     case "pbfBytes":
       return osmBytes(region.pbfBytes);
     case "databaseBytes":
-      return osmBytes(region.databaseBytes, true);
+      return retainedBuildBytes(region) === null
+        ? osmBytes(region.databaseBytes, true)
+        : `${region.databaseBytes === null ? "" : `${osmBytes(region.databaseBytes, true)} + `}${osmBytes(retainedBuildBytes(region), true)}`;
     case "generation":
       return region.generation === null ? "n/a" : String(region.generation);
     case "status":

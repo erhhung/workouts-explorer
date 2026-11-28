@@ -29,6 +29,7 @@ type sourceRecord struct {
 	displayName     string
 	typeName        string
 	autoSyncEnabled bool
+	autoSyncTime    string
 	status          string
 	generation      int64
 	configEnvelope  []byte
@@ -87,9 +88,14 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 		DisplayName     string          `json:"displayName"`
 		Type            string          `json:"type"`
 		AutoSyncEnabled bool            `json:"autoSyncEnabled"`
+		AutoSyncTime    *string         `json:"autoSyncTime"`
 		Config          json.RawMessage `json:"config"`
 	}
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if !validSourceSyncTime(input.AutoSyncTime) {
+		writeFieldError(w, r, "autoSyncTime", "invalid", "time of day must use HH:mm")
 		return
 	}
 	if input.Type != sourceconfig.LocalType && input.Type != sourceconfig.ICloudType {
@@ -119,9 +125,16 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 	}
 	tx, err := s.accountTransaction(r.Context(), *session.accountID)
 	var createdAt, updatedAt time.Time
+	var autoSyncTime string
 	if err == nil {
 		defer tx.Rollback(r.Context())
 		err = tx.QueryRow(r.Context(), `INSERT INTO app.sources(id,account_id,display_name,canonical_display_name,type,auto_sync_enabled,status,generation,config_envelope) VALUES($1,$2,$3,$4,$5,$6,'checking-connection',1,$7) RETURNING created_at,updated_at`, sourceID, *session.accountID, display, canonical, input.Type, input.AutoSyncEnabled, sourceEnvelope).Scan(&createdAt, &updatedAt)
+		if err == nil && input.AutoSyncTime != nil {
+			err = setSourceSyncTime(r.Context(), tx, sourceID, *input.AutoSyncTime)
+		}
+		if err == nil {
+			err = tx.QueryRow(r.Context(), `SELECT app.read_owned_source_sync_time($1)`, sourceID).Scan(&autoSyncTime)
+		}
 		if err == nil {
 			err = enqueueSourceConnectionCheck(r.Context(), tx, *session.accountID, sourceID, 1, jobID, snapshotEnvelope, requestIDFrom(r.Context()))
 		}
@@ -138,7 +151,7 @@ func (s *Server) CreateSource(w http.ResponseWriter, r *http.Request, params gen
 		return
 	}
 	w.Header().Set("Location", "/api/sources/"+compactUUID(sourceID))
-	response, err := s.sourceResponse(*session.accountID, sourceRecord{id: sourceID, displayName: display, typeName: input.Type, autoSyncEnabled: input.AutoSyncEnabled, status: "checking-connection", generation: 1, configEnvelope: sourceEnvelope, createdAt: createdAt, updatedAt: updatedAt})
+	response, err := s.sourceResponse(*session.accountID, sourceRecord{id: sourceID, displayName: display, typeName: input.Type, autoSyncEnabled: input.AutoSyncEnabled, autoSyncTime: autoSyncTime, status: "checking-connection", generation: 1, configEnvelope: sourceEnvelope, createdAt: createdAt, updatedAt: updatedAt})
 	if err != nil {
 		writeSourceUnavailable(w, r)
 		return
@@ -186,9 +199,14 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 	var patch struct {
 		DisplayName     *string         `json:"displayName"`
 		AutoSyncEnabled *bool           `json:"autoSyncEnabled"`
+		AutoSyncTime    *string         `json:"autoSyncTime"`
 		Config          json.RawMessage `json:"config"`
 	}
 	if !decodeJSON(w, r, &patch) {
+		return
+	}
+	if !validSourceSyncTime(patch.AutoSyncTime) {
+		writeFieldError(w, r, "autoSyncTime", "invalid", "time of day must use HH:mm")
 		return
 	}
 	tx, err := s.accountTransaction(r.Context(), *session.accountID)
@@ -272,6 +290,10 @@ func (s *Server) UpdateSource(w http.ResponseWriter, r *http.Request, sourceID g
 		}
 	}
 	err = tx.QueryRow(r.Context(), `UPDATE app.sources SET display_name=$1,canonical_display_name=$2,auto_sync_enabled=$3,status=$4,generation=$5,config_envelope=$6,status_code=$7,status_summary=$8,checked_at=$9 WHERE id=$10 RETURNING updated_at`, display, canonical, autoSync, status, generation, envelope, statusCode, statusSummary, checkedAt, id).Scan(&record.updatedAt)
+	if err == nil && patch.AutoSyncTime != nil {
+		err = setSourceSyncTime(r.Context(), tx, id, *patch.AutoSyncTime)
+		record.autoSyncTime = *patch.AutoSyncTime
+	}
 	if err == nil && jobID != uuid.Nil {
 		err = enqueueSourceConnectionCheck(r.Context(), tx, *session.accountID, id, generation, jobID, snapshotEnvelope, requestIDFrom(r.Context()))
 	}
@@ -328,7 +350,26 @@ func (s *Server) DeleteSource(w http.ResponseWriter, r *http.Request, sourceID g
 	w.WriteHeader(http.StatusNoContent)
 }
 
-const sourceSelect = `SELECT id,display_name,type,auto_sync_enabled,status,generation,config_envelope,status_code,status_summary,checked_at,created_at,updated_at FROM app.sources`
+const sourceSelect = `SELECT id,display_name,type,auto_sync_enabled,app.read_owned_source_sync_time(id),status,generation,config_envelope,status_code,status_summary,checked_at,created_at,updated_at FROM app.sources`
+
+func validSourceSyncTime(value *string) bool {
+	if value == nil {
+		return true
+	}
+	parsed, err := time.Parse("15:04", *value)
+	return err == nil && parsed.Format("15:04") == *value
+}
+
+func setSourceSyncTime(ctx context.Context, tx pgx.Tx, sourceID uuid.UUID, value string) error {
+	var saved bool
+	if err := tx.QueryRow(ctx, `SELECT app.set_owned_source_sync_time($1,$2)`, sourceID, value).Scan(&saved); err != nil {
+		return err
+	}
+	if !saved {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
 
 func (s *Server) readSource(ctx context.Context, accountID, id uuid.UUID, lock bool) (sourceRecord, error) {
 	tx, err := s.accountTransaction(ctx, accountID)
@@ -355,7 +396,7 @@ type sourceScanner interface{ Scan(...any) error }
 
 func scanSource(row sourceScanner) (sourceRecord, error) {
 	var value sourceRecord
-	err := row.Scan(&value.id, &value.displayName, &value.typeName, &value.autoSyncEnabled, &value.status, &value.generation, &value.configEnvelope, &value.statusCode, &value.statusSummary, &value.checkedAt, &value.createdAt, &value.updatedAt)
+	err := row.Scan(&value.id, &value.displayName, &value.typeName, &value.autoSyncEnabled, &value.autoSyncTime, &value.status, &value.generation, &value.configEnvelope, &value.statusCode, &value.statusSummary, &value.checkedAt, &value.createdAt, &value.updatedAt)
 	return value, err
 }
 
@@ -385,6 +426,9 @@ func (s *Server) sourceResponse(accountID uuid.UUID, record sourceRecord) (gener
 		return generated.Source{}, errors.New("unsupported source type")
 	}
 	response := generated.Source{Id: compactUUID(record.id), DisplayName: record.displayName, Type: generated.SourceType(record.typeName), AutoSyncEnabled: record.autoSyncEnabled, Status: generated.SourceStatus(record.status), Generation: record.generation, Config: public, StatusCode: record.statusCode, StatusSummary: record.statusSummary, CheckedAt: record.checkedAt, CreatedAt: record.createdAt, UpdatedAt: record.updatedAt}
+	if record.autoSyncTime != "" {
+		response.AutoSyncTime = &record.autoSyncTime
+	}
 	if record.typeName == sourceconfig.ICloudType {
 		err = response.FromHealthAutoExportICloudSourcePublic(generated.HealthAutoExportICloudSourcePublic{Config: public})
 	} else {

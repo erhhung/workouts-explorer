@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erhhung/workouts-explorer/internal/coverage"
 	"github.com/erhhung/workouts-explorer/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -60,8 +61,61 @@ func TestCanonicalCoverageDisplayPostgreSQL(t *testing.T) {
 	assertRuntimeRole(t, ctx, db.api, "workouts_api")
 	assertRuntimeRole(t, ctx, db.worker, "workouts_worker")
 	assertRuntimeRole(t, ctx, db.migration, "workouts_migration")
-	coverageDisplayCheck(t, db, `SELECT schema_version=31 AND minimum_runtime_version=31
-		AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`)
+	coverageDisplayCheck(t, db, `SELECT schema_version=$1 AND minimum_runtime_version=32
+		AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion)
+
+	t.Run("ServiceRoadEligibilityAgreesWithMatcherAcrossDisplaySurfaces", func(t *testing.T) {
+		data, err := os.ReadFile("../../../internal/coverage/testdata/service-road-policy.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fixtures []struct {
+			Label    string          `json:"label"`
+			Highway  string          `json:"highway"`
+			Tags     json.RawMessage `json:"tags"`
+			Eligible bool            `json:"eligible"`
+		}
+		if err := json.Unmarshal(data, &fixtures); err != nil || len(fixtures) == 0 {
+			t.Fatalf("invalid shared matcher/display fixtures: %v", err)
+		}
+		f := newCanonicalDisplayFixture(t, db)
+		first := len(f.paths)
+		tx := beginAccount(t, ctx, db.migration, f.account)
+		for _, fixture := range fixtures {
+			var tags map[string]string
+			if err := json.Unmarshal(fixture.Tags, &tags); err != nil {
+				t.Fatal(err)
+			}
+			var name any
+			if strings.TrimSpace(tags["name"]) != "" {
+				name = tags["name"]
+			}
+			canonicalDisplayAddPath(t, db, tx, &f, name, fixture.Label, "road", string(fixture.Tags), f.workouts[:1])
+			coverageDisplayExec(t, db, tx, `UPDATE app.path_segments SET highway=$3
+				WHERE account_id=$1 AND physical_segment_id=$2`, f.account, f.segments[len(f.segments)-1], fixture.Highway)
+			coverageDisplayExec(t, db, tx, `UPDATE app.workout_segment_matches SET display_class=$4
+				WHERE account_id=$1 AND workout_id=$2 AND physical_segment_id=$3`, f.account, f.workouts[0], f.segments[len(f.segments)-1],
+				coverage.DisplayClass(coverage.CurrentPathPolicyVersion, coverage.MovementFoot, fixture.Highway, fixture.Tags))
+		}
+		coverageDisplayCommit(t, db, tx)
+		s := canonicalDisplaySelection(t, db, f, "2026-01-10", "2026-01-12", f.workouts[:1])
+		rows := canonicalDisplayRows(t, db, f, s)
+		for i, fixture := range fixtures {
+			coverageDisplayCheck(t, db, `SELECT
+				EXISTS(SELECT 1 FROM app.workout_path_display_partials
+					WHERE account_id=$1 AND workout_id=$2 AND logical_path_id=$3)=$5
+				AND EXISTS(SELECT 1 FROM app.coverage_display_members
+					WHERE account_id=$1 AND context_id=$4 AND source_kind='path' AND source_id=$3)=$5`,
+				f.account, f.workouts[0], f.paths[first+i], s.context, fixture.Eligible)
+			if fixture.Eligible {
+				row := canonicalDisplayFind(t, rows, fixture.Label)
+				canonicalDisplayAssert(t, row, "range_workout_count", float64(1), "all_time_workout_count", float64(1))
+				canonicalDisplaySurfaces(t, db, f, s, row)
+				canonicalDisplayGeometry(t, db, f, s, "path", uuid.MustParse(row["entity_id"].(string)), f.segments[first+i:first+i+1])
+			}
+		}
+		canonicalDisplayMapSurfaces(t, db, f, s, false)
+	})
 
 	t.Run("AllTimeScopeDoesNotUseItsDisplayDatesAsFilters", func(t *testing.T) {
 		f := newCanonicalDisplayFixture(t, db)
@@ -1421,9 +1475,12 @@ func canonicalDisplayMapSurfaces(t *testing.T, db testDatabases, f coverageDispl
 		WHERE match.account_id=$1 AND match.workout_id=$2
 	), pieces AS (
 		SELECT 'path' source_kind,COALESCE(NULLIF(tags->>'workouts:education_id','')::uuid,logical_path_id) source_id,geom FROM raw
-		WHERE NOT(highway='service' AND COALESCE(tags->>'service','') IN('driveway','parking_aisle'))
-		AND tags->>'amenity' IS DISTINCT FROM 'parking'
-		AND(name IS NOT NULL OR tags->>'workouts:park_kind' IN('state_park','national_park') OR NOT(tags ? 'workouts:park_id'))
+		WHERE (display_class IN ('ordinary','shared_road','parking_aisle') OR (COALESCE(display_class,'legacy')='legacy'
+		AND (NOT(highway='service' AND COALESCE(tags->>'service','') IN('driveway','parking_aisle'))
+			OR (tags->>'service'='driveway' AND NULLIF(btrim(tags->>'name'),'') IS NOT NULL
+				AND lower(btrim(COALESCE(tags->>'access','')))='private'))
+		AND tags->>'amenity' IS DISTINCT FROM 'parking'))
+		AND(name IS NOT NULL OR display_class='parking_aisle' OR tags->>'workouts:park_kind' IN('state_park','national_park') OR NOT(tags ? 'workouts:park_id'))
 		UNION ALL SELECT 'park',(tags->>'workouts:park_id')::uuid,geom FROM raw WHERE tags ? 'workouts:park_id'
 	) SELECT source_kind,upper(replace(source_id::text,'-','')),ST_AsGeoJSON(ST_UnaryUnion(ST_Collect(geom)))
 	FROM pieces GROUP BY source_kind,source_id`, f.account, focused)

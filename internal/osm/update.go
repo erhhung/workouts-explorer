@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	ImporterVersion   = 3
-	DerivationVersion = 21
-	ExpectedOsmium    = "1.19.0"
-	ExpectedOsm2pgsql = "2.3.1"
+	ImporterVersion       = 4
+	LegacyImporterVersion = 3
+	DerivationVersion     = 21
+	ExpectedOsmium        = "1.19.0"
+	ExpectedOsm2pgsql     = "2.3.1"
 )
 
 type Generation struct {
@@ -31,6 +32,14 @@ type Generation struct {
 	BatchIndex         int
 	BatchTotal         int
 	RegionalGeneration int64
+	ImporterVersion    int
+}
+
+func (g Generation) importerVersion() int {
+	if g.ImporterVersion == 0 {
+		return LegacyImporterVersion
+	}
+	return g.ImporterVersion
 }
 
 type ToolVersions struct {
@@ -65,6 +74,22 @@ type StageCheckpointStore interface {
 	LockGeneration(context.Context, int64) (func(), error)
 }
 type StageFencer interface{ StageFence(string) (string, error) }
+type GenerationStageFencer interface {
+	StageFenceForGeneration(string, Generation) (string, error)
+}
+
+func generationStageFence(pipeline UpdatePipeline, stage string, generation Generation) (string, bool, error) {
+	if fencer, ok := pipeline.(GenerationStageFencer); ok {
+		fence, err := fencer.StageFenceForGeneration(stage, generation)
+		return fence, true, err
+	}
+	if fencer, ok := pipeline.(StageFencer); ok {
+		fence, err := fencer.StageFence(stage)
+		return fence, true, err
+	}
+	return strings.Repeat("0", 64), false, nil
+}
+
 type StageCursorStore interface {
 	StageCursor(context.Context, int64, string) (json.RawMessage, error)
 }
@@ -83,6 +108,10 @@ type UpdaterLocker interface {
 type StoragePreflight interface {
 	Check(context.Context) (StorageObservation, error)
 }
+
+type StoragePreflightFunc func(context.Context) (StorageObservation, error)
+
+func (f StoragePreflightFunc) Check(ctx context.Context) (StorageObservation, error) { return f(ctx) }
 
 type StorageObservation struct {
 	CheckedAt         time.Time
@@ -134,7 +163,22 @@ var pipelineStages = func() []string {
 	return append(stages, "prepare-partitions", "validate")
 }()
 
+func generationPipelineStages(generation Generation) []string {
+	if generation.importerVersion() < 4 {
+		return pipelineStages
+	}
+	result := make([]string, 0, len(pipelineStages)+1)
+	for _, stage := range pipelineStages {
+		result = append(result, stage)
+		if stage == "postprocess" {
+			result = append(result, "residential-context")
+		}
+	}
+	return result
+}
+
 var batchStages = map[string]bool{
+	"residential-context":      true,
 	"clip-candidates":          true,
 	"derive":                   true,
 	"clip-replacements":        true,
@@ -154,6 +198,7 @@ var batchStages = map[string]bool{
 }
 
 var initialBatchSizes = map[string]int{
+	"residential-context":      500,
 	"derive":                   150000,
 	"clip-candidates":          200000,
 	"clip-replacements":        7500,
@@ -223,7 +268,7 @@ func sqlCheckpointStage(stage string) bool { return batchStages[stage] || atomic
 
 func stageNeedsStoragePreflight(stage string) bool {
 	switch stage {
-	case "postprocess", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate":
+	case "postprocess", "residential-context", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate":
 		return true
 	default:
 		return false
@@ -540,6 +585,7 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 			return
 		}
 		if preserveBuild {
+			u.recordBuildSize(context.WithoutCancel(ctx), generation)
 			err = errors.Join(err, removeErr)
 			return
 		}
@@ -593,10 +639,9 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 	}
 
 	var validation json.RawMessage
-	for stageOrder, stageName := range pipelineStages {
+	for stageOrder, stageName := range generationPipelineStages(generation) {
 		if completed[stageName] && stageName != "validate" {
-			if fencer, ok := u.Pipeline.(StageFencer); ok {
-				fence, fenceErr := fencer.StageFence(stageName)
+			if fence, fenced, fenceErr := generationStageFence(u.Pipeline, stageName, generation); fenced {
 				if fenceErr != nil {
 					return generation, fenceErr
 				}
@@ -617,12 +662,9 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 			continue
 		}
 		if resumable {
-			fence := strings.Repeat("0", 64)
-			if fencer, ok := u.Pipeline.(StageFencer); ok {
-				fence, err = fencer.StageFence(stageName)
-				if err != nil {
-					return generation, err
-				}
+			fence, _, fenceErr := generationStageFence(u.Pipeline, stageName, generation)
+			if fenceErr != nil {
+				return generation, fenceErr
 			}
 			if err := checkpointStore.StartStage(ctx, generation.ID, stageName, stageOrder, fence); err != nil {
 				return generation, err
@@ -723,6 +765,8 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 				}
 				return generation, fmt.Errorf("OSM stage %s: %w", stageName, err)
 			}
+			// Pipeline.Run has committed its batch and released/deleted batch scratch objects.
+			u.recordBuildSize(ctx, generation)
 			logicalDone := !sqlCheckpointStage(stageName)
 			if u.Progress != nil && resumable && sqlCheckpointStage(stageName) {
 				logicalDone, err = checkpointStore.StageCompleted(ctx, generation.ID, stageName)
@@ -751,6 +795,9 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 						logicalDone = logicalTask(stageName, p).Order != task.Order
 					}
 				}
+			}
+			if stageName == "postprocess" && generation.importerVersion() >= 4 {
+				logicalDone = false
 			}
 			// The final task includes promotion, cleanup and statistics, not just validation SQL.
 			if task.Order == len(UpdateTasks) {
@@ -861,6 +908,18 @@ func (u Updater) Run(ctx context.Context, regionID string) (generation Generatio
 	return generation, nil
 }
 
+func (u Updater) recordBuildSize(ctx context.Context, generation Generation) {
+	if recorder, ok := u.Store.(interface {
+		RecordBuildDatabaseSize(context.Context, Generation) error
+	}); ok {
+		measurement, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := recorder.RecordBuildDatabaseSize(measurement, generation); err != nil && u.Log != nil {
+			_, _ = fmt.Fprintln(u.Log, "Build storage measurement unavailable; retaining the last completed snapshot.")
+		}
+	}
+}
+
 func validateReport(output []byte, generation Generation) (json.RawMessage, error) {
 	output = []byte(strings.TrimSpace(string(output)))
 	var report map[string]any
@@ -869,7 +928,7 @@ func validateReport(output []byte, generation Generation) (json.RawMessage, erro
 	}
 	required := map[string]float64{
 		"preparedGenerationId": float64(generation.ID), "provenanceMismatches": 0,
-		"importerVersion": ImporterVersion, "derivationVersion": DerivationVersion,
+		"importerVersion": float64(generation.importerVersion()), "derivationVersion": DerivationVersion,
 		"sourceVersionMismatches": 0, "logicalPathMismatches": 0, "invalidWays": 0,
 		"invalidPathSegments": 0, "orphanPathSegments": 0, "materialLocalityResiduals": 0,
 		"invalidParkAttributions": 0, "materialParkResiduals": 0,

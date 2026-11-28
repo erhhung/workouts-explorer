@@ -23,7 +23,7 @@ func TestEligibleCohortCanonical28Contract(t *testing.T) {
 		"UNIQUE(account_id,root_job_id)", "CHECK (batch_size BETWEEN 1 AND 1000)",
 		"CREATE FUNCTION app.read_ingest_coverage_prepared(", "CREATE FUNCTION app.seal_ingest_coverage_cohort(",
 		"CREATE FUNCTION app.record_ingest_coverage_repair(", "context.sealed_ingest_root_id IS NULL",
-		"prior_parent.sealed_ingest_root_id", "ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT",
+		"prior_parent.sealed_ingest_root_id", "ORDER BY child.parent_job_id,child.id FOR UPDATE OF child NOWAIT",
 		"targets<builder.batch_size", "app.ingest_coverage_root_terminal(target_account_id,builder.root_job_id)",
 		"app.ingest_coverage_snapshot_digest(target_account_id,prepared.workout_id)",
 		"UPDATE app.schema_metadata SET schema_version = 28,minimum_runtime_version = 28 WHERE singleton;",

@@ -1,5 +1,16 @@
 # Telemetry And Monitoring
 
+## Integration Switch
+
+OpenTelemetry is opt-in through `otel.enabled` (default false). A configured
+endpoint alone does not enable export. When enabled, the endpoint is required and
+the UI/Martin metrics sidecars are included; `otel.collector` retains only image
+and resource settings. The former `otel.collector.enabled` switch is removed.
+Go SDK processes also default to no exporter when their endpoint environment
+variable is unset. The xdev local profile explicitly keeps its working gateway
+integration enabled. Region-update enablement is independent and has been restored
+after the disabled-state review.
+
 **SLO implementation and pipeline status updated 10/10/2026** (`America/Los_Angeles`).
 The normal Helm chart implements four opt-in app SLOs. After xdev recreation,
 Helm revision **3** is live-verified: all four source and mirrored objectives and their generated
@@ -19,6 +30,13 @@ cluster configuration, or increase concurrency. Coverage, ingestion, OSM and
 browser/map SLOs remain future work, not part of the four implemented objectives.
 
 ## Component Coverage
+
+Coverage runner cycle errors share a30-second log cadence across concurrent
+execution and automatic-retry loops. The first error is immediate; periodic
+entries include `suppressed_errors` for intervening cycle failures. Polling and
+execution continue at their configured rates, idle siblings do not reset the
+cadence, and existing error redaction remains in place. Per-route outcomes and
+health/reconciliation messages are separate from this cycle-log throttle.
 
 **All five long-running components have live-verified metrics delivery;
 not all have owned lifecycle instrumentation.** API and both workers export OTLP;

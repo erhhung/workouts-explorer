@@ -218,10 +218,10 @@ func TestCoverageMetadataSameBoundsPointMutationIntegration(t *testing.T) {
 }
 
 func TestCoverageMetadataChangedTargetsIntegration(t *testing.T) {
-	for _, change := range []string{"generation", "minimum traversal", "boundary", "maps become available"} {
+	for _, change := range []string{"generation", "minimum traversal", "boundary", "maps become available", "hierarchical maps become available"} {
 		t.Run(change, func(t *testing.T) {
 			f, producer, source, keys := newCoveragePipelineFixture(t)
-			if change == "maps become available" {
+			if change == "maps become available" || change == "hierarchical maps become available" {
 				if _, err := f.osmAdminDB.Exec(f.ctx, `UPDATE osm_catalog.generations SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.generation); err != nil {
 					t.Fatal(err)
 				}
@@ -236,6 +236,7 @@ func TestCoverageMetadataChangedTargetsIntegration(t *testing.T) {
 			}
 			beforeJobs := len(pipelineParentSizes(t, f))
 			generation := f.generation
+			region := f.regionID
 			switch change {
 			case "generation":
 				if err := f.osmAdminDB.QueryRow(f.ctx, `SELECT nextval(pg_get_serial_sequence('osm_catalog.generations','id'))`).Scan(&generation); err != nil {
@@ -250,13 +251,88 @@ func TestCoverageMetadataChangedTargetsIntegration(t *testing.T) {
 				}
 			case "maps become available":
 				replicaFixtureCatchUp(f)
+			case "hierarchical maps become available":
+				region, generation = f.seedOSM("us")
+				var payload []byte
+				if err := f.osmAdminDB.QueryRow(f.ctx, `SELECT jsonb_build_object('id',id,'buildId',$2::bigint,'boundary',ST_AsGeoJSON(boundary)::jsonb)
+					FROM osm_catalog.regions WHERE id=$1`, region, generation).Scan(&payload); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.adminDB.Exec(f.ctx, `INSERT INTO app.osm_region_catalog(id,provider,payload) VALUES($1,'fixture',$2)`, region, payload); err != nil {
+					t.Fatal(err)
+				}
 			}
 			r.nextObservation = time.Time{}
-			if worked, err := r.RunOnce(f.ctx); err != nil || !worked {
+			if change == "hierarchical maps become available" {
+				if err := r.observe(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+				claim, found, err := r.claim(f.ctx)
+				if err != nil || !found || claim.accountID != f.accountID || !claim.scanRequired {
+					t.Fatal("priority claim", claim, found, err)
+				}
+				if err := r.processPriorityRoutes(f.ctx, claim); err != nil {
+					t.Fatal(err)
+				}
+				scope := f.accountTx(f.ctx, f.coverageDB)
+				var leaked int
+				f.scan(scope, `SELECT count(*) FROM app.read_priority_coverage_reconciliation_routes($1,$2,$3,$4,NULL,10)`,
+					[]any{f.accountID, claim.revision, r.workerID, uuid.New()}, &leaked)
+				if leaked != 0 {
+					t.Fatal("priority reader accepted the wrong lease")
+				}
+				f.commit(scope)
+				assertCountQuery(t, f.adminDB, 2, `SELECT count(*) FROM app.workout_coverage_states WHERE account_id=$1 AND target_job_id IS NOT NULL`, f.accountID)
+				var unchanged bool
+				if err := f.adminDB.QueryRow(f.ctx, `SELECT cursor_workout_id IS NOT DISTINCT FROM $2::uuid AND completed_revision<desired_revision
+					FROM app.coverage_reconciliation_accounts WHERE account_id=$1`, f.accountID, claim.cursor).Scan(&unchanged); err != nil || !unchanged {
+					t.Fatal("priority discovery advanced the ordinary checkpoint", unchanged, err)
+				}
+				var route reconciliationRoute
+				if err := f.adminDB.QueryRow(f.ctx, `SELECT workout_id,route_input_revision,route_input_sha256 FROM app.workout_coverage_states
+					WHERE account_id=$1 ORDER BY workout_id LIMIT 1`, f.accountID).Scan(&route.workoutID, &route.revision, &route.digest); err != nil {
+					t.Fatal(err)
+				}
+				item, err := readCoverageSelectionMetadata(f.ctx, r.db, f.accountID, nil, r.workerID, claim.leaseID, &claim.revision, route.workoutID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				unrelated := f.accountTx(f.ctx, f.adminDB)
+				f.exec(unrelated, `SELECT 1 FROM app.accounts WHERE id=$1 FOR KEY SHARE`, f.accountID)
+				f.exec(unrelated, `SELECT 1 FROM app.jobs WHERE account_id=$1 AND kind='coverage_update' FOR UPDATE`, f.accountID)
+				f.exec(unrelated, `SELECT 1 FROM app.jobs child JOIN app.coverage_route_job_contexts context ON context.job_id=child.id
+					WHERE child.account_id=$1 AND context.workout_id<>$2 FOR UPDATE OF child`, f.accountID, route.workoutID)
+				fastCtx, fastCancel := context.WithTimeout(f.ctx, time.Second)
+				err = r.applySelection(fastCtx, claim, route, item)
+				fastCancel()
+				if err != nil {
+					t.Fatal("metadata rebind collided with account FK checks or unrelated job locks", err)
+				}
+				if err := unrelated.Rollback(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+				locked := f.accountTx(f.ctx, f.adminDB)
+				f.exec(locked, `SELECT 1 FROM app.accounts WHERE id=$1 FOR UPDATE`, f.accountID)
+				released := make(chan error, 1)
+				go func() { time.Sleep(150 * time.Millisecond); released <- locked.Rollback(f.ctx) }()
+				started := time.Now()
+				if err := r.applySelection(f.ctx, claim, route, item); err != nil {
+					t.Fatal("brief account lock aborted discovery instead of retrying", err)
+				}
+				if err := <-released; err != nil {
+					t.Fatal(err)
+				}
+				if time.Since(started) < 100*time.Millisecond {
+					t.Fatal("lock retry was not exercised")
+				}
+				if err := r.process(f.ctx, claim); err != nil {
+					t.Fatal(err)
+				}
+			} else if worked, err := r.RunOnce(f.ctx); err != nil || !worked {
 				t.Fatalf("changed target not reconciled: %t %v", worked, err)
 			}
 			wantROI := int64(0)
-			if change == "boundary" || change == "maps become available" {
+			if change == "boundary" || change == "maps become available" || change == "hierarchical maps become available" {
 				wantROI = 2
 			}
 			if snapshots.Load() != wantROI || roi.Load() != wantROI {
@@ -273,7 +349,16 @@ func TestCoverageMetadataChangedTargetsIntegration(t *testing.T) {
 				ON context.job_id=state.target_job_id JOIN app.jobs child ON child.id=context.job_id
 				JOIN app.coverage_job_contexts parent ON parent.job_id=child.parent_job_id
 				WHERE state.account_id=$1 AND context.target_generations=jsonb_build_array(jsonb_build_object('regionId',$2::text,'generation',$3::bigint))
-				AND parent.minimum_traversal_meters=$4`, f.accountID, f.regionID, generation, minimum)
+				AND parent.minimum_traversal_meters=$4`, f.accountID, region, generation, minimum)
+			if change == "hierarchical maps become available" {
+				parents := len(pipelineParentSizes(t, f))
+				if _, err := r.RunOnce(f.ctx); err != nil {
+					t.Fatal(err)
+				}
+				if len(pipelineParentSizes(t, f)) != parents {
+					t.Fatal("unchanged hierarchical target created duplicate batches")
+				}
+			}
 		})
 	}
 }

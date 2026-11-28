@@ -48,7 +48,7 @@ func TestCustomDateRangeHistory(t *testing.T) {
 func TestCustomDateRangeLimitValidation(t *testing.T) {
 	server := &Server{}
 	for _, limit := range []int{-1, 0, 1, 2, 3, 4, 5, 6} {
-		prefs := generated.Preferences{Theme: "dark", Units: "metric", Timezone: "UTC", FirstWeekday: "monday", ClockFormat: "24h", PageSize: 25, CustomDateRangeLimit: limit}
+		prefs := generated.Preferences{Theme: "dark", Units: "metric", Timezone: "UTC", FirstWeekday: "monday", ClockFormat: "24h", DateFormat: "mm/dd/yyyy", PageSize: 25, CustomDateRangeLimit: limit}
 		field, _ := server.validatePreferences(prefs)
 		if limit >= 1 && limit <= 5 {
 			if field != "" {

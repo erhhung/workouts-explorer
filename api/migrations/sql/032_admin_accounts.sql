@@ -105,6 +105,8 @@ DECLARE item record; definition text; body text; table_name text;
 BEGIN
     FOR item IN SELECT DISTINCT p.oid,p.prosrc FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
       WHERE NOT t.tgisinternal AND t.tgrelid IN (SELECT c.oid FROM pg_class c JOIN pg_attribute a ON a.attrelid=c.oid WHERE c.relnamespace='app'::regnamespace AND a.attname='account_id')
+      -- Earlier feature tables can already use this capability-aware lifecycle guard.
+      AND p.oid<>'app.require_active_api_account()'::regprocedure
     LOOP
         body:=regexp_replace(item.prosrc,'\mBEGIN\M',E'BEGIN\n    IF app.account_purge_active() THEN\n        IF TG_LEVEL=''STATEMENT'' THEN RETURN NULL; END IF;\n        IF TG_OP=''DELETE'' THEN RETURN OLD; END IF;\n        RETURN NEW;\n    END IF;',1,1);
         IF body=item.prosrc THEN RAISE EXCEPTION 'unrecognized account trigger body' USING ERRCODE='55000'; END IF;

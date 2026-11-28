@@ -2766,10 +2766,21 @@ func bestRawSupportedRoadDeadEnd(node string, current, next TraversedPortion, ob
 			return nil, false
 		}
 		segment := graph.segments[id]
-		if segment.TransitionOnly || segment.ContinuityClass != "road" || segment.LengthMeters < 20 || segment.LengthMeters > maximumMeters || present[segment.PhysicalID] ||
+		minimumMeters := 20.0
+		// Classified shared courts can have short turning arms. Require directed
+		// out-and-back support and a better tail fit, not overlapping endpoint radii.
+		shortShared := segment.DisplayClass == "shared_road" && segment.LengthMeters < 20
+		if shortShared {
+			minimumMeters = 10
+		}
+		if segment.TransitionOnly || segment.ContinuityClass != "road" || segment.LengthMeters < minimumMeters || segment.LengthMeters > maximumMeters || present[segment.PhysicalID] ||
 			samePhysicalSegment(segment, graph.segments[current.SegmentID]) || next.SegmentID != "" && samePhysicalSegment(segment, graph.segments[next.SegmentID]) ||
 			!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, maximumDegrees, maximumRawOffsetMeters) &&
 				!graph.directedSegmentEndpointsRawSupported(observations, segment, maximumRawOffsetMeters) {
+			continue
+		}
+		if shortShared && (!graph.rawPolylineSupportsDirectedSegmentWithin(observations, segment, 45, math.Min(8, maximumRawOffsetMeters)) ||
+			!sharedDeadEndTailPreferred(observations, segment, current, next, graph)) {
 			continue
 		}
 		for _, returnID := range graph.outgoing[segment.ToNode] {
@@ -2780,6 +2791,9 @@ func bestRawSupportedRoadDeadEnd(node string, current, next TraversedPortion, ob
 			if returnSegment.ToNode != segment.FromNode || returnSegment.Direction == segment.Direction || !samePhysicalSegment(segment, returnSegment) ||
 				!graph.rawPolylineSupportsDirectedSegmentWithin(observations, returnSegment, maximumDegrees, maximumRawOffsetMeters) &&
 					!graph.directedSegmentEndpointsRawSupported(observations, returnSegment, maximumRawOffsetMeters) {
+				continue
+			}
+			if shortShared && !graph.rawPolylineSupportsDirectedSegmentWithin(observations, returnSegment, 45, math.Min(8, maximumRawOffsetMeters)) {
 				continue
 			}
 			deadEnd := true
@@ -2798,6 +2812,36 @@ func bestRawSupportedRoadDeadEnd(node string, current, next TraversedPortion, ob
 		}
 	}
 	return nil, false
+}
+
+func sharedDeadEndTailPreferred(observations []Observation, segment DirectedSegment, current, next TraversedPortion, graph compiledGraph) bool {
+	length := distance(segment.From, segment.To)
+	if length <= 0 {
+		return false
+	}
+	for _, observation := range observations {
+		if graph.err() != nil {
+			return false
+		}
+		along, offset := segmentProjection(observation.Point, segment, length)
+		if along < segment.LengthMeters*.8 || offset > 8 {
+			continue
+		}
+		otherDistance := math.Inf(1)
+		for _, boundary := range []TraversedPortion{current, next} {
+			other, exists := graph.segments[boundary.SegmentID]
+			if !exists {
+				continue
+			}
+			_, d := segmentProjection(observation.Point, other, distance(other.From, other.To))
+			otherDistance = math.Min(otherDistance, d)
+		}
+		margin := math.Max(3, math.Min(6, 2*observation.AccuracyMeters))
+		if finite(otherDistance) && offset+margin <= otherDistance {
+			return true
+		}
+	}
+	return false
 }
 
 func replaceOverlappingRoadReversalWithPath(result *Result, observations []Observation, graph compiledGraph, maximumExcursionMeters, maximumRouteMeters, maximumDegrees, maximumRawOffsetMeters, epsilon float64) {

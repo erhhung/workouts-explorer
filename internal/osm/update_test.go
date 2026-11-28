@@ -586,8 +586,8 @@ func newTestUpdater(t *testing.T, store *updateStoreStub, pipeline UpdatePipelin
 }
 
 func TestUpdaterRunsStagesInOrder(t *testing.T) {
-	if ImporterVersion != 3 || DerivationVersion != 21 {
-		t.Fatalf("importer/derivation versions=%d/%d, want 3/21 for park and education boundary clipping", ImporterVersion, DerivationVersion)
+	if ImporterVersion != 4 || LegacyImporterVersion != 3 || DerivationVersion != 21 {
+		t.Fatalf("importer/derivation versions=%d/%d, want 4/21 with importer-v3 resume support", ImporterVersion, DerivationVersion)
 	}
 	store := &updateStoreStub{}
 	pipeline := updatePipelineStub{events: &store.events, validation: validUpdateReport()}
@@ -1171,8 +1171,8 @@ func TestCommandPipelinePropagationMaintenanceVacuumsComponentTable(t *testing.T
 	}
 }
 
-func TestEveryTopLevelOSMSQLFileImplementsAnActiveStage(t *testing.T) {
-	entries, err := os.ReadDir("../../osm")
+func TestEveryBatchSQLFileImplementsAnActiveStage(t *testing.T) {
+	entries, err := os.ReadDir("../../osm/batches")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1183,16 +1183,25 @@ func TestEveryTopLevelOSMSQLFileImplementsAnActiveStage(t *testing.T) {
 		}
 		active[name] = stage
 	}
+	for stage := range pipelineSQLFiles {
+		for _, version := range []int{LegacyImporterVersion, ImporterVersion} {
+			name := pipelineSQLFile(stage, Generation{ImporterVersion: version})
+			if previous, duplicate := active[name]; duplicate && previous != stage {
+				t.Errorf("SQL file %s is mapped by both %s and %s", name, previous, stage)
+			}
+			active[name] = stage
+		}
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
 			continue
 		}
 		if _, ok := active[entry.Name()]; !ok {
-			t.Errorf("top-level OSM SQL file %s is not mapped to an active stage", entry.Name())
+			t.Errorf("OSM batch SQL file %s is not mapped to an active stage", entry.Name())
 		}
 	}
 	for name, stage := range active {
-		if _, err := os.Stat(filepath.Join("../../osm", name)); err != nil {
+		if _, err := os.Stat(filepath.Join("../../osm/batches", name)); err != nil {
 			t.Errorf("active stage %s references missing SQL file %s: %v", stage, name, err)
 		}
 	}
@@ -1240,7 +1249,7 @@ func TestCommandPipelineUsesAtomicOrBatchedSQLTransactions(t *testing.T) {
 			t.Errorf("call %d atomic checkpoint=%v, want %v: %v", index, hasAtomicCheckpoint, wantAtomicCheckpoint, args)
 		}
 	}
-	if got := calls[3]; !contains(got, "--file") || !contains(got, "/pipeline/identity-components.sql") {
+	if got := calls[3]; !contains(got, "--file") || !contains(got, "/pipeline/batches/identity-components.sql") {
 		t.Fatalf("identity-components args = %v", got)
 	}
 }

@@ -761,7 +761,7 @@ CREATE TABLE app.coverage_route_selection_proofs (
     PRIMARY KEY(account_id,workout_id),
     FOREIGN KEY(workout_id,account_id) REFERENCES app.workouts(id,account_id) ON DELETE CASCADE,
     CHECK ((readiness='map_data_ready' AND reason IS NULL AND cardinality(region_ids)>0)
-        OR (readiness='pending' AND reason='region_not_active' AND cardinality(region_ids)=0)
+        OR (readiness='pending' AND reason IN ('region_not_active','region_reprocessing_required') AND cardinality(region_ids)=0)
         OR (readiness='unavailable' AND reason='no_provider_region' AND cardinality(region_ids)=0))
 );
 CREATE TABLE app.coverage_applied_match_proofs (
@@ -952,7 +952,7 @@ $function$;
 CREATE FUNCTION app.observe_coverage_catalog(revision bigint,event_id bigint,full_fingerprint text,selection_fp text,
     heads jsonb,selection_policy_value text,descriptor jsonb,configured jsonb) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
-DECLARE prior app.coverage_reconciliation_state%ROWTYPE; campaign boolean; next_revision bigint;
+DECLARE prior app.coverage_reconciliation_state%ROWTYPE; campaign boolean; next_revision bigint; processing_changed boolean;
 BEGIN
     IF revision IS NULL OR revision<0 OR event_id IS NULL OR event_id<0
         OR full_fingerprint IS NULL OR full_fingerprint !~ '^[0-9a-f]{64}$'
@@ -967,23 +967,45 @@ BEGIN
     SELECT * INTO prior FROM app.coverage_reconciliation_state WHERE singleton;
     IF revision<COALESCE((SELECT max(proof.catalog_revision) FROM app.coverage_route_selection_proofs proof),0) THEN RETURN false; END IF;
     IF revision<prior.catalog_revision OR event_id<prior.last_osm_event_id THEN RETURN false; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(configured) item
+        WHERE item ? 'generation' AND item->>'generation' IS DISTINCT FROM heads->>(item->>'regionId')) THEN
+        RAISE EXCEPTION 'processing metadata differs from observed active heads' USING ERRCODE='40001';
+    END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(configured) item JOIN app.coverage_map_processing_versions v
+        ON v.region_id=item->>'regionId' AND v.generation=(item->>'generation')::bigint
+        WHERE item ? 'generation' AND (v.importer_version,v.derivation_version)
+            IS DISTINCT FROM ((item->>'importerVersion')::integer,(item->>'derivationVersion')::integer)) THEN
+        RAISE EXCEPTION 'immutable map processing versions changed' USING ERRCODE='40001';
+    END IF;
+    processing_changed:=EXISTS(SELECT 1 FROM app.coverage_map_processing_versions v
+            WHERE heads->>v.region_id IS DISTINCT FROM v.generation::text)
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements(configured) item WHERE item ? 'generation' AND NOT EXISTS(
+            SELECT 1 FROM app.coverage_map_processing_versions v WHERE v.region_id=item->>'regionId'
+                AND v.generation=(item->>'generation')::bigint AND v.importer_version=(item->>'importerVersion')::integer
+                AND v.derivation_version=(item->>'derivationVersion')::integer));
     IF revision=prior.catalog_revision AND prior.catalog_fingerprint<>'' AND full_fingerprint<>prior.catalog_fingerprint THEN
         RAISE EXCEPTION 'conflicting coverage catalog revision' USING ERRCODE='40001';
     END IF;
     IF (revision,event_id,full_fingerprint,selection_fp,heads,selection_policy_value,descriptor)
         IS NOT DISTINCT FROM (prior.catalog_revision,prior.last_osm_event_id,prior.catalog_fingerprint,
-            prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor) THEN RETURN true; END IF;
+            prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor) AND NOT processing_changed THEN RETURN true; END IF;
     SELECT * INTO prior FROM app.coverage_reconciliation_state WHERE singleton FOR UPDATE;
     IF revision<COALESCE((SELECT max(proof.catalog_revision) FROM app.coverage_route_selection_proofs proof),0) THEN RETURN false; END IF;
     IF revision<prior.catalog_revision OR event_id<prior.last_osm_event_id THEN RETURN false; END IF;
+    processing_changed:=EXISTS(SELECT 1 FROM app.coverage_map_processing_versions v
+            WHERE heads->>v.region_id IS DISTINCT FROM v.generation::text)
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements(configured) item WHERE item ? 'generation' AND NOT EXISTS(
+            SELECT 1 FROM app.coverage_map_processing_versions v WHERE v.region_id=item->>'regionId'
+                AND v.generation=(item->>'generation')::bigint AND v.importer_version=(item->>'importerVersion')::integer
+                AND v.derivation_version=(item->>'derivationVersion')::integer));
     IF revision=prior.catalog_revision AND prior.catalog_fingerprint<>'' AND full_fingerprint<>prior.catalog_fingerprint THEN
         RAISE EXCEPTION 'conflicting coverage catalog revision' USING ERRCODE='40001';
     END IF;
     IF (revision,event_id,full_fingerprint,selection_fp,heads,selection_policy_value,descriptor)
         IS NOT DISTINCT FROM (prior.catalog_revision,prior.last_osm_event_id,prior.catalog_fingerprint,
-            prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor) THEN RETURN true; END IF;
+            prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor) AND NOT processing_changed THEN RETURN true; END IF;
     campaign:=(full_fingerprint,selection_fp,heads,selection_policy_value,descriptor) IS DISTINCT FROM
-        (prior.catalog_fingerprint,prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor);
+        (prior.catalog_fingerprint,prior.selection_fingerprint,prior.active_heads,prior.selection_policy,prior.matching_descriptor) OR processing_changed;
     next_revision:=prior.desired_revision;
     IF campaign THEN
         SELECT GREATEST(prior.desired_revision,COALESCE(max(GREATEST(account.desired_revision,
@@ -996,6 +1018,14 @@ BEGIN
         matcher_contract_version=descriptor->>'productionMatcherContract',desired_revision=next_revision,observed_at=clock_timestamp()
     WHERE singleton;
     PERFORM app.sync_coverage_region_catalog(configured);
+    DELETE FROM app.coverage_map_processing_versions v WHERE heads->>v.region_id IS DISTINCT FROM v.generation::text;
+    INSERT INTO app.coverage_map_processing_versions(region_id,generation,importer_version,derivation_version)
+    SELECT item->>'regionId',(item->>'generation')::bigint,(item->>'importerVersion')::integer,(item->>'derivationVersion')::integer
+    FROM jsonb_array_elements(configured) item WHERE item ? 'generation'
+    ON CONFLICT(region_id) DO UPDATE SET generation=EXCLUDED.generation,importer_version=EXCLUDED.importer_version,
+        derivation_version=EXCLUDED.derivation_version
+    WHERE (coverage_map_processing_versions.generation,coverage_map_processing_versions.importer_version,coverage_map_processing_versions.derivation_version)
+        IS DISTINCT FROM (EXCLUDED.generation,EXCLUDED.importer_version,EXCLUDED.derivation_version);
     IF campaign THEN
         INSERT INTO app.coverage_reconciliation_accounts(account_id,desired_revision,next_scan_at)
         SELECT id,GREATEST(next_revision,1),'-infinity' FROM app.accounts WHERE state='active'
@@ -1035,6 +1065,8 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,ap
         AND proof.mutation_version=COALESCE(change.mutation_version,0)
         AND proof.catalog_revision<=catalog.catalog_revision
         AND proof.selection_fingerprint=catalog.selection_fingerprint AND proof.selection_policy=catalog.selection_policy
+        AND (proof.reason IS DISTINCT FROM 'region_reprocessing_required' OR proof.catalog_fingerprint=catalog.catalog_fingerprint)
+        AND (proof.readiness<>'map_data_ready' OR app.coverage_processing_ready(proof.generations,catalog.matching_descriptor->>'pathPolicy'))
         AND NOT EXISTS (SELECT 1 FROM unnest(proof.region_ids) id WHERE NOT catalog.active_heads ? id)
 $function$;
 -- +goose StatementEnd
@@ -1226,7 +1258,7 @@ BEGIN
     anchor:='DECLARE builder app.ingest_coverage_builders%ROWTYPE; root_id uuid; canonical_existing boolean;';
     IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'batch descriptor declaration anchor missing'; END IF;
     definition:=replace(definition,anchor,anchor||chr(10)||'DECLARE desired_descriptor jsonb; producer_descriptor jsonb;');
-    anchor:='    -- Claimers take Coverage parent/child before state.';
+    anchor:='    -- This stage records input/readiness and prepares cohorts; it changes no jobs.';
     IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'batch desired descriptor anchor missing'; END IF;
     definition:=replace(definition,anchor,'    SELECT matching_descriptor INTO desired_descriptor FROM app.coverage_reconciliation_state WHERE singleton FOR SHARE NOWAIT;
     producer_descriptor:=ready->0->''matchingDescriptor'';
@@ -1281,7 +1313,7 @@ BEGIN
                     AND proof.selection_fingerprint=refresh.value->>''selectionFingerprint''
                     AND proof.selection_policy=refresh.value->>''selectionPolicy'' AND proof.mutation_version=COALESCE(change.mutation_version,0))
             '||anchor);
-    anchor:='    -- Parent/child before workout/state';
+    anchor:='    IF targets>0 THEN PERFORM app.lock_coverage_target_jobs';
     IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'prepared matching descriptor anchor missing'; END IF;
     definition:=replace(definition,anchor,'    IF jsonb_array_length(refreshed)>0 AND refreshed->0 ? ''matchingDescriptor'' THEN
         SELECT matching_descriptor INTO desired_descriptor FROM app.coverage_reconciliation_state WHERE singleton FOR SHARE NOWAIT;
@@ -1522,7 +1554,7 @@ $function$;
 CREATE FUNCTION app.apply_coverage_selection(target_account uuid,revision bigint,worker text,lease uuid,target_workout uuid,
     route_revision bigint,digest bytea,item jsonb,rules text,sampling text,policy text,minimum double precision) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
-DECLARE applied boolean; metadata jsonb;
+DECLARE applied boolean; metadata jsonb; queue_change boolean; stale_target record;
 BEGIN
     IF NOT app.adopted_coverage_authority_current(target_account,NULL,worker,lease,revision) THEN RETURN false; END IF;
     PERFORM 1 FROM app.coverage_reconciliation_state catalog WHERE singleton AND
@@ -1532,16 +1564,22 @@ BEGIN
         AND (catalog.selection_policy='' OR catalog.selection_policy=item->>'selectionPolicy')
         FOR SHARE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'selection matching descriptor or policy changed' USING ERRCODE='40001'; END IF;
-    -- Reserve the same account -> reconciliation -> parent/child -> workout/state
-    -- order as batch admission, before either reusing a target or invoking it.
-    PERFORM 1 FROM app.accounts WHERE id=target_account AND target_account=app.current_account_id() AND state='active' FOR UPDATE NOWAIT;
+    -- Metadata writes need lifecycle stability, not a global writer mutex.
+    -- Decide before locking: a changed hint retries rather than upgrading SHARE
+    -- into admission after taking route/state locks.
+    queue_change:=item->>'readiness'='map_data_ready' AND NOT EXISTS(
+       SELECT 1 FROM app.ingest_coverage_existing_target(target_account,target_workout,route_revision,digest,item->'generations',rules,sampling,policy,minimum));
+    queue_change:=queue_change OR (COALESCE(item->>'reason'='region_reprocessing_required',false) AND EXISTS(
+        SELECT 1 FROM app.jobs child JOIN app.coverage_route_job_contexts route ON route.job_id=child.id AND route.account_id=child.account_id
+        JOIN app.coverage_job_contexts parent ON parent.job_id=child.parent_job_id AND parent.account_id=child.account_id
+        WHERE child.account_id=target_account AND route.workout_id=target_workout AND child.status IN('queued','running')
+            AND NOT app.coverage_processing_ready(route.target_generations,parent.path_policy_version)));
+    PERFORM 1 FROM app.accounts WHERE id=target_account AND target_account=app.current_account_id() AND state='active' FOR SHARE NOWAIT;
     IF NOT FOUND THEN RETURN false; END IF;
+    IF queue_change AND NOT app.lock_coverage_admission(target_account) THEN RETURN false; END IF;
     PERFORM 1 FROM app.coverage_reconciliation_accounts WHERE account_id=target_account FOR UPDATE NOWAIT;
-    PERFORM 1 FROM app.jobs parent WHERE parent.account_id=target_account AND parent.kind='coverage_update'
-        ORDER BY parent.id FOR UPDATE NOWAIT;
-    PERFORM 1 FROM app.jobs child JOIN app.jobs parent ON parent.id=child.parent_job_id AND parent.account_id=child.account_id
-        WHERE parent.account_id=target_account AND parent.kind='coverage_update' ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT;
-    PERFORM 1 FROM app.workouts WHERE id=target_workout AND account_id=target_account AND deletion_requested_at IS NULL FOR UPDATE NOWAIT;
+    IF queue_change THEN PERFORM app.lock_coverage_target_jobs(target_account,ARRAY[target_workout]); END IF;
+    PERFORM 1 FROM app.workouts WHERE id=target_workout AND account_id=target_account AND deletion_requested_at IS NULL FOR NO KEY UPDATE NOWAIT;
     IF NOT FOUND THEN RETURN false; END IF;
     IF NOT EXISTS (SELECT 1 FROM app.workouts workout JOIN app.accounts account ON account.id=workout.account_id
         JOIN app.sources source ON source.id=workout.source_id AND source.account_id=workout.account_id AND source.deleted_at IS NULL
@@ -1549,14 +1587,24 @@ BEGIN
             AND workout.source_id=(item->>'sourceId')::uuid AND account.workout_ownership_epoch=(item->>'ownershipEpoch')::bigint) THEN
         RAISE EXCEPTION 'selection immutable workout snapshot changed' USING ERRCODE='40001';
     END IF;
-    PERFORM 1 FROM app.coverage_route_changes WHERE account_id=target_account AND workout_id=target_workout FOR UPDATE NOWAIT;
+    PERFORM 1 FROM app.coverage_route_changes WHERE account_id=target_account AND workout_id=target_workout FOR NO KEY UPDATE NOWAIT;
     PERFORM 1 FROM app.workout_coverage_states WHERE account_id=target_account AND workout_id=target_workout
-        AND route_input_revision=route_revision AND route_input_sha256=digest FOR UPDATE NOWAIT;
+        AND route_input_revision=route_revision AND route_input_sha256=digest FOR NO KEY UPDATE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'selection route input changed' USING ERRCODE='40001'; END IF;
     metadata:=app.coverage_selection_metadata(target_account,target_workout);
     IF item ? 'mutationVersion' AND (item->>'mutationVersion')::bigint IS DISTINCT FROM COALESCE((SELECT mutation_version
         FROM app.coverage_route_changes WHERE account_id=target_account AND workout_id=target_workout),0) THEN
         RAISE EXCEPTION 'selection route mutation changed' USING ERRCODE='40001';
+    END IF;
+    IF item->>'reason'='region_reprocessing_required' THEN
+        FOR stale_target IN SELECT child.id FROM app.jobs child
+            JOIN app.coverage_route_job_contexts route ON route.job_id=child.id AND route.account_id=child.account_id
+            JOIN app.coverage_job_contexts parent ON parent.job_id=child.parent_job_id AND parent.account_id=child.account_id
+            WHERE child.account_id=target_account AND route.workout_id=target_workout AND child.status IN('queued','running')
+                AND NOT app.coverage_processing_ready(route.target_generations,parent.path_policy_version)
+        LOOP
+            PERFORM app.request_job_cancellation(stale_target.id,gen_random_uuid());
+        END LOOP;
     END IF;
     IF metadata IS NOT NULL AND item->>'readiness'<>'map_data_ready' THEN
         RETURN app.adopted_coverage_authority_current(target_account,NULL,worker,lease,revision);
@@ -1569,6 +1617,9 @@ BEGIN
             WHERE app.workout_coverage_regions.desired_osm_generation IS DISTINCT FROM EXCLUDED.desired_osm_generation;
         applied:=true;
     ELSE
+        IF item->>'readiness'='map_data_ready' AND NOT queue_change THEN
+            RAISE EXCEPTION 'coverage target changed before metadata rebind; retry admission' USING ERRCODE='55P03';
+        END IF;
         applied:=app.apply_coverage_reconciliation(target_account,revision,worker,lease,target_workout,route_revision,digest,
             item->>'readiness',item->>'reason',item->'generations',gen_random_uuid(),gen_random_uuid(),rules,sampling,policy,minimum);
     END IF;
@@ -1597,7 +1648,7 @@ BEGIN
     IF NOT app.adopted_coverage_authority_current(target_account,NULL,worker,lease,revision) THEN
         RAISE EXCEPTION 'route deferral authority lost' USING ERRCODE='42501';
     END IF;
-    PERFORM 1 FROM app.accounts WHERE id=target_account AND target_account=app.current_account_id() AND state='active' FOR UPDATE NOWAIT;
+    PERFORM 1 FROM app.accounts WHERE id=target_account AND target_account=app.current_account_id() AND state='active' FOR SHARE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'route deferral account authority lost' USING ERRCODE='42501'; END IF;
     PERFORM 1 FROM app.coverage_reconciliation_accounts account WHERE account.account_id=target_account
         AND account.active_revision=revision AND account.worker_id=worker AND account.lease_token=lease
@@ -1606,7 +1657,7 @@ BEGIN
     IF NOT FOUND THEN RAISE EXCEPTION 'route deferral lease lost' USING ERRCODE='42501'; END IF;
     PERFORM 1 FROM app.workouts workout JOIN app.sources source ON source.id=workout.source_id AND source.account_id=workout.account_id
         WHERE workout.id=target_workout AND workout.account_id=target_account AND workout.deletion_requested_at IS NULL
-            AND source.deleted_at IS NULL FOR UPDATE OF workout NOWAIT;
+            AND source.deleted_at IS NULL FOR NO KEY UPDATE OF workout NOWAIT;
     IF NOT FOUND THEN RETURN false; END IF;
     IF EXISTS (SELECT 1 FROM app.ingest_coverage_handoffs handoff WHERE handoff.account_id=target_account
         AND handoff.workout_id=target_workout AND handoff.acknowledged_at IS NULL) THEN RETURN false; END IF;
@@ -1615,7 +1666,7 @@ BEGIN
     IF NOT FOUND AND NOT (route_revision=0 AND digest IS NULL AND NOT EXISTS (SELECT 1 FROM app.workout_coverage_states state
         WHERE state.account_id=target_account AND state.workout_id=target_workout)) THEN RETURN false; END IF;
     SELECT mutation_version INTO current_version FROM app.coverage_route_changes
-        WHERE account_id=target_account AND workout_id=target_workout FOR UPDATE NOWAIT;
+        WHERE account_id=target_account AND workout_id=target_workout FOR NO KEY UPDATE NOWAIT;
     IF FOUND THEN
         IF current_version<>target_mutation_version THEN RETURN false; END IF;
         UPDATE app.coverage_route_changes SET resolved_version=LEAST(resolved_version,mutation_version-1),

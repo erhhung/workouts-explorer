@@ -1,19 +1,21 @@
+# Operator-rendered wrapper for the standalone /app/osm-update CLI. The managed
+# controller renders its own osm-region-* Jobs and injects execution capabilities.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: osm-update-${OSM_JOB_SUFFIX}
 spec:
   backoffLimit: 0
+  ttlSecondsAfterFinished: 21600
   template:
     metadata:
       labels:
         app.kubernetes.io/component: osm-update
     spec:
       restartPolicy: Never
-      hostAliases:
-        - ip: "${OSM_PROMETHEUS_SERVICE_IP}"
-          hostnames:
-            - prometheus-stack-prometheus.monitoring.svc.cluster.local
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 180
+      hostAliases: ${OSM_PROMETHEUS_HOST_ALIASES}
       imagePullSecrets:
         - name: ${OSM_IMAGE_PULL_SECRET}
       securityContext:
@@ -56,6 +58,8 @@ spec:
               value: "${OSM_UPDATE_ACTION}"
             - name: OSM_GENERATION_ID
               value: "${OSM_GENERATION_ID}"
+            - name: OSM_BUILD_ID
+              value: "${OSM_BUILD_ID}"
             - name: OSM_OPERATOR
               value: "${OSM_OPERATOR}"
             - name: OSM_OPERATOR_NOTE
@@ -66,16 +70,29 @@ spec:
               value: "${OSM_MAX_DOWNLOAD_BYTES}"
             - name: OSM_RESUME_GENERATION_ID
               value: "${OSM_RESUME_GENERATION_ID}"
+            - name: OSM_RESUME_BUILD_ID
+              value: "${OSM_RESUME_BUILD_ID}"
+            - name: OSM_MONITOR_DATABASE_STORAGE
+              value: "${OSM_MONITOR_DATABASE_STORAGE}"
+            - name: OSM_STORAGE_SETTLE_TIMEOUT
+              value: "${OSM_STORAGE_SETTLE_TIMEOUT}"
             - name: OSM_UPDATE_SCRATCH
               value: /scratch
             - name: OSM_PIPELINE_ROOT
               value: /app/osm
             - name: OSM_PROMETHEUS_URL
-              value: "https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+              value: "${OSM_PROMETHEUS_URL}"
+            - name: OSM_STORAGE_METRICS_ENABLED
+              value: "${OSM_STORAGE_METRICS_ENABLED}"
+            - name: OSM_STORAGE_AVAILABLE_METRIC
+              value: "${OSM_STORAGE_AVAILABLE_METRIC}"
+            - name: OSM_STORAGE_CAPACITY_METRIC
+              value: "${OSM_STORAGE_CAPACITY_METRIC}"
+            - name: OSM_STORAGE_SELECTOR_LABELS_JSON
+              value: >-
+                ${OSM_STORAGE_SELECTOR_LABELS_JSON}
             - name: SSL_CERT_FILE
               value: /tls/prod-db/ca.crt
-            - name: OSM_PROMETHEUS_PVC_TEMPLATE
-              value: "data-{{POD}}"
             - name: OSM_PROMETHEUS_MAX_SAMPLE_AGE
               value: "2m"
           resources:

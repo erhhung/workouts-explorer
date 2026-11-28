@@ -87,6 +87,7 @@ func (r routeCatalogRow) Scan(dest ...any) error {
 	*dest[0].(*int64), *dest[5].(*int64) = r.revision, r.eventID
 	*dest[1].(*[]byte), *dest[2].(*[]byte) = r.fingerprint, r.selection
 	*dest[3].(*[]byte), *dest[4].(*[]byte) = r.heads, r.active
+	*dest[6].(*[]byte) = []byte(`{}`)
 	return nil
 }
 
@@ -139,10 +140,13 @@ func TestRouteCatalogRejectsMissingMetadata(t *testing.T) {
 }
 
 func TestRouteCatalogReadAndROISQLStayCheap(t *testing.T) {
-	for _, forbidden := range []string{"ST_", "sha256", "osm_catalog.regions", "osm_catalog.generations", "string_agg"} {
+	for _, forbidden := range []string{"ST_", "sha256", "osm_catalog.regions", "string_agg"} {
 		if strings.Contains(readRouteRegionCatalogSQL, forbidden) {
 			t.Fatalf("steady-state proof read contains %q", forbidden)
 		}
+	}
+	if !strings.Contains(readRouteRegionCatalogSQL, "FROM jsonb_each_text(active_generations) head") || !strings.Contains(readRouteRegionCatalogSQL, "g.id=head.value::bigint") {
+		t.Fatal("processing capabilities must use bounded primary-key lookups for cached active heads")
 	}
 	if strings.Contains(resolveRouteRegionsSQL, "ST_Area") || strings.Contains(resolveRouteRegionsSQL, "MATERIALIZED") ||
 		strings.Count(resolveRouteRegionsSQL, "ST_Covers(region.boundary,point.location)") != 2 ||

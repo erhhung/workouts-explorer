@@ -155,8 +155,7 @@ func runUpdate(ctx context.Context, getenv func(string) string, stdout io.Writer
 func runControlledUpdate(ctx context.Context, getenv func(string) string, stdout io.Writer, pool storagePool, store osm.PostgreSQLUpdateStore, resumeGenerationID int64, control *managedControl) error {
 	regionID, scratch, pipelineRoot := getenv("OSM_REGION_ID"), getenv("OSM_UPDATE_SCRATCH"), getenv("OSM_PIPELINE_ROOT")
 	maximumBytes, err := strconv.ParseInt(getenv("OSM_MAX_DOWNLOAD_BYTES"), 10, 64)
-	prometheusURL := valueOrDefault(getenv("OSM_PROMETHEUS_URL"), osm.DefaultPrometheusURL)
-	pvcTemplate := valueOrDefault(getenv("OSM_PROMETHEUS_PVC_TEMPLATE"), osm.DefaultPVCTemplate)
+	metrics, metricsErr := osm.StorageMetricsFromEnv(getenv)
 	maximumSampleAge, ageErr := durationOrDefault(getenv("OSM_PROMETHEUS_MAX_SAMPLE_AGE"), osm.DefaultMaximumAge)
 	storageSettleTimeout, settleErr := durationOrDefault(getenv("OSM_STORAGE_SETTLE_TIMEOUT"), 90*time.Second)
 	monitorStorage, monitorErr := strconv.ParseBool(valueOrDefault(getenv("OSM_MONITOR_DATABASE_STORAGE"), "true"))
@@ -164,9 +163,10 @@ func runControlledUpdate(ctx context.Context, getenv func(string) string, stdout
 		monitorStorage = *control.monitorDatabaseStorage
 		monitorErr = nil
 	}
+	monitorStorage = monitorStorage && metrics.Enabled
 	logLocation, locationErr := time.LoadLocation(valueOrDefault(getenv("OSM_LOG_TIMEZONE"), "America/Los_Angeles"))
-	if regionID == "" || scratch == "" || pipelineRoot == "" || err != nil || maximumBytes < 1 || (monitorStorage && (ageErr != nil || maximumSampleAge <= 0 || settleErr != nil || storageSettleTimeout < 0)) || monitorErr != nil || locationErr != nil {
-		return fmt.Errorf("OSM region, download, scratch, pipeline, and Prometheus storage-preflight configuration are required")
+	if regionID == "" || scratch == "" || pipelineRoot == "" || err != nil || maximumBytes < 1 || metricsErr != nil || (monitorStorage && (ageErr != nil || maximumSampleAge <= 0 || settleErr != nil || storageSettleTimeout < 0)) || monitorErr != nil || locationErr != nil {
+		return fmt.Errorf("OSM region, download, scratch, pipeline and enabled storage metrics configuration must be valid")
 	}
 	databaseURL := getenv("OSM_MIGRATION_DATABASE_URL")
 	updater := osm.Updater{
@@ -177,8 +177,8 @@ func runControlledUpdate(ctx context.Context, getenv func(string) string, stdout
 		StorageSettleTimeout:  storageSettleTimeout,
 		SkipStorageMonitoring: !monitorStorage,
 		StoragePreflight: osm.PrometheusStoragePreflight{
-			DB: pool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: prometheusURL,
-			PVCTemplate: pvcTemplate, MaximumAge: maximumSampleAge,
+			DB: pool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: metrics.PrometheusURL,
+			AvailableMetric: metrics.AvailableMetric, CapacityMetric: metrics.CapacityMetric, SelectorLabels: metrics.SelectorLabels, MaximumAge: maximumSampleAge,
 		},
 	}
 	if control != nil {

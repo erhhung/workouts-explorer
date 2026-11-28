@@ -54,7 +54,7 @@ func tileTestDatabases(t *testing.T) testDatabases {
 	t.Cleanup(cancel)
 	db := testDatabases{ctx: ctx, migration: openPool(t, ctx, os.Getenv("MIGRATION_DATABASE_URL"), 4),
 		api: openPool(t, ctx, os.Getenv("API_DATABASE_URL"), 2), worker: openPool(t, ctx, os.Getenv("WORKER_DATABASE_URL"), 2)}
-	coverageDisplayCheck(t, db, fmt.Sprintf(`SELECT schema_version=%d AND minimum_runtime_version=31 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion))
+	coverageDisplayCheck(t, db, fmt.Sprintf(`SELECT schema_version=%d AND minimum_runtime_version=32 AND migration_baseline=27 FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion))
 	return db
 }
 

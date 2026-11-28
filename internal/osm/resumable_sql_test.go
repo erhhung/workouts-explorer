@@ -17,7 +17,7 @@ func TestResumableSQLUsesOneBatchPerInvocationAndLoggedState(t *testing.T) {
 		"identity-proximity-batched.sql", "identity-propagate-batched.sql", "identity-label-overrides-batched.sql", "identity-rewrite-batched.sql",
 	}
 	for _, name := range files {
-		contents, err := os.ReadFile("../../osm/" + name)
+		contents, err := os.ReadFile("../../osm/batches/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestOperationalBatchSizeOverridesMatchSQL(t *testing.T) {
 		{"identity-propagate/hook", "identity-propagate-batched.sql", "hook_batch_size constant integer := 100000;"},
 	}
 	for _, test := range tests {
-		contents, err := os.ReadFile("../../osm/" + test.file)
+		contents, err := os.ReadFile("../../osm/batches/" + test.file)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestOperationalBatchSizeOverridesMatchSQL(t *testing.T) {
 }
 
 func TestIdentityComponentBatchSizesMatchSQL(t *testing.T) {
-	contents, err := os.ReadFile("../../osm/identity-components.sql")
+	contents, err := os.ReadFile("../../osm/batches/identity-components.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestIdentityComponentBatchSizesMatchSQL(t *testing.T) {
 }
 
 func TestIdentityPropagationPersistsPerPassBatchProgress(t *testing.T) {
-	contents, err := os.ReadFile("../../osm/identity-propagate-batched.sql")
+	contents, err := os.ReadFile("../../osm/batches/identity-propagate-batched.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestDocumentedRepeatedBatchesPersistProgressMetadata(t *testing.T) {
 	for name, batch := range batches {
 		sql, ok := files[batch.file]
 		if !ok {
-			contents, readErr := os.ReadFile("../../osm/" + batch.file)
+			contents, readErr := os.ReadFile("../../osm/batches/" + batch.file)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -209,7 +209,7 @@ func TestRepeatedPhaseTransitionsResetProgress(t *testing.T) {
 		{"validate.sql", 2},
 	}
 	for _, test := range tests {
-		contents, err := os.ReadFile("../../osm/" + test.file)
+		contents, err := os.ReadFile("../../osm/batches/" + test.file)
 		if err != nil {
 			t.Fatal(err)
 		}

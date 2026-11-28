@@ -11,9 +11,10 @@ import (
 )
 
 type osmProcessingSettings struct {
-	MonitorDatabaseStorage bool      `json:"monitorDatabaseStorage"`
-	Revision               int64     `json:"revision"`
-	UpdatedAt              time.Time `json:"updatedAt"`
+	StorageMetricsConfigured bool      `json:"storageMetricsConfigured"`
+	MonitorDatabaseStorage   bool      `json:"monitorDatabaseStorage"`
+	Revision                 int64     `json:"revision"`
+	UpdatedAt                time.Time `json:"updatedAt"`
 }
 
 func readOSMProcessingSettings(ctx context.Context, tx pgx.Tx, lock bool) (osmProcessingSettings, error) {
@@ -46,6 +47,8 @@ func (s *Server) GetAdminOSMProcessingSettings(w http.ResponseWriter, r *http.Re
 		writeAdminUnavailable(w, r)
 		return
 	}
+	value.StorageMetricsConfigured = s.config.OSMStorageMetricsEnabled
+	value.MonitorDatabaseStorage = value.MonitorDatabaseStorage && value.StorageMetricsConfigured
 	writeJSON(w, 200, value)
 }
 
@@ -61,6 +64,10 @@ func (s *Server) UpdateAdminOSMProcessingSettings(w http.ResponseWriter, r *http
 	}
 	if !decodeOSMCommand(r, &command) || command.Monitor == nil || command.Revision == nil || *command.Revision < 1 {
 		writeProblem(w, r, 400, "Bad Request", "invalid OSM processing settings")
+		return
+	}
+	if *command.Monitor && !s.config.OSMStorageMetricsEnabled {
+		writeProblem(w, r, 400, "Bad Request", "storage metrics are not configured in Helm")
 		return
 	}
 	tx, err := s.db.Begin(r.Context())
@@ -100,5 +107,7 @@ func (s *Server) UpdateAdminOSMProcessingSettings(w http.ResponseWriter, r *http
 		writeAdminUnavailable(w, r)
 		return
 	}
+	value.StorageMetricsConfigured = s.config.OSMStorageMetricsEnabled
+	value.MonitorDatabaseStorage = value.MonitorDatabaseStorage && value.StorageMetricsConfigured
 	writeJSON(w, 200, value)
 }

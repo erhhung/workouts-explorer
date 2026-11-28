@@ -94,6 +94,14 @@ is not promoted.
 
 ## Storage Monitoring Policy
 
+External filesystem metrics are opt-in through
+`osm.regionUpdates.storageMetrics`. Configure the URL, metric names and exact
+selector labels there. Disabled/unconfigured metrics force the global monitoring
+control off; configured-but-missing/stale metrics still block monitored work.
+The configured path does not discover PostgreSQL exporter pods or assume replicas.
+The optional Service IP overrides only the configured URL hostname for isolated
+DNS environments. SQL-derived region and retained-build sizes are independent.
+
 Settings > **OSM Processing** provides **Monitor available database storage**,
 enabled by default. Save the global default in the application database. Every
 new region request records an initial preview. Every actual updater start or
@@ -154,7 +162,7 @@ controlled comparison.
 | Status | Job actions |
 |---|---|
 | Available | Download region |
-| Ready | Reprocess region; Delete region |
+| Ready / Stale | Reprocess region; Delete region |
 | Waiting | Cancel download or Cancel processing, according to the queued operation |
 | Downloading | Pause download; Cancel download |
 | Processing | Pause processing; Cancel processing |
@@ -164,7 +172,7 @@ controlled comparison.
 | Canceled | Download region; Clear job status; Delete region when data remains |
 | Deleting | View deletion progress; wait for storage reclamation |
 
-**Show boundaries** is the first menu action. **View job progress** is second when
+**View boundaries** is the first menu action. **View job progress** is second when
 job history is available, followed by a divider before job commands. The Failed
 menu orders Resume processing, eligible Cancel processing, then Clear job status; Canceled orders Download
 region before Clear job status. Delete region is a separate danger action below
@@ -175,8 +183,15 @@ This includes newly queued downloads/deletions before execution has started, as
 well as Waiting after resume, Pausing and Canceling. The menu and status shortcut
 both open progress immediately. Queued progress names the first step and shows
 the existing waiting message with a spinner, then updates in place as work starts.
-Show boundaries is the fallback when progress is unavailable. A region created by
+View boundaries is the fallback when progress is unavailable. A region created by
 an older operator-only workflow may have active data without a managed job history.
+
+Stale is yellow and shows exactly **Updated matcher policies require reprocessing**
+through the shared delayed tooltip. It means the promoted generation's importer
+or derivation contract predates current map-processing requirements, not that
+the usable map is removed. Matcher-only changes stale workout Coverage results,
+not region data. Cleared/absent run overlays reveal this base state; an older
+successful run does not force an obsolete generation back to Ready.
 
 Statuses use the application's semantic colors: Ready is green; waiting, running
 and stopping states are yellow; Failed and Deleting are red; Paused and Canceled are muted gray.
@@ -319,6 +334,13 @@ reclaims shared OSM data, not retained user-specific Coverage records.
 
 ## Generations And Processing Job IDs
 
+Regions shows a retained build's last completed post-cleanup allocation snapshot
+in yellow, in addition to active-generation usage when present. Snapshots include
+tables/indexes/TOAST in the build schema, not WAL, executor scratch/PBF files or
+discarded per-batch objects. These values update at batch/task boundaries rather
+than estimating in-flight work from row counts. Promotion/discard hides the
+candidate component; recorded measurement metadata remains available for audit.
+
 These identify different things:
 
 | Term | Meaning | Example |
@@ -416,7 +438,12 @@ Up/Down and Home/End scroll it immediately. Opening or changing the current task
 follows that row: tasks 1–20 start at the top, tasks 21–57 align row `n-19` below
 the sticky header, and the final task scrolls to the absolute bottom. Stopped and
 completed history follows the same rule. Short/mobile viewports scroll far enough
-to keep the current row visible when twenty rows cannot fit. Stable background
+to keep the current row visible when twenty rows cannot fit. Automatic following
+past task 20 takes one second: accelerate for 250ms, cruise for 450ms, then decelerate
+for 300ms, with continuous speed between phases. Reduced motion follows immediately.
+Wheel, touch, scrollbar/pointer and scrolling-key input stop the animation without
+blocking the user's action; a newly selected/current task can resume following.
+Stable background
 polls preserve manual scroll and focus. Repeated steps retain their recorded batch
 counts after completion, such as **12 of 12**; single-batch or unknown counts show
 `n/a`. The current-task line's batch suffix appears only

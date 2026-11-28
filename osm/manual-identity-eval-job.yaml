@@ -1,3 +1,5 @@
+# Optional operator-launched logical-path identity regression evaluation; this
+# invokes /app/osm-identity-eval, not a region rebuild or managed region update.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -17,10 +19,8 @@ spec:
         app.kubernetes.io/component: osm-identity-eval
     spec:
       restartPolicy: Never
-      hostAliases:
-        - ip: "${OSM_PROMETHEUS_SERVICE_IP}"
-          hostnames:
-            - prometheus-stack-prometheus.monitoring.svc.cluster.local
+      automountServiceAccountToken: false
+      hostAliases: ${OSM_PROMETHEUS_HOST_ALIASES}
       imagePullSecrets:
         - name: ${OSM_IMAGE_PULL_SECRET}
       securityContext:
@@ -52,11 +52,18 @@ spec:
             - name: OSM_PIPELINE_ROOT
               value: /app/osm
             - name: OSM_PROMETHEUS_URL
-              value: "https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+              value: "${OSM_PROMETHEUS_URL}"
+            - name: OSM_STORAGE_METRICS_ENABLED
+              value: "${OSM_STORAGE_METRICS_ENABLED}"
+            - name: OSM_STORAGE_AVAILABLE_METRIC
+              value: "${OSM_STORAGE_AVAILABLE_METRIC}"
+            - name: OSM_STORAGE_CAPACITY_METRIC
+              value: "${OSM_STORAGE_CAPACITY_METRIC}"
+            - name: OSM_STORAGE_SELECTOR_LABELS_JSON
+              value: >-
+                ${OSM_STORAGE_SELECTOR_LABELS_JSON}
             - name: SSL_CERT_FILE
               value: /tls/prod-db/ca.crt
-            - name: OSM_PROMETHEUS_PVC_TEMPLATE
-              value: "data-{{POD}}"
             - name: OSM_PROMETHEUS_MAX_SAMPLE_AGE
               value: "2m"
             - name: OSM_MIGRATION_DATABASE_URL

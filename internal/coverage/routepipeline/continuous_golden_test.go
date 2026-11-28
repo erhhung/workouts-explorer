@@ -77,6 +77,7 @@ func TestContinuousPipelineGolden(t *testing.T) {
 				snapshot.unavailable = []osm.MatcherUnavailableRegion{{RegionID: "fixture:missing", DisplayName: "Synthetic"}}
 			}
 			cfg := fixtureConfig()
+			cfg.PathPolicyVersion = coverage.ExperimentalPathPolicyV83
 			cfg.MovementMode = tc.mode
 			for i, point := range points {
 				if !finite(point.Longitude) || !finite(point.Latitude) || math.Abs(point.Longitude) > 180 || math.Abs(point.Latitude) > 90 || point.Time.IsZero() {
@@ -119,6 +120,41 @@ func TestContinuousPipelineGolden(t *testing.T) {
 			}
 			if got := fmt.Sprintf("%x", sha256.Sum256(payload)); got != tc.want {
 				t.Fatalf("full Result + Prepare SHA256 = %s, want %s", got, tc.want)
+			}
+			// v84 changes service eligibility and adds classification, not ordinary
+			// route geometry or provenance. Keep the approved v83 golden unchanged.
+			cfg.PathPolicyVersion = coverage.ExperimentalPathPolicyV84
+			current, err := Evaluate(ctx, snapshot, points, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentPrepared, err := Prepare(ctx, snapshot, current, time.Unix(1, 0).UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantClass := "ordinary"
+			if tc.mode == coverage.MovementSharedPublic {
+				wantClass = "legacy"
+			}
+			for i := range current.Evidence {
+				if current.Evidence[i].DisplayClass != wantClass || current.Evidence[i].Portion.DisplayClass != wantClass {
+					t.Fatalf("missing authoritative display decision: %+v", current.Evidence[i])
+				}
+				current.Evidence[i].DisplayClass = ""
+				current.Evidence[i].Portion.DisplayClass = ""
+			}
+			for i := range currentPrepared {
+				if currentPrepared[i].DisplayClass != wantClass {
+					t.Fatal("prepared match lost display decision")
+				}
+				currentPrepared[i].DisplayClass = ""
+			}
+			projection, err := json.Marshal(struct {
+				Result   Result
+				Prepared []PreparedMatch
+			}{current, currentPrepared})
+			if err != nil || string(projection) != string(payload) {
+				t.Fatalf("v84 changed ordinary-route output beyond classification: %v", err)
 			}
 		})
 	}

@@ -23,7 +23,7 @@ is self-service; an administrator-triggered reset-email action is out of scope.
 | Workspace | Four tabs, guarded 1-4 shortcuts, Stats-style left navigation, deep links and retained category selection implemented; compact sign-out keeps its pending label/appearance stable |
 | Accounts | Combined directory, Registered dates, bounded usage, invitation lifecycle, disable/enable, conditional session revocation and background account deletion implemented; richer lifecycle detail remains pending; password recovery is self-service only |
 | Settings | Curated read-only effective configuration and identity/recovery link implemented; persistent console preferences, password change and session-management controls remain pending |
-| OSM Maps | Regions catalog/boundaries plus managed Download/Reprocess/View progress/Pause/Resume/Cancel/Delete implemented; separate Update history and Storage/cleanup UI remain planned |
+| OSM Maps | Regions, managed lifecycle and Storage Usage implemented; retained build sizes included. Update history uses the shared future-release placeholder. |
 | Operations | Navigation only; maintenance/tasks, announcements, audit and monitoring/recovery completion remain pending |
 | Verification | 985 UI tests, Go checks and native32 lifecycle/readiness/isolation checks pass; Chromium dark/WebKit light verify disable/enable, credential-verified sign-in feedback and desktop/tablet containment; earlier strict-TLS SMTP and invitation/usage receipts retain their scope |
 
@@ -138,7 +138,7 @@ remain separate from Summary, Map, Stats and Data Sync.
 | Tab | Left navigation categories |
 |---|---|
 | Accounts | Users (including invitations and account deletion actions/progress) |
-| OSM Maps | Regions; Update history; Storage and cleanup |
+| OSM Maps | Regions; Update history; Storage usage |
 | Operations | Overview; System tasks; Incidents; Announcements; Audit; Recovery |
 | Settings | Console preferences; Administrator access; Effective configuration |
 
@@ -210,7 +210,7 @@ remain separate from Summary, Map, Stats and Data Sync.
   Persisted invitations can be retried through Resend after a transport failure.
 - There is no separate Invitations category. Old invitation-category deep links
   resolve to Users. **View usage** is first; it is unavailable for invitations.
-   Registered users next offer conditional **Revoke sessions**, followed by
+    After a divider, registered users offer conditional **Revoke sessions**, followed by
    **Disable user / Enable user** and, below a divider,
    red danger **Delete user**. Disable/Enable are implemented for active/disabled
     owners; Delete accepts an irreversible background purge. Deleting/deleted owners cannot change access.
@@ -421,12 +421,17 @@ administrator browser authentication, CSRF and optimistic revision checking;
 late acknowledgements must not cross session replacement. Do not place this
 mutable setting in the read-only Effective configuration section.
 
-Progress shows **Database storage monitoring ENABLED/DISABLED** on the current
-task/elapsed row, right-aligned with the table. The label is regular text without
-  a colon and has two non-breaking spaces before the state. The state uses shared
-  all-caps heading typography with tighter, indicator-only letter spacing, green for ENABLED
-  (the same shared green as the map's start marker)
-and the same muted gray as n/a for DISABLED. Allow wrapping on narrow viewports
+Progress shows a right-positioned, left-aligned two-column/two-row storage table.
+Row one is on the current task/elapsed line: **Database storage monitoring** and
+**ENABLED/DISABLED**, with cell padding replacing the former two spaces. The state
+keeps shared all-caps heading typography, green for ENABLED and muted n/a gray for
+DISABLED. Row two is **Database storage used** and a bold ordinary-value size,
+preserving mixed-case MiB/GiB. Use the measured snapshot for this job's matching
+build, yellow until successfully completed/promoted, then the matching active
+generation footprint in normal theme text. Give known values an exact-byte
+tooltip; show n/a rather than another build's footprint or an estimate. Subscribe
+to the same catalog data as Regions and refresh it every five seconds while the
+dialog is open, including the completion handoff. Allow wrapping on narrow viewports
 without overflowing or obscuring the task line. Deletion is not subject to these monitoring
 checks. The authoritative [work-unit matrix](osm-region-updates.md#storage-monitoring-policy)
 defines precisely which probes/waits/conditional vacuum are skipped; cleanup,
@@ -440,6 +445,17 @@ styles or private user routes. Reuse the implemented
 
 ### Regions
 
+- Region updates and their bundled controller are enabled by default in Helm.
+  With `osm.regionUpdates.enabled=false`, lifecycle mutations are disabled in the
+  table and rejected by both command APIs. Boundaries and existing job details
+  remain readable, including through the Status cell. Catalog refresh has its
+  separate `osm.catalogRefresh.enabled` flag.
+  While disabled, show **Region updates have been disabled in this installation.**
+  above the Regions heading row, using Data Sync's dismissible warning frame.
+  Dismissal is scoped to the current administrator login and survives compatible
+  navigation/reloads; a new login or a subsequent enabled-to-disabled transition
+  shows it again. Eligible lifecycle actions remain visible but disabled, while
+  boundaries and recorded progress stay readable.
 - Region lifecycle actions now use the dedicated controller described below.
   Download/Reprocess requests enter a durable Waiting queue, default dispatch
   concurrency1 (Helm-configurable), and expose distinct Downloading/Processing
@@ -475,7 +491,9 @@ styles or private user routes. Reuse the implemented
   its real task icons. On open/current-task or stop-state changes, follow the
   current row: 1–20 at the top, 21–57 with row `n-19` fully visible below the sticky
   header, and the final task at absolute bottom. Adjust for shorter viewports;
-  same-task polling must not undo a manual scroll.
+  same-task polling must not undo a manual scroll. Following past task 20 uses a
+  one-second scroll with 250ms acceleration, 450ms constant speed and 300ms
+  deceleration. Manual scroll input interrupts it; reduced motion is immediate.
 - Download errors use **Failed to download <URL> | <reason>**, without repeated
   task/region prefixes. The source URL is an inline copy button, not a navigation
   link. Reuse shared tooltip/theme/focus behavior; support click and keyboard
@@ -517,7 +535,7 @@ styles or private user routes. Reuse the implemented
   the same View progress dialog when a run history is available. Reuse the shared
   full-cell action, accent hover and single keyboard stop; closing returns focus
   to that status action. Ready without managed run history remains plain text.
-- Ready offers Reprocess region; Paused offers Resume processing and Cancel
+- Ready and Stale offer Reprocess region; Paused offers Resume processing and Cancel
   processing; Failed offers Resume processing and Clear job status; Canceled
   offers Download region and Clear job status. Keep shared boundary/history and
   separate deletion actions. Failed Resume restores prerequisites when no durable
@@ -528,7 +546,7 @@ styles or private user routes. Reuse the implemented
 - Status-cell actions preserve semantic normal colors in both themes: running/
   pending/stopping yellow, failed/deleting red, paused/canceled muted gray, Ready
   green and Available normal text. Shared cell hover still uses the accent.
-- Context menus put Show boundaries first and View job progress second when
+- Context menus put View boundaries first and View job progress second when
   applicable, then a divider before job commands. Failed orders Resume processing
   then Clear job status; Canceled orders Download region then Clear job status.
 - Generation values are region-local successful-promotion numbers starting at1;
@@ -558,6 +576,9 @@ styles or private user routes. Reuse the implemented
   visible Road Coverage-style search field and shared table viewport.
 - Columns, in order: **Name**, **Date**, **PBF size**, **Downloaded**,
   **Generation**, **Database usage**, **Workouts**, **Status**, then the shared ellipsis menu.
+  All sortable columns break ties by the displayed **Name**, ascending and
+  case-insensitively, including equal unavailable values. Hidden region IDs are
+  not used to determine the displayed tie order.
   Name defaults ascending; date/size/downloaded/usage default descending when
   selected. Generation is not sortable. Missing values use Workout log's muted
   `n/a`, not Unknown/dashes/zero. Date/size lanes right-align within the common
@@ -575,8 +596,15 @@ styles or private user routes. Reuse the implemented
   **n coverage routes**, counting applied results for current route inputs using
   this region's latest promoted generation. New promotions reset that progress
   count while retaining the total; successful Coverage updates increase it.
+  When fewer routes are current and a current readiness proof confirms missing
+  map data, append **| n missing additional regions**. This counts blocked routes,
+  not distinct missing map regions. Stale readiness awaiting reconciliation and
+  fully covered multi-region routes do not add this suffix.
   Without a generation value, Workouts has no tooltip/help cursor and inherits
   the row's ordinary hand cursor.
+  With a generation, Workouts is success green when the workout and current-route
+  counts are equal, and running yellow when fewer routes are current. Zero of zero
+  is complete. Without a generation, it retains the normal text color.
 - After the initial column adjustment, reduce Downloaded and Status by 10% each
   and transfer both released widths to Name. Preserve the fixed ellipsis track
   and shared header/action boundary at every responsive table width.
@@ -591,7 +619,9 @@ styles or private user routes. Reuse the implemented
   Downloaded shows the recorded download date with exact downloaded bytes in its
   tooltip. Generation's tooltip combines the promotion's long local calendar date
   with the matching completed job's active wall-clock total when recorded.
-  Name's tooltip is its full provider-qualified region ID. Provider HTML line
+  Name's tooltip is its full provider-qualified region ID, centered above the
+  pointer using shared cursor-following positioning. Keep the hand cursor to
+  advertise the boundary-map action. Provider HTML line
   breaks become spaces; raw slug labels such as `us/district-of-columbia` are
   displayed as **US / District of Columbia**, without changing stored IDs.
 - Title casing is generic word-level formatting, not a region-name allowlist.
@@ -603,6 +633,7 @@ styles or private user routes. Reuse the implemented
   **includes** and the whole abbreviation **a.k.a.**. Keep them lowercase unless
   they begin the name/path segment. Parenthetical descriptions do not reset that
   first-word exception; e.g. **(includes …)** and **(a.k.a. …)** stay lowercase.
+- Stale is yellow and uses the shared tooltip with exactly `Updated matcher policies require reprocessing`. A promoted map is Stale when its importer/derivation contract is older than current processing requirements; it remains usable. A matcher-only policy change does not by itself stale region data. Retained job statuses keep precedence until cleared, and successful old-version job history must not erase the underlying Stale state. Stale retains the ordinary job-progress action when history exists and the same Reprocess region action as Ready.
 - Ready is green, Downloading/Processing yellow, Failed/Deleting red, and Available
   ordinary theme text. These are region lifecycle states, not catalog-refresh
   states: a global metadata refresh must not label every region Processing.
@@ -639,7 +670,7 @@ styles or private user routes. Reuse the implemented
   non-clickable **Refreshing catalogs** help label. Tooltip progress reads
   **123 of 554 regions cataloged**; partial-result help uses ** — ** before
   **cached values retained**. Do not leave a gray clickable-looking action.
-- A row click or its native keyboard name action opens **Show boundaries**; the
+- A row click or its native keyboard name action opens **View boundaries**; the
   ellipsis menu is independent. The modal title is the region name, with top-right
   X dismissal. Use the theme's **Streets** MapTiler style and a magenta boundary:
   25% fill and a five-pixel outline, both below every base-map symbol/text label.
@@ -690,8 +721,9 @@ styles or private user routes. Reuse the implemented
 - Show Name/Status, current provider PBF size/file date, the active generation's
   download date/actual bytes and current database footprint using the column
   labels and formatting specified above.
-  Sum its three canonical partitions including indexes/TOAST; exclude shared
-  metadata/timezones, builds, retired garbage, WAL, backups and replicas. Legacy
+  The active-generation component sums its three canonical partitions including
+  indexes/TOAST; the separate yellow component is its measured retained build.
+  Exclude shared metadata/timezones, retired garbage, WAL, backups and replicas. Legacy
   download times remain null in metadata and display as `n/a`. Preserve
   search/sort/scroll and existing rows.
 - The worker refreshes public storage projections every five minutes without
@@ -726,6 +758,12 @@ styles or private user routes. Reuse the implemented
 
 ### Update History
 
+Implementation is deferred. Unimplemented admin sections use a content-sized
+`sync-feedback` cyan frame centered horizontally and vertically, containing only
+**This section will be implemented in a future release.** Omit the Administration
+eyebrow, section heading and old planned-slices card. Keep the navigation label
+and an accessible content-region name. Preserve history/audit data for later use.
+
 - Provide administrative task history/detail, generation and stage history,
   bounded sanitized events/logs, retries, active execution and promotion outcome.
 - Resume retained work only with matching source/tool/image/stage fences; show a
@@ -743,23 +781,114 @@ styles or private user routes. Reuse the implemented
   and retry the durable handoff; do not report a complete end-to-end success or
   rebuild the public dataset merely to recreate the missing obligation.
 
-### Storage And Cleanup
+### Storage Usage
 
-- Show the authoritative storage preflight, measured available/capacity bytes,
-  threshold, freshness, block reason and affected generation/stage. Unknown/stale
-  storage readings block work rather than being interpreted as adequate space.
-- Separate **Unblock** from **Resume**. Clearance records authenticated actor,
-  timestamp and optional note; the resumed unit still runs a fresh preflight.
-- Show candidate/retired-generation cleanup status and provide bounded retries for
-  the updater's supported cleanup. Never remove active data to make a build fit.
-- PVC expansion, snapshot deletion, broad database cleanup and unrelated Job
-  deletion remain external operator actions. Link remediation guidance rather
-  than granting those powers to the application.
-- Show OSM replica readiness, validation/promotion blockers and the installed time
-  zone boundary release/import outcome where available. Boundary import changes
-  remain deployment-controlled; this slice adds no competing release selector.
-- Automatic region discovery/download remains separately deferred. This UI may
-  display its effective policy but cannot enable it in conflict with Helm.
+The content heading is **Storage Usage**. Reuse Consistency's section cards,
+disclosures and spacing. Sort the observed read/write primary first and open it
+initially, followed by initially collapsed read-only replicas. Titles identify the
+actual pod: **Read/write primary: postgresql-postgresql-0** or
+**Read-only replica: postgresql-postgresql-1**. Retain deliberate disclosure choices
+during refresh and main-tab retention; untouched sections follow an observed role
+change. Determine roles from PostgreSQL exporter observations, not pod ordinals.
+
+Each section shows a horizontal filesystem-usage bar on the left and a two-slice
+used-space pie chart on the right. Match the measured Consistency bar thickness
+and rounded ends. Display total capacity at the right, vertically centered with
+the bar. Format GiB with at most one decimal and no artificial trailing zero.
+Place the used-size label inside the filled bar with equal vertical/right inset,
+or just outside its right end when the padded text does not fit. Use theme-aware
+text shadows only for the inside label. Whole-GiB axis ticks target ten-percent
+intervals; narrow views can omit alternate labels rather than overlap them.
+
+At desktop widths, center the section group at 80% of its previous report width;
+narrow screens retain the available width. Use a 108px pie circle (25% smaller
+than the original 144px circle), with the circle/legend group flush to the content
+right edge. Allocate remaining width to the bar and leave twice the card's inner
+padding between the capacity label and pie. Vertically center the complete bar
+block, including its metadata and axis, on the pie circle.
+
+Above the track, show **data-postgresql-postgresql-0** in foreground text followed
+by ` — measured on 11/27/2026 at 11:54:55 AM`, using the browser's local time and
+the shared formatter cache. On the same metadata row, right-align available space
+to the track's right edge, excluding the separate capacity label. The gap below
+this row equals the X-axis gap above its labels. Wrap metadata responsively when
+the complete line cannot fit.
+
+In the available-space caption, emphasize the GiB quantity in foreground text and
+the percentage in bold foreground text; keep surrounding words/parentheses muted.
+The fitted used-space label includes both size and usable-filesystem percentage,
+for example **17.1 GiB (34.3%)**. Measure that complete string including padding
+before deciding inside/outside placement; retain the same font, margins and
+inside-only readability shadow. The explanatory footer is:
+
+> Workouts Explorer includes OSM database data and indexes, including partial builds; Other applications includes other databases and shared PostgreSQL storage, such as WAL, temporary files and overhead.
+
+Use foreground emphasis for the two application/category names. A failed refresh
+with accepted data says **Storage usage could not be refreshed. Showing the last
+available measurements.** Keep the accepted sections and disclosure choices.
+The right-end capacity label prefers the actual requested PVC size from
+`kube_persistentvolumeclaim_resource_requests_storage_bytes`: a `50Gi` request is
+53,687,091,200 bytes and displays **50 GiB**. This is separate from measured usable
+filesystem capacity: 53,619,982,336 bytes is 49.9375 GiB. Keep used/free percentages
+and the resulting bar fill based on that usable capacity. Derive automatic X-axis
+tick intervals and positions from the same requested-or-fallback capacity shown
+at the bar end; do not force a final tick at that capacity. For example, a 50-GiB
+request naturally includes 50 in five-GiB ticks, while a 63-GiB request can end its
+regular ticks at 60. The capacity
+label's shared tooltip explains both sizes. Requested size is optional: missing,
+stale, ambiguous or unsupported request measurements fall back to filesystem size,
+without suppressing valid filesystem charts. Non-PVC observations can likewise
+display their filesystem size without a requested size. Do not fabricate a rounded
+PVC request or a zero. Exactly one primary must be observed; zero or
+multiple writable-primary reports are unavailable/ambiguous, not an arbitrary
+choice based on pod ordinal or freshness.
+
+Consistency and Storage Usage share a disclosure hit target extended 12px above
+and below its original title-height rectangle. Offset that padding with equal
+negative margins: the visible title, card height, chart position and surrounding
+spacing must not change. Both added regions are clickable with a hand cursor;
+keyboard/expanded-state behavior remains the same.
+
+The fill gradient is anchored to total capacity, not stretched to the used part:
+green through 50%, yellow through 70%, orange through 85%, then red. Blend within
+five percentage points on each side of each threshold. The pie shows
+**Workouts Explorer** versus **Other applications**, as percentages of used space.
+The app share is the sum of configured database sizes on that same pod, counted
+once, including indexes and retained build tables. Clearly explain that the
+residual also includes shared PostgreSQL WAL, temporary files and overhead; it is
+not exact attribution of those files to other applications.
+
+The administrator-only endpoint reads fresh Prometheus volume, pod/PVC mapping,
+PostgreSQL role and per-database-size metrics. Anchor discovery to the configured
+namespace/PVC, then its exporter cluster; do not enumerate unrelated clusters.
+Cache successful snapshots briefly, poll only while the page is active, and retain
+accepted charts with visible recovery feedback on refresh failure. Missing or
+inconsistent database-size metrics leave the pie unavailable, not a fabricated
+zero. No new database credentials, SQL size scans or schema adoption are needed.
+
+Without configured Prometheus querying, show no report heading/charts. Reuse the
+future-release notice's centered positioning and frame dimensions, but use the
+application orange frame and this explicit line break:
+
+```text
+Storage usage information not available because
+Prometheus metrics querying is not configured.
+```
+
+The display is independent of the processing storage-monitoring preference.
+Existing completion/cancellation workflows own cleanup. Database object usage in
+Regions remains SQL-derived.
+
+Regions adds measured retained-candidate bytes for Processing/Pausing/Paused/
+Failed/Canceling runs. Measure ordinary/unlogged tables and materialized views
+with `pg_total_relation_size`, including their indexes/TOAST without double
+counting, after each successful task/batch returns and its scratch cleanup has
+completed. Retained failure/pause paths record a final bounded snapshot. Publish
+snapshots through the controller; never run size scans on each browser poll.
+Show active usage followed by a yellow **+ 245.6 MiB**, with independent exact-byte
+tooltips for each size. Without an active generation show only yellow build usage.
+Ignore unmeasured, mismatched, promoted or physically removed candidates. Sorting
+Database usage uses the displayed total, retaining Name-ascending tie breaks.
 
 ## Operations
 

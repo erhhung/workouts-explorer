@@ -158,7 +158,7 @@ func TestCoverageDisplayPrecomputationsIndependentEvidence(t *testing.T) {
 	}
 	for _, required := range []string{"bool_or(tags ? 'workouts:education_id')", "min(tags->>'workouts:education_name')",
 		"COALESCE(NULLIF(tags->>'workouts:education_id', '')::uuid, logical_path_id)",
-		"OR NOT (tags ? 'workouts:park_id')) IS TRUE", "'driveway', 'parking_aisle'", "IS DISTINCT FROM 'parking'"} {
+		"OR NOT (tags ? 'workouts:park_id')) IS TRUE", "app.coverage_match_visible(display_class,highway,tags)"} {
 		if !strings.Contains(partials, required) {
 			t.Errorf("missing exact path qualification partial %q", required)
 		}

@@ -244,6 +244,10 @@ func (s *Server) CommandAdminOSMRegionUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
+	if !s.config.OSMUpdatesEnabled {
+		writeProblem(w, r, 503, "Service Unavailable", "region updates are not enabled")
+		return
+	}
 	var command struct {
 		Action string `json:"action"`
 	}

@@ -5,10 +5,11 @@ import { api } from "./api";
 import { DialogTableViewport } from "./DialogTableViewport";
 import { useOSMProgressFollow } from "./osmProgressFollow";
 import { dateTimeFormatter } from "./formatters";
+import { formatEnglishDate } from "./date";
 import { Tooltip } from "./Tooltip";
 import { osmTaskDescriptions } from "./osmTaskDescriptions";
-import type { RegionUpdate, RegionUpdateStep } from "./osmRegions";
-import { elapsedTotal, updateElapsedLabel } from "./osmRegions";
+import type { OSMRegion, RegionUpdate, RegionUpdateStep } from "./osmRegions";
+import { elapsedTotal, exactBytes, osmBytes, updateElapsedLabel } from "./osmRegions";
 
 const deletionDescriptions: Record<string, string> = {
   "detach-region":
@@ -66,7 +67,7 @@ export function OSMTaskIcon({ state }: { state: string }) {
 }
 const timestamp = (value: string | null) =>
   value
-    ? `${dateTimeFormatter("en-US", { year: "numeric", month: "numeric", day: "numeric" }).format(new Date(value))} ${dateTimeFormatter("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(value))}`
+    ? `${formatEnglishDate(new Date(value), { year: "numeric", month: "numeric", day: "numeric" })} ${dateTimeFormatter("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(value))}`
     : undefined;
 function Time({
   value,
@@ -148,10 +149,12 @@ export function OSMRegionProgressDialog({
   jobId,
   onClose,
   onReturnFocus,
+  regions = [],
 }: {
   jobId: string | undefined;
   onClose: () => void;
   onReturnFocus: () => void;
+  regions?: readonly OSMRegion[];
 }) {
   const close = useRef<HTMLButtonElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
@@ -165,6 +168,18 @@ export function OSMRegionProgressDialog({
   });
   const job = query.data,
     stopped = job && ["failed", "canceled", "paused"].includes(job.state);
+  const region = job ? regions.find((region) => region.id === job.regionId) : undefined;
+  const storageBytes =
+    job?.buildId != null && region
+      ? job.promoted
+        ? region.buildId === job.buildId
+          ? (region.databaseBytes ?? region.processedDatabaseBytes)
+          : null
+        : region.buildDatabaseId === job.buildId && region.buildDatabaseMeasuredAt
+          ? (region.buildDatabaseBytes ?? null)
+          : null
+      : null;
+  const storageComplete = job?.state === "succeeded" && job.promoted;
   const stepCount = job?.steps?.length;
   const currentOrder =
     job?.state === "succeeded"
@@ -252,15 +267,41 @@ export function OSMRegionProgressDialog({
                 )}
               </span>
             </div>
-            {job && job.operation !== "delete" && job.monitorDatabaseStorage !== undefined && (
-              <p className="osm-update-storage-policy">
-                Database storage monitoring{"\u00a0\u00a0"}
-                <span
-                  className={`eyebrow osm-update-policy-value osm-update-policy-value--${job.monitorDatabaseStorage ? "enabled" : "disabled"}`}
-                >
-                  {job.monitorDatabaseStorage ? "ENABLED" : "DISABLED"}
-                </span>
-              </p>
+            {job && job.operation !== "delete" && (
+              <table className="osm-update-storage-policy" aria-label="Database storage summary">
+                <tbody>
+                  <tr>
+                    <th scope="row">Database storage monitoring</th>
+                    <td>
+                      {job.monitorDatabaseStorage === undefined ? (
+                        <span className="workout-table-na">n/a</span>
+                      ) : (
+                        <span
+                          className={`eyebrow osm-update-policy-value osm-update-policy-value--${job.monitorDatabaseStorage ? "enabled" : "disabled"}`}
+                        >
+                          {job.monitorDatabaseStorage ? "ENABLED" : "DISABLED"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Database storage used</th>
+                    <td>
+                      {storageBytes == null ? (
+                        <span className="workout-table-na">n/a</span>
+                      ) : (
+                        <Tooltip content={exactBytes(storageBytes)!} focusable={false}>
+                          <strong
+                            className={`osm-update-storage-used${storageComplete ? "" : " osm-update-storage-used--pending"}`}
+                          >
+                            {osmBytes(storageBytes, true)}
+                          </strong>
+                        </Tooltip>
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             )}
           </div>
           {stopped && (
@@ -294,7 +335,10 @@ export function OSMRegionProgressDialog({
             busy={query.isFetching}
             message={query.isPending ? "Loading updater progress..." : undefined}
           >
-            <table className="workout-table osm-update-progress-table">
+            <table
+              className="workout-table osm-update-progress-table"
+              aria-label="Region update tasks"
+            >
               <colgroup>
                 <col style={{ width: "10%" }} />
                 <col style={{ width: "32%" }} />

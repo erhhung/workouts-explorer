@@ -11,6 +11,8 @@ import { ContentBackground } from "./ContentBackground";
 import { AdminUsers } from "./AdminUsers";
 import { AdminOSMRegions } from "./AdminOSMRegions";
 import { AdminOSMProcessingSettings } from "./AdminOSMProcessingSettings";
+import { AdminOSMStorage } from "./AdminOSMStorage";
+import { FutureReleasePlaceholder } from "./FutureReleasePlaceholder";
 import { RetainedTab, useTabActive } from "./RetainedTab";
 import { useKeyboardShortcut } from "./keyboardShortcuts";
 
@@ -25,8 +27,8 @@ const TABS = [
     title: "OSM Maps",
     sections: [
       ["regions", "Regions"],
+      ["storage", "Storage usage"],
       ["history", "Update history"],
-      ["storage", "Storage and cleanup"],
     ],
   },
   {
@@ -343,6 +345,13 @@ function AdminShell({
         const tableCaption =
           (item.id === "accounts" && selected[0] === "users") ||
           (item.id === "osm" && selected[0] === "regions");
+        const planned =
+          !tableCaption &&
+          !(item.id === "osm" && selected[0] === "storage") &&
+          !(
+            item.id === "settings" &&
+            ["osm-processing", "configuration", "access"].includes(selected[0])
+          );
         return (
           <RetainedTab key={item.id} id={`/admin/${item.id}`} active={item.id === tab.id}>
             <main
@@ -369,18 +378,29 @@ function AdminShell({
               <div className="stats-report-viewport content-background">
                 <ContentBackground />
                 <section
-                  className="stats-report admin-content"
+                  className={`stats-report admin-content${planned ? " admin-content--planned" : ""}${item.id === "osm" && selected[0] === "storage" ? " admin-content--storage" : ""}`}
                   data-app-content
                   data-app-scroll
                   tabIndex={-1}
-                  aria-labelledby={`admin-heading-${item.id}`}
+                  aria-labelledby={
+                    planned || (item.id === "osm" && selected[0] === "storage")
+                      ? undefined
+                      : `admin-heading-${item.id}`
+                  }
+                  aria-label={
+                    planned || (item.id === "osm" && selected[0] === "storage")
+                      ? selected[1]
+                      : undefined
+                  }
                 >
-                  {!tableCaption && (
-                    <header className="stats-heading">
-                      <p className="eyebrow">Administration</p>
-                      <h1 id={`admin-heading-${item.id}`}>{selected[1]}</h1>
-                    </header>
-                  )}
+                  {!tableCaption &&
+                    !planned &&
+                    !(item.id === "osm" && selected[0] === "storage") && (
+                      <header className="stats-heading">
+                        <p className="eyebrow">Administration</p>
+                        <h1 id={`admin-heading-${item.id}`}>{selected[1]}</h1>
+                      </header>
+                    )}
                   {signout.isError && (
                     <p role="alert" className="error-summary">
                       Sign out failed. Try again.
@@ -406,6 +426,8 @@ function AdminShell({
                       session={session}
                       headingId={`admin-heading-${item.id}`}
                     />
+                  ) : item.id === "osm" && selected[0] === "storage" ? (
+                    <AdminOSMStorage polling={config.pollingIntervalSeconds} />
                   ) : item.id === "settings" && selected[0] === "osm-processing" ? (
                     <AdminOSMProcessingSettings session={session} />
                   ) : item.id === "settings" && selected[0] === "configuration" ? (
@@ -420,11 +442,7 @@ function AdminShell({
                       </p>
                     </div>
                   ) : (
-                    <div className="sync-card admin-planned">
-                      <p>
-                        This section is planned for the next administration implementation slices.
-                      </p>
-                    </div>
+                    <FutureReleasePlaceholder />
                   )}
                 </section>
               </div>
@@ -463,10 +481,16 @@ function EffectiveConfig() {
           ))}
         </dl>
       )}
-      {query.isPending && <p role="status">Loading effective configuration...</p>}
+      {query.isPending && (
+        <p className="content-state-message content-state-message--centered" role="status">
+          Loading effective configuration...
+        </p>
+      )}
       {query.isError && (
         <div role="alert">
-          <p>Effective configuration is unavailable.</p>
+          <p className="content-state-message content-state-message--centered">
+            Effective configuration is unavailable.
+          </p>
           <button className="secondary" onClick={() => void query.refetch()}>
             Retry
           </button>

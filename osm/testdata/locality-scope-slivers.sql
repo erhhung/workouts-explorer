@@ -30,8 +30,8 @@ CROSS JOIN LATERAL (SELECT ST_MakeLine(
 CREATE UNIQUE INDEX source_piece ON path_segments(source_way_id,source_way_version,start_node_index,end_node_index,boundary_piece);
 INSERT INTO osm_catalog.generation_stages(generation_id,stage,stage_order,fence,state,cursor)
 VALUES(2,'attribute-slivers',1,repeat('0',64),'running','{}');
-\ir ../attribute-slivers-batched.sql
-\ir ../attribute-slivers-batched.sql
+\ir ../batches/attribute-slivers-batched.sql
+\ir ../batches/attribute-slivers-batched.sql
 DO $test$
 BEGIN
  IF EXISTS(SELECT 1 FROM locality_scope_slivers WHERE segment_id=md5('1:2')::uuid)
@@ -40,8 +40,8 @@ BEGIN
  THEN RAISE EXCEPTION 'valid nested sliver or existing length/road exclusions changed'; END IF;
 END;
 $test$;
-\ir ../attribute-slivers-batched.sql
-\ir ../attribute-slivers-batched.sql
+\ir ../batches/attribute-slivers-batched.sql
+\ir ../batches/attribute-slivers-batched.sql
 DO $test$
 BEGIN
  IF (SELECT locality_relation_id FROM path_segments WHERE segment_id=md5('1:2')::uuid)<>8
@@ -65,7 +65,7 @@ INSERT INTO validation_metrics VALUES('materialLocalityResiduals','0'),
  ('materialParkBoundaryCrossings','0'),('materialEducationBoundaryCrossings','0');
 INSERT INTO osm_catalog.generation_stages(generation_id,stage,stage_order,fence,state,cursor)
 VALUES(2,'validate',2,repeat('0',64),'running','{"phase":"locality-residuals"}');
-\ir ../validate.sql
+\ir ../batches/validate.sql
 DO $test$
 BEGIN
  IF EXISTS(SELECT 1 FROM validation_metrics WHERE value::text::bigint<>0)

@@ -2,11 +2,11 @@ import * as Dialog from "./Dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { ApiError, api, type DataSync, type Session, type Source, type SourceType } from "./api";
+import { ApiError, api, type Preferences, type Session, type Source, type SourceType } from "./api";
 import { CoverageCellValue } from "./CoverageTableCell";
 import { PreferenceSelect } from "./PreferenceSelect";
-import { Tooltip } from "./Tooltip";
-import { autoSyncIntervalLabel } from "./formatters";
+import { dismissActivePortalTooltip, InfoTip } from "./Tooltip";
+import { TimeOfDayField } from "./TimeOfDayField";
 
 const TYPES: Array<{ value: SourceType; label: string }> = [
   { value: "health-auto-export-icloud", label: "Health Auto Export — iCloud Drive" },
@@ -30,6 +30,7 @@ type Draft = {
   type: SourceType;
   displayName: string;
   autoSyncEnabled: boolean;
+  autoSyncTime: string;
   path: string;
   appleId: string;
   password: string;
@@ -116,10 +117,12 @@ function SourceActions({
 
 export function DataSourcesDialog({
   session,
+  preferences,
   onClose,
   onCloseFocus,
 }: {
   session: Session;
+  preferences: Pick<Preferences, "clockFormat" | "timezone">;
   onClose: () => void;
   onCloseFocus: () => void;
 }) {
@@ -151,17 +154,6 @@ export function DataSourcesDialog({
     retry: false,
     refetchInterval: busy ? false : 30_000,
   });
-  const schedule = useQuery({
-    queryKey: ["data-sync"],
-    queryFn: ({ signal }) => api<DataSync>("/api/data-sync", { signal }),
-    enabled: Boolean(draft),
-    retry: false,
-  });
-  const cadence = schedule.data
-    ? autoSyncIntervalLabel(schedule.data.schedule.cadenceSeconds).toLowerCase()
-    : schedule.isError
-      ? "interval unavailable"
-      : "loading interval...";
   const current = () => {
     const cached = client.getQueryData<Session | null>(["session"]);
     return (
@@ -209,6 +201,7 @@ export function DataSourcesDialog({
       type: source?.type ?? TYPES[0].value,
       displayName: source?.displayName ?? DEFAULT_NAMES[TYPES[0].value],
       autoSyncEnabled: source?.autoSyncEnabled ?? false,
+      autoSyncTime: source?.autoSyncTime ?? "02:00",
       path: source?.config.path ?? "",
       appleId: "",
       password: "",
@@ -281,6 +274,7 @@ export function DataSourcesDialog({
           body: JSON.stringify({
             displayName: draft.displayName.trim(),
             autoSyncEnabled: draft.autoSyncEnabled,
+            autoSyncTime: draft.autoSyncTime,
             ...(draft.source ? {} : { type: draft.type }),
             config,
           }),
@@ -425,25 +419,15 @@ export function DataSourcesDialog({
       );
     return (
       <div className={fullWidth ? "field field--wide" : "field"} key={name}>
-        <label htmlFor={fieldId}>{label}</label>
         {help ? (
-          <Tooltip
-            id={`${fieldId}-help`}
-            content={help}
-            portal
-            focusable={false}
-            keyboardFocusOnly
-            dismissOnPointerDown
-            dismissOnPointerLeave
-            followPointer
-            multiline={help.includes("\n")}
-            className="source-input-tooltip"
-          >
-            {input}
-          </Tooltip>
+          <div className="source-field-label">
+            <label htmlFor={fieldId}>{label}</label>
+            <InfoTip id={`${fieldId}-help`} label={`About ${label}`} content={help} />
+          </div>
         ) : (
-          input
+          <label htmlFor={fieldId}>{label}</label>
         )}
+        {input}
       </div>
     );
   }
@@ -471,6 +455,9 @@ export function DataSourcesDialog({
         <Dialog.Content
           className="dialog-content compact-dialog data-sources-dialog"
           aria-describedby={undefined}
+          onEscapeKeyDown={(event) => {
+            if (dismissActivePortalTooltip()) event.preventDefault();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             onCloseFocus();
@@ -679,31 +666,34 @@ export function DataSourcesDialog({
                         )}
                       </>
                     )}
-                    <div className="field">
-                      <label className="checkbox-option" htmlFor={`${id}-auto-sync`}>
-                        <input
-                          id={`${id}-auto-sync`}
-                          type="checkbox"
-                          name="autoSyncEnabled"
-                          checked={draft.autoSyncEnabled}
-                          disabled={busy}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setDraft((old) => (old ? { ...old, autoSyncEnabled: checked } : old));
+                    <div className="field data-source-auto-sync-field">
+                      <div className="checkbox-option data-source-auto-sync">
+                        <label className="data-source-auto-sync-toggle" htmlFor={`${id}-auto-sync`}>
+                          <input
+                            id={`${id}-auto-sync`}
+                            type="checkbox"
+                            name="autoSyncEnabled"
+                            checked={draft.autoSyncEnabled}
+                            disabled={busy}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setDraft((old) => (old ? { ...old, autoSyncEnabled: checked } : old));
+                              setFailure(undefined);
+                            }}
+                          />
+                          <span>Enable automated sync (once a day)</span>
+                        </label>
+                        <TimeOfDayField
+                          id={`${id}-sync-time`}
+                          value={draft.autoSyncTime}
+                          preferences={preferences}
+                          disabled={busy || !draft.autoSyncEnabled}
+                          onChange={(autoSyncTime) => {
+                            setDraft((old) => (old ? { ...old, autoSyncTime } : old));
                             setFailure(undefined);
                           }}
                         />
-                        <span>Enable automated sync ({cadence})</span>
-                      </label>
-                      {schedule.isError && (
-                        <button
-                          type="button"
-                          className="text-action"
-                          onClick={() => void schedule.refetch()}
-                        >
-                          Retry interval
-                        </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                   {failure && (
@@ -726,7 +716,7 @@ export function DataSourcesDialog({
                   Cancel
                 </button>
                 <button className="primary preferences-action" disabled={busy} aria-busy={busy}>
-                  {busy ? "Checking..." : "Save"}
+                  Save
                 </button>
               </footer>
             )}

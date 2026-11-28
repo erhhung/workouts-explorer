@@ -217,7 +217,7 @@ func matcherReplicaTestPool(t *testing.T, firstGeneration int64) (*pgxpool.Pool,
 					}
 					catalogRead = true
 					var fields []pgproto3.FieldDescription
-					for _, oid := range []uint32{20, 17, 17, 3802, 3802, 20} {
+					for _, oid := range []uint32{20, 17, 17, 3802, 3802, 20, 3802} {
 						fields = append(fields, pgproto3.FieldDescription{DataTypeOID: oid, DataTypeSize: -1})
 					}
 					backend.Send(&pgproto3.RowDescription{Fields: fields})
@@ -226,6 +226,7 @@ func matcherReplicaTestPool(t *testing.T, firstGeneration int64) (*pgxpool.Pool,
 						[]byte(`\x` + strings.Repeat("01", 32)), []byte(`\x` + strings.Repeat("02", 32)),
 						[]byte(`{"fixture:region":2,"fixture:installed":3}`),
 						[]byte(`[{"regionId":"fixture:region","displayName":"Region"},{"regionId":"fixture:installed","displayName":"Other"}]`), []byte("7"),
+						[]byte(`{"fixture:region":{"generation":2,"importerVersion":4,"derivationVersion":21},"fixture:installed":{"generation":3,"importerVersion":4,"derivationVersion":21}}`),
 					}})
 					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")})
 				case strings.Contains(lower, "with route_point"):

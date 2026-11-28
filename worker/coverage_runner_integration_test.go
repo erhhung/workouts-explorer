@@ -278,10 +278,14 @@ func (f *coverageIntegrationFixture) fence(tx pgx.Tx) {
 // seedOSM creates three independent linear roads: two parallel and one crossing.
 // Each region has real canonical partitions, provenance and geography lengths.
 // Calling it again adds an overlapping decoy region without changing the target.
-func (f *coverageIntegrationFixture) seedOSM() (string, int64) {
+func (f *coverageIntegrationFixture) seedOSM(hierarchy ...string) (string, int64) {
 	f.t.Helper()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	region := "fixture:coverage-" + suffix
+	providerRegion := "coverage-" + suffix
+	if len(hierarchy) > 0 {
+		providerRegion = hierarchy[0] + "/" + providerRegion
+	}
+	region := "fixture:" + providerRegion
 	tx, err := f.osmAdminDB.Begin(f.ctx)
 	if err != nil {
 		f.t.Fatal(err)
@@ -289,12 +293,12 @@ func (f *coverageIntegrationFixture) seedOSM() (string, int64) {
 	defer coverageIntegrationRollback(tx)
 	f.exec(tx, `INSERT INTO osm_catalog.regions(id,provider,provider_region_id,display_name,catalog_url,source_url,boundary)
 		VALUES($1,'fixture',$2,'Coverage fixture','https://example.test/catalog','https://example.test/coverage.pbf',
-		ST_Multi(ST_GeomFromText('POLYGON((-123 36,-121 36,-121 38,-123 38,-123 36))',4326)))`, region, "coverage-"+suffix)
+		ST_Multi(ST_GeomFromText('POLYGON((-123 36,-121 36,-121 38,-123 38,-123 36))',4326)))`, region, providerRegion)
 	var generation int64
 	f.scan(tx, `SELECT nextval(pg_get_serial_sequence('osm_catalog.generations','id'))`, nil, &generation)
 	hash := sha256.Sum256([]byte(region))
 	f.exec(tx, `INSERT INTO osm_catalog.generations(id,region_id,state,schema_name,source_url,source_sha256,importer_version,derivation_version,promoted_at)
-		OVERRIDING SYSTEM VALUE VALUES($1,$2,'active',$3,'https://example.test/coverage.pbf',$4,1,1,clock_timestamp())`, generation, region, fmt.Sprintf("osm_build_%d", generation), hex.EncodeToString(hash[:]))
+		OVERRIDING SYSTEM VALUE VALUES($1,$2,'active',$3,'https://example.test/coverage.pbf',$4,4,21,clock_timestamp())`, generation, region, fmt.Sprintf("osm_build_%d", generation), hex.EncodeToString(hash[:]))
 	f.exec(tx, `CREATE SCHEMA `+pgx.Identifier{fmt.Sprintf("osm_build_%d", generation)}.Sanitize())
 	for _, table := range []string{"ways", "localities", "path_segments"} {
 		query := fmt.Sprintf(`CREATE TABLE %s PARTITION OF %s FOR VALUES IN ('%s')`, pgx.Identifier{"osm_canonical", table + "_coverage_" + suffix}.Sanitize(), pgx.Identifier{"osm_canonical", table}.Sanitize(), region)
@@ -314,10 +318,18 @@ func (f *coverageIntegrationFixture) seedOSM() (string, int64) {
 		f.exec(tx, `INSERT INTO osm_canonical.path_segments(region_id,generation_id,segment_id,source_way_id,source_way_version,derivation_version,
 			start_node_index,end_node_index,boundary_piece,start_graph_node_id,end_graph_node_id,name,normalized_name,highway,broad_class,tags,
 			motor_forward_allowed,motor_reverse_allowed,geom,locality_relation_id,logical_path_id,length_m)
-			VALUES($1,$2,$3,$4,7,1,0,1,1,$5,$6,$7,$8,'residential','road','{"surface":"asphalt"}',true,true,
+			VALUES($1,$2,$3,$4,7,21,0,1,1,$5,$6,$7,$8,'residential','road','{"surface":"asphalt"}',true,true,
 			ST_GeomFromText($9,4326),$2,$10,ST_Length(ST_GeomFromText($9,4326)::geography))`, region, generation, segment, wayID, uuid.New(), uuid.New(), fmt.Sprintf("Fixture Road %d", i), fmt.Sprintf("fixture road %d", i), wkt, path)
 	}
 	f.commit(tx)
+	if _, err := f.adminDB.Exec(f.ctx, `INSERT INTO app.coverage_map_processing_versions(region_id,generation,importer_version,derivation_version)
+		VALUES($1,$2,4,21) ON CONFLICT(region_id) DO UPDATE SET generation=EXCLUDED.generation,
+		importer_version=EXCLUDED.importer_version,derivation_version=EXCLUDED.derivation_version`, region, generation); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() {
+		_, _ = f.adminDB.Exec(context.Background(), `DELETE FROM app.coverage_map_processing_versions WHERE region_id=$1`, region)
+	})
 	f.t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

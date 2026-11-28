@@ -17,7 +17,7 @@ type attributionEdge struct {
 }
 
 func TestAttributionUsesStorageBoundedSegmentRewrite(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "..", "osm", "identity-rewrite-batched.sql"))
+	script, err := os.ReadFile(filepath.Join("..", "..", "osm", "batches", "identity-rewrite-batched.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -76,9 +76,23 @@ const runtimeBaseReadinessSQL = `
 		       AND attname='custom_date_range_limit' AND atttypid='integer'::regtype AND attnotnull AND NOT attisdropped)
 		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.preferences'::regclass
 		       AND attname='recent_custom_date_ranges' AND atttypid='text[]'::regtype AND attnotnull AND NOT attisdropped)
+		   AND EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+		       WHERE a.attrelid='app.preferences'::regclass AND a.attname='date_format' AND a.atttypid='text'::regtype AND a.attnotnull AND NOT a.attisdropped
+		       AND pg_get_expr(d.adbin,d.adrelid)='''mm/dd/yyyy''::text')
+		   AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app.preferences'::regclass AND conname='preferences_date_format_check' AND contype='c' AND convalidated)
 		   AND (current_user='workouts_coverage_worker' OR has_table_privilege(current_user, 'app.jobs', 'SELECT'))
 		   AND (current_user='workouts_coverage_worker' OR has_table_privilege(current_user, 'app.jobs', 'INSERT'))
 		   AND to_regclass('app.sources') IS NOT NULL
+		   AND to_regclass('app.source_sync_schedules') IS NOT NULL
+		   AND to_regprocedure('app.read_owned_source_sync_time(uuid)') IS NOT NULL
+		   AND to_regprocedure('app.set_owned_source_sync_time(uuid,text)') IS NOT NULL
+		   AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='app.sources'::regclass
+		       AND attname='auto_sync_time' AND atttypid='text'::regtype AND NOT attisdropped)
+		   AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='app.sources'::regclass
+		       AND tgname='source_daily_sync_schedule' AND NOT tgisinternal AND tgenabled='O')
+		   AND (current_user<>'workouts_api' OR
+		       (has_function_privilege(current_user,'app.read_owned_source_sync_time(uuid)','EXECUTE')
+		        AND has_function_privilege(current_user,'app.set_owned_source_sync_time(uuid,text)','EXECUTE')))
 		   AND to_regclass('app.job_config_snapshots') IS NOT NULL
 		   AND to_regclass('app.source_files') IS NOT NULL
 		   AND to_regclass('app.workout_types') IS NOT NULL
@@ -86,6 +100,13 @@ const runtimeBaseReadinessSQL = `
 		   AND to_regclass('app.workout_aggregates') IS NOT NULL
 		   AND to_regclass('app.workout_route_points') IS NOT NULL
 		   AND to_regclass('app.workout_routes') IS NOT NULL
+		   AND (SELECT count(*)=2 FROM pg_attribute WHERE attrelid='app.workout_routes'::regclass
+		       AND attname IN('pace_distance_meters','pace_elapsed_seconds') AND atttypid='double precision'::regtype AND NOT attisdropped)
+		   AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app.workout_routes'::regclass
+		       AND conname='workout_routes_pace_consistency_check' AND convalidated)
+		   AND EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('app.workout_route_statistics_v2(uuid,uuid)')
+		       AND pg_get_userbyid(p.proowner)='workouts_security_owner' AND NOT p.prosecdef AND p.proretset AND p.provolatile='s'
+		       AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl WHERE acl.grantee<>p.proowner))
 		   AND to_regclass('app.timezone_migration_function_backup') IS NOT NULL
 		   AND to_regclass('app.workout_timezone_write_capabilities') IS NOT NULL
 		   AND to_regclass('app.workout_coverage_states') IS NOT NULL
@@ -152,6 +173,14 @@ const runtimeBaseReadinessSQL = `
 		   AND to_regclass('app.coverage_paths') IS NOT NULL
 		   AND to_regclass('app.path_segments') IS NOT NULL
 		   AND to_regclass('app.workout_segment_matches') IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='app.workout_segment_matches'::regclass
+		       AND attname='display_class' AND atttypid='text'::regtype AND NOT attisdropped
+		       AND NOT attnotnull AND NOT atthasdef AND attgenerated='' AND attidentity='')
+		   AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app.workout_segment_matches'::regclass
+		       AND conname='workout_segment_matches_display_class_check' AND contype='c' AND convalidated AND conenforced
+		       AND md5(pg_get_constraintdef(oid))='07a63b751b73765ad5183cc3d86705a0')
+		   AND (SELECT md5(prosrc)='c8aa18f64bd960fc3524a9c87280430a' FROM pg_proc
+		       WHERE oid=to_regprocedure('app.persist_coverage_route(uuid,text,uuid,integer,jsonb,jsonb)'))
 		   AND to_regclass('app.workout_path_attributions') IS NOT NULL
 		   AND to_regclass('app.coverage_reconciliation_state') IS NOT NULL
 		   AND to_regclass('app.coverage_reconciliation_accounts') IS NOT NULL
@@ -1413,7 +1442,7 @@ const runtimeCohortReadinessSQL = `
 			('app.read_ingest_coverage_prepared(uuid,uuid,text,uuid,bigint,integer)','app.ingest_coverage_root_terminal'),
 			('app.read_ingest_coverage_prepared(uuid,uuid,text,uuid,bigint,integer)','''catalogFingerprint'',encode(prepared.catalog_fingerprint,''hex'')'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','targets<builder.batch_size'),
-			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT'),
+			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.lock_coverage_target_jobs'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.coverage_verified_route_digest'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','app.coverage_generation_vectors_equal'),
 			('app.seal_ingest_coverage_cohort(uuid,uuid,text,uuid,bigint,uuid,jsonb,integer)','catalog_proof IS DISTINCT FROM prepared.catalog_fingerprint'),
@@ -1516,7 +1545,7 @@ const runtimeCoverageDisplayReadinessSQL = `
 		AND NOT EXISTS (
 			SELECT 1 FROM (VALUES
 				('app.rebuild_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
-					ARRAY['search_path=pg_catalog, app, public'],'44fa74d835f498f6819205aa2a450020'),
+					ARRAY['search_path=pg_catalog, app, public'],'7c939954e08abcc184fde5ef4a42dd1c'),
 				('app.flush_coverage_display_precomputations(uuid)','plpgsql','v',false,0,'void',
 					ARRAY['search_path=pg_catalog, app'],'1a724480f69901dc05a310b9603e489f'),
 				('app.mark_coverage_display_dirty()','plpgsql','v',false,0,'trigger',
@@ -1620,6 +1649,7 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'FOREIGN KEY (account_id, coverage_display_context_id) REFERENCES app.coverage_display_contexts(account_id, id) ON DELETE SET NULL (coverage_display_context_id)',
 				'CHECK ((generation > 0))','CHECK ((start_date <= end_date))'])
 		), functions(signature,language,volatility,definer,strict,parallel,returns_set,defaults,result,config,api,tiles,body_hash) AS (VALUES
+			('app.coverage_match_visible(text,text,jsonb)','sql','i',false,false,'u',false,0,'boolean',ARRAY['search_path=pg_catalog'],false,false,'af0d044c031a420080f71ba58723211a'),
 			('app.coverage_display_target_current(uuid,uuid,text,text,text)','sql','s',true,false,'u',false,0,'boolean',ARRAY['search_path=pg_catalog, app'],true,false,'93567675a3514a4af09d03ce060e2127'),
 			('app.coverage_display_normalize(text)','sql','i',false,true,'s',false,0,'text',ARRAY['search_path=pg_catalog'],false,false,'f9b737c67fbf910ef932ddd4f8af727b'),
 			('app.coverage_display_identity(text,text,text,text)','plpgsql','i',false,true,'s',false,0,'uuid',ARRAY['search_path=pg_catalog'],false,false,'528503a039e38e7c00894fdf42755fb6'),
@@ -1666,11 +1696,11 @@ const runtimeCanonicalCoverageDisplayReadinessSQL = `
 				'TABLE(source_kind text, source_id uuid)',ARRAY['search_path=pg_catalog, app'],true,false,'04862cedaf0cbdcd472a57f867081996'),
 			('app.map_selection_coverage_entity_detail(uuid,uuid,uuid,bigint,text,uuid)','sql','s',true,false,'u',true,0,
 				'TABLE(entity_id uuid, entity_kind text, broad_class text, name text, locality_name text, region_id text, region_name text, range_workout_count bigint, range_first_date date, range_first_workout_id uuid, range_latest_date date, range_latest_workout_id uuid, all_time_workout_count bigint, all_time_first_date date, all_time_first_workout_id uuid, all_time_latest_date date, all_time_latest_workout_id uuid, minimum_longitude double precision, minimum_latitude double precision, maximum_longitude double precision, maximum_latitude double precision, geometry jsonb, fit_minimum_longitude double precision, fit_minimum_latitude double precision, fit_maximum_longitude double precision, fit_maximum_latitude double precision)',
-				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'716b666af75155e76e106a53071add26'),
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'0df0cb10c06a897aadd34854cac7f171'),
 			('app.coverage_mvt(integer,integer,integer,json)','plpgsql','s',true,false,'u',false,1,'bytea',
-				ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'d3bdc84e87b90d71d2310cca9a96a5c8'),
+				ARRAY['search_path=pg_catalog, app, public','jit=off','work_mem=32MB'],false,true,'49c6ed56bd977c96a6b798b541f8d8a4'),
 			('app.map_selection_coverage_focus(uuid,uuid,uuid,bigint,uuid)','plpgsql','s',true,false,'u',false,0,'jsonb',
-				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'1b28db14908f5980ec407853a4a4d08f')
+				ARRAY['search_path=pg_catalog, app, public','jit=off'],true,false,'9e20e4be433022f836be78e8978d3b8f')
 		)
 		SELECT (SELECT schema_version>=30 AND minimum_runtime_version>=30 AND migration_baseline=27
 			FROM app.schema_metadata WHERE singleton)

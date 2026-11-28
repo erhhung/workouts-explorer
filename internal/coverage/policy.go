@@ -17,7 +17,8 @@ type PathPolicyVersion string
 
 const ExperimentalPathPolicyV82 PathPolicyVersion = "coverage-path-policy-experimental-v82"
 const ExperimentalPathPolicyV83 PathPolicyVersion = "coverage-path-policy-experimental-v83"
-const CurrentPathPolicyVersion = ExperimentalPathPolicyV83
+const ExperimentalPathPolicyV84 PathPolicyVersion = "coverage-path-policy-experimental-v84"
+const CurrentPathPolicyVersion = ExperimentalPathPolicyV84
 
 const footRoadAttributionDistanceMeters = 5.0
 const footRoadCandidateSearchRadiusMeters = 20.0
@@ -37,10 +38,17 @@ type pathPolicy struct {
 }
 
 func experimentalPathPolicy(mode MovementMode) pathPolicy {
+	return pathPolicyForVersion(mode, CurrentPathPolicyVersion)
+}
+
+func pathPolicyForVersion(mode MovementMode, version PathPolicyVersion) pathPolicy {
 	if mode != MovementFoot && mode != MovementBicycle {
 		mode = MovementSharedPublic
 	}
-	return pathPolicy{CurrentPathPolicyVersion, mode}
+	if version == "" {
+		version = CurrentPathPolicyVersion
+	}
+	return pathPolicy{version, mode}
 }
 
 func (policy pathPolicy) transitionEligible(highway string, rawTags json.RawMessage) bool {
@@ -75,11 +83,14 @@ func (policy pathPolicy) eligible(highway string, rawTags json.RawMessage) bool 
 	tags := decodeTags(rawTags)
 	highway = strings.ToLower(highway)
 	privatePath := policy.privatePedestrianAccess(highway, tags)
-	if (policy.mode == MovementFoot || policy.mode == MovementBicycle) && excludedServiceRoad(highway, tags) {
+	if (policy.mode == MovementFoot || policy.mode == MovementBicycle) && policy.excludedServiceRoad(highway, tags) {
+		return false
+	}
+	if policy.parkingCandidate(highway, tags) && (forbidden(tags["access"]) || forbidden(tags[string(policy.mode)])) {
 		return false
 	}
 	if denied(tags["access"]) && !allowed(tags[string(policy.mode)]) &&
-		!((policy.mode == MovementFoot || policy.mode == MovementBicycle) && drivableRoad(highway, tags)) && !privatePath {
+		!((policy.mode == MovementFoot || policy.mode == MovementBicycle) && policy.drivableRoad(highway, tags)) && !privatePath {
 		return false
 	}
 	switch policy.mode {
@@ -87,7 +98,7 @@ func (policy pathPolicy) eligible(highway string, rawTags json.RawMessage) bool 
 		if pedestrianRoadAccessory(highway, tags) {
 			return false
 		}
-		if denied(tags["foot"]) && !drivableRoad(highway, tags) && !privatePath {
+		if denied(tags["foot"]) && !policy.drivableRoad(highway, tags) && !privatePath {
 			return false
 		}
 		return !motorOnly(highway) || allowed(tags["foot"])
@@ -95,7 +106,7 @@ func (policy pathPolicy) eligible(highway string, rawTags json.RawMessage) bool 
 		if pedestrianRoadAccessory(highway, tags) {
 			return false
 		}
-		if denied(tags["bicycle"]) && !drivableRoad(highway, tags) && !privatePath {
+		if denied(tags["bicycle"]) && !policy.drivableRoad(highway, tags) && !privatePath {
 			return false
 		}
 		if highway == "steps" && !allowed(tags["bicycle"]) && tags["bicycle"] != "dismount" {

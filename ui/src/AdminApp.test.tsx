@@ -90,6 +90,58 @@ function setup(
 }
 
 describe("administrator workspace", () => {
+  test.each([["history", "Update history"]])(
+    "uses the shared future-release page for OSM %s",
+    async (section, label) => {
+      setup(`/admin/osm/${section}`);
+      const message = await screen.findByText(
+        "This section will be implemented in a future release.",
+      );
+      expect(message).toHaveClass("sync-feedback", "future-release-placeholder");
+      expect(message.closest("section")).toHaveAttribute("aria-label", label);
+      expect(within(message.closest("section")!).queryByRole("heading")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          "This section is planned for the next administration implementation slices.",
+        ),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  test("unconfigured Storage Usage replaces the placeholder with its orange availability notice", async () => {
+    setup("/admin/osm/storage", (path) =>
+      path === "/api/admin/osm/storage-usage"
+        ? json({ configured: false, checkedAt: "2026-11-27T00:00:00Z", databases: [], nodes: [] })
+        : undefined,
+    );
+    const notice = await screen.findByRole("note");
+    expect(notice).toHaveTextContent("Storage usage information not available because");
+    expect(notice).toHaveTextContent("Prometheus metrics querying is not configured.");
+    expect(notice).toHaveClass("sync-feedback", "future-release-placeholder");
+    expect(notice.querySelector("br")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Storage Usage" })).toBeNull();
+  });
+
+  test("unconfigured storage metrics keep monitoring unchecked and disabled", async () => {
+    setup("/admin/settings/osm-processing", (path) =>
+      path === "/api/admin/osm/processing-settings"
+        ? json({
+            monitorDatabaseStorage: false,
+            storageMetricsConfigured: false,
+            revision: 1,
+            updatedAt: "2026-11-24T00:00:00Z",
+          })
+        : undefined,
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Monitor available database storage",
+    });
+    await screen.findByText("Storage metrics are disabled or not configured in Helm.");
+    expect(checkbox).toBeDisabled();
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   test("OSM processing stores the monitoring default and retains it across tabs", async () => {
     const user = userEvent.setup();
     let settings = { monitorDatabaseStorage: true, revision: 1, updatedAt: "2026-11-21T00:00:00Z" };

@@ -1,5 +1,9 @@
+{{- define "workouts.otel.endpoint" -}}
+{{- if .Values.otel.enabled -}}{{ required "otel.endpoint is required when otel.enabled=true" .Values.otel.endpoint }}{{- end -}}
+{{- end }}
+
 {{- define "workouts.collector.enabled" -}}
-{{- if and .Values.otel.collector.enabled .Values.otel.endpoint -}}true{{- end -}}
+{{- if and .Values.otel.enabled .Values.otel.endpoint -}}true{{- end -}}
 {{- end }}
 
 {{- define "workouts.collector.container" -}}

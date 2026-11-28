@@ -42,7 +42,9 @@ coverageWorker:
   reconciliationScanInterval: 720h
 osm:
   autoAddRegions: false
-  regions: [fixture:dense]
+  # Synthetic acceptance data must not dispatch real regional rebuilds.
+  regionUpdates:
+    enabled: false
   timezoneBoundaries:
     enabled: false
 sources:

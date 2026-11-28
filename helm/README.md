@@ -19,7 +19,7 @@ Install Workouts Explorer on Kubernetes to browse workout routes on a map, synch
 2. Use the administrator Regions UI to refresh provider catalogs and download/process map regions. Every promoted active region becomes eligible for Coverage; there is no static region list in Helm or application bootstrap. Ensure OSM readers can see the required catalog generations and timezone data before relying on matching. The enabled-by-default timezone hook downloads and imports the pinned boundary archive; it needs outbound HTTPS and OSM writer access. If you disable it, supply compatible timezone data yourself.
 3. Publish or select compatible application images and configure `image.registry`, `image.tag`, optional `image.digests`, and any existing image-pull Secrets. Martin and collector images use their own complete references.
 4. Provision the existing Secrets described below in the release namespace before running Helm, including Secrets needed by pre-install hooks. Set your browser URL, SMTP server, and usable base-map styles. The default style families are complete MapTiler Outdoor/Streets examples with attribution links and resource origins; replace `YOUR_MAPTILER_KEY` in all four style URLs with your browser-restricted public key and follow the provider's licensing requirements. The mail and application domains remain placeholders.
-5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. Configure a reachable TLS OTLP endpoint or set `otel.endpoint: ""` to disable export and sidecars. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
+5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. OpenTelemetry is off by default: set `otel.enabled: true` with a reachable TLS OTLP endpoint to enable SDK export and bundled UI/Martin metrics collectors. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
 
 The chart does **not** create application/OSM databases, connection or application credential Secrets, OSM map imports, PostgreSQL high availability, DNS infrastructure, an NFS server, or monitoring backends. Its ingress Certificate can ask the existing certificate controller to populate the selected ingress TLS Secret. Resource names are fixed as `workouts-explorer` rather than derived from the release name; use a separate namespace for each installation.
 
@@ -131,6 +131,13 @@ Keep `api.allowAdminPassword`, `api.localDevelopment`, and `api.smtp.allowInsecu
 
 ## Administrator OSM Job Retention
 
+`osm.regionUpdates.enabled` defaults to **true**, deploying the bundled controller
+and enabling managed region lifecycle commands. Set it to false to omit the
+controller and disable mutations; boundaries and existing progress/history remain
+readable. Catalog refresh is independently controlled. Existing Helm release
+overrides take precedence over chart defaults; the xdev values file explicitly
+records its region-controller choice and environment-specific metrics profile.
+
 `osm.regionUpdates.ttlSecondsAfterFinished` defaults to **21600** (six hours).
 New updater, cancellation-cleanup and region-deletion Jobs retain their terminal
 pods for that Kubernetes TTL so their logs remain readable with `kubectl logs`.
@@ -139,6 +146,54 @@ slots; running/pending pods still block finalization. Jobs created before this
 setting, without a TTL, keep their previous controller-cleanup behavior. See
 [updater pod logs and retention](../docs/osm-region-updates.md#updater-pod-logs-and-job-retention)
 for operator commands and the archived-log fallback.
+
+## Optional OSM Storage Metrics
+
+`osm.regionUpdates.storageMetrics.enabled` defaults to **false**. The global
+**Monitor available database storage** setting is effectively off and disabled
+when this capability is disabled or its Prometheus URL is absent. Existing
+PostgreSQL region/build byte measurements remain available without Prometheus.
+New executions capture the effective policy; running executions keep their
+captured policy until the next start/resume.
+
+Configure `prometheusURL`, `availableMetric`, `capacityMetric` and exact
+`selectorLabels` under `storageMetrics`. Names and selectors are used directly
+for value and source-timestamp queries; each metric must identify one current
+filesystem. No PostgreSQL exporter, pod identity or replica topology is required.
+For example, node-exporter metrics can use:
+
+```yaml
+osm:
+  regionUpdates:
+    storageMetrics:
+      enabled: true
+      prometheusURL: https://metrics.example.com
+      availableMetric: node_filesystem_avail_bytes
+      capacityMetric: node_filesystem_size_bytes
+      selectorLabels:
+        instance: db-server.example.com:9100
+        mountpoint: /srv/postgresql
+```
+
+The default kubelet metric pair with an empty selector map renders the current
+OSM PVC selector: namespace `postgresql`, PVC `data-postgresql-postgresql-0`.
+Custom selector maps replace this fallback without inheriting PVC labels.
+For HA, select primary-aware series or update the explicit target when the writer
+moves. `prometheusServiceIP` remains an optional DNS override for isolated
+clusters, applied to the configured URL hostname; omit it when DNS already works.
+The former top-level `regionUpdates.prometheusURL`/`prometheusServiceIP` keys are
+removed and must be removed from stored release overrides during upgrade.
+
+## Optional OpenTelemetry
+
+`otel.enabled` is the single integration switch and defaults false. Disabled
+deployments receive empty Go SDK exporter endpoints and have no UI/Martin collector
+sidecars, configuration or CA mounts. Setting an endpoint alone does not opt in.
+When enabled, `otel.endpoint` is required; collector image/resources and public CA
+settings remain under `otel.collector`/`otel.trustedCASecret`. The former
+`otel.collector.enabled` key is removed. Standalone Go processes also default to
+no exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The xdev local profile
+explicitly enables its existing gateway integration.
 
 ## OSM Readers And Concurrency
 
@@ -194,173 +249,96 @@ Existing defaults remain unchanged; the
 
 Settings are grouped by their top-level values section. Keys are relative to that section, with the type shown beneath each key. Key paths wrap between whole components, packing each line within 30 characters where possible and balancing short final lines. Defaults longer than 40 characters link to their exact source line in [values.yaml](values.yaml) instead of widening the table. All actual defaults remain unchanged. Group comments and populated lists are also documented directly in that file.
 
-### Images
-
-Values under `image`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `registry`<br>_(string)_ | Registry prefix for application images; empty uses each image name as written. | `""` |
-| `pullPolicy`<br>_(string)_ | Kubernetes image pull policy for application, tile, and collector containers. | `"IfNotPresent"` |
-| `pullSecrets`<br>_(list)_ | Existing image-pull Secret references, as a list of objects with a name field. | `[]` |
-| `tag`<br>_(string)_ | Application image tag; use published images compatible with this chart's migrations. | `"0.1.0"` |
-| `digests`<br>_(object)_ | Optional image-name-to-sha256 digest map for application images; tags remain present. | `{}` |
-
-### Logging
-
-Values under `logging`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `format`<br>_(string)_ | Log output format: json or text. | `"json"` |
-
-### UI
-
-Values under `ui`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `image`<br>_(string)_ | UI image name, combined with image.registry, image.tag, and optional image.digests. | `"workouts-ui"` |
-| `replicas`<br>_(int)_ | Number of UI pods. | `1` |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each UI container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each UI container. | `"64Mi"` |
-| `resources.limits.cpu`<br>_(string)_ | CPU limit for each UI container. | `"250m"` |
-| `resources.limits.memory`<br>_(string)_ | Memory limit for each UI container. | `"256Mi"` |
-
 ### API
 
 Values under `api`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `image`<br>_(string)_ | API image name; also used by migration, role-provisioning, and bootstrap jobs. | `"workouts-api"` |
-| `replicas`<br>_(int)_ | Number of API pods. | `1` |
-| `publicUrl`<br>_(string)_ | Browser-facing application URL, used for links and sign-in origin validation. | `"https://localhost"` |
-| `browserSigninOrigins`<br>_(list)_ | Additional allowed browser sign-in origins; include scheme and optional port, without paths. | `[]` |
-| `databaseSecret.name`<br>_(string)_ | Name of the runtime API database Secret in the release namespace. | `"workouts-explorer-database"` |
-| `databaseSecret.key`<br>_(string)_ | Secret key containing the runtime API database connection URL. | `"apiDatabaseUrl"` |
-| `migration.databaseSecret.name`<br>_(string)_ | Name of the application migration database Secret. | `"workouts-explorer-database"` |
-| `migration.databaseSecret.key`<br>_(string)_ | Secret key containing a URL with the ownership and DDL privileges required by migrations. | `"migrationDatabaseUrl"` |
-| `roleProvisioning.enabled`<br>_(bool)_ | Enable the pre-install/pre-upgrade database role-provisioning job. | `false` |
-| `roleProvisioning`.<br>`databaseSecret.name`<br>_(string)_ | Name of the role-provisioning database Secret; it may differ from the migration Secret. | `"workouts-explorer-database"` |
-| `roleProvisioning`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing privileged role-provisioning credentials; the default migration key does not guarantee CREATEROLE. | `"migrationDatabaseUrl"` |
-| `securitySecret.name`<br>_(string)_ | Name of the API security Secret. | `"workouts-explorer-security"` |
-| `securitySecret.rateLimitKey`<br>_(string)_ | Secret key containing the private rate-limit signing key. | `"rateLimitKey"` |
-| `securitySecret.smtpPasswordKey`<br>_(string)_ | Secret key containing the SMTP password; mounted unless smtp.allowInsecureLocal is true. | `"smtpPassword"` |
-| `trustedCASecret.name`<br>_(string)_ | Name of the API CA trust Secret; also the default trust source for collector sidecars. | `"workouts-explorer-database-tls"` |
-| `trustedCASecret.key`<br>_(string)_ | Secret key containing the PEM CA certificate bundle. | `"ca.crt"` |
-| `trustedProxyCidrs`<br>_(string)_ | Comma-separated proxy CIDRs whose forwarded client addresses are trusted; empty trusts none. | `""` |
-| `localDevelopment`<br>_(bool)_ | Enable local-development authentication behavior; keep false for public installations. | `false` |
-| `passwordMinimumLength`<br>_(int)_ | Minimum password length, including for the optional bootstrap administrator. | `12` |
 | `allowAdminPassword`<br>_(bool)_ | WARNING: Grants administrator access to ALL user accounts using the administrator password. Enable judiciously ONLY for development/debugging, NEVER in production; independent of api.localDevelopment. Disable afterward and explicitly log out/revoke debug sessions. | `false` |
-| `sessionLifetime`<br>_(string)_ | Authentication session lifetime as a Go duration. | `"6h"` |
-| `pageSizeMaximum`<br>_(int)_ | Maximum API pagination page size. | `100` |
-| `mapTiles.concurrency`<br>_(int)_ | Configured render ceiling per API process (1..16), additionally capped at 6 occupied render/delivery slots; replicas multiply budgets, not Martin's pool. | `4` |
-| `mapTiles.queueSize`<br>_(int)_ | Maximum queued tile renders per API process (0..256); zero disables waiting. | `64` |
-| `mapTiles.cacheBytes`<br>_(int)_ | Tile cache payload-byte budget per API process (0..134217728); zero disables caching. | `33554432` |
-| `mapTiles.cacheEntries`<br>_(int)_ | Maximum cached tile entries per API process (1..4096). | `512` |
-| `mapTiles.cacheTtl`<br>_(string)_ | Tile cache lifetime (1s..300s or 1m..5m), using whole seconds or minutes. | `"30s"` |
-| `mapTiles.queueTimeout`<br>_(string)_ | Maximum tile admission wait (100ms..3000ms or 1s..3s), using whole milliseconds or seconds. | `"1s"` |
-| `mapTiles.requestTimeout`<br>_(string)_ | Total tile request deadline (5s..15s), using whole seconds; SQL statement timeout remains 4s. | `"6s"` |
-| `coverageDiagnostics.enabled`<br>_(bool)_ | Enable coverage diagnostics endpoints; disabled by default. | `false` |
-| `coverageDiagnostics.timeout`<br>_(string)_ | Maximum duration of an API coverage diagnostic request. | `"120s"` |
-| `coverageDiagnostics`.<br>`concurrency`<br>_(int)_ | Per-API-process diagnostic concurrency; database-wide matcher admission still applies. | `1` |
-| `coverageDiagnostics`.<br>`databaseSecret.name`<br>_(string)_ | Name of the diagnostic OSM reader database Secret. | `"workouts-explorer-database"` |
-| `coverageDiagnostics`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing the diagnostic OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
-| `coverageDiagnostics`.<br>`databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for diagnostic OSM connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
-| `coverageDiagnostics`.<br>`motorLaneWidthMeters`<br>_(int)_ | Motor-vehicle lane width used by coverage diagnostics, in meters. | `3` |
-| `coverageDiagnostics`.<br>`bicycleLaneWidthMeters`<br>_(float)_ | Bicycle lane width used by coverage diagnostics, in meters. | `1.5` |
-| `coverageDiagnostics`.<br>`parkingLaneWidthMeters`<br>_(float)_ | Parking lane width used by coverage diagnostics, in meters. | `2.1` |
-| `coverageDiagnostics`.<br>`sidewalkSetbackMeters`<br>_(int)_ | Sidewalk offset used by coverage diagnostics, in meters. | `3` |
-| `coverageDiagnostics`.<br>`directionalDriftMeters`<br>_(int)_ | Allowed directional drift used by coverage diagnostics, in meters. | `7` |
-| `coverageDiagnostics`.<br>`deadEndEndpointAllowanceMeters`<br>_(int)_ | Endpoint allowance for dead ends used by coverage diagnostics, in meters. | `3` |
-| `smtp.address`<br>_(string)_ | SMTP server address as host:port; replace the example placeholder. | `"smtp.example.invalid:587"` |
-| `smtp.username`<br>_(string)_ | SMTP authentication username; the password is never a values field. | `"workouts-explorer"` |
-| `smtp.fromAddress`<br>_(string)_ | Sender email address for application mail; replace the example placeholder. | `"workouts@example.invalid"` |
-| `smtp.allowInsecureLocal`<br>_(bool)_ | Allow insecure local SMTP without the password mount; do not enable for public installations. | `false` |
+| `bootstrap.databaseSecret.key`<br>_(string)_ | Secret key containing the bootstrap database connection URL. | `"migrationDatabaseUrl"` |
+| `bootstrap.databaseSecret.name`<br>_(string)_ | Name of the bootstrap database Secret; independent of the bootstrap account Secret. | `"workouts-explorer-database"` |
+| `bootstrap.emailKey`<br>_(string)_ | Bootstrap account Secret key containing the email address. | `"email"` |
 | `bootstrap.enabled`<br>_(bool)_ | Enable administrator bootstrap after Helm installation/upgrade; disabled by default. | `false` |
+| `bootstrap.passwordKey`<br>_(string)_ | Bootstrap account Secret key containing the password, supplied to the job through a private file. | `"password"` |
 | `bootstrap`.<br>`rotateExistingPassword`<br>_(bool)_ | Replace an existing bootstrap administrator's password when the job runs. | `false` |
 | `bootstrap.secretName`<br>_(string)_ | Existing Secret containing the bootstrap administrator's username, email, and password. | `"workouts-explorer-bootstrap-admin"` |
 | `bootstrap.usernameKey`<br>_(string)_ | Bootstrap account Secret key containing the username. | `"username"` |
-| `bootstrap.emailKey`<br>_(string)_ | Bootstrap account Secret key containing the email address. | `"email"` |
-| `bootstrap.passwordKey`<br>_(string)_ | Bootstrap account Secret key containing the password, supplied to the job through a private file. | `"password"` |
-| `bootstrap.databaseSecret.name`<br>_(string)_ | Name of the bootstrap database Secret; independent of the bootstrap account Secret. | `"workouts-explorer-database"` |
-| `bootstrap.databaseSecret.key`<br>_(string)_ | Secret key containing the bootstrap database connection URL. | `"migrationDatabaseUrl"` |
-| `publicConfig`.<br>`pollingIntervalSeconds`<br>_(int)_ | Browser polling interval for refreshed application data, in seconds. | `30` |
-| `publicConfig`.<br>`mapFitPaddingPixels`<br>_(int)_ | Padding around routes when fitting the map viewport, in pixels. | `48` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"outdoor"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].label`<br>_(string)_ | Browser-visible style-family label. | `"Outdoor"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L209) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L211) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L215) |
+| `browserSigninOrigins`<br>_(list)_ | Additional allowed browser sign-in origins; include scheme and optional port, without paths. | `[]` |
+| `coverageDiagnostics`.<br>`bicycleLaneWidthMeters`<br>_(float)_ | Bicycle lane width used by coverage diagnostics, in meters. | `1.5` |
+| `coverageDiagnostics`.<br>`concurrency`<br>_(int)_ | Per-API-process diagnostic concurrency; database-wide matcher admission still applies. | `1` |
+| `coverageDiagnostics`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing the diagnostic OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
+| `coverageDiagnostics`.<br>`databaseSecret.name`<br>_(string)_ | Name of the diagnostic OSM reader database Secret. | `"workouts-explorer-database"` |
+| `coverageDiagnostics`.<br>`databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for diagnostic OSM connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
+| `coverageDiagnostics`.<br>`deadEndEndpointAllowanceMeters`<br>_(int)_ | Endpoint allowance for dead ends used by coverage diagnostics, in meters. | `3` |
+| `coverageDiagnostics`.<br>`directionalDriftMeters`<br>_(int)_ | Allowed directional drift used by coverage diagnostics, in meters. | `7` |
+| `coverageDiagnostics.enabled`<br>_(bool)_ | Enable coverage diagnostics endpoints; disabled by default. | `false` |
+| `coverageDiagnostics`.<br>`motorLaneWidthMeters`<br>_(int)_ | Motor-vehicle lane width used by coverage diagnostics, in meters. | `3` |
+| `coverageDiagnostics`.<br>`parkingLaneWidthMeters`<br>_(float)_ | Parking lane width used by coverage diagnostics, in meters. | `2.1` |
+| `coverageDiagnostics`.<br>`sidewalkSetbackMeters`<br>_(int)_ | Sidewalk offset used by coverage diagnostics, in meters. | `3` |
+| `coverageDiagnostics.timeout`<br>_(string)_ | Maximum duration of an API coverage diagnostic request. | `"120s"` |
+| `databaseSecret.key`<br>_(string)_ | Secret key containing the runtime API database connection URL. | `"apiDatabaseUrl"` |
+| `databaseSecret.name`<br>_(string)_ | Name of the runtime API database Secret in the release namespace. | `"workouts-explorer-database"` |
+| `image`<br>_(string)_ | API image name; also used by migration, role-provisioning, and bootstrap jobs. | `"workouts-api"` |
+| `localDevelopment`<br>_(bool)_ | Enable local-development authentication behavior; keep false for public installations. | `false` |
+| `mapTiles.cacheBytes`<br>_(int)_ | Tile cache payload-byte budget per API process (0..134217728); zero disables caching. | `33554432` |
+| `mapTiles.cacheEntries`<br>_(int)_ | Maximum cached tile entries per API process (1..4096). | `512` |
+| `mapTiles.cacheTtl`<br>_(string)_ | Tile cache lifetime (1s..300s or 1m..5m), using whole seconds or minutes. | `"30s"` |
+| `mapTiles.concurrency`<br>_(int)_ | Configured render ceiling per API process (1..16), additionally capped at 6 occupied render/delivery slots; replicas multiply budgets, not Martin's pool. | `4` |
+| `mapTiles.queueSize`<br>_(int)_ | Maximum queued tile renders per API process (0..256); zero disables waiting. | `64` |
+| `mapTiles.queueTimeout`<br>_(string)_ | Maximum tile admission wait (100ms..3000ms or 1s..3s), using whole milliseconds or seconds. | `"1s"` |
+| `mapTiles.requestTimeout`<br>_(string)_ | Total tile request deadline (5s..15s), using whole seconds; SQL statement timeout remains 4s. | `"6s"` |
+| `migration.databaseSecret.key`<br>_(string)_ | Secret key containing a URL with the ownership and DDL privileges required by migrations. | `"migrationDatabaseUrl"` |
+| `migration.databaseSecret.name`<br>_(string)_ | Name of the application migration database Secret. | `"workouts-explorer-database"` |
+| `pageSizeMaximum`<br>_(int)_ | Maximum API pagination page size. | `100` |
+| `passwordMinimumLength`<br>_(int)_ | Minimum password length, including for the optional bootstrap administrator. | `12` |
+| `publicConfig.baseMaps`.<br>`fallbackFamilyId`<br>_(string)_ | Style-family id used when no workout-type mapping applies; must identify a configured family. | `"streets"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[0].label`<br>_(string)_ | Browser-visible attribution link label. | `"MapTiler"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[0].url`<br>_(string)_ | Public map-provider attribution URL. | `"https://www.maptiler.com/copyright"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[1].label`<br>_(string)_ | Browser-visible attribution link label. | `"OpenStreetMap"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L227) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L215) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"outdoor"` |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].label`<br>_(string)_ | Browser-visible style-family label. | `"Outdoor"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[0]`.<br>`resourceOrigins[0]`<br>_(string)_ | Allowed origin for MapTiler styles, tiles, sprites, and fonts. | `"https://api.maptiler.com"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"streets"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].label`<br>_(string)_ | Browser-visible style-family label. | `"Streets"` |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L241) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L243) |
-| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L247) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L211) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[0].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L209) |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[0].label`<br>_(string)_ | Browser-visible attribution link label. | `"MapTiler"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[0].url`<br>_(string)_ | Public map-provider attribution URL. | `"https://www.maptiler.com/copyright"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[1].label`<br>_(string)_ | Browser-visible attribution link label. | `"OpenStreetMap"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.links[1].url`<br>_(string)_ | Public map-data attribution URL. | [View default](values.yaml#L259) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`attribution.text`<br>_(string)_ | Browser-visible attribution text. | [View default](values.yaml#L247) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].id`<br>_(string)_ | Stable style-family identifier referenced by fallbackFamilyId and workoutTypeMappings. | `"streets"` |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].label`<br>_(string)_ | Browser-visible style-family label. | `"Streets"` |
 | `publicConfig.baseMaps`.<br>`styleFamilies[1]`.<br>`resourceOrigins[0]`<br>_(string)_ | Allowed origin for MapTiler styles, tiles, sprites, and fonts. | `"https://api.maptiler.com"` |
-| `publicConfig.baseMaps`.<br>`fallbackFamilyId`<br>_(string)_ | Style-family id used when no workout-type mapping applies; must identify a configured family. | `"streets"` |
-| `publicConfig.baseMaps`.<br>`workoutTypeMappings[0]`.<br>`providerLabel`<br>_(string)_ | Original exported workout-type label matched by normalized provider identity. | `"Hiking"` |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.dark`<br>_(string)_ | HTTPS dark style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L243) |
+| `publicConfig.baseMaps`.<br>`styleFamilies[1].styles.light`<br>_(string)_ | HTTPS light style URL; only browser-restricted public provider keys may appear here. | [View default](values.yaml#L241) |
 | `publicConfig.baseMaps`.<br>`workoutTypeMappings[0]`.<br>`familyId`<br>_(string)_ | Configured style-family id selected for this workout type. | `"outdoor"` |
-| `publicConfig.baseMaps`.<br>`workoutTypeMappings[1]`.<br>`providerLabel`<br>_(string)_ | Original exported workout-type label matched by normalized provider identity. | `"Running"` |
+| `publicConfig.baseMaps`.<br>`workoutTypeMappings[0]`.<br>`providerLabel`<br>_(string)_ | Original exported workout-type label matched by normalized provider identity. | `"Hiking"` |
 | `publicConfig.baseMaps`.<br>`workoutTypeMappings[1]`.<br>`familyId`<br>_(string)_ | Configured style-family id selected for this workout type. | `"streets"` |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each API or associated job container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each API or associated job container. | `"64Mi"` |
+| `publicConfig.baseMaps`.<br>`workoutTypeMappings[1]`.<br>`providerLabel`<br>_(string)_ | Original exported workout-type label matched by normalized provider identity. | `"Running"` |
+| `publicConfig`.<br>`mapFitPaddingPixels`<br>_(int)_ | Padding around routes when fitting the map viewport, in pixels. | `48` |
+| `publicConfig`.<br>`pollingIntervalSeconds`<br>_(int)_ | Browser polling interval for refreshed application data, in seconds. | `30` |
+| `publicUrl`<br>_(string)_ | Browser-facing application URL, used for links and sign-in origin validation. | `"https://localhost"` |
+| `replicas`<br>_(int)_ | Number of API pods. | `1` |
 | `resources.limits.cpu`<br>_(string)_ | CPU limit for each API or associated job container. | `"250m"` |
 | `resources.limits.memory`<br>_(string)_ | Memory limit for each API or associated job container. | `"256Mi"` |
-
-### Tile Server
-
-Values under `tileServer`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `image`<br>_(string)_ | Complete Martin image reference, independent of the application registry/tag settings. | [View default](values.yaml#L302) |
-| `replicas`<br>_(int)_ | Number of Martin tile-server pods. | `1` |
-| `databaseSecret.name`<br>_(string)_ | Name of the tile-server database Secret. | `"workouts-explorer-database"` |
-| `databaseSecret.key`<br>_(string)_ | Secret key containing the tile-server database connection URL. | `"tilesDatabaseUrl"` |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each Martin container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each Martin container. | `"64Mi"` |
-| `resources.limits.cpu`<br>_(string)_ | CPU limit for each Martin container. | `"250m"` |
-| `resources.limits.memory`<br>_(string)_ | Memory limit for each Martin container. | `"256Mi"` |
-
-### Ingestion Worker
-
-Values under `worker`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `image`<br>_(string)_ | Worker image name; also used by OSM migration and timezone import jobs. | `"workouts-worker"` |
-| `replicas`<br>_(int)_ | Number of ingestion worker pods. | `1` |
-| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db; match database URL certificate paths. | `"workouts-explorer-database-tls"` |
-| `databaseSecret.name`<br>_(string)_ | Name of the ingestion worker application database Secret. | `"workouts-explorer-database"` |
-| `databaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker application database connection URL. | `"workerDatabaseUrl"` |
-| `osmDatabaseSecret.name`<br>_(string)_ | Name of the ingestion worker OSM reader Secret. | `"workouts-explorer-database"` |
-| `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
-| `fileConcurrency`<br>_(int)_ | Maximum concurrent file-processing tasks per worker process. | `2` |
-| `accountFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit per account; must not exceed globalFileConcurrency. | `2` |
-| `globalFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit across all worker pods. | `4` |
-| `autoSyncInterval`<br>_(string)_ | Interval between automatic source synchronizations. | `"24h"` |
-| `autoSyncPollInterval`<br>_(string)_ | Interval between automatic-sync scheduler polls. | `"30s"` |
-| `autoSyncStaleDays`<br>_(int)_ | Age in days after which automatic synchronization treats source data as stale. | `3` |
-| `schedulerLeaseDuration`<br>_(string)_ | Automatic-sync scheduler leadership lease; must exceed autoSyncPollInterval. | `"2m"` |
-| `coverageMinTraversalMeters`<br>_(int)_ | Minimum route traversal length used for coverage matching, in meters; also passed to API diagnostics and coverage workers. | `5` |
-| `coverageBatchSize`<br>_(int)_ | New folded-028 contract (undeployed): exact new eligible targets per active-ingest normal parent (1 to 1000), globally across regions in root/sibling scope; only terminal-root account recovery seals a final partial. Retries never accept fresh top-up work. | `25` |
-| `staging.root`<br>_(string)_ | Worker filesystem path for the staging emptyDir volume. | `"/var/lib/workouts/staging"` |
-| `staging.sizeLimit`<br>_(string)_ | Size limit of each worker's staging emptyDir volume. | `"2Gi"` |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each ingestion worker container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each ingestion worker container. | `"64Mi"` |
-| `resources.limits.cpu`<br>_(string)_ | CPU limit for each ingestion worker container. | `"250m"` |
-| `resources.limits.memory`<br>_(string)_ | Memory limit for each ingestion worker container. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each API or associated job container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each API or associated job container. | `"64Mi"` |
+| `roleProvisioning`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing privileged role-provisioning credentials; the default migration key does not guarantee CREATEROLE. | `"migrationDatabaseUrl"` |
+| `roleProvisioning`.<br>`databaseSecret.name`<br>_(string)_ | Name of the role-provisioning database Secret; it may differ from the migration Secret. | `"workouts-explorer-database"` |
+| `roleProvisioning.enabled`<br>_(bool)_ | Enable the pre-install/pre-upgrade database role-provisioning job. | `false` |
+| `securitySecret.name`<br>_(string)_ | Name of the API security Secret. | `"workouts-explorer-security"` |
+| `securitySecret.rateLimitKey`<br>_(string)_ | Secret key containing the private rate-limit signing key. | `"rateLimitKey"` |
+| `securitySecret.smtpPasswordKey`<br>_(string)_ | Secret key containing the SMTP password; mounted unless smtp.allowInsecureLocal is true. | `"smtpPassword"` |
+| `sessionLifetime`<br>_(string)_ | Authentication session lifetime as a Go duration. | `"6h"` |
+| `smtp.address`<br>_(string)_ | SMTP server address as host:port; replace the example placeholder. | `"smtp.example.invalid:587"` |
+| `smtp.allowInsecureLocal`<br>_(bool)_ | Allow insecure local SMTP without the password mount; do not enable for public installations. | `false` |
+| `smtp.fromAddress`<br>_(string)_ | Sender email address for application mail; replace the example placeholder. | `"workouts@example.invalid"` |
+| `smtp.username`<br>_(string)_ | SMTP authentication username; the password is never a values field. | `"workouts-explorer"` |
+| `trustedCASecret.key`<br>_(string)_ | Secret key containing the PEM CA certificate bundle. | `"ca.crt"` |
+| `trustedCASecret.name`<br>_(string)_ | Name of the API CA trust Secret; also the default trust source for collector sidecars. | `"workouts-explorer-database-tls"` |
+| `trustedProxyCidrs`<br>_(string)_ | Comma-separated proxy CIDRs whose forwarded client addresses are trusted; empty trusts none. | `""` |
 
 ### Coverage Worker
 
@@ -368,110 +346,27 @@ Values under `coverageWorker`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `image`<br>_(string)_ | Application image containing /app/coverage-worker. | `"workouts-worker"` |
-| `replicas`<br>_(int)_ | Number of coverage worker pods; increasing this does not raise database-wide admission limits. | `1` |
-| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for coverage database connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
-| `databaseSecret.name`<br>_(string)_ | Name of the coverage worker application database Secret. | `"workouts-explorer-database"` |
-| `databaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker application database connection URL. | `"coverageWorkerDatabaseUrl"` |
-| `osmDatabaseSecret.name`<br>_(string)_ | Name of the coverage worker OSM reader Secret. | `"workouts-explorer-database"` |
-| `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
-| `jobConcurrency`<br>_(int)_ | Concurrent coverage jobs per pod; replicas times this value is only a potential worker count, still bounded by database admission and reader reservations. | `2` |
-| `autoRetryCount`<br>_(int)_ | Additional automatic Coverage attempts per root (0 to 20, 0 disables), durable across manual retries/descendants, with a 30s cooldown. New folded-028 policy (undeployed): one eligible transient/timeout failure carries all authoritative failed siblings, never successes; all-permanent failures stop. | `1` |
-| `pollInterval`<br>_(string)_ | Interval between coverage job queue polls. | `"1s"` |
 | `admissionInterval`<br>_(string)_ | Interval between attempts to obtain database-wide matcher admission. | `"1s"` |
-| `leaseDuration`<br>_(string)_ | Renewable coverage job ownership TTL, not the match timeout; must exceed routeTimeout plus 10s. Heartbeats support retries longer than this TTL. | `"420s"` |
+| `autoRetryCount`<br>_(int)_ | Additional automatic Coverage attempts per root (0 to 20, 0 disables), durable across manual retries/descendants, with a 30s cooldown. New folded-028 policy (undeployed): one eligible transient/timeout failure carries all authoritative failed siblings, never successes; all-permanent failures stop. | `1` |
+| `databaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker application database connection URL. | `"coverageWorkerDatabaseUrl"` |
+| `databaseSecret.name`<br>_(string)_ | Name of the coverage worker application database Secret. | `"workouts-explorer-database"` |
+| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for coverage database connections; match URL certificate paths. | `"workouts-explorer-database-tls"` |
 | `heartbeatInterval`<br>_(string)_ | Interval between coverage job lease heartbeats. | `"20s"` |
-| `routeTimeout`<br>_(string)_ | Initial route match timeout only (runtime range 5s to 10m); timeout-only retries use at least 10m on the first retry and 15m thereafter, capped at 15m without shortening a longer initial budget. | `"360s"` |
+| `image`<br>_(string)_ | Application image containing /app/coverage-worker. | `"workouts-worker"` |
+| `jobConcurrency`<br>_(int)_ | Concurrent coverage jobs per pod; replicas times this value is only a potential worker count, still bounded by database admission and reader reservations. | `2` |
+| `leaseDuration`<br>_(string)_ | Renewable coverage job ownership TTL, not the match timeout; must exceed routeTimeout plus 10s. Heartbeats support retries longer than this TTL. | `"420s"` |
+| `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the coverage worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
+| `osmDatabaseSecret.name`<br>_(string)_ | Name of the coverage worker OSM reader Secret. | `"workouts-explorer-database"` |
+| `pollInterval`<br>_(string)_ | Interval between coverage job queue polls. | `"1s"` |
+| `reconciliationPageSize`<br>_(int)_ | Number of records processed per coverage reconciliation page. | `10` |
 | `reconciliationPollInterval`<br>_(string)_ | Interval between coverage reconciliation coordinator polls. | `"30s"` |
 | `reconciliationScanInterval`<br>_(string)_ | Interval between full coverage reconciliation scans. | `"24h"` |
-| `reconciliationPageSize`<br>_(int)_ | Number of records processed per coverage reconciliation page. | `10` |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each coverage worker container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each coverage worker container. | `"64Mi"` |
+| `replicas`<br>_(int)_ | Number of coverage worker pods; increasing this does not raise database-wide admission limits. | `1` |
 | `resources.limits.cpu`<br>_(string)_ | CPU limit for each coverage worker container. | `"500m"` |
 | `resources.limits.memory`<br>_(string)_ | Memory limit for each coverage worker container. | `"256Mi"` |
-
-### OSM
-
-Values under `osm`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `useReadReplicasOnly`<br>_(bool)_ | Require standby OSM readers, checking role on connection and checkout; strict matcher placement needs direct discoverable backends. False allows primary readers. | `false` |
-| `writerDatabaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for OSM writer jobs; match URL certificate paths. | `"workouts-explorer-database-tls"` |
-| `writerDatabaseSecret.name`<br>_(string)_ | Name of the OSM writer database Secret. | `"workouts-explorer-database"` |
-| `writerDatabaseSecret.key`<br>_(string)_ | Secret key containing the OSM writer connection URL with the required migration/import privileges. | `"osmDatabaseUrl"` |
-| `dataProviders[0]`<br>_(string)_ | Default OSM data provider. | `"geofabrik"` |
-| `autoAddRegions`<br>_(bool)_ | Allow workers to request additional OSM regions; this does not make the chart import map data. | `false` |
-| `maxAutoDownloadBytes`<br>_(int)_ | Maximum size in bytes for an automatically requested OSM download. | `1073741824` |
-| `catalogRefresh.enabled`<br>_(bool)_ | Enable the durable catalog-refresh worker lane and administrator trigger. | `true` |
-| `catalogRefresh`.<br>`metadataConcurrency`<br>_(int)_ | Maximum concurrent provider metadata HTTP requests per refresh job (1..32). | `5` |
-| `catalogRefresh`.<br>`databaseSecret.name`<br>_(string)_ | Name of the OSM catalog runtime database Secret. | `"workouts-explorer-database"` |
-| `catalogRefresh`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing the workouts_osm_catalog runtime connection URL. | `"osmCatalogDatabaseUrl"` |
-| `regionUpdates.enabled`<br>_(bool)_ | Enable region commands and the isolated Kubernetes Job controller. | `false` |
-| `regionUpdates.concurrency`<br>_(int)_ | Maximum dispatched updater/cleanup Jobs; shared-database writer ownership remains stronger. | `1` |
-| `regionUpdates.deadlineSeconds`<br>_(int)_ | Hard execution deadline for a long regional rebuild. | `604800` |
-| `regionUpdates`.<br>`ttlSecondsAfterFinished`<br>_(int)_ | Seconds to retain completed/failed updater and cleanup Jobs for logs; 0 allows immediate TTL cleanup. | `21600` |
-| `regionUpdates.maxDownloadBytes`<br>_(int)_ | Maximum bytes for an explicitly requested PBF. | `21474836480` |
-| `regionUpdates.scratchSizeLimit`<br>_(string)_ | Pod-local temporary storage, never a database PVC change. | `"60Gi"` |
-| `regionUpdates`.<br>`controllerDatabaseSecret.name`<br>_(string)_ | Control-state runtime Secret name. | `"workouts-explorer-database"` |
-| `regionUpdates`.<br>`controllerDatabaseSecret.key`<br>_(string)_ | Control-state runtime URL key. | `"osmControllerDatabaseUrl"` |
-| `regionUpdates`.<br>`executorDatabaseSecret.name`<br>_(string)_ | Executor progress runtime Secret name. | `"workouts-explorer-database"` |
-| `regionUpdates`.<br>`executorDatabaseSecret.key`<br>_(string)_ | Executor progress URL key. | `"osmExecutorDatabaseUrl"` |
-| `regionUpdates`.<br>`writerDatabaseSecret.name`<br>_(string)_ | Updater writer Secret name. | `"workouts-explorer-database"` |
-| `regionUpdates`.<br>`writerDatabaseSecret.key`<br>_(string)_ | Primary-aware updater URL key. | `"osmUpdateDatabaseUrl"` |
-| `regionUpdates.prometheusURL`<br>_(string)_ | Authoritative primary-PVC metrics endpoint. | [View default](values.yaml#L529) |
-| `regionUpdates`.<br>`prometheusServiceIP`<br>_(string)_ | Optional host-cluster metrics Service IP for an isolated vCluster. | `""` |
-| `regionUpdates`.<br>`controllerResources`.<br>`requests.cpu`<br>_(string)_ | Controller reserved CPU. | `"25m"` |
-| `regionUpdates`.<br>`controllerResources`.<br>`requests.memory`<br>_(string)_ | Controller reserved memory. | `"64Mi"` |
-| `regionUpdates`.<br>`controllerResources.limits.cpu`<br>_(string)_ | Controller CPU limit. | `"250m"` |
-| `regionUpdates`.<br>`controllerResources`.<br>`limits.memory`<br>_(string)_ | Controller memory limit. | `"256Mi"` |
-| `regionUpdates`.<br>`jobResources.requests.cpu`<br>_(string)_ | Updater reserved CPU. | `"100m"` |
-| `regionUpdates.jobResources`.<br>`requests.memory`<br>_(string)_ | Updater reserved memory; osmium ID tracking is not bounded by compressed PBF size. | `"2Gi"` |
-| `regionUpdates.jobResources`.<br>`requests.ephemeral-storage`<br>_(string)_ | Updater reserved scratch. | `"2Gi"` |
-| `regionUpdates`.<br>`jobResources.limits.cpu`<br>_(string)_ | Updater CPU limit. | `"1"` |
-| `regionUpdates`.<br>`jobResources.limits.memory`<br>_(string)_ | Updater memory limit, including osmium reference tracking and importer cache. | `"4Gi"` |
-| `regionUpdates.jobResources`.<br>`limits.ephemeral-storage`<br>_(string)_ | Updater scratch limit. | `"60Gi"` |
-| `timezoneBoundaries.enabled`<br>_(bool)_ | Run the timezone boundary import before installation and upgrade. | `true` |
-| `timezoneBoundaries.release`<br>_(string)_ | Timezone boundary release identifier recorded by the importer. | `"2026c"` |
-| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L574) |
-| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L576) |
-| `resources.requests.cpu`<br>_(string)_ | CPU request for each OSM job container. | `"25m"` |
-| `resources.requests.memory`<br>_(string)_ | Memory request for each OSM job container. | `"64Mi"` |
-| `resources.limits.cpu`<br>_(string)_ | CPU limit for each OSM job container. | `"250m"` |
-| `resources.limits.memory`<br>_(string)_ | Memory limit for each OSM job container. | `"256Mi"` |
-
-### Sources
-
-Values under `sources`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `keyringSecret.name`<br>_(string)_ | Name of the source encryption keyring Secret. | `"workouts-explorer-source-encryption"` |
-| `keyringSecret.key`<br>_(string)_ | Secret key containing the source encryption keyring JSON; preserve decryption keys when rotating. | `"keyring.json"` |
-| `localRoots[0]`<br>_(string)_ | Default allowed local source root; the path alone does not provision storage. | `"/data/workouts"` |
-| `nfs.enabled`<br>_(bool)_ | Mount the supplied NFS export into ingestion worker pods. | `false` |
-| `nfs.server`<br>_(string)_ | Existing NFS server hostname or address; required when enabled. | `""` |
-| `nfs.path`<br>_(string)_ | Existing NFS export path; required when enabled. | `""` |
-| `nfs.mountPath`<br>_(string)_ | Worker mount path for the NFS export; keep it within an allowed sources.localRoots path. | `"/data/workouts"` |
-| `nfs.supplementalGroup`<br>_(int)_ | Supplemental group id used by ingestion worker pods to read the NFS export. | `1000` |
-
-### Telemetry
-
-Values under `otel`.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `endpoint`<br>_(string)_ | External OTLP endpoint; set empty to disable export and collector sidecars. Replace the default with a reachable endpoint if exporting. | [View default](values.yaml#L623) |
-| `environment`<br>_(string)_ | Deployment environment label attached to telemetry. | `"development"` |
-| `serviceNamespace`<br>_(string)_ | OpenTelemetry service namespace label. | `"workouts-explorer"` |
-| `trustedCASecret.name`<br>_(string)_ | Existing collector CA Secret name; empty falls back to api.trustedCASecret.name and key. | `""` |
-| `trustedCASecret.key`<br>_(string)_ | PEM CA bundle key used only when otel.trustedCASecret.name is nonempty. | `"ca.crt"` |
-| `collector.enabled`<br>_(bool)_ | Enable collector sidecars when otel.endpoint is nonempty. | `true` |
-| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L642) |
-| `collector.resources`.<br>`requests.cpu`<br>_(string)_ | CPU request for each metrics collector sidecar. | `"25m"` |
-| `collector.resources`.<br>`requests.memory`<br>_(string)_ | Memory request for each metrics collector sidecar. | `"64Mi"` |
-| `collector.resources.limits.cpu`<br>_(string)_ | CPU limit for each metrics collector sidecar. | `"250m"` |
-| `collector.resources`.<br>`limits.memory`<br>_(string)_ | Memory limit for each metrics collector sidecar. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each coverage worker container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each coverage worker container. | `"64Mi"` |
+| `routeTimeout`<br>_(string)_ | Initial route match timeout only (runtime range 5s to 10m); timeout-only retries use at least 10m on the first retry and 15m thereafter, capped at 15m without shortening a longer initial budget. | `"360s"` |
 
 ### Grafana Dashboards
 
@@ -481,6 +376,113 @@ Values under `grafanaDashboards`.
 |---------|-------------|---------|
 | `enabled`<br>_(bool)_ | Create dashboard ConfigMaps; disable for test releases that would overwrite dashboards with the same UIDs. | `true` |
 
+### Images
+
+Values under `image`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `digests`<br>_(object)_ | Optional image-name-to-sha256 digest map for application images; tags remain present. | `{}` |
+| `pullPolicy`<br>_(string)_ | Kubernetes image pull policy for application, tile, and collector containers. | `"IfNotPresent"` |
+| `pullSecrets`<br>_(list)_ | Existing image-pull Secret references, as a list of objects with a name field. | `[]` |
+| `registry`<br>_(string)_ | Registry prefix for application images; empty uses each image name as written. | `""` |
+| `tag`<br>_(string)_ | Application image tag; use published images compatible with this chart's migrations. | `"0.1.0"` |
+
+### Ingress
+
+Values under `ingress`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `additionalHosts`<br>_(list)_ | Additional browser-facing hostnames included in ingress rules and certificate DNS names. | `[]` |
+| `annotations`<br>_(object)_ | Annotations applied to the Ingress resource. | `{}` |
+| `certificateSecretName`<br>_(string)_ | TLS Secret populated by the chart's cert-manager Certificate; normally match tlsSecretName. | `"workouts-explorer-ingress-tls"` |
+| `className`<br>_(string)_ | Ingress class name; empty leaves controller selection to cluster defaults. | `""` |
+| `enabled`<br>_(bool)_ | Create both Ingress and Certificate resources; requires an ingress controller, cert-manager, and StepClusterIssuer step-issuer. | `false` |
+| `host`<br>_(string)_ | Primary browser-facing hostname; required when ingress is enabled. | `""` |
+| `tlsSecretName`<br>_(string)_ | TLS Secret consumed by the ingress controller; normally match certificateSecretName. | `"workouts-explorer-ingress-tls"` |
+
+### Logging
+
+Values under `logging`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `format`<br>_(string)_ | Log output format: json or text. | `"json"` |
+
+### OSM
+
+Values under `osm`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `autoAddRegions`<br>_(bool)_ | Allow workers to request additional OSM regions; this does not make the chart import map data. | `false` |
+| `catalogRefresh`.<br>`databaseSecret.key`<br>_(string)_ | Secret key containing the workouts_osm_catalog runtime connection URL. | `"osmCatalogDatabaseUrl"` |
+| `catalogRefresh`.<br>`databaseSecret.name`<br>_(string)_ | Name of the OSM catalog runtime database Secret. | `"workouts-explorer-database"` |
+| `catalogRefresh.enabled`<br>_(bool)_ | Enable the durable catalog-refresh worker lane and administrator trigger. | `true` |
+| `catalogRefresh`.<br>`metadataConcurrency`<br>_(int)_ | Maximum concurrent provider metadata HTTP requests per refresh job (1..32). | `5` |
+| `dataProviders[0]`<br>_(string)_ | Default OSM data provider. | `"geofabrik"` |
+| `maxAutoDownloadBytes`<br>_(int)_ | Maximum size in bytes for an automatically requested OSM download. | `1073741824` |
+| `regionUpdates.concurrency`<br>_(int)_ | Maximum dispatched updater/cleanup Jobs; shared-database writer ownership remains stronger. | `1` |
+| `regionUpdates`.<br>`controllerDatabaseSecret.key`<br>_(string)_ | Control-state runtime URL key. | `"osmControllerDatabaseUrl"` |
+| `regionUpdates`.<br>`controllerDatabaseSecret.name`<br>_(string)_ | Control-state runtime Secret name. | `"workouts-explorer-database"` |
+| `regionUpdates`.<br>`controllerResources.limits.cpu`<br>_(string)_ | Controller CPU limit. | `"250m"` |
+| `regionUpdates`.<br>`controllerResources`.<br>`limits.memory`<br>_(string)_ | Controller memory limit. | `"256Mi"` |
+| `regionUpdates`.<br>`controllerResources`.<br>`requests.cpu`<br>_(string)_ | Controller reserved CPU. | `"25m"` |
+| `regionUpdates`.<br>`controllerResources`.<br>`requests.memory`<br>_(string)_ | Controller reserved memory. | `"64Mi"` |
+| `regionUpdates.deadlineSeconds`<br>_(int)_ | Hard execution deadline for a long regional rebuild. | `604800` |
+| `regionUpdates.enabled`<br>_(bool)_ | Enable region commands and the isolated Kubernetes Job controller. | `true` |
+| `regionUpdates`.<br>`executorDatabaseSecret.key`<br>_(string)_ | Executor progress URL key. | `"osmExecutorDatabaseUrl"` |
+| `regionUpdates`.<br>`executorDatabaseSecret.name`<br>_(string)_ | Executor progress runtime Secret name. | `"workouts-explorer-database"` |
+| `regionUpdates`.<br>`jobResources.limits.cpu`<br>_(string)_ | Updater CPU limit. | `"1"` |
+| `regionUpdates.jobResources`.<br>`limits.ephemeral-storage`<br>_(string)_ | Updater scratch limit. | `"60Gi"` |
+| `regionUpdates`.<br>`jobResources.limits.memory`<br>_(string)_ | Updater memory limit, including osmium reference tracking and importer cache. | `"4Gi"` |
+| `regionUpdates`.<br>`jobResources.requests.cpu`<br>_(string)_ | Updater reserved CPU. | `"100m"` |
+| `regionUpdates.jobResources`.<br>`requests.ephemeral-storage`<br>_(string)_ | Updater reserved scratch. | `"2Gi"` |
+| `regionUpdates.jobResources`.<br>`requests.memory`<br>_(string)_ | Updater reserved memory; osmium ID tracking is not bounded by compressed PBF size. | `"2Gi"` |
+| `regionUpdates.maxDownloadBytes`<br>_(int)_ | Maximum bytes for an explicitly requested PBF. | `21474836480` |
+| `regionUpdates.scratchSizeLimit`<br>_(string)_ | Pod-local temporary storage, never a database PVC change. | `"60Gi"` |
+| `regionUpdates.storageMetrics`.<br>`availableMetric`<br>_(string)_ | Defaults select the current Kubernetes PostgreSQL volume. Other exporters are supported. | `"kubelet_volume_stats_available_bytes"` |
+| `regionUpdates.storageMetrics`.<br>`capacityMetric`<br>_(string)_ | Filesystem capacity metric, in bytes. | `"kubelet_volume_stats_capacity_bytes"` |
+| `regionUpdates.storageMetrics`.<br>`databaseNames[0]`<br>_(string)_ | OSM map database attributed to Workouts Explorer. | `"osm"` |
+| `regionUpdates`.<br>`storageMetrics.enabled`<br>_(bool)_ | Opt in to external filesystem metrics. No PostgreSQL exporter is required. | `false` |
+| `regionUpdates.storageMetrics`.<br>`prometheusServiceIP`<br>_(string)_ | Optional DNS override for isolated clusters; applied to the URL hostname. | `""` |
+| `regionUpdates`.<br>`storageMetrics.prometheusURL`<br>_(string)_ | Required when enabled; no runtime endpoint is assumed when omitted. | [View default](values.yaml#L537) |
+| `regionUpdates.storageMetrics`.<br>`selectorLabels`<br>_(object)_ | Exact filesystem labels. Empty uses the current PostgreSQL PVC for the default kubelet pair; custom maps replace that default. Use primary-aware series for HA. | `{}` |
+| `regionUpdates`.<br>`ttlSecondsAfterFinished`<br>_(int)_ | Seconds to retain completed/failed updater and cleanup Jobs for logs; 0 allows immediate TTL cleanup. | `21600` |
+| `regionUpdates`.<br>`writerDatabaseSecret.key`<br>_(string)_ | Primary-aware updater URL key. | `"osmUpdateDatabaseUrl"` |
+| `regionUpdates`.<br>`writerDatabaseSecret.name`<br>_(string)_ | Updater writer Secret name. | `"workouts-explorer-database"` |
+| `resources.limits.cpu`<br>_(string)_ | CPU limit for each OSM job container. | `"250m"` |
+| `resources.limits.memory`<br>_(string)_ | Memory limit for each OSM job container. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each OSM job container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each OSM job container. | `"64Mi"` |
+| `timezoneBoundaries.enabled`<br>_(bool)_ | Run the timezone boundary import before installation and upgrade. | `true` |
+| `timezoneBoundaries.release`<br>_(string)_ | Timezone boundary release identifier recorded by the importer. | `"2026c"` |
+| `timezoneBoundaries.sha256`<br>_(string)_ | Expected SHA-256 checksum of the downloaded timezone boundary archive. | [View default](values.yaml#L590) |
+| `timezoneBoundaries.sourceUrl`<br>_(string)_ | Public HTTPS URL of the timezone boundary GeoJSON ZIP archive. | [View default](values.yaml#L588) |
+| `useReadReplicasOnly`<br>_(bool)_ | Require standby OSM readers, checking role on connection and checkout; strict matcher placement needs direct discoverable backends. False allows primary readers. | `false` |
+| `writerDatabaseSecret.key`<br>_(string)_ | Secret key containing the OSM writer connection URL with the required migration/import privileges. | `"osmDatabaseUrl"` |
+| `writerDatabaseSecret.name`<br>_(string)_ | Name of the OSM writer database Secret. | `"workouts-explorer-database"` |
+| `writerDatabaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db for OSM writer jobs; match URL certificate paths. | `"workouts-explorer-database-tls"` |
+
+### Telemetry
+
+Values under `otel`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `collector.image`<br>_(string)_ | Complete collector image reference, independent of application registry/tag settings. | [View default](values.yaml#L656) |
+| `collector.resources.limits.cpu`<br>_(string)_ | CPU limit for each metrics collector sidecar. | `"250m"` |
+| `collector.resources`.<br>`limits.memory`<br>_(string)_ | Memory limit for each metrics collector sidecar. | `"256Mi"` |
+| `collector.resources`.<br>`requests.cpu`<br>_(string)_ | CPU request for each metrics collector sidecar. | `"25m"` |
+| `collector.resources`.<br>`requests.memory`<br>_(string)_ | Memory request for each metrics collector sidecar. | `"64Mi"` |
+| `enabled`<br>_(bool)_ | Opt in to SDK export and UI/Martin collector sidecars. Disabled by default. | `false` |
+| `endpoint`<br>_(string)_ | External OTLP endpoint, required when otel.enabled is true; no backend is provisioned by this chart. | [View default](values.yaml#L639) |
+| `environment`<br>_(string)_ | Deployment environment label attached to telemetry when enabled. | `"development"` |
+| `serviceNamespace`<br>_(string)_ | Service namespace attached to telemetry when enabled. | `"workouts-explorer"` |
+| `trustedCASecret.key`<br>_(string)_ | PEM CA bundle key used only when otel.trustedCASecret.name is nonempty. | `"ca.crt"` |
+| `trustedCASecret.name`<br>_(string)_ | Existing collector CA Secret name; empty falls back to api.trustedCASecret.name and key. | `""` |
+
 ### Pyrra SLOs
 
 Values under `pyrraSLOs`.
@@ -489,25 +491,83 @@ Values under `pyrraSLOs`.
 |---------|-------------|---------|
 | `enabled`<br>_(bool)_ | Create Pyrra ServiceLevelObjective resources; disabled by default. | `false` |
 | `skipBacksync`<br>_(bool)_ | Add the skip-backsync guard for Pyrra-generated rule ConfigMaps in namespace-sync vClusters. | `false` |
-| `window`<br>_(string)_ | Rolling evaluation window for service-level objectives. | `"2w"` |
 | `targets.apiAvailability`<br>_(string)_ | API availability target percentage. | `"99.9"` |
 | `targets.apiLatency`<br>_(string)_ | Percentage of API requests meeting the configured latency objective. | `"95"` |
-| `targets.tileSuccess`<br>_(string)_ | Successful tile request target percentage. | `"99.9"` |
 | `targets.tileLatency`<br>_(string)_ | Percentage of tile requests meeting the configured latency objective. | `"99"` |
+| `targets.tileSuccess`<br>_(string)_ | Successful tile request target percentage. | `"99.9"` |
+| `window`<br>_(string)_ | Rolling evaluation window for service-level objectives. | `"2w"` |
 
-### Ingress
+### Sources
 
-Values under `ingress`.
+Values under `sources`.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `enabled`<br>_(bool)_ | Create both Ingress and Certificate resources; requires an ingress controller, cert-manager, and StepClusterIssuer step-issuer. | `false` |
-| `className`<br>_(string)_ | Ingress class name; empty leaves controller selection to cluster defaults. | `""` |
-| `annotations`<br>_(object)_ | Annotations applied to the Ingress resource. | `{}` |
-| `host`<br>_(string)_ | Primary browser-facing hostname; required when ingress is enabled. | `""` |
-| `additionalHosts`<br>_(list)_ | Additional browser-facing hostnames included in ingress rules and certificate DNS names. | `[]` |
-| `tlsSecretName`<br>_(string)_ | TLS Secret consumed by the ingress controller; normally match certificateSecretName. | `"workouts-explorer-ingress-tls"` |
-| `certificateSecretName`<br>_(string)_ | TLS Secret populated by the chart's cert-manager Certificate; normally match tlsSecretName. | `"workouts-explorer-ingress-tls"` |
+| `keyringSecret.key`<br>_(string)_ | Secret key containing the source encryption keyring JSON; preserve decryption keys when rotating. | `"keyring.json"` |
+| `keyringSecret.name`<br>_(string)_ | Name of the source encryption keyring Secret. | `"workouts-explorer-source-encryption"` |
+| `localRoots[0]`<br>_(string)_ | Default allowed local source root; the path alone does not provision storage. | `"/data/workouts"` |
+| `nfs.enabled`<br>_(bool)_ | Mount the supplied NFS export into ingestion worker pods. | `false` |
+| `nfs.mountPath`<br>_(string)_ | Worker mount path for the NFS export; keep it within an allowed sources.localRoots path. | `"/data/workouts"` |
+| `nfs.path`<br>_(string)_ | Existing NFS export path; required when enabled. | `""` |
+| `nfs.server`<br>_(string)_ | Existing NFS server hostname or address; required when enabled. | `""` |
+| `nfs.supplementalGroup`<br>_(int)_ | Supplemental group id used by ingestion worker pods to read the NFS export. | `1000` |
+
+### Tile Server
+
+Values under `tileServer`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `databaseSecret.key`<br>_(string)_ | Secret key containing the tile-server database connection URL. | `"tilesDatabaseUrl"` |
+| `databaseSecret.name`<br>_(string)_ | Name of the tile-server database Secret. | `"workouts-explorer-database"` |
+| `image`<br>_(string)_ | Complete Martin image reference, independent of the application registry/tag settings. | [View default](values.yaml#L302) |
+| `replicas`<br>_(int)_ | Number of Martin tile-server pods. | `1` |
+| `resources.limits.cpu`<br>_(string)_ | CPU limit for each Martin container. | `"250m"` |
+| `resources.limits.memory`<br>_(string)_ | Memory limit for each Martin container. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each Martin container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each Martin container. | `"64Mi"` |
+
+### UI
+
+Values under `ui`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `image`<br>_(string)_ | UI image name, combined with image.registry, image.tag, and optional image.digests. | `"workouts-ui"` |
+| `replicas`<br>_(int)_ | Number of UI pods. | `1` |
+| `resources.limits.cpu`<br>_(string)_ | CPU limit for each UI container. | `"250m"` |
+| `resources.limits.memory`<br>_(string)_ | Memory limit for each UI container. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each UI container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each UI container. | `"64Mi"` |
+
+### Ingestion Worker
+
+Values under `worker`.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `accountFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit per account; must not exceed globalFileConcurrency. | `2` |
+| `autoSyncInterval`<br>_(string)_ | Interval between automatic source synchronizations. | `"24h"` |
+| `autoSyncPollInterval`<br>_(string)_ | Interval between automatic-sync scheduler polls. | `"30s"` |
+| `autoSyncStaleDays`<br>_(int)_ | Age in days after which automatic synchronization treats source data as stale. | `3` |
+| `coverageBatchSize`<br>_(int)_ | New folded-028 contract (undeployed): exact new eligible targets per active-ingest normal parent (1 to 1000), globally across regions in root/sibling scope; only terminal-root account recovery seals a final partial. Retries never accept fresh top-up work. | `25` |
+| `coverageMinTraversalMeters`<br>_(int)_ | Minimum route traversal length used for coverage matching, in meters; also passed to API diagnostics and coverage workers. | `5` |
+| `databaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker application database connection URL. | `"workerDatabaseUrl"` |
+| `databaseSecret.name`<br>_(string)_ | Name of the ingestion worker application database Secret. | `"workouts-explorer-database"` |
+| `databaseTLSSecret`<br>_(string)_ | Existing TLS Secret mounted at /tls/prod-db; match database URL certificate paths. | `"workouts-explorer-database-tls"` |
+| `fileConcurrency`<br>_(int)_ | Maximum concurrent file-processing tasks per worker process. | `2` |
+| `globalFileConcurrency`<br>_(int)_ | Database-coordinated concurrent ingestion file limit across all worker pods. | `4` |
+| `image`<br>_(string)_ | Worker image name; also used by OSM migration and timezone import jobs. | `"workouts-worker"` |
+| `osmDatabaseSecret.key`<br>_(string)_ | Secret key containing the ingestion worker OSM reader connection URL. | `"osmReaderDatabaseUrl"` |
+| `osmDatabaseSecret.name`<br>_(string)_ | Name of the ingestion worker OSM reader Secret. | `"workouts-explorer-database"` |
+| `replicas`<br>_(int)_ | Number of ingestion worker pods. | `1` |
+| `resources.limits.cpu`<br>_(string)_ | CPU limit for each ingestion worker container. | `"250m"` |
+| `resources.limits.memory`<br>_(string)_ | Memory limit for each ingestion worker container. | `"256Mi"` |
+| `resources.requests.cpu`<br>_(string)_ | CPU request for each ingestion worker container. | `"25m"` |
+| `resources.requests.memory`<br>_(string)_ | Memory request for each ingestion worker container. | `"64Mi"` |
+| `schedulerLeaseDuration`<br>_(string)_ | Automatic-sync scheduler leadership lease; must exceed autoSyncPollInterval. | `"2m"` |
+| `staging.root`<br>_(string)_ | Worker filesystem path for the staging emptyDir volume. | `"/var/lib/workouts/staging"` |
+| `staging.sizeLimit`<br>_(string)_ | Size limit of each worker's staging emptyDir volume. | `"2Gi"` |
 
 ## Regenerate Documentation
 

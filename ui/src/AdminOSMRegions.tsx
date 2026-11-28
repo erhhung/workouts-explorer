@@ -1,7 +1,15 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "./Dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from "react";
 import { api, type BaseMapsConfig, type Session } from "./api";
 import { DialogTableViewport } from "./DialogTableViewport";
 import { OSMRegionBoundaryDialog } from "./OSMRegionBoundaryDialog";
@@ -21,7 +29,10 @@ import {
   regionDate,
   regionExactTime,
   regionStatus,
+  baseRegionStatus,
   regionValue,
+  retainedBuildBytes,
+  regionDatabaseTotalBytes,
   updateActive,
   updateStatus,
   type RegionUpdate,
@@ -34,6 +45,33 @@ export type { CatalogRefresh, OSMCatalogs, OSMRegion } from "./osmRegions";
 export { osmBytes } from "./osmRegions";
 
 const KEY = ["admin-osm-regions"];
+const DISABLED_NOTICE_KEY = "workouts:admin:region-updates-disabled-notice";
+function RegionPolicyTooltip({ region, children }: { region: OSMRegion; children: ReactElement }) {
+  if (regionStatus(region) !== "Stale") return children;
+  return (
+    <Tooltip
+      content="Updated matcher policies require reprocessing"
+      label={
+        canOpenStatusProgress(region) ? `View job progress for ${region.name}: Stale` : undefined
+      }
+      asChild
+      portal
+      followPointer
+      dismissOnPointerDown
+      className="osm-regions-status-tooltip"
+    >
+      {children}
+    </Tooltip>
+  );
+}
+
+function dismissedUpdatesNoticeSession() {
+  try {
+    return sessionStorage.getItem(DISABLED_NOTICE_KEY);
+  } catch {
+    return null;
+  }
+}
 const NUMERIC = [
   "pbfModifiedAt",
   "pbfBytes",
@@ -171,7 +209,12 @@ function Value({
     unavailable = text === "n/a";
   const help =
     field === "workoutCount" && region.generation != null
-      ? `${region.coverageRouteCount ?? 0} coverage routes`
+      ? `${region.coverageRouteCount ?? 0} coverage routes${
+          (region.coverageRouteCount ?? 0) < (region.workoutCount ?? 0) &&
+          (region.missingRegionRouteCount ?? 0) > 0
+            ? ` | ${region.missingRegionRouteCount} missing additional regions`
+            : ""
+        }`
       : field === "pbfModifiedAt"
         ? regionExactTime(region.pbfModifiedAt)
         : field === "pbfBytes"
@@ -188,8 +231,16 @@ function Value({
                     .filter(Boolean)
                     .join(" | ")
                 : undefined;
-  const content = <span className={unavailable ? "workout-table-na" : undefined}>{text}</span>;
-  const value = help ? (
+  const progressClass =
+    field === "workoutCount" && region.generation != null
+      ? (region.coverageRouteCount ?? 0) === (region.workoutCount ?? 0)
+        ? "osm-regions-workouts--complete"
+        : (region.coverageRouteCount ?? 0) < (region.workoutCount ?? 0)
+          ? "osm-regions-workouts--incomplete"
+          : undefined
+      : undefined;
+  const content = <span className={unavailable ? "workout-table-na" : progressClass}>{text}</span>;
+  let value = help ? (
     <Tooltip
       content={help ?? ""}
       enabled={Boolean(help)}
@@ -202,6 +253,32 @@ function Value({
   ) : (
     content
   );
+  const buildBytes = field === "databaseBytes" ? retainedBuildBytes(region) : null;
+  if (buildBytes !== null) {
+    value = (
+      <span className="osm-regions-database-usage">
+        {region.databaseBytes !== null && (
+          <>
+            <Tooltip
+              content={exactBytes(region.databaseBytes)!}
+              focusable={false}
+              className="osm-regions-value-tooltip"
+            >
+              <span>{osmBytes(region.databaseBytes, true)}</span>
+            </Tooltip>
+            <span className="osm-regions-build-usage"> + </span>
+          </>
+        )}
+        <Tooltip
+          content={exactBytes(buildBytes)!}
+          focusable={false}
+          className="osm-regions-value-tooltip"
+        >
+          <span className="osm-regions-build-usage">{osmBytes(buildBytes, true)}</span>
+        </Tooltip>
+      </span>
+    );
+  }
   return extent === undefined ? (
     value
   ) : (
@@ -237,6 +314,7 @@ function RegionActions({
   }, [enabled]);
   const status = regionStatus(region),
     running = status === "Downloading" || status === "Processing";
+  const reprocess = status === "Ready" || status === "Stale";
   const update = region.update,
     active = updateActive(update),
     stopping = status === "Pausing" || status === "Canceling";
@@ -257,25 +335,22 @@ function RegionActions({
           align="end"
           sideOffset={6}
         >
-          <DropdownMenu.Item onSelect={onBoundaries}>Show boundaries</DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={onBoundaries}>View boundaries</DropdownMenu.Item>
           {(running || canViewRegionProgress(region)) && (
             <>
-              <DropdownMenu.Item
-                disabled={!updatesEnabled || !canViewRegionProgress(region)}
-                onSelect={onProgress}
-              >
+              <DropdownMenu.Item disabled={!canViewRegionProgress(region)} onSelect={onProgress}>
                 View job progress
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
             </>
           )}
-          {status === "Ready" && !canViewRegionProgress(region) && <DropdownMenu.Separator />}
+          {reprocess && !canViewRegionProgress(region) && <DropdownMenu.Separator />}
           {!active && status !== "Deleting" && status !== "Paused" && status !== "Failed" && (
             <DropdownMenu.Item
               disabled={!updatesEnabled || !region.available}
-              onSelect={() => onCommand(status === "Ready" ? "reprocess" : "download")}
+              onSelect={() => onCommand(reprocess ? "reprocess" : "download")}
             >
-              {status === "Ready" ? "Reprocess region" : "Download region"}
+              {reprocess ? "Reprocess region" : "Download region"}
             </DropdownMenu.Item>
           )}
           {update && (status === "Paused" || status === "Failed") && (
@@ -348,6 +423,7 @@ export function AdminOSMRegions({
   const [search, setSearch] = useState(""),
     [showAll, setShowAll] = useState(false),
     [page, setPage] = useState(1);
+  const [noticeDismissedFor, setNoticeDismissedFor] = useState(dismissedUpdatesNoticeSession);
   useKeyboardShortcut("osm-regions", table, (shortcut) => {
     if (shortcut.kind !== "osm-regions" || !activeRef.current) return false;
     setShowAll((current) => !current);
@@ -375,7 +451,7 @@ export function AdminOSMRegions({
       active
         ? Math.min(
             polling * 1000,
-            catalogPending(query.state.data?.refresh)
+            progressId || catalogPending(query.state.data?.refresh)
               ? 5000
               : query.state.data?.regions.some((region) => updateActive(region.update))
                 ? 10000
@@ -384,6 +460,16 @@ export function AdminOSMRegions({
         : false,
     refetchIntervalInBackground: false,
   });
+  useEffect(() => {
+    if (query.data?.updatesEnabled && noticeDismissedFor === session.id) {
+      setNoticeDismissedFor(null);
+      try {
+        sessionStorage.removeItem(DISABLED_NOTICE_KEY);
+      } catch {
+        /* In-memory dismissal still works. */
+      }
+    }
+  }, [query.data?.updatesEnabled, noticeDismissedFor, session.id]);
   const refresh = useMutation({
     mutationFn: () =>
       api<CatalogRefresh>(
@@ -437,10 +523,10 @@ export function AdminOSMRegions({
                       ...region,
                       update: update.cleared ? undefined : update,
                       status: update.cleared
-                        ? region.generation === null
-                          ? "Available"
-                          : "Ready"
-                        : updateStatus(update),
+                        ? baseRegionStatus(region)
+                        : update.state === "succeeded" && update.operation !== "delete"
+                          ? baseRegionStatus(region)
+                          : updateStatus(update),
                     }
                   : region,
               ),
@@ -471,6 +557,9 @@ export function AdminOSMRegions({
       setDeleteTarget(undefined);
     }
   }, [active]);
+  useEffect(() => {
+    if (query.data?.updatesEnabled === false && !command.isPending) setDeleteTarget(undefined);
+  }, [query.data?.updatesEnabled, command.isPending]);
   const regions = query.data?.regions ?? EMPTY;
   const rows = useMemo(
     () =>
@@ -483,17 +572,27 @@ export function AdminOSMRegions({
               .includes(search.trim().toLowerCase()),
         )
         .sort((a, b) => {
-          const av = sort.field === "status" ? regionStatus(a) : a[sort.field],
-            bv = sort.field === "status" ? regionStatus(b) : b[sort.field];
-          if (av === null || bv === null)
-            return av === bv ? a.id.localeCompare(b.id) : av === null ? 1 : -1;
+          const av =
+              sort.field === "status"
+                ? regionStatus(a)
+                : sort.field === "databaseBytes"
+                  ? regionDatabaseTotalBytes(a)
+                  : a[sort.field],
+            bv =
+              sort.field === "status"
+                ? regionStatus(b)
+                : sort.field === "databaseBytes"
+                  ? regionDatabaseTotalBytes(b)
+                  : b[sort.field],
+            nameOrder = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+          if (av === null || bv === null) return av === bv ? nameOrder : av === null ? 1 : -1;
           const result =
             sort.field === "pbfModifiedAt" || sort.field === "downloadedAt"
               ? Date.parse(String(av)) - Date.parse(String(bv))
               : typeof av === "number" && typeof bv === "number"
                 ? av - bv
                 : String(av).localeCompare(String(bv), undefined, { sensitivity: "base" });
-          return result * (sort.direction === "asc" ? 1 : -1) || a.id.localeCompare(b.id);
+          return result * (sort.direction === "asc" ? 1 : -1) || nameOrder;
         }),
     [regions, showAll, search, sort],
   );
@@ -529,7 +628,7 @@ export function AdminOSMRegions({
     (trigger ?? heading.current)?.focus({ preventScroll: true });
   };
   const showProgress = (region: OSMRegion, trigger?: HTMLButtonElement) => {
-    if (!enabled || !query.data?.updatesEnabled || !canViewRegionProgress(region)) return;
+    if (!enabled || !canViewRegionProgress(region)) return;
     dismissActivePortalTooltip();
     lastSelected.current = region.id;
     progressFocus.current =
@@ -561,6 +660,32 @@ export function AdminOSMRegions({
       aria-labelledby={headingId}
       data-paging-region
     >
+      {query.data?.updatesEnabled === false && noticeDismissedFor !== session.id && (
+        <article
+          className="sync-notification sync-notification--warning osm-regions-disabled-notice dismissible-notice"
+          role="status"
+        >
+          <span>Region updates have been disabled in this installation.</span>
+          <div className="notification-actions">
+            <button
+              type="button"
+              className="secondary"
+              aria-label="Dismiss region updates disabled notice"
+              onClick={() => {
+                setNoticeDismissedFor(session.id);
+                try {
+                  sessionStorage.setItem(DISABLED_NOTICE_KEY, session.id);
+                } catch {
+                  /* In-memory dismissal still works. */
+                }
+                heading.current?.focus({ preventScroll: true });
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </article>
+      )}
       <div className="section-line">
         <h2 ref={heading} id={headingId} tabIndex={-1}>
           Regions
@@ -738,12 +863,13 @@ export function AdminOSMRegions({
                         data-region-id={region.id}
                         disabled={!enabled}
                         aria-haspopup="dialog"
-                        aria-description="Show boundaries"
+                        aria-description="View boundaries"
                         onClick={() => showBoundaries(region)}
                       >
                         <Tooltip
                           content={region.id}
                           portal
+                          followPointer
                           focusable={false}
                           dismissOnPointerDown
                           className="osm-regions-name-tooltip"
@@ -770,31 +896,27 @@ export function AdminOSMRegions({
                     <td>
                       <Value region={region} field="workoutCount" extent={samples.workoutCount} />
                     </td>
-                    <td
-                      className={
-                        query.data?.updatesEnabled && canOpenStatusProgress(region)
-                          ? "table-action-cell"
-                          : undefined
-                      }
-                    >
-                      {query.data?.updatesEnabled && canOpenStatusProgress(region) ? (
-                        <button
-                          type="button"
-                          className={`table-cell-link osm-regions-status osm-regions-status--${regionStatus(region).toLowerCase()}`}
-                          disabled={!enabled}
-                          aria-haspopup="dialog"
-                          aria-label={`View job progress for ${region.name}: ${regionStatus(region)}`}
-                          onClick={(event) => showProgress(region, event.currentTarget)}
-                        >
-                          {regionStatus(region)}
-                        </button>
-                      ) : (
-                        <span
-                          className={`osm-regions-status osm-regions-status--${regionStatus(region).toLowerCase()}`}
-                        >
-                          {regionStatus(region)}
-                        </span>
-                      )}
+                    <td className={canOpenStatusProgress(region) ? "table-action-cell" : undefined}>
+                      <RegionPolicyTooltip region={region}>
+                        {canOpenStatusProgress(region) ? (
+                          <button
+                            type="button"
+                            className={`table-cell-link osm-regions-status osm-regions-status--${regionStatus(region).toLowerCase()}`}
+                            disabled={!enabled}
+                            aria-haspopup="dialog"
+                            aria-label={`View job progress for ${region.name}: ${regionStatus(region)}`}
+                            onClick={(event) => showProgress(region, event.currentTarget)}
+                          >
+                            {regionStatus(region)}
+                          </button>
+                        ) : (
+                          <span
+                            className={`osm-regions-status osm-regions-status--${regionStatus(region).toLowerCase()}`}
+                          >
+                            {regionStatus(region)}
+                          </span>
+                        )}
+                      </RegionPolicyTooltip>
                     </td>
                     <td className="workout-actions-cell osm-regions-actions-cell">
                       <RegionActions
@@ -805,7 +927,7 @@ export function AdminOSMRegions({
                         updatesEnabled={Boolean(query.data?.updatesEnabled)}
                         onProgress={() => showProgress(region)}
                         onCommand={(action) => {
-                          if (commandLock.current) return;
+                          if (!query.data?.updatesEnabled || commandLock.current) return;
                           if (action === "delete") {
                             deleteFocus.current =
                               [
@@ -881,6 +1003,7 @@ export function AdminOSMRegions({
       )}
       <OSMRegionProgressDialog
         jobId={progressId}
+        regions={regions}
         onClose={() => setProgressId(undefined)}
         onReturnFocus={returnProgressFocus}
       />
@@ -935,11 +1058,17 @@ export function AdminOSMRegions({
               <button
                 type="button"
                 className="danger-action"
-                disabled={command.isPending}
+                disabled={command.isPending || !query.data?.updatesEnabled}
                 aria-busy={command.isPending}
                 onClick={() => {
                   const region = regions.find((region) => region.id === deleteTarget?.id);
-                  if (!region || commandLock.current || updateActive(region.update)) return;
+                  if (
+                    !query.data?.updatesEnabled ||
+                    !region ||
+                    commandLock.current ||
+                    updateActive(region.update)
+                  )
+                    return;
                   commandLock.current = true;
                   command.mutate({ region, action: "delete" });
                 }}

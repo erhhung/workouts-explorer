@@ -118,7 +118,11 @@ func (r *CoverageReconciler) RunOnce(ctx context.Context) (bool, error) {
 		return found, err
 	}
 	if err := r.process(ctx, claim); err != nil {
-		_ = r.failDetached(claim, "coverage-reconciliation-failed", "Coverage reconciliation could not be completed.")
+		delay := 5 * time.Minute
+		if reconciliationLockContention(err) || errors.Is(err, context.Canceled) {
+			delay = time.Minute
+		}
+		_ = r.failDetached(claim, "coverage-reconciliation-failed", "Coverage reconciliation could not be completed.", delay)
 		return true, err
 	}
 	return true, nil
@@ -193,6 +197,9 @@ func (r *CoverageReconciler) process(ctx context.Context, claim reconciliationCl
 		}
 		return r.advance(ctx, claim, cursor, true)
 	}
+	if err := r.processPriorityRoutes(ctx, claim); err != nil {
+		return err
+	}
 	for {
 		if err := r.heartbeat(ctx, claim); err != nil {
 			return err
@@ -228,6 +235,70 @@ func (r *CoverageReconciler) process(ctx context.Context, claim reconciliationCl
 			}
 		}
 	}
+}
+
+// Membership is only a discovery hint. Each candidate still goes through the
+// ordinary snapshot, ROI, ownership and queue fences; its own cursor never moves
+// the account-wide checkpoint past unrelated work.
+func (r *CoverageReconciler) processPriorityRoutes(ctx context.Context, claim reconciliationClaim) error {
+	var cursor *uuid.UUID
+	for {
+		if err := r.heartbeat(ctx, claim); err != nil {
+			return err
+		}
+		tx, err := beginAccount(ctx, r.db, claim.accountID)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT workout_id,route_input_revision,route_input_sha256
+			FROM app.read_priority_coverage_reconciliation_routes($1,$2,$3,$4,$5,$6)`,
+			claim.accountID, claim.revision, r.workerID, claim.leaseID, cursor, r.pageSize)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		var routes []reconciliationRoute
+		for rows.Next() {
+			var route reconciliationRoute
+			if err := rows.Scan(&route.workoutID, &route.revision, &route.digest); err != nil {
+				rows.Close()
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			routes = append(routes, route)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		if len(routes) == 0 {
+			return nil
+		}
+		for _, route := range routes {
+			if err := r.heartbeat(ctx, claim); err != nil {
+				return err
+			}
+			routeCtx, cancel := context.WithTimeout(ctx, r.leaseDuration/2)
+			err := r.reconcileRoute(routeCtx, claim, route)
+			cancel()
+			if err != nil {
+				if err := r.deferRouteFailure(ctx, claim, err); err != nil {
+					return err
+				}
+			}
+			cursor = &route.workoutID
+		}
+	}
+}
+
+func reconciliationLockContention(err error) bool {
+	var sql *pgconn.PgError
+	return errors.As(err, &sql) && sql.Code == "55P03"
 }
 
 func (r *CoverageReconciler) readRoutes(ctx context.Context, claim reconciliationClaim, cursor *uuid.UUID) ([]reconciliationRoute, error) {
@@ -271,7 +342,7 @@ func (r *CoverageReconciler) reconcileRoute(ctx context.Context, claim reconcili
 		if err != nil {
 			return database.RedactOSMConnectionError(err)
 		}
-		if rebindCoverageSelection(&item, catalog, r.osmAutoAddRegions) {
+		if rebindCoverageSelection(&item, catalog, r.osmAutoAddRegions, productionMapProcessingRequirements()) {
 			return r.applySelection(ctx, claim, route, item)
 		}
 	}
@@ -301,7 +372,7 @@ func (r *CoverageReconciler) reconcileRoute(ctx context.Context, claim reconcili
 			CatalogRevision: catalog.Revision, CatalogFingerprint: catalog.Fingerprint, SelectionFingerprint: catalog.SelectionFingerprint}
 	} else {
 		readiness, err = osm.ResolveRouteRegionsWithCatalogBudget(ctx, r.osmDB, coordinates, eventID, catalogRevision,
-			min(r.roiTimeout, r.leaseDuration/4))
+			min(r.roiTimeout, r.leaseDuration/4), productionMapProcessingRequirements())
 	}
 	if err != nil {
 		if reason := deferredRouteResolutionReason(ctx, err); reason != "" {
@@ -451,6 +522,22 @@ func (r *CoverageReconciler) deferRouteFailure(ctx context.Context, claim reconc
 }
 
 func (r *CoverageReconciler) applySelection(ctx context.Context, claim reconciliationClaim, route reconciliationRoute, item coverageHandoff) error {
+	for attempt := 0; ; attempt++ {
+		err := r.applySelectionAttempt(ctx, claim, route, item)
+		if !reconciliationLockContention(err) || attempt == 4 {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (r *CoverageReconciler) applySelectionAttempt(ctx context.Context, claim reconciliationClaim, route reconciliationRoute, item coverageHandoff) error {
 	item.MatchingDescriptor = productionMatchingDescriptor(r.minimumTraversal)
 	encoded, err := json.Marshal(item)
 	if err != nil {
@@ -545,12 +632,12 @@ func (r *CoverageReconciler) advance(ctx context.Context, claim reconciliationCl
 	return nil
 }
 
-func (r *CoverageReconciler) failDetached(claim reconciliationClaim, code, summary string) error {
+func (r *CoverageReconciler) failDetached(claim reconciliationClaim, code, summary string, retryDelay time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	var failed bool
-	if err := r.db.QueryRow(ctx, `SELECT app.fail_coverage_reconciliation($1,$2,$3,$4,$5,$6,interval '5 minutes')`,
-		claim.accountID, claim.revision, r.workerID, claim.leaseID, code, summary).Scan(&failed); err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT app.fail_coverage_reconciliation($1,$2,$3,$4,$5,$6,$7)`,
+		claim.accountID, claim.revision, r.workerID, claim.leaseID, code, summary, retryDelay).Scan(&failed); err != nil {
 		return err
 	}
 	return nil

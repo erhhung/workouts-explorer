@@ -45,6 +45,7 @@ func TestPreferencesUseEmbeddedIANAData(t *testing.T) {
 		Timezone:             "America/Los_Angeles",
 		FirstWeekday:         "monday",
 		ClockFormat:          "12h",
+		DateFormat:           "mm/dd/yyyy",
 		WorkoutColumns:       []generated.PreferencesWorkoutColumns{"date", "type", "duration"},
 		PageSize:             25,
 		CustomDateRangeLimit: 3,
@@ -59,7 +60,7 @@ func TestPreferencesTimeZoneValidationMessages(t *testing.T) {
 	for _, zone := range []string{"Local", "/etc/localtime", "../UTC", "Mars/Olympus"} {
 		t.Run(zone, func(t *testing.T) {
 			field, message := server.validatePreferences(generated.Preferences{
-				Theme: "dark", Units: "imperial", FirstWeekday: "monday", ClockFormat: "12h", Timezone: zone,
+				Theme: "dark", Units: "imperial", FirstWeekday: "monday", ClockFormat: "12h", DateFormat: "mm/dd/yyyy", Timezone: zone,
 			})
 			if field != "timezone" || message != "time zone must be an IANA time zone name" {
 				t.Fatalf("field=%q message=%q", field, message)

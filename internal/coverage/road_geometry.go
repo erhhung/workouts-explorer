@@ -36,9 +36,13 @@ func (rules RoadGeometryRules) valid() bool {
 		rules.DeadEndEndpointAllowanceMeters >= 0 && rules.DeadEndEndpointAllowanceMeters <= 10
 }
 
-func roadAttributionOffset(mode MovementMode, highway string, raw json.RawMessage, rules RoadGeometryRules) float64 {
+func roadAttributionOffset(mode MovementMode, highway string, raw json.RawMessage, rules RoadGeometryRules, policies ...pathPolicy) float64 {
 	tags := decodeTags(raw)
-	if (mode != MovementFoot && mode != MovementBicycle) || !drivableRoad(highway, tags) {
+	policy := pathPolicyForVersion(mode, ExperimentalPathPolicyV83)
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+	if (mode != MovementFoot && mode != MovementBicycle) || !policy.drivableRoad(highway, tags) {
 		return 0
 	}
 	width, ok := taggedWidthMeters(tags["width"])

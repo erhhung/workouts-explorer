@@ -82,7 +82,7 @@ func writeTime(digest hash.Hash, value *time.Time) {
 }
 
 func routeReadinessForAutoAddPolicy(readiness osm.RouteRegionReadiness, autoAddRegions bool) osm.RouteRegionReadiness {
-	if readiness.State == "pending" && !autoAddRegions {
+	if readiness.State == "pending" && readiness.Reason == "region_not_active" && !autoAddRegions {
 		readiness.State, readiness.Reason = "unavailable", "no_provider_region"
 		readiness.Regions = []osm.RegionGeneration{}
 	}

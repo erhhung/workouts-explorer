@@ -182,6 +182,9 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	}
 	userToken := bearerSession.AccessToken
 	initialPreferences := getPreferences(t, server, userToken)
+	if initialPreferences.DateFormat != "mm/dd/yyyy" {
+		t.Fatalf("unexpected date-ordering default: %s", initialPreferences.DateFormat)
+	}
 	if initialPreferences.CustomDateRangeLimit != 3 || len(initialPreferences.RecentCustomDateRanges) != 0 {
 		t.Fatalf("custom date range defaults: %+v", initialPreferences)
 	}
@@ -210,6 +213,18 @@ func TestAccountLifecycleIntegration(t *testing.T) {
 	server.UpdateMyPreferences(secondInitialize.recorder, secondInitialize.request, generated.UpdateMyPreferencesParams{InitializeOnly: &initializeOnly})
 	if secondInitialize.recorder.Code != http.StatusOK || !strings.Contains(secondInitialize.recorder.Body.String(), `"timezone":"America/Denver"`) {
 		t.Fatalf("preference initialization was overwritten: %d %s", secondInitialize.recorder.Code, secondInitialize.recorder.Body.String())
+	}
+	for _, order := range []string{"dd/mm/yyyy", "yyyy/mm/dd", "mm/dd/yyyy"} {
+		change := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateFormat":"`+order+`"}`, userToken, "")
+		server.UpdateMyPreferences(change.recorder, change.request, generated.UpdateMyPreferencesParams{})
+		if change.recorder.Code != http.StatusOK || string(getPreferences(t, server, userToken).DateFormat) != order {
+			t.Fatalf("date format not persisted: %d %s", change.recorder.Code, change.recorder.Body.String())
+		}
+	}
+	badOrder := callEndpoint(http.MethodPatch, "/api/me/preferences", `{"dateFormat":"fr-FR"}`, userToken, "")
+	server.UpdateMyPreferences(badOrder.recorder, badOrder.request, generated.UpdateMyPreferencesParams{})
+	if badOrder.recorder.Code != http.StatusBadRequest || getPreferences(t, server, userToken).DateFormat != "mm/dd/yyyy" {
+		t.Fatalf("unsupported date ordering changed preferences: %d %s", badOrder.recorder.Code, badOrder.recorder.Body.String())
 	}
 	adminMe := callEndpoint(http.MethodGet, "/api/me", "", adminToken, "")
 	server.GetMe(adminMe.recorder, adminMe.request)

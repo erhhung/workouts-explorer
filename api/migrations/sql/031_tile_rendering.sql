@@ -474,13 +474,13 @@ BEGIN
         WHERE chunk.piece > 0 OR ST_NPoints(chunk.geom) = 256
         GROUP BY chunk.workout_id, chunk.physical_segment_id, chunk.component
     ), evidence AS MATERIALIZED (
-        SELECT DISTINCT match.region_id, match.generation_id, match.physical_segment_id, match.logical_path_id,
+        SELECT DISTINCT match.region_id, match.generation_id, match.physical_segment_id, match.logical_path_id, match.display_class,
             ST_AsEWKB(ST_AsMVTGeom(input.geom, bounds::box2d, 4096, 64, true)) ewkb
         FROM render_inputs input
         JOIN app.workout_segment_matches match ON match.account_id = scope.account_id
             AND match.workout_id = input.workout_id AND match.physical_segment_id = input.physical_segment_id
     ), checked AS MATERIALIZED (
-        SELECT evidence.logical_path_id, segment.highway, segment.tags, evidence.ewkb
+        SELECT evidence.logical_path_id, evidence.display_class, segment.highway, segment.tags, evidence.ewkb
         FROM evidence JOIN app.path_segments segment ON segment.account_id = scope.account_id
             AND segment.region_id = evidence.region_id AND segment.generation_id = evidence.generation_id
             AND segment.physical_segment_id = evidence.physical_segment_id
@@ -492,9 +492,8 @@ BEGIN
         JOIN app.coverage_display_members member ON member.account_id = scope.account_id AND member.context_id = scope.context_id
             AND member.source_kind = 'path'
             AND member.source_id = COALESCE(NULLIF(checked.tags->>'workouts:education_id', '')::uuid, checked.logical_path_id)
-        WHERE NOT (checked.highway = 'service' AND COALESCE(checked.tags->>'service', '') IN ('driveway', 'parking_aisle'))
-            AND checked.tags->>'amenity' IS DISTINCT FROM 'parking'
-            AND (path.name IS NOT NULL OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
+        WHERE app.coverage_match_visible(checked.display_class,checked.highway,checked.tags)
+            AND (path.name IS NOT NULL OR checked.display_class='parking_aisle' OR checked.tags->>'workouts:park_kind' IN ('state_park', 'national_park')
                 OR NOT (checked.tags ? 'workouts:park_id'))
         UNION ALL
         SELECT member.canonical_id, member.source_kind, member.source_id, checked.ewkb FROM checked

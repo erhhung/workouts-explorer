@@ -125,7 +125,7 @@ func TestStorageBoundedPartitionMigrationContract(t *testing.T) {
 }
 
 func TestPartitionPreparationContract(t *testing.T) {
-	contents, err := os.ReadFile("../../../osm/prepare-partitions.sql")
+	contents, err := os.ReadFile("../../../osm/batches/prepare-partitions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestPartitionPreparationContract(t *testing.T) {
 }
 
 func TestPartitionValidationContract(t *testing.T) {
-	contents, err := os.ReadFile("../../../osm/validate.sql")
+	contents, err := os.ReadFile("../../../osm/batches/validate.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,9 +210,9 @@ func TestTolerantLogicalPathPromotionMigrationContract(t *testing.T) {
 
 func TestOutsideLogicalPathsAreProviderRegionScoped(t *testing.T) {
 	for _, path := range []string{
-		"../../../osm/derive-batched.sql",
-		"../../../osm/clip-localities-replacements.sql",
-		"../../../osm/clip-localities-residual.sql",
+		"../../../osm/batches/derive-batched.sql",
+		"../../../osm/batches/clip-localities-replacements.sql",
+		"../../../osm/batches/clip-localities-residual.sql",
 	} {
 		contents, err := os.ReadFile(path)
 		if err != nil {
@@ -271,26 +271,26 @@ func TestParkAttributionDerivationContract(t *testing.T) {
 		"../../../osm/import.lua": {"park_ways", "park_relations", "object.is_closed", "object:as_polygon()",
 			"tags.boundary == 'national_park'", "tags.protected_area == 'national_park'", "string.lower(protection_title)",
 			"education_ways", "education_relations", "tags.amenity == 'school'", "tags.amenity == 'university'", "tags.landuse == 'education'"},
-		"../../../osm/postprocess.sql": {"park_areas", "'national_park'", "'state_park'", "protection_title'))='state park'",
+		"../../../osm/batches/postprocess.sql": {"park_areas", "'national_park'", "'state_park'", "protection_title'))='state park'",
 			"area_m2 BETWEEN 500 AND 25000000", "area_m2 BETWEEN 1000000 AND 100000000000",
 			"park_kind IN ('state_park','national_park') OR tags->>'protect_class' IS DISTINCT FROM '2'",
 			"WHEN 'state_park' THEN 1 WHEN 'national_park' THEN 1", "admin_level' IN ('6','8')",
 			"education_areas", "education_kind='school'", "education_kind='university'", "area_m2 BETWEEN 5000 AND 500000000"},
-		"../../../osm/attribute-parks-batched.sql": {"ST_Difference(segment.geom,candidate.geom)", "workouts:park_id",
+		"../../../osm/batches/attribute-parks-batched.sql": {"ST_Difference(segment.geom,candidate.geom)", "workouts:park_id",
 			"locality.admin_level=8", "workouts:park_kind", "workouts-explorer/osm-park/v1",
 			"workouts-explorer/osm-state-park/v1", "workouts-explorer/osm-national-park/v1", "ORDER BY candidate.type_priority"},
-		"../../../osm/attribute-education-batched.sql": {"ST_Difference(segment.geom,candidate.geom)",
+		"../../../osm/batches/attribute-education-batched.sql": {"ST_Difference(segment.geom,candidate.geom)",
 			"workouts:education_id", "workouts:education_name", "workouts-explorer/osm-education/v1:"},
-		"../../../osm/attribute-slivers-batched.sql": {"county.admin_level=6", "middle.length_m<=25"},
-		"../../../osm/identity-segments-batched.sql": {"workouts-explorer/osm-attribution-group/v3:", "WHEN segment.normalized_name IS NOT NULL THEN 'named'",
+		"../../../osm/batches/attribute-slivers-batched.sql": {"county.admin_level=6", "middle.length_m<=25"},
+		"../../../osm/batches/identity-segments-batched.sql": {"workouts-explorer/osm-attribution-group/v3:", "WHEN segment.normalized_name IS NOT NULL THEN 'named'",
 			"lower(regexp_replace(btrim(segment.name)"},
-		"../../../osm/identity-components.sql":              {"attribution_identity_branch_nodes", "attribution_identity_branch_classes", "AND edge.unnamed", "edge.left_source_way_id<>edge.right_source_way_id"},
-		"../../../osm/identity-proximity-batched.sql":       {"workouts-explorer/osm-named-road-proximity/v1:", "ST_DWithin(a.geom::geography,candidate.geom::geography,50)", "a.oneway AND candidate.oneway"},
-		"../../../osm/identity-propagate-batched.sql":       {"parent_segment_id", "workouts-explorer/osm-logical-path/v12:group:", "remaining_connected_splits"},
-		"../../../osm/identity-label-overrides-batched.sql": {"attribution_identity_component_overrides", "length_m<=25", "HAVING count(DISTINCT (replacement_group_id,replacement_parent_segment_id))=1"},
-		"../../../osm/identity-rewrite-batched.sql": {"DROP TABLE path_segments", "ALTER TABLE path_segments_rewritten RENAME TO path_segments",
+		"../../../osm/batches/identity-components.sql":              {"attribution_identity_branch_nodes", "attribution_identity_branch_classes", "AND edge.unnamed", "edge.left_source_way_id<>edge.right_source_way_id"},
+		"../../../osm/batches/identity-proximity-batched.sql":       {"workouts-explorer/osm-named-road-proximity/v1:", "ST_DWithin(a.geom::geography,candidate.geom::geography,50)", "a.oneway AND candidate.oneway"},
+		"../../../osm/batches/identity-propagate-batched.sql":       {"parent_segment_id", "workouts-explorer/osm-logical-path/v12:group:", "remaining_connected_splits"},
+		"../../../osm/batches/identity-label-overrides-batched.sql": {"attribution_identity_component_overrides", "length_m<=25", "HAVING count(DISTINCT (replacement_group_id,replacement_parent_segment_id))=1"},
+		"../../../osm/batches/identity-rewrite-batched.sql": {"DROP TABLE path_segments", "ALTER TABLE path_segments_rewritten RENAME TO path_segments",
 			"workouts-explorer/osm-logical-path/v14:", "label_override.replacement_name"},
-		"../../../osm/validate.sql": {"qualifyingParkAreas", "qualifyingNationalParkAreas", "invalidNationalParkAreas",
+		"../../../osm/batches/validate.sql": {"qualifyingParkAreas", "qualifyingNationalParkAreas", "invalidNationalParkAreas",
 			"qualifyingStateParkAreas", "invalidStateParkAreas", "stateParkAttributedSegments",
 			"parkAttributedSegments", "nationalParkAttributedSegments", "attributionIdentityLogicalIdEdges",
 			"attributionIdentityAffectedLogicalIds", "attributionIdentityMergedComponents", "attributionScopeRebasedSegments",
@@ -329,9 +329,9 @@ func TestConnectedAttributionIdentityFixtureContract(t *testing.T) {
 func TestConnectedAttributionIdentityUsesIndexedTopologyAndClass(t *testing.T) {
 	var sql strings.Builder
 	for _, path := range []string{
-		"../../../osm/identity-segments-batched.sql",
-		"../../../osm/identity-edges-batched.sql",
-		"../../../osm/identity-components.sql",
+		"../../../osm/batches/identity-segments-batched.sql",
+		"../../../osm/batches/identity-edges-batched.sql",
+		"../../../osm/batches/identity-components.sql",
 	} {
 		contents, err := os.ReadFile(path)
 		if err != nil {
@@ -371,7 +371,7 @@ func TestConnectedAttributionIdentityUsesIndexedTopologyAndClass(t *testing.T) {
 }
 
 func TestConnectedAttributionValidationUsesRecordedRequiredEdges(t *testing.T) {
-	contents, err := os.ReadFile("../../../osm/validate.sql")
+	contents, err := os.ReadFile("../../../osm/batches/validate.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

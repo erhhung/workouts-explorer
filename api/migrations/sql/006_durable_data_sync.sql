@@ -293,6 +293,7 @@ CREATE TABLE app.account_sync_schedules (
         OR length(lease_worker) BETWEEN 1 AND 200
     ),
     lease_token uuid,
+    lease_source_ids uuid[],
     lease_expires_at timestamptz,
     consecutive_failures integer NOT NULL DEFAULT 0 CHECK (consecutive_failures BETWEEN 0 AND 1000000),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
@@ -304,6 +305,120 @@ CREATE TABLE app.account_sync_schedules (
 );
 
 CREATE INDEX account_sync_schedules_due_idx ON app.account_sync_schedules (next_run_at, account_id);
+
+-- NULL retains the existing interval schedule until the owner selects a daily time.
+ALTER TABLE app.sources ADD COLUMN auto_sync_time text
+    CHECK (auto_sync_time IS NULL OR auto_sync_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$');
+CREATE TABLE app.source_sync_schedules (
+    source_id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES app.accounts(id) ON DELETE CASCADE,
+    local_time text NOT NULL,
+    timezone text NOT NULL,
+    next_run_at timestamptz NOT NULL,
+    FOREIGN KEY (source_id,account_id) REFERENCES app.sources(id,account_id) ON DELETE CASCADE
+);
+CREATE INDEX source_sync_schedules_due_idx ON app.source_sync_schedules(next_run_at,account_id);
+ALTER TABLE app.source_sync_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.source_sync_schedules FORCE ROW LEVEL SECURITY;
+CREATE POLICY source_sync_schedules_private ON app.source_sync_schedules
+    TO workouts_security_owner USING(true) WITH CHECK(true);
+CREATE TRIGGER account_active_api_write BEFORE INSERT OR UPDATE ON app.source_sync_schedules
+    FOR EACH ROW EXECUTE FUNCTION app.require_active_api_account();
+REVOKE ALL ON app.source_sync_schedules FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+GRANT SELECT,INSERT,UPDATE,DELETE ON app.source_sync_schedules TO workouts_security_owner;
+GRANT UPDATE(auto_sync_time) ON app.sources TO workouts_security_owner;
+
+-- +goose StatementBegin
+CREATE FUNCTION app.next_daily_sync_run(local_time text, zone text, after_time timestamptz)
+RETURNS timestamptz LANGUAGE plpgsql STABLE SET search_path=pg_catalog AS $function$
+DECLARE next_time timestamptz;
+BEGIN
+    IF local_time IS NULL OR local_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' OR after_time IS NULL OR NOT isfinite(after_time) THEN
+        RAISE EXCEPTION 'invalid daily sync time' USING ERRCODE='22023';
+    END IF;
+    next_time := (((after_time AT TIME ZONE zone)::date + local_time::time) AT TIME ZONE zone);
+    IF next_time <= after_time THEN
+        next_time := ((((after_time AT TIME ZONE zone)::date + 1) + local_time::time) AT TIME ZONE zone);
+    END IF;
+    RETURN next_time;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.track_source_sync_schedule() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+DECLARE zone text;
+BEGIN
+    IF NEW.auto_sync_time IS NULL THEN RETURN NEW; END IF;
+    IF TG_OP='UPDATE' AND NEW.auto_sync_time IS NOT DISTINCT FROM OLD.auto_sync_time
+       AND NOT (NEW.auto_sync_enabled AND NOT OLD.auto_sync_enabled) THEN RETURN NEW; END IF;
+    -- Serialize time/zone edits before reading the preferred zone, without locking other sources.
+    PERFORM pg_advisory_xact_lock(hashtextextended('source-sync-schedule:'||NEW.account_id::text,0));
+    SELECT COALESCE(preference.timezone,'UTC') INTO zone FROM app.preferences preference WHERE preference.account_id=NEW.account_id;
+    zone := COALESCE(zone,'UTC');
+    INSERT INTO app.source_sync_schedules(source_id,account_id,local_time,timezone,next_run_at)
+    VALUES(NEW.id,NEW.account_id,NEW.auto_sync_time,zone,app.next_daily_sync_run(NEW.auto_sync_time,zone,clock_timestamp()))
+    ON CONFLICT(source_id) DO UPDATE SET local_time=EXCLUDED.local_time,timezone=EXCLUDED.timezone,next_run_at=EXCLUDED.next_run_at;
+    RETURN NEW;
+END;
+$function$;
+-- +goose StatementEnd
+CREATE TRIGGER source_daily_sync_schedule AFTER INSERT OR UPDATE OF auto_sync_time,auto_sync_enabled ON app.sources
+    FOR EACH ROW EXECUTE FUNCTION app.track_source_sync_schedule();
+
+-- +goose StatementBegin
+CREATE FUNCTION app.track_sync_schedule_timezone() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+BEGIN
+    IF NEW.timezone IS NOT DISTINCT FROM OLD.timezone THEN RETURN NEW; END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('source-sync-schedule:'||NEW.account_id::text,0));
+    UPDATE app.source_sync_schedules timer SET timezone=NEW.timezone,
+        next_run_at=app.next_daily_sync_run(timer.local_time,NEW.timezone,clock_timestamp())
+    WHERE timer.account_id=NEW.account_id;
+    RETURN NEW;
+END;
+$function$;
+-- +goose StatementEnd
+CREATE TRIGGER source_daily_sync_timezone AFTER UPDATE OF timezone ON app.preferences
+    FOR EACH ROW EXECUTE FUNCTION app.track_sync_schedule_timezone();
+
+-- +goose StatementBegin
+CREATE FUNCTION app.read_owned_source_sync_time(target_source uuid) RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+    SELECT COALESCE(source.auto_sync_time,
+        to_char(CASE WHEN isfinite(schedule.next_run_at) THEN schedule.next_run_at END
+            AT TIME ZONE COALESCE(preference.timezone,'UTC'),'HH24:MI'),'02:00')
+    FROM app.sources source LEFT JOIN app.account_sync_schedules schedule ON schedule.account_id=source.account_id
+    LEFT JOIN app.preferences preference ON preference.account_id=source.account_id
+    WHERE source.id=target_source AND source.account_id=app.current_account_id() AND source.deleted_at IS NULL
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.set_owned_source_sync_time(target_source uuid,local_time text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+BEGIN
+    IF local_time IS NULL OR local_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' THEN
+        RAISE EXCEPTION 'invalid daily sync time' USING ERRCODE='22023';
+    END IF;
+    UPDATE app.sources SET auto_sync_time=local_time WHERE id=target_source
+        AND account_id=app.current_account_id() AND deleted_at IS NULL;
+    RETURN FOUND;
+END;
+$function$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION app.sync_source_is_leased(target_account uuid,target_source uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+    SELECT EXISTS(SELECT 1 FROM app.account_sync_schedules schedule JOIN app.sources source ON source.account_id=schedule.account_id
+        LEFT JOIN app.source_sync_schedules timer ON timer.source_id=source.id AND timer.account_id=source.account_id
+        WHERE schedule.account_id=target_account AND source.id=target_source AND
+            CASE WHEN schedule.lease_source_ids IS NULL THEN source.auto_sync_time IS NULL
+            ELSE source.id=ANY(schedule.lease_source_ids) AND timer.next_run_at<=statement_timestamp() END)
+$function$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE FUNCTION app.configure_auto_sync_policy (requested_cadence interval, requested_stale_days integer) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
@@ -372,8 +487,9 @@ SET
      WHERE schedule.account_id = target_account_id AND schedule.lease_worker = claiming_worker
        AND schedule.lease_token = current_lease_token AND schedule.lease_expires_at >= clock_timestamp()
        AND account.state = 'active'
-       AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled
-     ORDER BY source.id
+        AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled
+        AND app.sync_source_is_leased(target_account_id,source.id)
+      ORDER BY source.id
 $function$;
 
 -- +goose StatementEnd
@@ -409,12 +525,15 @@ BEGIN
     IF NOT FOUND THEN RETURN; END IF;
     PERFORM set_config('app.account_id', target_account_id::text, true);
     PERFORM 1 FROM app.sources source WHERE source.account_id = target_account_id AND source.deleted_at IS NULL
-      AND source.status = 'connected' AND source.auto_sync_enabled ORDER BY source.id FOR UPDATE;
+      AND source.status = 'connected' AND source.auto_sync_enabled
+      AND app.sync_source_is_leased(target_account_id,source.id) ORDER BY source.id FOR UPDATE;
     SELECT count( * ) INTO eligible_count FROM app.sources source WHERE source.account_id = target_account_id
-      AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled;
+      AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled
+      AND app.sync_source_is_leased(target_account_id,source.id);
     IF eligible_count <> jsonb_array_length(children) OR EXISTS (
         SELECT 1 FROM app.sources source WHERE source.account_id = target_account_id AND source.deleted_at IS NULL
-          AND source.status = 'connected' AND source.auto_sync_enabled AND NOT EXISTS (
+          AND source.status = 'connected' AND source.auto_sync_enabled
+          AND app.sync_source_is_leased(target_account_id,source.id) AND NOT EXISTS (
             SELECT 1 FROM jsonb_array_elements(children) item
              WHERE (item->> 'sourceId')::uuid = source.id AND (item->> 'generation')::bigint = source.generation)
     ) OR EXISTS (SELECT 1 FROM jsonb_array_elements(children) item WHERE
@@ -544,9 +663,17 @@ BEGIN
     IF retry_base < interval '1 second' OR retry_base > interval '5 minutes' THEN
         RAISE EXCEPTION 'invalid scheduler retry delay' USING ERRCODE = '22023';
     END IF;
+    PERFORM 1 FROM app.account_sync_schedules schedule WHERE schedule.account_id=target_account_id
+        AND schedule.lease_worker=claiming_worker AND schedule.lease_token=current_lease_token FOR UPDATE;
+    IF NOT FOUND THEN RETURN false; END IF;
+    UPDATE app.source_sync_schedules timer SET next_run_at=clock_timestamp()+LEAST(
+        retry_base*(power(2::numeric,LEAST(schedule.consecutive_failures,7)+1))::double precision,interval '5 minutes')
+    FROM app.account_sync_schedules schedule WHERE schedule.account_id=target_account_id
+        AND timer.account_id=schedule.account_id AND timer.source_id=ANY(schedule.lease_source_ids)
+        AND timer.next_run_at<=clock_timestamp();
     UPDATE app.account_sync_schedules schedule SET consecutive_failures = LEAST(schedule.consecutive_failures, 999999) + 1,
-      next_run_at = clock_timestamp() + LEAST(retry_base * (power(2::numeric, LEAST(schedule.consecutive_failures, 7) + 1))::double precision, interval '5 minutes'),
-      lease_worker = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = transaction_timestamp() WHERE schedule.account_id = target_account_id
+      next_run_at = CASE WHEN schedule.lease_source_ids IS NOT NULL THEN schedule.next_run_at ELSE clock_timestamp() + LEAST(retry_base * (power(2::numeric, LEAST(schedule.consecutive_failures, 7) + 1))::double precision, interval '5 minutes') END,
+      lease_worker = NULL, lease_token = NULL, lease_expires_at = NULL, lease_source_ids=NULL, updated_at = transaction_timestamp() WHERE schedule.account_id = target_account_id
       AND schedule.lease_worker = claiming_worker AND schedule.lease_token = current_lease_token;
     RETURN FOUND;
 END;
@@ -565,7 +692,12 @@ CREATE FUNCTION app.read_owned_sync_schedule () RETURNS TABLE (
 SET
     search_path = pg_catalog,
     app AS $function$
-    SELECT extract(epoch FROM policy.cadence)::integer, policy.stale_days, schedule.next_run_at, schedule.last_enqueued_at, schedule.last_job_id
+    SELECT extract(epoch FROM policy.cadence)::integer, policy.stale_days,
+        LEAST(CASE WHEN EXISTS(SELECT 1 FROM app.sources source WHERE source.account_id=app.current_account_id()
+            AND source.deleted_at IS NULL AND source.auto_sync_enabled AND source.auto_sync_time IS NULL) THEN schedule.next_run_at END,
+            (SELECT min(timer.next_run_at) FROM app.source_sync_schedules timer JOIN app.sources source ON source.id=timer.source_id AND source.account_id=timer.account_id
+                WHERE timer.account_id=app.current_account_id() AND source.deleted_at IS NULL AND source.auto_sync_enabled)),
+        schedule.last_enqueued_at, schedule.last_job_id
       FROM app.auto_sync_policy policy LEFT JOIN app.account_sync_schedules schedule ON schedule.account_id = app.current_account_id()
      WHERE policy.singleton
 $function$;
@@ -1791,6 +1923,17 @@ ALTER FUNCTION app.release_sync_account (uuid, text, uuid, interval) OWNER TO wo
 
 ALTER FUNCTION app.read_owned_sync_schedule () OWNER TO workouts_security_owner;
 
+ALTER FUNCTION app.next_daily_sync_run(text,text,timestamptz) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.track_source_sync_schedule() OWNER TO workouts_security_owner;
+ALTER FUNCTION app.track_sync_schedule_timezone() OWNER TO workouts_security_owner;
+ALTER FUNCTION app.read_owned_source_sync_time(uuid) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.set_owned_source_sync_time(uuid,text) OWNER TO workouts_security_owner;
+ALTER FUNCTION app.sync_source_is_leased(uuid,uuid) OWNER TO workouts_security_owner;
+REVOKE ALL ON FUNCTION app.next_daily_sync_run(text,text,timestamptz),app.track_source_sync_schedule(),
+    app.track_sync_schedule_timezone(),app.read_owned_source_sync_time(uuid),app.set_owned_source_sync_time(uuid,text),
+    app.sync_source_is_leased(uuid,uuid) FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+GRANT EXECUTE ON FUNCTION app.read_owned_source_sync_time(uuid),app.set_owned_source_sync_time(uuid,text) TO workouts_api;
+
 ALTER FUNCTION app.create_legacy_ingest_read_models () OWNER TO workouts_security_owner;
 
 REVOKE CREATE ON SCHEMA app
@@ -2183,6 +2326,17 @@ DROP FUNCTION app.read_leased_sync_sources (uuid, text, uuid);
 DROP FUNCTION app.claim_due_sync_account (text, uuid, interval, integer);
 
 DROP FUNCTION app.configure_auto_sync_policy (interval, integer);
+
+DROP TRIGGER source_daily_sync_schedule ON app.sources;
+DROP TRIGGER source_daily_sync_timezone ON app.preferences;
+DROP FUNCTION app.track_source_sync_schedule();
+DROP FUNCTION app.track_sync_schedule_timezone();
+DROP FUNCTION app.read_owned_source_sync_time(uuid);
+DROP FUNCTION app.set_owned_source_sync_time(uuid,text);
+DROP FUNCTION app.sync_source_is_leased(uuid,uuid);
+DROP FUNCTION app.next_daily_sync_run(text,text,timestamptz);
+DROP TABLE app.source_sync_schedules;
+ALTER TABLE app.sources DROP COLUMN auto_sync_time;
 
 DROP TABLE app.account_sync_schedules;
 

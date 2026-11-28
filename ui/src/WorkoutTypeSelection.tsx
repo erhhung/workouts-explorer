@@ -95,7 +95,6 @@ export function WorkoutTypeSelection({
           className="map-route-toggle-help"
           portal
           multiline
-          offsetY={-2}
           keyboardFocusOnly
           dismissOnPointerDown
           focusable={false}

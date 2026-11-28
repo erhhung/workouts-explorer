@@ -67,7 +67,8 @@ export function installDialogPixelAlignment(dialog: HTMLElement) {
     watchResolution();
     schedule();
   };
-  const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(schedule);
+  // Resize delivery is before paint; deferring it paints new content at the old position first.
+  const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
   observer?.observe(dialog);
   window.addEventListener("resize", schedule);
   document.fonts?.addEventListener("loadingdone", schedule);

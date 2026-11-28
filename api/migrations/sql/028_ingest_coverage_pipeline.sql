@@ -225,6 +225,29 @@ CREATE TRIGGER workout_import_events_coverage_handoff AFTER INSERT ON app.workou
 FOR EACH ROW EXECUTE FUNCTION app.record_ingest_coverage_handoff();
 
 -- +goose StatementBegin
+CREATE FUNCTION app.lock_coverage_target_jobs(target_account uuid,target_workouts uuid[]) RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+BEGIN
+    IF target_account IS DISTINCT FROM app.current_account_id() OR target_workouts IS NULL
+        OR cardinality(target_workouts) NOT BETWEEN 1 AND 1000 OR array_position(target_workouts,NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'invalid coverage lock targets' USING ERRCODE='22023';
+    END IF;
+    PERFORM 1 FROM app.jobs parent WHERE parent.account_id=target_account AND parent.kind='coverage_update'
+      AND EXISTS(SELECT 1 FROM app.jobs child JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+        WHERE child.parent_job_id=parent.id AND child.account_id=target_account AND context.workout_id=ANY(target_workouts)
+          AND child.status IN('queued','running')) ORDER BY parent.id FOR UPDATE NOWAIT;
+    PERFORM 1 FROM app.jobs child JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+      WHERE child.account_id=target_account AND context.workout_id=ANY(target_workouts) AND child.status IN('queued','running')
+      ORDER BY child.parent_job_id,child.id FOR UPDATE OF child NOWAIT;
+END;
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.lock_coverage_target_jobs(uuid,uuid[]) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.lock_coverage_target_jobs(uuid,uuid[]) FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+
+-- +goose StatementBegin
 CREATE FUNCTION app.enqueue_coverage_update_core(
     target_account_id uuid, new_parent_id uuid, target_region_id text, target_osm_generation bigint,
     target_work_revision bigint, target_rules text, target_sampling text, target_policy text,
@@ -233,10 +256,10 @@ CREATE FUNCTION app.enqueue_coverage_update_core(
 SET search_path = pg_catalog, app AS $function$
 DECLARE target jsonb; additions jsonb := '[]'; actual_parent uuid; existing_parent uuid;
 DECLARE child_id uuid; generations jsonb; capacity integer; needed integer; total integer; old_parent uuid;
-DECLARE seen jsonb := '{}'; workout_key text;
+DECLARE seen jsonb := '{}'; workout_key text; affected_parents uuid[];
 BEGIN
     IF target_account_id IS DISTINCT FROM app.current_account_id() OR new_parent_id IS NULL OR
-       target_region_id IS NULL OR target_region_id !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$' OR
+       target_region_id IS NULL OR target_region_id !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$' OR
        target_osm_generation IS NULL OR target_osm_generation < 1 OR target_work_revision IS NULL OR target_work_revision < 1 OR
        target_rules IS DISTINCT FROM 'coverage-experimental-v1' OR target_sampling IS DISTINCT FROM 'coverage-sampling-experimental-v1' OR
        target_policy IS NULL OR target_policy !~ '^coverage-path-policy-experimental-v[1-9][0-9]*$' OR
@@ -247,9 +270,17 @@ BEGIN
     IF jsonb_array_length(route_targets) NOT BETWEEN 1 AND 1000 OR force_refresh IS NULL THEN
         RAISE EXCEPTION 'invalid coverage target count' USING ERRCODE = '22023';
     END IF;
-    PERFORM 1 FROM app.accounts WHERE id = target_account_id AND state = 'active' FOR UPDATE;
-    IF NOT FOUND THEN RETURN; END IF;
+    IF NOT app.lock_coverage_admission(target_account_id) THEN RETURN; END IF;
     capacity := app.current_coverage_batch_size();
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(route_targets) item WHERE item->>'workoutId' IS NULL
+        OR item->>'workoutId' !~ '^[0-9a-fA-F-]{36}$') THEN
+        RAISE EXCEPTION 'invalid coverage route target' USING ERRCODE='22023';
+    END IF;
+    PERFORM app.lock_coverage_target_jobs(target_account_id,ARRAY(SELECT DISTINCT (value->>'workoutId')::uuid FROM jsonb_array_elements(route_targets)));
+    PERFORM 1 FROM app.workouts WHERE account_id=target_account_id AND id IN(SELECT (value->>'workoutId')::uuid FROM jsonb_array_elements(route_targets))
+        ORDER BY id FOR NO KEY UPDATE NOWAIT;
+    PERFORM 1 FROM app.workout_coverage_states WHERE account_id=target_account_id AND workout_id IN(SELECT (value->>'workoutId')::uuid FROM jsonb_array_elements(route_targets))
+        ORDER BY workout_id FOR NO KEY UPDATE NOWAIT;
     FOR target IN SELECT value FROM jsonb_array_elements(route_targets) LOOP
         IF jsonb_typeof(target) IS DISTINCT FROM 'object' OR (SELECT count(*) FROM jsonb_object_keys(target)) <> 4 OR
            NOT (target ?& ARRAY['jobId','workoutId','routeRevision','generations']) OR
@@ -260,6 +291,9 @@ BEGIN
             RAISE EXCEPTION 'invalid coverage route target' USING ERRCODE = '22023';
         END IF;
         generations := (SELECT jsonb_agg(value ORDER BY value->>'regionId') FROM jsonb_array_elements(target->'generations'));
+        IF NOT app.coverage_processing_ready(generations,target_policy) THEN
+            RAISE EXCEPTION 'updated map processing is required for this matcher' USING ERRCODE='40001';
+        END IF;
         target := jsonb_set(target,'{generations}',generations);
         workout_key := ((target->>'workoutId')::uuid)::text;
         IF seen ? workout_key THEN
@@ -310,7 +344,7 @@ BEGIN
       AND context.sealed_ingest_root_id IS NULL
       AND job.kind = 'coverage_update' AND job.status = 'queued' AND job.retry_of_job_id IS NULL AND job.cancel_requested_at IS NULL
       AND (SELECT count(*) FROM app.jobs child WHERE child.parent_job_id = job.id) + needed <= context.parent_batch_size
-    ORDER BY job.created_at,job.id LIMIT 1 FOR UPDATE OF job;
+    ORDER BY job.created_at,job.id LIMIT 1 FOR UPDATE OF job NOWAIT;
     reused := FOUND;
     IF NOT reused THEN
         actual_parent := new_parent_id;
@@ -324,6 +358,10 @@ BEGIN
         UPDATE app.coverage_job_contexts SET target_work_revision = GREATEST(coverage_job_contexts.target_work_revision,
             enqueue_coverage_update_core.target_work_revision) WHERE coverage_job_contexts.job_id = actual_parent;
     END IF;
+    SELECT array_agg(DISTINCT child.parent_job_id) INTO affected_parents FROM app.jobs child
+      JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+      WHERE child.account_id=target_account_id AND child.status='queued'
+        AND context.workout_id IN(SELECT (value->>'workoutId')::uuid FROM jsonb_array_elements(additions));
     FOR target IN SELECT value FROM jsonb_array_elements(additions) LOOP
         child_id := (target->>'jobId')::uuid; generations := target->'generations';
         UPDATE app.coverage_route_job_contexts context SET result_outcome = 'superseded' FROM app.jobs child
@@ -351,6 +389,7 @@ BEGIN
     UPDATE app.jobs SET progress_total = total WHERE id = actual_parent AND account_id = target_account_id;
     FOR old_parent IN SELECT parent.id FROM app.jobs parent WHERE parent.account_id = target_account_id
         AND parent.kind = 'coverage_update' AND parent.status IN ('queued','running') AND parent.id <> actual_parent
+        AND parent.id=ANY(COALESCE(affected_parents,'{}'::uuid[]))
         AND NOT EXISTS (SELECT 1 FROM app.jobs child WHERE child.parent_job_id = parent.id AND child.status IN ('queued','running'))
     LOOP PERFORM app.derive_parent_status(old_parent); END LOOP;
     job_id := actual_parent; route_count := total; RETURN NEXT;
@@ -538,7 +577,7 @@ BEGIN
         RAISE EXCEPTION 'coverage cleanup authority lost' USING ERRCODE='42501';
     END IF;
     IF target_job_id IS NOT NULL OR NOT app.ingest_coverage_cleanup_due(target_account_id) THEN RETURN 0; END IF;
-    PERFORM 1 FROM app.accounts WHERE id=target_account_id AND state='active' FOR UPDATE NOWAIT;
+    PERFORM 1 FROM app.accounts WHERE id=target_account_id AND state='active' FOR SHARE NOWAIT;
     PERFORM 1 FROM app.coverage_reconciliation_accounts WHERE account_id=target_account_id FOR UPDATE NOWAIT;
     FOR retired IN SELECT handoff.*,source_job.parent_job_id cleanup_root,
         CASE WHEN workout.source_id IS DISTINCT FROM handoff.source_id THEN 'superseded'
@@ -930,7 +969,7 @@ BEGIN
     END IF;
     -- Post-file admission always starts with account, never with a source lock.
     SELECT account.workout_ownership_epoch INTO epoch FROM app.accounts account
-    WHERE account.id = target_account_id AND target_account_id = app.current_account_id() AND account.state = 'active' FOR UPDATE NOWAIT;
+    WHERE account.id = target_account_id AND target_account_id = app.current_account_id() AND account.state = 'active' FOR SHARE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'coverage batch account authority lost' USING ERRCODE = '42501'; END IF;
     IF target_job_id IS NOT NULL THEN
         IF reconciliation_revision IS NOT NULL THEN RAISE EXCEPTION 'ambiguous coverage authority' USING ERRCODE = '42501'; END IF;
@@ -946,16 +985,7 @@ BEGIN
     END IF;
     IF NOT app.adopted_coverage_authority_current(target_account_id,target_job_id,claiming_worker,current_lease_token,reconciliation_revision)
     THEN RAISE EXCEPTION 'coverage batch authority lost' USING ERRCODE = '42501'; END IF;
-    -- Claimers take Coverage parent/child before state. Reserve every active
-    -- parent (including spare coalescing buckets and running targets), then its
-    -- live children, before any workout/state lock. Never wait behind a claimer
-    -- while holding the state it needs; contention rolls back the whole batch.
-    PERFORM 1 FROM app.jobs parent WHERE parent.account_id = target_account_id AND parent.kind = 'coverage_update'
-        AND parent.status IN ('queued','running') ORDER BY parent.id FOR UPDATE NOWAIT;
-    PERFORM 1 FROM app.jobs child JOIN app.jobs parent ON parent.id = child.parent_job_id AND parent.account_id = child.account_id
-        WHERE parent.account_id = target_account_id AND parent.kind = 'coverage_update' AND parent.status IN ('queued','running')
-          AND child.kind = 'coverage_update_route' AND child.status IN ('queued','running')
-        ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT;
+    -- This stage records input/readiness and prepares cohorts; it changes no jobs.
     -- The whole page is one atomic transaction. Sorted locks also cover mixed origins.
     FOR item IN SELECT value FROM jsonb_array_elements(ready) ORDER BY value->>'workoutId' LOOP
         IF jsonb_typeof(item) IS DISTINCT FROM 'object' OR NOT (item ?& ARRAY['workoutId','eventId','origin','contentSha256','routeDigest','ownershipEpoch','readiness','generations'])
@@ -967,7 +997,7 @@ BEGIN
                OR jsonb_typeof(item->'catalogFingerprint') IS DISTINCT FROM 'string'
                OR item->>'catalogFingerprint' !~ '^[0-9a-f]{64}$'
                OR app.valid_coverage_generation_vector(item->'generations') IS DISTINCT FROM true))
-           OR (item->>'readiness' = 'pending' AND item->>'reason' IS DISTINCT FROM 'region_not_active')
+           OR (item->>'readiness' = 'pending' AND (item->>'reason' IS NULL OR item->>'reason' NOT IN ('region_not_active','region_reprocessing_required')))
            OR (item->>'readiness' = 'unavailable' AND item->>'reason' IS DISTINCT FROM 'no_provider_region')
            OR (item->>'readiness' <> 'map_data_ready' AND item->'generations' IS DISTINCT FROM '[]'::jsonb) THEN
             RAISE EXCEPTION 'invalid coverage batch item' USING ERRCODE = '22023';
@@ -975,7 +1005,7 @@ BEGIN
         workout_id := (item->>'workoutId')::uuid; event_id := (item->>'eventId')::uuid;
         parent_job_id := NULL; child_job_id := NULL; outcome := NULL;
         SELECT * INTO workout FROM app.workouts current_workout WHERE current_workout.id = workout_id
-            AND current_workout.account_id = target_account_id FOR UPDATE NOWAIT;
+            AND current_workout.account_id = target_account_id FOR NO KEY UPDATE NOWAIT;
         IF NOT FOUND OR workout.deletion_requested_at IS NOT NULL OR
            workout.content_sha256 IS DISTINCT FROM decode(item->>'contentSha256','hex') OR
            epoch IS DISTINCT FROM (item->>'ownershipEpoch')::bigint OR
@@ -999,7 +1029,7 @@ BEGIN
             RAISE EXCEPTION 'coverage batch route digest changed' USING ERRCODE = '40001';
         END IF;
         SELECT * INTO state FROM app.workout_coverage_states current_state WHERE current_state.account_id = target_account_id
-            AND current_state.workout_id = apply_ingest_coverage_batch.workout_id FOR UPDATE NOWAIT;
+            AND current_state.workout_id = apply_ingest_coverage_batch.workout_id FOR NO KEY UPDATE NOWAIT;
         IF candidate.origin = 'adopted' THEN
             PERFORM 1 FROM app.adopted_workout_coverage_refreshes request WHERE request.account_id = target_account_id
                 AND request.workout_id = apply_ingest_coverage_batch.workout_id AND request.event_id = apply_ingest_coverage_batch.event_id FOR UPDATE NOWAIT;
@@ -1291,7 +1321,7 @@ BEGIN
     IF jsonb_typeof(items) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'invalid coverage defer batch' USING ERRCODE = '22023'; END IF;
     IF jsonb_array_length(items) NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'invalid coverage defer count' USING ERRCODE = '22023'; END IF;
     SELECT account.workout_ownership_epoch INTO epoch FROM app.accounts account
-    WHERE account.id = target_account_id AND target_account_id = app.current_account_id() AND account.state = 'active' FOR UPDATE NOWAIT;
+    WHERE account.id = target_account_id AND target_account_id = app.current_account_id() AND account.state = 'active' FOR SHARE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'coverage defer account authority lost' USING ERRCODE = '42501'; END IF;
     IF target_job_id IS NOT NULL THEN
         IF reconciliation_revision IS NOT NULL THEN RAISE EXCEPTION 'ambiguous coverage authority' USING ERRCODE = '42501'; END IF;
@@ -1470,7 +1500,7 @@ SET search_path = pg_catalog, app AS $function$
 DECLARE builder app.ingest_coverage_builders%ROWTYPE; prepared app.ingest_coverage_prepared%ROWTYPE;
 DECLARE workout app.workouts%ROWTYPE; state app.workout_coverage_states%ROWTYPE;
 DECLARE epoch bigint; vector jsonb; catalog_proof bytea; current_event record; existing record; anchor record;
-DECLARE new_parent uuid; new_child uuid; old_parent uuid; changed boolean:=false; targets integer;
+DECLARE new_parent uuid; new_child uuid; old_parent uuid; changed boolean:=false; targets integer; affected_parents uuid[];
 BEGIN
     IF runtime_version IS NULL OR runtime_version<28 OR runtime_version<
         (SELECT minimum_runtime_version FROM app.schema_metadata WHERE singleton) THEN
@@ -1484,8 +1514,9 @@ BEGIN
         RAISE EXCEPTION 'invalid refreshed cohort count' USING ERRCODE='22023';
     END IF;
     SELECT account.workout_ownership_epoch INTO epoch FROM app.accounts account
-    WHERE account.id=target_account_id AND account.id=app.current_account_id() AND account.state='active' FOR UPDATE NOWAIT;
+    WHERE account.id=target_account_id AND account.id=app.current_account_id() AND account.state='active' FOR SHARE NOWAIT;
     IF NOT FOUND THEN RAISE EXCEPTION 'cohort account authority lost' USING ERRCODE='42501'; END IF;
+    IF NOT app.lock_coverage_admission(target_account_id) THEN RAISE EXCEPTION 'cohort account authority lost' USING ERRCODE='42501'; END IF;
     IF target_job_id IS NOT NULL THEN
         PERFORM app.fence_ingest_job(target_job_id,claiming_worker,current_lease_token,runtime_version);
     ELSE
@@ -1512,17 +1543,15 @@ BEGIN
             AND prepared_item.workout_id=(item->>'workoutId')::uuid AND prepared_item.event_id=(item->>'eventId')::uuid)) THEN
         RAISE EXCEPTION 'prepared cohort snapshot changed' USING ERRCODE='40001';
     END IF;
-    -- Parent/child before workout/state, matching claimers; never wait holding a
-    -- state row for a parent lock. Include terminal canonical targets as well.
-    PERFORM 1 FROM app.jobs parent WHERE parent.account_id=target_account_id AND parent.kind='coverage_update'
-        ORDER BY parent.id FOR UPDATE NOWAIT;
-    PERFORM 1 FROM app.jobs child JOIN app.jobs parent ON parent.id=child.parent_job_id AND parent.account_id=child.account_id
-        WHERE parent.account_id=target_account_id AND parent.kind='coverage_update'
-        ORDER BY parent.id,child.id FOR UPDATE OF child NOWAIT;
+    IF targets>0 THEN PERFORM app.lock_coverage_target_jobs(target_account_id,ARRAY(SELECT item.workout_id FROM app.ingest_coverage_prepared item WHERE item.builder_id=target_builder_id)); END IF;
+    SELECT array_agg(DISTINCT child.parent_job_id) INTO affected_parents FROM app.jobs child
+      JOIN app.coverage_route_job_contexts context ON context.job_id=child.id AND context.account_id=child.account_id
+      WHERE child.account_id=target_account_id AND child.status='queued'
+        AND context.workout_id IN(SELECT item.workout_id FROM app.ingest_coverage_prepared item WHERE item.builder_id=target_builder_id);
     FOR prepared IN SELECT item.* FROM app.ingest_coverage_prepared item WHERE item.builder_id=target_builder_id
         ORDER BY item.workout_id FOR UPDATE NOWAIT LOOP
         SELECT * INTO workout FROM app.workouts current_workout WHERE current_workout.id=prepared.workout_id
-            AND current_workout.account_id=target_account_id FOR UPDATE NOWAIT;
+            AND current_workout.account_id=target_account_id FOR NO KEY UPDATE NOWAIT;
         IF NOT FOUND OR workout.deletion_requested_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM app.sources source
             WHERE source.id=workout.source_id AND source.account_id=target_account_id AND source.deleted_at IS NULL) THEN
             DELETE FROM app.ingest_coverage_prepared item WHERE item.account_id=target_account_id
@@ -1548,7 +1577,7 @@ BEGIN
             changed:=true; CONTINUE;
         END IF;
         SELECT * INTO state FROM app.workout_coverage_states current_state WHERE current_state.account_id=target_account_id
-            AND current_state.workout_id=prepared.workout_id FOR UPDATE NOWAIT;
+            AND current_state.workout_id=prepared.workout_id FOR NO KEY UPDATE NOWAIT;
         IF NOT FOUND OR state.route_input_revision IS DISTINCT FROM prepared.route_input_revision
             OR state.route_input_sha256 IS DISTINCT FROM prepared.route_input_sha256 OR state.readiness_state<>'map_data_ready' THEN
             DELETE FROM app.ingest_coverage_prepared item WHERE item.account_id=target_account_id AND item.workout_id=prepared.workout_id;
@@ -1616,7 +1645,7 @@ BEGIN
     INSERT INTO app.coverage_job_progress(job_id,account_id,routes_total) VALUES(new_parent,target_account_id,targets);
     DELETE FROM app.ingest_coverage_builders current_builder WHERE current_builder.builder_id=target_builder_id;
     FOR old_parent IN SELECT parent.id FROM app.jobs parent WHERE parent.account_id=target_account_id
-        AND parent.kind='coverage_update' AND parent.status IN ('queued','running') AND parent.id<>new_parent
+        AND parent.kind='coverage_update' AND parent.status IN ('queued','running') AND parent.id=ANY(COALESCE(affected_parents,'{}'::uuid[])) AND parent.id<>new_parent
         AND NOT EXISTS (SELECT 1 FROM app.jobs child WHERE child.parent_job_id=parent.id AND child.status IN ('queued','running'))
     LOOP PERFORM app.derive_parent_status(old_parent); END LOOP;
     IF NOT app.adopted_coverage_authority_current(target_account_id,target_job_id,claiming_worker,current_lease_token,reconciliation_revision) THEN

@@ -396,6 +396,12 @@ lock before account/workout/focused-membership FKs.
 - Coverage Route runs outcome text uses sentence capitalization, for example
   `Applied / 16,487 ms`, `No evidence / 250 ms`, `No result / 29,854 ms` and
   `Processing`. This is display formatting; stored outcome values are unchanged.
+- Promotion discovery prioritizes missing-generation candidates from the private
+  region-membership index before the account's ordinary scan. The index is a hint:
+  authoritative input/readiness/ownership checks still run. Priority work has a
+  separate cursor and cannot advance the ordinary checkpoint. Brief selection-write
+  lock conflicts retry without repeated GPS reads; persistent 55P03 contention uses
+  a one-minute campaign backoff instead of the general five-minute failure delay.
 - Retry construction copies only eligible failed/canceled predecessors and
   inherits capacity and lineage. Spare retry capacity never accepts normal work:
   three eligible failures under B=25 stay a three-route retry; 25 fresh routes

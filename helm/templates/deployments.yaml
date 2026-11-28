@@ -73,6 +73,13 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
+      {{- with .Values.osm.regionUpdates.storageMetrics }}
+      {{- if and .enabled .prometheusServiceIP .prometheusURL }}
+      hostAliases:
+        - ip: {{ .prometheusServiceIP | quote }}
+          hostnames: [{{ (urlParse .prometheusURL).hostname | quote }}]
+      {{- end }}
+      {{- end }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -96,6 +103,10 @@ spec:
             - {name: OSM_DATA_PROVIDERS_JSON, value: {{ mustToJson .Values.osm.dataProviders | quote }}}
             - {name: OSM_CATALOG_REFRESH_ENABLED, value: {{ .Values.osm.catalogRefresh.enabled | quote }}}
             - {name: OSM_REGION_UPDATES_ENABLED, value: {{ .Values.osm.regionUpdates.enabled | quote }}}
+            - {name: OSM_STORAGE_METRICS_ENABLED, value: {{ .Values.osm.regionUpdates.storageMetrics.enabled | quote }}}
+            - {name: OSM_PROMETHEUS_URL, value: {{ .Values.osm.regionUpdates.storageMetrics.prometheusURL | default "" | quote }}}
+            - {name: OSM_STORAGE_SELECTOR_LABELS_JSON, value: {{ mustToJson .Values.osm.regionUpdates.storageMetrics.selectorLabels | quote }}}
+            - {name: OSM_STORAGE_DATABASE_NAMES_JSON, value: {{ mustToJson .Values.osm.regionUpdates.storageMetrics.databaseNames | quote }}}
             {{- if .Values.api.coverageDiagnostics.enabled }}
             - name: API_OSM_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ required "api.coverageDiagnostics.databaseSecret.name is required" .Values.api.coverageDiagnostics.databaseSecret.name }}, key: {{ required "api.coverageDiagnostics.databaseSecret.key is required" .Values.api.coverageDiagnostics.databaseSecret.key }}}}
@@ -169,7 +180,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
-            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ include "workouts.otel.endpoint" . | quote }}}
             - name: POD_UID
               valueFrom: {fieldRef: {fieldPath: metadata.uid}}
             - name: OTEL_RESOURCE_ATTRIBUTES
@@ -237,7 +248,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           env:
             - {name: LOG_FORMAT, value: {{ .Values.logging.format | quote }} }
-            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otel.endpoint | quote }}}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ include "workouts.otel.endpoint" . | quote }}}
             - name: POD_UID
               valueFrom: {fieldRef: {fieldPath: metadata.uid}}
             - name: OTEL_RESOURCE_ATTRIBUTES

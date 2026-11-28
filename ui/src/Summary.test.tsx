@@ -133,6 +133,87 @@ function aggregatePointerTargets(card: HTMLElement) {
 }
 
 describe("Summary", () => {
+  test("reveals totals only after first visible load, and again when a retained tab returns", async () => {
+    let release!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).startsWith("/api/summary?")
+        ? new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve(json(workoutPage())),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const view = (active: boolean) => (
+      <QueryClientProvider client={client}>
+        <RetainedTab id="/" active={active}>
+          <Summary preferences={preferences} csrfToken="csrf" onDateRangeSaved={vi.fn()} />
+        </RetainedTab>
+      </QueryClientProvider>
+    );
+    const rendered = render(view(false));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    rendered.rerender(view(true));
+    await screen.findByText("Loading range totals...");
+    expect(document.querySelector(".aggregate-grid")).toBeNull();
+    await act(async () => release(json(summary)));
+    await waitFor(() =>
+      expect(document.querySelector(".aggregate-grid")).toHaveClass("is-revealing"),
+    );
+    const grid = document.querySelector(".aggregate-grid")!;
+    const card = grid.querySelector(".aggregate-card")!;
+    rendered.rerender(view(false));
+    expect(grid).not.toHaveClass("is-revealing");
+    act(() =>
+      client.setQueryData(
+        ["summary", "last30Days", preferences.timezone, preferences.firstWeekday],
+        {
+          ...summary,
+          totals: { ...totals, count: 3 },
+        },
+      ),
+    );
+    expect(grid).not.toHaveClass("is-revealing");
+    rendered.rerender(view(true));
+    await waitFor(() => expect(grid).toHaveClass("is-revealing"));
+    expect(document.querySelector(".aggregate-grid")).toBe(grid);
+    expect(grid.querySelector(".aggregate-card")).toBe(card);
+    expect(card.querySelector("strong")).toHaveTextContent("3");
+  });
+
+  test("replays the totals reveal after a successful refresh without remounting focused cards", async () => {
+    let release!: (response: Response) => void;
+    let requests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (!String(input).startsWith("/api/summary?")) return Promise.resolve(json(workoutPage()));
+      if (++requests === 1) return Promise.resolve(json(summary));
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+    const { client } = renderSummary();
+    await waitFor(() =>
+      expect(document.querySelector(".aggregate-grid")).toHaveClass("is-revealing"),
+    );
+    const grid = document.querySelector(".aggregate-grid")!;
+    const button = grid.querySelector<HTMLButtonElement>(".aggregate-card > button")!;
+    button.focus();
+    act(() => {
+      void client.invalidateQueries({ queryKey: ["summary"] });
+    });
+    await waitFor(() => expect(grid).toHaveAttribute("aria-busy", "true"));
+    expect(grid).not.toHaveClass("is-revealing");
+    expect(grid).toHaveClass("is-refetching");
+    await act(async () => release(json({ ...summary, totals: { ...totals, count: 4 } })));
+    await waitFor(() => expect(grid).toHaveAttribute("aria-busy", "false"));
+    expect(grid).toHaveClass("is-revealing");
+    expect(document.querySelector(".aggregate-grid")).toBe(grid);
+    expect(grid.querySelector(".aggregate-card > button")).toBe(button);
+    expect(button).toHaveFocus();
+    expect(button.querySelector("strong")).toHaveTextContent("4");
+  });
+
   test("a superseded column popup cannot restore focus over its replacement", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       Promise.resolve(json(String(input).startsWith("/api/summary?") ? summary : workoutPage())),
@@ -306,7 +387,7 @@ describe("Summary", () => {
     const row = trigger.closest("tr");
     const user = userEvent.setup();
     await user.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "Show on map" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "View on map" })).toBeVisible();
     const replacement: Workout = {
       ...workout,
       id: "C".repeat(32),
@@ -318,7 +399,7 @@ describe("Summary", () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.queryByRole("menuitem", { name: "Show on map" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("menuitem", { name: "View on map" })).not.toBeInTheDocument(),
     );
     const nextTrigger = screen.getAllByRole("button", {
       name: "Actions for Walking on 2026-08-05",
@@ -326,7 +407,7 @@ describe("Summary", () => {
     expect(nextTrigger.closest("tr")).toBe(row);
     expect(trigger).not.toBeInTheDocument();
     await user.click(nextTrigger);
-    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    await user.click(screen.getByRole("menuitem", { name: "View on map" }));
     expect(showOnMap).toHaveBeenCalledExactlyOnceWith(replacement.id);
   });
 
@@ -821,7 +902,9 @@ describe("Summary", () => {
     expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("range-dialog-action");
     await user.type(startDate, "2026-08-05");
     await user.tab();
-    expect(endDate).toHaveValue("2026-08-05");
+    expect(
+      endDate.closest(".date-input-control")!.querySelector("[data-date-canonical]"),
+    ).toHaveValue("2026-08-05");
     await user.clear(endDate);
     await user.type(endDate, "2026-08-01");
     await user.click(screen.getByRole("button", { name: "Apply" }));
@@ -884,7 +967,9 @@ describe("Summary", () => {
       expect(endDate).toHaveValue(end);
       await user.tab();
       expect(endDate).toHaveFocus();
-      expect(endDate).toHaveValue(expected);
+      expect(
+        endDate.closest(".date-input-control")!.querySelector("[data-date-canonical]"),
+      ).toHaveValue(expected);
     },
   );
 
@@ -1668,9 +1753,11 @@ describe("Summary", () => {
       .getAllByRole("row")[1]
       .querySelector<HTMLElement>(".workout-cell--calories")!;
     expect(calorieCell.querySelector(".tooltip-trigger")).toHaveTextContent("451");
-    expect(calorieCell.querySelector(".tooltip-content")).toHaveTextContent(
-      "451 kcal total | 400 kcal active",
-    );
+    expect(
+      document.getElementById(
+        calorieCell.querySelector(".tooltip-trigger")!.getAttribute("aria-describedby")!,
+      ),
+    ).toHaveTextContent("451 kcal total | 400 kcal active");
 
     const energyCard = screen.getByRole("button", { name: /Energy.*By workout type/ });
     expect(energyCard).toHaveTextContent("451 kcal");
@@ -1687,9 +1774,11 @@ describe("Summary", () => {
       .getByText("Calories")
       .closest("div")!;
     expect(calorieDetail.querySelector(".tooltip-trigger")).toHaveTextContent("451");
-    expect(calorieDetail.querySelector(".tooltip-content")).toHaveTextContent(
-      "451 kcal total | 400 kcal active",
-    );
+    expect(
+      document.getElementById(
+        calorieDetail.querySelector(".tooltip-trigger")!.getAttribute("aria-describedby")!,
+      ),
+    ).toHaveTextContent("451 kcal total | 400 kcal active");
   });
 
   test("shows total calories, rounded heart rate, split pace, and elevation details", async () => {
@@ -2393,7 +2482,7 @@ describe("Summary", () => {
     expect(trigger).toHaveFocus();
   });
 
-  test("puts Show on map first for routed workouts and passes the compact workout ID", async () => {
+  test("puts View on map first for routed workouts and passes the compact workout ID", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       String(input).startsWith("/api/summary?")
         ? Promise.resolve(json(summary))
@@ -2407,13 +2496,13 @@ describe("Summary", () => {
     )[0];
     await user.click(trigger);
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "Show on map",
+      "View on map",
       "View provenance",
       "Export GeoJSON",
       "Export points",
       "Delete workout",
     ]);
-    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    await user.click(screen.getByRole("menuitem", { name: "View on map" }));
     expect(showOnMap).toHaveBeenCalledWith(workout.id);
   });
 

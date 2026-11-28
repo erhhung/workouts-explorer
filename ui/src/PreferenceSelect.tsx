@@ -10,6 +10,7 @@ export function PreferenceSelect({
   value,
   onValueChange,
   disabled,
+  compact = false,
 }: {
   label: string;
   id: string;
@@ -19,6 +20,7 @@ export function PreferenceSelect({
   value?: string;
   onValueChange?: (value: string) => void;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [height, setHeight] = useState(0);
@@ -50,7 +52,7 @@ export function PreferenceSelect({
         </Select.Trigger>
         <Select.Portal>
           <Select.Content
-            className="preference-select-content"
+            className={`preference-select-content${compact ? " preference-select-content--compact" : ""}`}
             position="popper"
             side="bottom"
             align="start"
@@ -73,7 +75,9 @@ export function PreferenceSelect({
                   className="preference-select-option"
                 >
                   <Select.ItemText>{option.label}</Select.ItemText>
-                  <Select.ItemIndicator aria-hidden="true">&#10003;</Select.ItemIndicator>
+                  {!compact && (
+                    <Select.ItemIndicator aria-hidden="true">&#10003;</Select.ItemIndicator>
+                  )}
                 </Select.Item>
               ))}
             </Select.Viewport>

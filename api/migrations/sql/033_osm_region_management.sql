@@ -148,6 +148,81 @@ REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
 REVOKE ALL ON FUNCTION app.admin_osm_region_workout_counts(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.admin_osm_region_workout_counts(uuid) TO workouts_api;
 GRANT SELECT ON app.osm_region_catalog TO workouts_security_owner;
+
+-- Keep the original three-column counts ABI for older callers. Only confirmed,
+-- current negative selection proofs contribute to the missing-map breakdown.
+-- +goose StatementBegin
+CREATE FUNCTION app.admin_osm_region_workout_progress(admin_session uuid)
+RETURNS TABLE(region_id text,workout_count bigint,coverage_route_count bigint,missing_region_route_count bigint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+    SELECT totals.region_id,totals.workout_count,totals.coverage_route_count,
+      CASE WHEN totals.coverage_route_count<totals.workout_count AND catalog.payload->>'buildId' IS NOT NULL THEN (
+        SELECT count(*) FROM app.osm_region_workouts member JOIN app.workouts workout ON workout.id=member.workout_id
+        JOIN app.accounts account ON account.id=workout.account_id AND account.state='active'
+        JOIN app.sources source ON source.id=workout.source_id AND source.account_id=workout.account_id
+        JOIN app.workout_coverage_states state ON state.workout_id=workout.id AND state.account_id=workout.account_id
+        LEFT JOIN app.coverage_route_changes change ON change.workout_id=workout.id AND change.account_id=workout.account_id
+        WHERE member.region_id=totals.region_id AND workout.deletion_requested_at IS NULL
+          AND state.readiness_state IN('pending','unavailable')
+          AND app.coverage_selection_metadata(workout.account_id,workout.id)->>'readiness' IN('pending','unavailable')
+          AND NOT COALESCE(state.applied_route_input_revision=state.route_input_revision
+            AND state.applied_route_input_sha256=state.route_input_sha256
+            AND state.applied_generations @> jsonb_build_array(jsonb_build_object('regionId',totals.region_id,'generation',(catalog.payload->>'buildId')::bigint))
+            AND COALESCE(change.mutation_version,0)<=COALESCE(change.resolved_version,0)
+            AND EXISTS(SELECT 1 FROM app.coverage_applied_match_proofs proof WHERE proof.account_id=workout.account_id AND proof.workout_id=workout.id
+                AND proof.route_input_revision=state.route_input_revision AND proof.route_input_sha256=state.route_input_sha256
+                AND proof.generations @> jsonb_build_array(jsonb_build_object('regionId',totals.region_id,'generation',(catalog.payload->>'buildId')::bigint))),false)
+      ) ELSE 0::bigint END
+    FROM app.admin_osm_region_workout_counts(admin_session) totals
+    JOIN app.osm_region_catalog catalog ON catalog.id=totals.region_id
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.admin_osm_region_workout_progress(uuid) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.admin_osm_region_workout_progress(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.admin_osm_region_workout_progress(uuid) TO workouts_api;
+
+-- Region membership prioritizes discovery, never authorizes a matching result.
+-- The ordinary scan remains responsible for routes absent from this derived index.
+-- +goose StatementBegin
+CREATE FUNCTION app.read_priority_coverage_reconciliation_routes(target_account uuid,revision bigint,worker text,lease uuid,
+    after_workout uuid,page_limit integer)
+RETURNS TABLE(workout_id uuid,route_input_revision bigint,route_input_sha256 bytea)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+    SELECT workout.id,COALESCE(state.route_input_revision,0),state.route_input_sha256
+    FROM app.coverage_reconciliation_accounts reconciliation
+    JOIN app.workouts workout ON workout.account_id=reconciliation.account_id
+    JOIN app.sources source ON source.id=workout.source_id AND source.account_id=workout.account_id AND source.deleted_at IS NULL
+    JOIN app.workout_routes route ON route.workout_id=workout.id AND route.account_id=workout.account_id
+    LEFT JOIN app.workout_coverage_states state ON state.workout_id=workout.id AND state.account_id=workout.account_id
+    LEFT JOIN app.coverage_route_changes change ON change.workout_id=workout.id AND change.account_id=workout.account_id
+    WHERE reconciliation.account_id=target_account AND target_account=app.current_account_id()
+      AND reconciliation.scan_required AND page_limit BETWEEN 1 AND 100
+      AND app.adopted_coverage_authority_current(target_account,NULL,worker,lease,revision)
+      AND workout.deletion_requested_at IS NULL AND (after_workout IS NULL OR workout.id>after_workout)
+      AND (change.mutation_version IS NULL OR change.mutation_version<=change.resolved_version OR change.next_attempt_at<=clock_timestamp())
+      AND NOT EXISTS(SELECT 1 FROM app.ingest_coverage_handoffs handoff WHERE handoff.account_id=workout.account_id
+          AND handoff.workout_id=workout.id AND handoff.acknowledged_at IS NULL)
+      AND EXISTS(SELECT 1 FROM app.osm_region_workouts member CROSS JOIN app.coverage_reconciliation_state catalog
+          WHERE member.workout_id=workout.id AND catalog.singleton AND catalog.active_heads ? member.region_id
+          AND NOT (COALESCE(state.applied_route_input_revision=state.route_input_revision
+              AND state.applied_route_input_sha256=state.route_input_sha256
+              AND state.applied_generations @> jsonb_build_array(jsonb_build_object('regionId',member.region_id,'generation',(catalog.active_heads->>member.region_id)::bigint)),false)
+            AND COALESCE(change.mutation_version,0)<=COALESCE(change.resolved_version,0)
+            AND EXISTS(SELECT 1 FROM app.coverage_applied_match_proofs proof WHERE proof.account_id=workout.account_id AND proof.workout_id=workout.id
+              AND proof.route_input_revision=state.route_input_revision AND proof.route_input_sha256=state.route_input_sha256
+              AND proof.generations @> jsonb_build_array(jsonb_build_object('regionId',member.region_id,'generation',(catalog.active_heads->>member.region_id)::bigint)))))
+      AND app.coverage_route_actionable(workout.account_id,workout.id)
+    ORDER BY workout.id LIMIT LEAST(page_limit,100)
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.read_priority_coverage_reconciliation_routes(uuid,bigint,text,uuid,uuid,integer) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.read_priority_coverage_reconciliation_routes(uuid,bigint,text,uuid,uuid,integer) FROM PUBLIC,workouts_api,workouts_worker;
+GRANT EXECUTE ON FUNCTION app.read_priority_coverage_reconciliation_routes(uuid,bigint,text,uuid,uuid,integer) TO workouts_coverage_worker;
+
 REVOKE ALL ON app.osm_catalog_refresh_jobs,app.osm_provider_catalogs,app.osm_region_catalog FROM PUBLIC;
 GRANT SELECT ON app.osm_catalog_refresh_jobs,app.osm_provider_catalogs,app.osm_region_catalog TO workouts_api,workouts_worker;
 GRANT INSERT(id,administrator_id,providers) ON app.osm_catalog_refresh_jobs TO workouts_api;
@@ -247,7 +322,7 @@ BEGIN
                 AND OLD.storage_policy_execution_hash IS DISTINCT FROM NEW.execution_hash) THEN
                 RAISE EXCEPTION 'region processing storage policy is fixed during an execution';
             END IF;
-            PERFORM 1 FROM app.osm_processing_settings WHERE singleton AND monitor_database_storage=NEW.monitor_database_storage AND revision=NEW.storage_policy_revision FOR SHARE;
+            PERFORM 1 FROM app.osm_processing_settings WHERE singleton AND (monitor_database_storage OR NOT NEW.monitor_database_storage) AND revision=NEW.storage_policy_revision FOR SHARE;
             IF NOT FOUND THEN RAISE EXCEPTION 'storage policy does not match current processing settings'; END IF;
         END IF;
     ELSE
@@ -422,6 +497,7 @@ BEGIN
     operation:=job.operation;
     IF event->>'type'='read' AND job.intent='run' AND operation<>'delete' AND job.storage_policy_execution_hash IS DISTINCT FROM job.execution_hash THEN
         SELECT monitor_database_storage,revision INTO monitor,policy_revision FROM app.osm_processing_settings WHERE singleton FOR SHARE;
+        monitor:=monitor AND COALESCE((event->>'storageMetricsConfigured')::boolean,true);
         UPDATE app.osm_region_updates SET monitor_database_storage=monitor,storage_policy_revision=policy_revision,storage_policy_execution_hash=execution_hash WHERE id=target;
         INSERT INTO app.osm_region_update_events(update_id,event_type,outcome) VALUES(target,'osm.storage_policy_applied',CASE WHEN monitor THEN 'enabled' ELSE 'disabled' END);
     END IF;

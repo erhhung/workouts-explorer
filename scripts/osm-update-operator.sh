@@ -36,7 +36,7 @@ if [[ $# -ne 0 ]]; then
   exit 2
 fi
 
-for command in kubectl envsubst jq curl; do
+for command in kubectl envsubst jq; do
   command -v "$command" >/dev/null || { printf 'required command not found: %s\n' "$command" >&2; exit 1; }
 done
 
@@ -54,11 +54,22 @@ OSM_MAX_DOWNLOAD_BYTES=${OSM_MAX_DOWNLOAD_BYTES:-1073741824}
 OSM_OPERATOR=${OSM_OPERATOR:-${USER:-unknown}}
 
 template=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/osm/manual-update-job.yaml
-OSM_PROMETHEUS_SERVICE_IP=$(kubectl --context "$PROMETHEUS_KUBE_CONTEXT" -n monitoring \
-  get service prometheus-stack-prometheus -o jsonpath='{.spec.clusterIP}')
-if [[ -z "$OSM_PROMETHEUS_SERVICE_IP" || "$OSM_PROMETHEUS_SERVICE_IP" == "None" ]]; then
-  printf 'Unable to discover the Prometheus Service ClusterIP from context %s.\n' "$PROMETHEUS_KUBE_CONTEXT" >&2
-  exit 1
+OSM_STORAGE_METRICS_ENABLED=${OSM_STORAGE_METRICS_ENABLED:-false}
+OSM_PROMETHEUS_URL=${OSM_PROMETHEUS_URL:-}
+OSM_PROMETHEUS_SERVICE_IP=${OSM_PROMETHEUS_SERVICE_IP:-}
+OSM_STORAGE_AVAILABLE_METRIC=${OSM_STORAGE_AVAILABLE_METRIC:-kubelet_volume_stats_available_bytes}
+OSM_STORAGE_CAPACITY_METRIC=${OSM_STORAGE_CAPACITY_METRIC:-kubelet_volume_stats_capacity_bytes}
+OSM_STORAGE_SELECTOR_LABELS_JSON=${OSM_STORAGE_SELECTOR_LABELS_JSON:-'{"namespace":"postgresql","persistentvolumeclaim":"data-postgresql-postgresql-0"}'}
+OSM_MONITOR_DATABASE_STORAGE=${OSM_MONITOR_DATABASE_STORAGE:-true}
+if [[ "$OSM_STORAGE_METRICS_ENABLED" == true && -n "$OSM_PROMETHEUS_URL" ]]; then
+  command -v curl >/dev/null || { printf 'required command not found: curl\n' >&2; exit 1; }
+fi
+OSM_PROMETHEUS_HOST_ALIASES='[]'
+if [[ "$OSM_STORAGE_METRICS_ENABLED" == true && -n "$OSM_PROMETHEUS_SERVICE_IP" && -n "$OSM_PROMETHEUS_URL" ]]; then
+  metrics_host=${OSM_PROMETHEUS_URL#*://}
+  metrics_host=${metrics_host%%/*}
+  metrics_host=${metrics_host%%:*}
+  OSM_PROMETHEUS_HOST_ALIASES=$(jq -cn --arg ip "$OSM_PROMETHEUS_SERVICE_IP" --arg host "$metrics_host" '[{ip:$ip,hostnames:[$host]}]')
 fi
 
 PYGMENT_STYLE=${PYGMENT_STYLE:-gruvbox-dark}
@@ -86,6 +97,8 @@ printf '  PROMETHEUS_SERVICE_IP="%s" ("%s" context)\n' "$OSM_PROMETHEUS_SERVICE_
 export OSM_UPDATE_IMAGE OSM_REGION_ID OSM_IMAGE_PULL_SECRET OSM_DATABASE_SECRET
 export OSM_DATABASE_KEY OSM_DATABASE_TLS_SECRET OSM_MAX_DOWNLOAD_BYTES OSM_OPERATOR
 export OSM_PROMETHEUS_SERVICE_IP
+export OSM_PROMETHEUS_HOST_ALIASES OSM_STORAGE_METRICS_ENABLED OSM_PROMETHEUS_URL
+export OSM_STORAGE_AVAILABLE_METRIC OSM_STORAGE_CAPACITY_METRIC OSM_STORAGE_SELECTOR_LABELS_JSON OSM_MONITOR_DATABASE_STORAGE
 
 job_name=""
 job_persistent=false
@@ -127,6 +140,7 @@ launch_job() {
 
   export OSM_JOB_SUFFIX=$suffix OSM_UPDATE_ACTION=$action OSM_GENERATION_ID=$build
   export OSM_RESUME_GENERATION_ID=$build OSM_OPERATOR_NOTE=$note OSM_ABORT_REASON=$reason
+  export OSM_BUILD_ID=$build OSM_RESUME_BUILD_ID=$build
   export OSM_RESOURCE_REQUEST_EPHEMERAL_STORAGE OSM_RESOURCE_LIMIT_EPHEMERAL_STORAGE
   envsubst < "$template" | kubectl --context "$KUBE_CONTEXT" -n "$OSM_NAMESPACE" apply -f - >/dev/null
   job_name="osm-update-${suffix}"
@@ -187,14 +201,20 @@ probe_status() {
 }
 
 prometheus_query() {
-  local query=$1 output delay
+  local query=$1 output delay authority host port
+  [[ "$OSM_STORAGE_METRICS_ENABLED" == true && -n "$OSM_PROMETHEUS_URL" ]] || return 1
+  local resolve=()
+  if [[ -n "$OSM_PROMETHEUS_SERVICE_IP" ]]; then
+    authority=${OSM_PROMETHEUS_URL#*://}; authority=${authority%%/*}; host=${authority%%:*}
+    port=${authority##*:}; if [[ "$port" == "$authority" ]]; then port=443; if [[ "$OSM_PROMETHEUS_URL" == http://* ]]; then port=80; fi; fi
+    resolve=(--resolve "${host}:${port}:${OSM_PROMETHEUS_SERVICE_IP}")
+  fi
   for delay in 0 5 10; do
     if ((delay > 0)); then
       sleep "$delay"
     fi
     if output=$(curl -GsS --fail --max-time 15 \
-      --resolve "prometheus-stack-prometheus.monitoring.svc.cluster.local:9090:${OSM_PROMETHEUS_SERVICE_IP}" \
-        'https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/query' \
+      "${resolve[@]}" "${OSM_PROMETHEUS_URL%/}/api/v1/query" \
       --data-urlencode "query=${query}" 2>/dev/null); then
       if jq -e '.status == "success" and .data.resultType == "vector"' >/dev/null <<<"$output"; then
         printf '%s' "$output"
@@ -206,23 +226,13 @@ prometheus_query() {
 }
 
 postgres_primary_storage() {
-  local primary_result primary_count namespace pod node pvc available_result capacity_result
+  local selector available_result capacity_result
   local available capacity available_gib capacity_gib percent
-
-  primary_result=$(prometheus_query 'pg_replication_is_replica') || return 1
-  primary_count=$(jq '[.data.result[] | select((.value[1] | tonumber) == 0)] | length' <<< "$primary_result")
-  [[ "$primary_count" == 1 ]] || return 1
-
-  namespace=$(jq -r '.data.result[] | select((.value[1] | tonumber) == 0) | .metric.namespace' <<< "$primary_result")
-  pod=$(jq -r '.data.result[] | select((.value[1] | tonumber) == 0) | .metric.pod' <<< "$primary_result")
-  [[ -n "$namespace" && "$namespace" != null && -n "$pod" && "$pod" != null ]] || return 1
-
-  node=$(kubectl --context "$PROMETHEUS_KUBE_CONTEXT" -n "$namespace" \
-    get pod "$pod" -o jsonpath='{.spec.nodeName}' 2>/dev/null) || return 1
-  pvc="data-${pod}"
-  available_result=$(prometheus_query "kubelet_volume_stats_available_bytes{namespace=\"${namespace}\",persistentvolumeclaim=\"${pvc}\"}") || return 1
+  if [[ "$OSM_STORAGE_METRICS_ENABLED" != true || -z "$OSM_PROMETHEUS_URL" ]]; then printf '\nDatabase storage metrics disabled.\n'; return 0; fi
+  selector=$(jq -r 'to_entries|sort_by(.key)|map(.key+"="+(.value|tojson))|join(",")' <<< "$OSM_STORAGE_SELECTOR_LABELS_JSON") || return 1
+  available_result=$(prometheus_query "${OSM_STORAGE_AVAILABLE_METRIC}{${selector}}") || return 1
   [[ $(jq '.data.result | length' <<< "$available_result") == 1 ]] || return 1
-  capacity_result=$(prometheus_query "kubelet_volume_stats_capacity_bytes{namespace=\"${namespace}\",persistentvolumeclaim=\"${pvc}\"}") || return 1
+  capacity_result=$(prometheus_query "${OSM_STORAGE_CAPACITY_METRIC}{${selector}}") || return 1
   [[ $(jq '.data.result | length' <<< "$capacity_result") == 1 ]] || return 1
 
   available=$(jq -r '.data.result[0].value[1] | tonumber | floor' <<< "$available_result")
@@ -232,10 +242,9 @@ postgres_primary_storage() {
   available_gib=$(jq -nr --argjson bytes "$available" '$bytes / 1073741824 * 100 | round / 100')
    capacity_gib=$(jq -nr --argjson bytes  "$capacity" '$bytes / 1073741824 * 100 | round / 100')
   percent=$(jq -nr --argjson available "$available" --argjson capacity "$capacity" '$available * 100 / $capacity | floor')
-  printf '\nPostgreSQL primary storage:\n'
+  printf '\nConfigured PostgreSQL storage:\n'
   {
-  printf '  Pod: %s (%s)\n' "$pod" "$node"
-  printf '  PVC: %s\n' "$pvc"
+  printf '  Selector: %s\n' "$selector"
   printf '  Capacity: %s GiB\n' "$capacity_gib"
   printf '  Free: %s GiB (%s%%)\n' "$available_gib" "$percent"
   } | colorize yaml github-dark

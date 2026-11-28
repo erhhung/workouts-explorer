@@ -4980,7 +4980,7 @@ func TestEducationCoverageIdentityReads(t *testing.T) {
 }
 
 func TestCoverageFacilityKindsReads(t *testing.T) {
-	// Education kinds come from osm/validate.sql; park kinds also have a CHECK
+	// Education kinds come from osm/batches/validate.sql; park kinds also have a CHECK
 	// constraint in migration 018. Named roads and regional park paths stay paths.
 	for _, kind := range []string{"school", "college", "university", "education",
 		"local_park", "nature_reserve", "protected_area", "state_park", "national_park"} {

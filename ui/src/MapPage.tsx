@@ -45,13 +45,14 @@ import {
   type WorkoutColumn,
   type WorkoutSort,
 } from "./api";
-import { formatDateOnly } from "./date";
+import { formatDateOnly, formatEnglishDate, type DateFormat } from "./date";
+import { useDateFormat } from "./DateFormat";
 import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
 import { useRecentDateRanges } from "./RecentDateRanges";
 import { DateRangePicker } from "./DateRangePicker";
 import { CoverageCellValue } from "./CoverageTableCell";
 export { CoverageCellValue } from "./CoverageTableCell";
-import { Tooltip } from "./Tooltip";
+import { cursorTooltipGap, Tooltip } from "./Tooltip";
 import type { AcceptedWorkoutDeletion } from "./Summary";
 import { PrivateTiles } from "./privateTiles";
 import { WorkoutTypeSelection } from "./WorkoutTypeSelection";
@@ -383,24 +384,37 @@ export function resolveBaseFamily(baseMaps: BaseMapsConfig, workouts: MapSelecti
     : (baseMaps.families[0]?.id ?? "");
 }
 
-function formatCoveragePopupDate(value: string) {
+function formatCoveragePopupDate(value: string, order?: DateFormat) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  return match ? `${Number(match[2])}/${Number(match[3])}/${match[1]}` : value;
+  return match
+    ? formatEnglishDate(
+        new Date(value + "T00:00:00Z"),
+        { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" },
+        order,
+      )
+    : value;
 }
 
 function formatWorkoutDate(workout: MapSelectionWorkout, preferences: Preferences) {
   if (workout.localStartDate) {
-    const [year, month, day] = workout.localStartDate.split("-");
-    return `${Number(month)}/${day}/${year}`;
+    return formatEnglishDate(
+      new Date(workout.localStartDate + "T00:00:00Z"),
+      { year: "numeric", month: "numeric", day: "2-digit", timeZone: "UTC" },
+      preferences.dateFormat,
+    );
   }
   const instant = new Date(workout.startedAt);
   if (Number.isNaN(instant.getTime())) return "Date unavailable";
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "numeric",
-    day: "2-digit",
-    timeZone: preferences.timezone,
-  }).format(instant);
+  return formatEnglishDate(
+    instant,
+    {
+      year: "numeric",
+      month: "numeric",
+      day: "2-digit",
+      timeZone: preferences.timezone,
+    },
+    preferences.dateFormat,
+  );
 }
 
 function topmostFeature(features: MapGeoJSONFeature[]) {
@@ -787,7 +801,11 @@ function routePopupParts(value: string, preferences: Preferences) {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value ?? "";
   return {
-    date: `${part("month")}/${part("day")}/${part("year")}`,
+    date: formatEnglishDate(
+      new Date(value),
+      { timeZone: preferences.timezone, year: "numeric", month: "numeric", day: "2-digit" },
+      preferences.dateFormat,
+    ),
     time: `${part("hour").replace(/^0/, "")}:${part("minute")}${preferences.clockFormat === "12h" ? part("dayPeriod").slice(0, 1).toLowerCase() : ""}`,
   };
 }
@@ -1901,10 +1919,22 @@ function MapCanvas({
     content.append(title, place);
     const rows: Array<[string, string]> = [
       ["Workouts", detail.rangeWorkoutCount.toLocaleString()],
-      ["Earliest visit", formatCoveragePopupDate(detail.rangeFirstDate)],
-      ["First visit ever", formatCoveragePopupDate(detail.allTimeFirstDate)],
-      ["Most recent visit", formatCoveragePopupDate(detail.rangeLatestDate)],
-      ["Last visit ever", formatCoveragePopupDate(detail.allTimeLatestDate)],
+      [
+        "Earliest visit",
+        formatCoveragePopupDate(detail.rangeFirstDate, preferencesRef.current.dateFormat),
+      ],
+      [
+        "First visit ever",
+        formatCoveragePopupDate(detail.allTimeFirstDate, preferencesRef.current.dateFormat),
+      ],
+      [
+        "Most recent visit",
+        formatCoveragePopupDate(detail.rangeLatestDate, preferencesRef.current.dateFormat),
+      ],
+      [
+        "Last visit ever",
+        formatCoveragePopupDate(detail.allTimeLatestDate, preferencesRef.current.dateFormat),
+      ],
     ];
     for (const [label, value] of rows) {
       const term = document.createElement("span");
@@ -2092,7 +2122,8 @@ function MapCanvas({
         popupRef.current = new maplibregl.Popup({
           closeButton: false,
           closeOnClick: false,
-          offset: 12,
+          anchor: "bottom",
+          offset: cursorTooltipGap("map"),
           className: "map-route-popup",
           maxWidth: "none",
         })
@@ -2261,7 +2292,8 @@ function MapCanvas({
             popupRef.current = new maplibregl.Popup({
               closeButton: false,
               closeOnClick: false,
-              offset: 12,
+              anchor: "bottom",
+              offset: cursorTooltipGap("map"),
               className: "map-route-popup map-coverage-popup",
               maxWidth: "none",
             })
@@ -3486,6 +3518,7 @@ function RoadCoverageDialog({
     if (totalPages === 0 && page !== 1) setPage(1);
     else if (totalPages > 0 && page > totalPages) setPage(totalPages);
   }, [entities, open, page, totalPages]);
+  const dateFormat = useDateFormat();
   const inRange = (date: string) =>
     Boolean(selection && date >= selection.range.startDate && date <= selection.range.endDate);
   const updateSort = (field: RoadCoverageSortField) => {
@@ -3509,10 +3542,10 @@ function RoadCoverageDialog({
           onShowWorkout(workoutId);
         }}
       >
-        <CoverageCellValue text={formatDateOnly(date)} />
+        <CoverageCellValue text={formatDateOnly(date, dateFormat)} />
       </button>
     ) : (
-      <CoverageCellValue text={formatDateOnly(date)} />
+      <CoverageCellValue text={formatDateOnly(date, dateFormat)} />
     );
   if (error)
     return (
@@ -4030,7 +4063,12 @@ export default function MapPage({
 
   function refreshSelection() {
     const now = Date.now();
-    if (selectionPendingRef.current || now - selectionRefreshAtRef.current < 1000) return;
+    if (
+      selectionPendingRef.current ||
+      (!selectionError && now - selectionRefreshAtRef.current < 1000)
+    )
+      return;
+    selectionPendingRef.current = true;
     selectionRefreshAtRef.current = now;
     setSelectionRefresh((value) => value + 1);
   }
@@ -4193,12 +4231,10 @@ export default function MapPage({
             csrfToken,
           );
         } catch (error) {
-          if (
-            !(error instanceof ApiError) ||
-            error.status !== 503 ||
-            attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length
-          )
-            throw error;
+          const transient =
+            error instanceof TypeError ||
+            (error instanceof ApiError && [408, 429, 500, 502, 503, 504].includes(error.status));
+          if (!transient || attempt >= MAP_SELECTION_RETRY_DELAYS_MS.length) throw error;
           if (!current()) throw new DOMException("Map selection canceled", "AbortError");
           await waitForDiagnosticRetry(controller.signal, MAP_SELECTION_RETRY_DELAYS_MS[attempt]);
         }
@@ -4366,6 +4402,10 @@ export default function MapPage({
     selectionRefresh,
     deletionRevision,
   ]);
+
+  useEffect(() => {
+    if (returningToTab && selectionError && !selectionPending) refreshSelection();
+  }, [returningToTab, selectionError, selectionPending]);
 
   useEffect(() => {
     if (!tabActive || !selection) return;
@@ -4837,7 +4877,7 @@ export default function MapPage({
   const dismissStatusMessage = () => {
     if (rangeError) setRangeError("");
     else if (baseMapError) setBaseMapError("");
-    else if (selectionError) setSelectionError("");
+    else if (selectionError) refreshSelection();
     else setSelectionPendingDismissed(true);
   };
 
@@ -5424,7 +5464,13 @@ export default function MapPage({
           {availableWorkouts.length ? (
             routeList
           ) : (
-            <p className="map-routes-empty">No workout routes in this range.</p>
+            <p className="map-routes-empty content-state-message">
+              {selectionPending
+                ? "Loading workout routes..."
+                : selectionError
+                  ? "Workout routes could not be loaded."
+                  : "No workout routes in this range."}
+            </p>
           )}
         </div>
       </fieldset>
@@ -5467,6 +5513,11 @@ export default function MapPage({
             role="status"
           >
             <span>{[statusMessage, coverageDetailMessage].filter(Boolean).join(" ")}</span>
+            {selectionError && statusMessage === selectionError && (
+              <button type="button" className="secondary" onClick={refreshSelection}>
+                Retry
+              </button>
+            )}
             {coverageDetailStatus && (
               <>
                 {!coverageDetailStatus.loading && (

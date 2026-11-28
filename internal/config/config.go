@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/erhhung/workouts-explorer/internal/sourceconfig"
-	"github.com/erhhung/workouts-explorer/internal/telemetry"
 )
 
 const (
@@ -36,25 +35,29 @@ type Common struct {
 
 type API struct {
 	Common
-	PublicURL              string
-	BrowserSigninOrigins   []string
-	PollingIntervalSeconds int
-	MapFitPaddingPixels    int
-	BaseMaps               BaseMaps
-	TileServerURL          string
-	MapTiles               MapTiles
-	SessionLifetime        time.Duration
-	PasswordMinimum        int
-	AllowAdminPassword     bool
-	PageSizeMaximum        int
-	RateLimitKey           []byte
-	TrustedProxyCIDRs      []*net.IPNet
-	LocalDevelopment       bool
-	SMTP                   SMTP
-	CoverageDiagnostics    CoverageDiagnostics
-	OSMProviders           []string
-	OSMCatalogEnabled      bool
-	OSMUpdatesEnabled      bool
+	PublicURL                string
+	BrowserSigninOrigins     []string
+	PollingIntervalSeconds   int
+	MapFitPaddingPixels      int
+	BaseMaps                 BaseMaps
+	TileServerURL            string
+	MapTiles                 MapTiles
+	SessionLifetime          time.Duration
+	PasswordMinimum          int
+	AllowAdminPassword       bool
+	PageSizeMaximum          int
+	RateLimitKey             []byte
+	TrustedProxyCIDRs        []*net.IPNet
+	LocalDevelopment         bool
+	SMTP                     SMTP
+	CoverageDiagnostics      CoverageDiagnostics
+	OSMProviders             []string
+	OSMCatalogEnabled        bool
+	OSMUpdatesEnabled        bool
+	OSMStorageMetricsEnabled bool
+	OSMPrometheusURL         string
+	OSMStorageSelectorLabels map[string]string
+	OSMStorageDatabases      []string
 }
 
 type CoverageDiagnostics struct {
@@ -240,25 +243,37 @@ func LoadAPI() (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	var storageLabels map[string]string
+	if err := json.Unmarshal([]byte(env("OSM_STORAGE_SELECTOR_LABELS_JSON", "{}")), &storageLabels); err != nil {
+		return API{}, fmt.Errorf("invalid OSM storage selector labels")
+	}
+	storageDatabases, err := identifierList("OSM_STORAGE_DATABASE_NAMES_JSON", `["osm"]`, false)
+	if err != nil {
+		return API{}, err
+	}
 	result := API{
-		OSMUpdatesEnabled:      env("OSM_REGION_UPDATES_ENABLED", "false") == "true",
-		OSMCatalogEnabled:      catalogEnabled,
-		OSMProviders:           providers,
-		Common:                 c,
-		PublicURL:              publicURL,
-		BrowserSigninOrigins:   browserSigninOrigins,
-		PollingIntervalSeconds: polling,
-		MapFitPaddingPixels:    padding,
-		BaseMaps:               baseMaps,
-		TileServerURL:          env("TILE_SERVER_URL", "http://127.0.0.1:3000"),
-		MapTiles:               mapTiles,
-		SessionLifetime:        sessionLifetime,
-		PasswordMinimum:        passwordMinimum,
-		AllowAdminPassword:     allowAdminPassword,
-		PageSizeMaximum:        pageMaximum,
-		RateLimitKey:           rateKey,
-		TrustedProxyCIDRs:      trustedProxies,
-		LocalDevelopment:       localDevelopment,
+		OSMUpdatesEnabled:        env("OSM_REGION_UPDATES_ENABLED", "false") == "true",
+		OSMStorageMetricsEnabled: env("OSM_STORAGE_METRICS_ENABLED", "false") == "true" && strings.TrimSpace(os.Getenv("OSM_PROMETHEUS_URL")) != "",
+		OSMPrometheusURL:         strings.TrimSpace(os.Getenv("OSM_PROMETHEUS_URL")),
+		OSMStorageSelectorLabels: storageLabels,
+		OSMStorageDatabases:      storageDatabases,
+		OSMCatalogEnabled:        catalogEnabled,
+		OSMProviders:             providers,
+		Common:                   c,
+		PublicURL:                publicURL,
+		BrowserSigninOrigins:     browserSigninOrigins,
+		PollingIntervalSeconds:   polling,
+		MapFitPaddingPixels:      padding,
+		BaseMaps:                 baseMaps,
+		TileServerURL:            env("TILE_SERVER_URL", "http://127.0.0.1:3000"),
+		MapTiles:                 mapTiles,
+		SessionLifetime:          sessionLifetime,
+		PasswordMinimum:          passwordMinimum,
+		AllowAdminPassword:       allowAdminPassword,
+		PageSizeMaximum:          pageMaximum,
+		RateLimitKey:             rateKey,
+		TrustedProxyCIDRs:        trustedProxies,
+		LocalDevelopment:         localDevelopment,
 		SMTP: SMTP{
 			Address:            os.Getenv("SMTP_ADDRESS"),
 			Username:           os.Getenv("SMTP_USERNAME"),
@@ -650,10 +665,7 @@ func WriteTimeout() time.Duration      { return 30 * time.Second }
 func IdleTimeout() time.Duration       { return 60 * time.Second }
 
 func otlpEndpoint() string {
-	if value, present := os.LookupEnv("OTEL_EXPORTER_OTLP_ENDPOINT"); present {
-		return value
-	}
-	return telemetry.DefaultEndpoint
+	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 }
 
 func env(name, fallback string) string {

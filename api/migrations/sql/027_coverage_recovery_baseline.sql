@@ -219,7 +219,8 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, app AS $fun
     ) desired ON true
     WHERE child.parent_job_id = prior_job_id AND child.account_id = target_account_id
       AND child.kind = 'coverage_update_route' AND child.status IN ('failed','canceled')
-      AND state.readiness_state = 'map_data_ready'
+       AND state.readiness_state = 'map_data_ready'
+       AND app.coverage_processing_ready(context.target_generations,parent_context.path_policy_version)
       AND state.route_input_revision = context.route_input_revision AND state.route_input_sha256 = context.route_input_sha256
       AND parent_context.matcher_contract_version = app.current_coverage_matcher_contract()
       AND workout.deletion_requested_at IS NULL AND source.deleted_at IS NULL
@@ -287,8 +288,7 @@ DECLARE new_parent uuid := gen_random_uuid(); new_child uuid; targets uuid[]; ch
 BEGIN
     -- Normal enqueue also locks account first. NOWAIT prevents inversion with
     -- ingest/deletion and bounds each control transaction; a later poll retries.
-    PERFORM 1 FROM app.accounts WHERE id = target_account_id AND state = 'active' FOR UPDATE NOWAIT;
-    IF NOT FOUND THEN RETURN; END IF;
+    IF NOT app.lock_coverage_admission(target_account_id) THEN RETURN; END IF;
     SELECT job.*, context.region_id, context.target_osm_generation, context.target_work_revision,
         context.rules_version, context.sampling_version, context.path_policy_version, context.minimum_traversal_meters, context.matcher_contract_version
     INTO prior_parent FROM app.jobs job JOIN app.coverage_job_contexts context ON context.job_id = job.id AND context.account_id = job.account_id

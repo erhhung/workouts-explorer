@@ -323,7 +323,7 @@ describe("public authentication", () => {
     expect(
       screen.queryByText("Routes could not be prepared for this map."),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Running.*8\/05\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("button", { name: /Running.*8\/5\/2026/ }).closest("li")).toHaveClass(
       "is-focused",
     );
     expect(bodies).toEqual([
@@ -834,7 +834,7 @@ describe("authenticated shell", () => {
         await user.click(
           (await screen.findAllByRole("button", { name: /^Actions for Running on/ }))[0],
         );
-        await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+        await user.click(screen.getByRole("menuitem", { name: "View on map" }));
         await waitFor(() =>
           expect(document.querySelector(`[data-workout-id="${work[0].id}"]`)).toHaveClass(
             "is-focused",
@@ -850,7 +850,7 @@ describe("authenticated shell", () => {
           }),
         );
       }
-      await user.click(await screen.findByRole("button", { name: "New Coverage" }));
+      await user.click(await screen.findByRole("button", { name: "New coverage" }));
       await screen.findByText("August 2026");
       await user.click(
         within(screen.getByRole("columnheader", { name: "Month" })).getByRole("button"),
@@ -956,7 +956,7 @@ describe("authenticated shell", () => {
         "aria-sort",
         "ascending",
       );
-      expect(screen.getByRole("button", { name: "New Coverage" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "New coverage" })).toHaveAttribute(
         "aria-current",
         "page",
       );
@@ -994,7 +994,7 @@ describe("authenticated shell", () => {
       return undefined as unknown as Response;
     });
     renderApp("/stats");
-    await userEvent.click(await screen.findByRole("button", { name: "New Coverage" }));
+    await userEvent.click(await screen.findByRole("button", { name: "New coverage" }));
     await screen.findByText("November 2026");
     const navigation = screen.getByRole("navigation", { name: "Primary" });
     expect(
@@ -1705,10 +1705,10 @@ describe("authenticated shell", () => {
       const user = userEvent.setup();
       renderApp(mode === "initial" ? "/" : "/map");
       if (mode !== "initial") {
-        await screen.findByRole("button", { name: /Running.*8\/05\/2026/ });
+        await screen.findByRole("button", { name: /Running.*8\/5\/2026/ });
         if (mode === "explicit") {
           await user.click(screen.getByRole("checkbox", { name: /Hiking/ }));
-          await user.click(screen.getByRole("button", { name: /Running.*8\/05\/2026/ }));
+          await user.click(screen.getByRole("button", { name: /Running.*8\/5\/2026/ }));
         } else if (mode === "none")
           await user.click(screen.getByRole("checkbox", { name: "Select all workout routes" }));
         else if (mode === "hidden")
@@ -1749,12 +1749,12 @@ describe("authenticated shell", () => {
         );
       });
       if (status === 503) {
-        expect(screen.getByRole("button", { name: /Running.*8\/05\/2026/ })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Running.*8\/5\/2026/ })).toBeInTheDocument();
         expect(bodies.at(-1)?.workoutIds).toEqual([oneWorkout.id]);
       } else {
         await waitFor(() =>
           expect(
-            screen.queryByRole("button", { name: /Running.*8\/05\/2026/ }),
+            screen.queryByRole("button", { name: /Running.*8\/5\/2026/ }),
           ).not.toBeInTheDocument(),
         );
         await waitFor(() => expect(bodies.length).toBeGreaterThan(before));
@@ -1767,10 +1767,10 @@ describe("authenticated shell", () => {
               ? ["E".repeat(32)]
               : undefined,
         );
-        expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ })).toBeInTheDocument();
         if (mode === "rangeNewImport") {
           expect(
-            await screen.findByRole("button", { name: /New import.*8\/05\/2026/ }),
+            await screen.findByRole("button", { name: /New import.*8\/5\/2026/ }),
           ).toBeInTheDocument();
           expect(screen.getByRole("checkbox", { name: /New import/ })).toBeChecked();
         }
@@ -1924,7 +1924,7 @@ describe("authenticated shell", () => {
     renderApp("/map");
     const coverage = await screen.findByRole("button", { name: "Coverage" });
     expect(coverage).toBeDisabled();
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/05\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/5\/2026/ }));
     await waitFor(() => expect(coverage).toBeEnabled());
     await userEvent.click(coverage);
     expect(coverage).toHaveAttribute("aria-pressed", "true");
@@ -1936,7 +1936,7 @@ describe("authenticated shell", () => {
     );
   });
 
-  test("keeps every route checked when first opening Map through Show on map", async () => {
+  test("keeps every route checked when first opening Map through View on map", async () => {
     const routeWorkouts = [
       {
         id: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
@@ -2023,12 +2023,12 @@ describe("authenticated shell", () => {
     await user.click(
       (await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0],
     );
-    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    await user.click(screen.getByRole("menuitem", { name: "View on map" }));
     expect(
-      await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Running from 8/5/2026" }),
     ).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
-    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/1/2026" })).toBeChecked();
+    expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
@@ -2036,10 +2036,10 @@ describe("authenticated shell", () => {
     await user.click(screen.getByRole("link", { name: "Summary" }));
     await user.click(screen.getByRole("link", { name: "Map" }));
     expect(
-      await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Running from 8/5/2026" }),
     ).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
-    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/1/2026" })).toBeChecked();
+    expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
@@ -2140,7 +2140,7 @@ describe("authenticated shell", () => {
     });
     renderApp("/map");
     const user = userEvent.setup();
-    const hiking = await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" });
+    const hiking = await screen.findByRole("checkbox", { name: "Show Hiking from 8/1/2026" });
     await user.click(hiking);
     await waitFor(() => expect(selectionBodies.at(-1)?.workoutIds).toEqual([routeWorkouts[0].id]));
     await user.click(screen.getByRole("button", { name: "Coverage" }));
@@ -2160,9 +2160,9 @@ describe("authenticated shell", () => {
     await user.click(screen.getByRole("link", { name: "Map" }));
 
     expect(
-      await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Running from 8/5/2026" }),
     ).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/1/2026" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Coverage" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -2173,17 +2173,17 @@ describe("authenticated shell", () => {
     await user.click(
       (await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0],
     );
-    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    await user.click(screen.getByRole("menuitem", { name: "View on map" }));
     expect(
-      await screen.findByRole("checkbox", { name: "Show Running from 8/05/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Running from 8/5/2026" }),
     ).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/1/2026" })).toBeChecked();
     await waitFor(() =>
       expect(selectionBodies.at(-1)?.workoutIds).toEqual(
         routeWorkouts.map((workout) => workout.id),
       ),
     );
-    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
@@ -2192,9 +2192,9 @@ describe("authenticated shell", () => {
     await screen.findByRole("button", { name: "Duration" });
     await user.click(screen.getByRole("link", { name: "Map" }));
     expect(
-      await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Hiking from 8/1/2026" }),
     ).toBeChecked();
-    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
@@ -2211,14 +2211,14 @@ describe("authenticated shell", () => {
     );
     expect(selectionBodies.at(-1)?.workoutIds).toBeUndefined();
     expect(
-      await screen.findByRole("checkbox", { name: "Show Hiking from 8/01/2026" }),
+      await screen.findByRole("checkbox", { name: "Show Hiking from 8/1/2026" }),
     ).toBeChecked();
 
     await user.click(screen.getByRole("link", { name: "Summary" }));
     await user.click(
       (await screen.findAllByRole("button", { name: "Actions for Hiking on 2026-08-01" }))[0],
     );
-    await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+    await user.click(screen.getByRole("menuitem", { name: "View on map" }));
     await waitFor(() =>
       expect(selectionBodies).toContainEqual({ dateRangeEnum: "last7Days", tz: "America/Denver" }),
     );
@@ -2226,16 +2226,16 @@ describe("authenticated shell", () => {
       expect(selectionBodies.at(-1)).toMatchObject({ dateRangeEnum: "last7Days" }),
     );
     expect(selectionBodies.at(-1)?.workoutIds).toBeUndefined();
-    expect(screen.getByRole("checkbox", { name: "Show Running from 8/05/2026" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/01/2026" })).toBeChecked();
-    expect(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("checkbox", { name: "Show Running from 8/5/2026" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show Hiking from 8/1/2026" })).toBeChecked();
+    expect(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
   });
 
   test.each(["none", "current", "stale"] as const)(
-    "paged Show on map uses %s coverage readiness without changing scope or sort",
+    "paged View on map uses %s coverage readiness without changing scope or sort",
     async (resultStatus) => {
       const maps: Array<Record<string, any>> = [];
       class MockMap {
@@ -2418,7 +2418,7 @@ describe("authenticated shell", () => {
       await user.click(
         screen.getAllByRole("button", { name: "Actions for Cycling on 2026-07-20" })[0],
       );
-      await user.click(screen.getByRole("menuitem", { name: "Show on map" }));
+      await user.click(screen.getByRole("menuitem", { name: "View on map" }));
       const chosenMode = resultStatus === "none" ? "Routes" : "Coverage";
       await waitFor(() =>
         expect(screen.getByRole("button", { name: chosenMode })).toHaveAttribute(
@@ -3116,6 +3116,7 @@ describe("authenticated shell", () => {
             units: "metric",
             pageSize: 50,
             customDateRangeLimit: 4,
+            dateFormat: "dd/mm/yyyy",
           });
       }
       return undefined as never;
@@ -3136,15 +3137,36 @@ describe("authenticated shell", () => {
       "Theme",
       "Units",
       "Time zone",
-      "First weekday",
       "Clock format",
-      "Table rows per page",
+      "Date format",
+      "First weekday",
       "Custom date ranges",
+      "Table rows per page",
     ]) {
       expect(screen.getByRole("combobox", { name: label })).toHaveClass(
         "preference-select-trigger",
       );
     }
+    const display = within(dialog)
+      .getByText("Display", { selector: "legend" })
+      .closest("fieldset")!;
+    expect(within(display).getAllByRole("combobox")).toEqual(
+      [
+        "Theme",
+        "Units",
+        "Time zone",
+        "Clock format",
+        "Date format",
+        "First weekday",
+        "Custom date ranges",
+        "Table rows per page",
+      ].map((name) => within(display).getByRole("combobox", { name })),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Date format" }));
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent?.replace("\u2713", "")),
+    ).toEqual(["mm/dd/yyyy", "dd/mm/yyyy", "yyyy/mm/dd"]);
+    await user.click(screen.getByRole("option", { name: "dd/mm/yyyy" }));
     await user.clear(screen.getByLabelText("Full name"));
     await user.type(screen.getByLabelText("Full name"), "Avery Summit");
     for (const [label, option] of [
@@ -3182,6 +3204,7 @@ describe("authenticated shell", () => {
       timezone: "America/Denver",
       firstWeekday: "monday",
       clockFormat: "12h",
+      dateFormat: "dd/mm/yyyy",
       workoutColumns: ["date", "type", "duration", "pace"],
       pageSize: 50,
       customDateRangeLimit: 4,
@@ -3293,6 +3316,7 @@ describe("authenticated shell", () => {
     expect(await screen.findByRole("button", { name: "Select date range" })).toBeInTheDocument();
     expect(initialization).toEqual({
       body: {
+        dateFormat: "mm/dd/yyyy",
         theme: "dark",
         units: "imperial",
         timezone: "America/Los_Angeles",

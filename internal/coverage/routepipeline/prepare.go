@@ -21,6 +21,7 @@ type PreparedMatch struct {
 	CoveredMeters    float64
 	FirstTraversedAt time.Time
 	FirstRouteOrder  int
+	DisplayClass     string `json:",omitempty"`
 }
 
 type segmentKey struct {
@@ -40,6 +41,7 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 		return nil, err
 	}
 	groups := make(map[segmentKey][]sourceInterval)
+	classes := make(map[segmentKey]string)
 	for i, evidence := range result.Evidence {
 		if i&127 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -47,6 +49,10 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 			}
 		}
 		key := segmentKey{id: evidence.Portion.PhysicalSegmentID, region: evidence.Portion.RegionID, generation: evidence.Portion.GenerationID}
+		if prior, ok := classes[key]; ok && prior != evidence.DisplayClass {
+			return nil, errors.New("inconsistent segment display classification")
+		}
+		classes[key] = evidence.DisplayClass
 		groups[key] = append(groups[key], sourceInterval{from: evidence.Portion.SourceFromFraction,
 			to: evidence.Portion.SourceToFraction, routeOrder: evidence.RouteOrder, firstTraversedAt: evidence.FirstTraversedAt})
 	}
@@ -218,7 +224,7 @@ func Prepare(ctx context.Context, snapshot ProductionSnapshot, result Result, fa
 			return nil, err
 		}
 		prepared[i] = PreparedMatch{Segment: segmentCopies[i], CoveredGeoJSON: geometry,
-			CoveredMeters: coveredMeters, FirstTraversedAt: firstTimes[i], FirstRouteOrder: firstOrders[i]}
+			CoveredMeters: coveredMeters, FirstTraversedAt: firstTimes[i], FirstRouteOrder: firstOrders[i], DisplayClass: classes[keys[i]]}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

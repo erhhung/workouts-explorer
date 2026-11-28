@@ -140,7 +140,8 @@ func TestHelmPodResources(t *testing.T) {
 	owners := map[string]string{
 		"ui": "ui", "api": "api", "worker": "worker",
 		"coverage-worker": "coverageWorker", "tiles": "tileServer",
-		"migration": "api", "role-provisioning": "api", "bootstrap-admin": "api",
+		"osm-controller": "osm-controller",
+		"migration":      "api", "role-provisioning": "api", "bootstrap-admin": "api",
 		"osm-migration": "osm", "timezone-import": "osm",
 	}
 	for _, overrides := range []bool{false, true} {
@@ -149,9 +150,9 @@ func TestHelmPodResources(t *testing.T) {
 			name = "component overrides"
 		}
 		t.Run(name, func(t *testing.T) {
-			args := []string{"template", "resource-test", chartDir, "--set", "api.bootstrap.enabled=true,api.roleProvisioning.enabled=true"}
+			args := []string{"template", "resource-test", chartDir, "--set", "api.bootstrap.enabled=true,api.roleProvisioning.enabled=true,otel.enabled=true"}
 			want := make(map[string]map[string]map[string]string)
-			for i, component := range []string{"ui", "api", "worker", "coverageWorker", "tileServer", "osm", "otel.collector"} {
+			for i, component := range []string{"ui", "api", "worker", "coverageWorker", "tileServer", "osm", "otel.collector", "osm-controller"} {
 				resources := map[string]map[string]string{
 					"requests": {"cpu": "25m", "memory": "64Mi"},
 					"limits":   {"cpu": "250m", "memory": "256Mi"},
@@ -166,7 +167,11 @@ func TestHelmPodResources(t *testing.T) {
 					resources["limits"]["memory"] = fmt.Sprintf("%dMi", 300+i)
 					for group, quantities := range resources {
 						for resource, quantity := range quantities {
-							args = append(args, "--set-string", component+".resources."+group+"."+resource+"="+quantity)
+							prefix := component + ".resources."
+							if component == "osm-controller" {
+								prefix = "osm.regionUpdates.controllerResources."
+							}
+							args = append(args, "--set-string", prefix+group+"."+resource+"="+quantity)
 						}
 					}
 				}

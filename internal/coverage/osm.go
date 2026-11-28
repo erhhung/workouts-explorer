@@ -27,12 +27,14 @@ type GeographicObservation struct {
 }
 
 type OSMEvaluationOptions struct {
-	MaxCandidatesPerObservation int
-	MaxGraphNodes               int
-	MaxGraphEdges               int
-	MovementMode                MovementMode
-	Sampling                    SamplingRules
-	RoadGeometry                RoadGeometryRules
+	PathPolicyVersion             PathPolicyVersion
+	ResidentialContextGenerations map[int64]bool
+	MaxCandidatesPerObservation   int
+	MaxGraphNodes                 int
+	MaxGraphEdges                 int
+	MovementMode                  MovementMode
+	Sampling                      SamplingRules
+	RoadGeometry                  RoadGeometryRules
 }
 
 // OSMEvaluationLimitError identifies deterministic graph-expansion limits.
@@ -95,7 +97,10 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	observations := make([]Observation, len(input))
 	supplied := make([][]Candidate, len(input))
 	physical := make(map[uuid.UUID]physicalSegment)
-	policy := experimentalPathPolicy(options.MovementMode)
+	policy := pathPolicyForVersion(options.MovementMode, options.PathPolicyVersion)
+	if policy.version != ExperimentalPathPolicyV82 && policy.version != ExperimentalPathPolicyV83 && policy.version != ExperimentalPathPolicyV84 {
+		return Result{}, OSMEvaluationStats{}, fmt.Errorf("unsupported path policy")
+	}
 	stats := OSMEvaluationStats{InputObservationCount: inputCount, SampledObservationCount: len(input)}
 	for i := range input {
 		if i&127 == 0 {
@@ -133,6 +138,36 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 			return Result{}, stats, err
 		}
 		stats.CandidateCount += len(candidates)
+		if policy.sharedAccessPolicy() && options.ResidentialContextGenerations != nil {
+			copied := append([]osm.MatcherCandidate(nil), candidates...)
+			for i := range copied {
+				copied[i].Tags, err = options.residentialTags(copied[i].Tags, copied[i].GenerationID)
+				if err != nil {
+					return Result{}, stats, err
+				}
+			}
+			candidates = copied
+		}
+		if policy.sharedAccessPolicy() {
+			filtered := make([]osm.MatcherCandidate, 0, len(candidates))
+			for i, candidate := range candidates {
+				if i&127 == 0 {
+					if err := ctx.Err(); err != nil {
+						return Result{}, stats, err
+					}
+				}
+				index := batchStart + candidate.ObservationIndex
+				if index < batchStart || index >= batchEnd {
+					return Result{}, stats, fmt.Errorf("OSM candidate returned an invalid observation index")
+				}
+				if policy.parkingCandidate(candidate.Highway, decodeTags(candidate.Tags)) &&
+					(candidate.DistanceMeters > 8 || !observationWindowAligned(index, observations, candidate.TangentDegrees, rules)) {
+					continue
+				}
+				filtered = append(filtered, candidate)
+			}
+			candidates = filtered
+		}
 		preferred, sidewalkSupport, suppressed, err := attributionCandidatesContext(ctx, options.MovementMode, policy, candidates, options.RoadGeometry)
 		if err != nil {
 			return Result{}, stats, err
@@ -153,26 +188,31 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 				return Result{}, stats, fmt.Errorf("OSM candidate returned an invalid observation index")
 			}
 			segment := physicalFromCandidate(candidate)
+			segment.policy = policy
 			if !policy.eligible(segment.highway, segment.tags) {
 				continue
 			}
+			parking := policy.parkingCandidate(candidate.Highway, decodeTags(candidate.Tags))
 			physical[segment.id] = segment
 			projected := localPoint(origin, candidate.ProjectedLongitude, candidate.ProjectedLatitude)
 			forwardTangent := candidate.TangentDegrees
 			reverseTangent := reverseHeading(candidate.TangentDegrees)
 			forward, reverse := policy.directions(segment.tags, segment.motorForward, segment.motorReverse)
-			attributionOffset := roadAttributionOffset(options.MovementMode, candidate.Highway, candidate.Tags, options.RoadGeometry)
+			attributionOffset := roadAttributionOffset(options.MovementMode, candidate.Highway, candidate.Tags, options.RoadGeometry, policy)
+			if parking {
+				attributionOffset = 0
+			}
 			if supportDistance, supported := sidewalkSupport[roadSupportKey(candidate)]; supported {
 				attributionOffset = math.Max(attributionOffset, candidate.DistanceMeters-supportDistance+options.RoadGeometry.DirectionalDriftMeters)
-			} else if candidate.DistanceMeters <= footRoadCandidateSearchRadiusMeters &&
+			} else if !parking && candidate.DistanceMeters <= footRoadCandidateSearchRadiusMeters &&
 				observationWindowAligned(observationIndex, observations, candidate.TangentDegrees, rules) {
 				attributionOffset += options.RoadGeometry.DirectionalDriftMeters
 			}
 			pathSwitchCost := candidatePathSwitchCost(options.MovementMode, candidate)
-			continuityClass, continuityClassCost := candidateContinuityClass(options.MovementMode, candidate)
+			continuityClass, continuityClassCost := candidateContinuityClass(options.MovementMode, candidate, policy)
 			rawDistanceCostWeight := 0.0
 			if options.MovementMode == MovementFoot || options.MovementMode == MovementBicycle {
-				if drivableRoad(candidate.Highway, decodeTags(candidate.Tags)) {
+				if policy.drivableRoad(candidate.Highway, decodeTags(candidate.Tags)) && !parking {
 					rawDistanceCostWeight = 0.01
 				}
 			}
@@ -204,7 +244,7 @@ func MatchOSM(ctx context.Context, topology osmTopology, input []GeographicObser
 	if err := expandOSMGraph(ctx, topology, physical, policy, options, rules.MaxNetworkDistanceMeters, &stats); err != nil {
 		return Result{}, stats, err
 	}
-	if err := applyDeadEndEndpointAllowanceContext(ctx, options.MovementMode, supplied, physical, options.RoadGeometry); err != nil {
+	if err := applyDeadEndEndpointAllowanceContext(ctx, options.MovementMode, supplied, physical, options.RoadGeometry, policy); err != nil {
 		return Result{}, stats, err
 	}
 	graph := Graph{Segments: make([]DirectedSegment, 0, len(physical)*2)}
@@ -247,7 +287,11 @@ func applyDeadEndEndpointAllowance(mode MovementMode, candidates [][]Candidate, 
 	_ = applyDeadEndEndpointAllowanceContext(context.Background(), mode, candidates, physical, rules)
 }
 
-func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode, candidates [][]Candidate, physical map[uuid.UUID]physicalSegment, rules RoadGeometryRules) error {
+func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode, candidates [][]Candidate, physical map[uuid.UUID]physicalSegment, rules RoadGeometryRules, policies ...pathPolicy) error {
+	policy := pathPolicyForVersion(mode, ExperimentalPathPolicyV83)
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -261,7 +305,7 @@ func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode
 		if g.canceled(&checks) {
 			return ctx.Err()
 		}
-		if !drivableRoad(segment.highway, decodeTags(segment.tags)) {
+		if !policy.drivableRoad(segment.highway, decodeTags(segment.tags)) || policy.parkingCandidate(segment.highway, decodeTags(segment.tags)) {
 			continue
 		}
 		roadDegrees[segment.startNode]++
@@ -281,7 +325,7 @@ func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode
 				continue
 			}
 			segment, ok := physical[physicalID]
-			if !ok || !drivableRoad(segment.highway, decodeTags(segment.tags)) || segment.length <= 0 {
+			if !ok || !policy.drivableRoad(segment.highway, decodeTags(segment.tags)) || policy.parkingCandidate(segment.highway, decodeTags(segment.tags)) || segment.length <= 0 {
 				continue
 			}
 			fraction := candidate.AlongMeters / segment.length
@@ -298,21 +342,25 @@ func applyDeadEndEndpointAllowanceContext(ctx context.Context, mode MovementMode
 	return ctx.Err()
 }
 
-func candidateContinuityClass(mode MovementMode, candidate osm.MatcherCandidate) (string, float64) {
+func candidateContinuityClass(mode MovementMode, candidate osm.MatcherCandidate, policies ...pathPolicy) (string, float64) {
 	if mode != MovementFoot && mode != MovementBicycle {
 		return "", 0
 	}
-	if class := continuityClassForWay(candidate.Highway, candidate.Tags); class != "" {
+	if class := continuityClassForWay(candidate.Highway, candidate.Tags, policies...); class != "" {
 		return class, 8
 	}
 	return "", 0
 }
 
-func continuityClassForWay(highway string, rawTags json.RawMessage) string {
+func continuityClassForWay(highway string, rawTags json.RawMessage, policies ...pathPolicy) string {
 	if pedestrianOnlyPath(highway, rawTags) {
 		return "path"
 	}
-	if drivableRoad(highway, decodeTags(rawTags)) {
+	policy := pathPolicyForVersion(MovementFoot, ExperimentalPathPolicyV83)
+	if len(policies) > 0 && policies[0].version != "" {
+		policy = policies[0]
+	}
+	if policy.drivableRoad(highway, decodeTags(rawTags)) {
 		return "road"
 	}
 	return ""
@@ -385,7 +433,7 @@ func attributionCandidatesContext(ctx context.Context, mode MovementMode, policy
 			if g.canceled(&checks) {
 				return nil, nil, 0, ctx.Err()
 			}
-			if candidate.DistanceMeters <= footRoadAttributionDistanceMeters && drivableRoad(candidate.Highway, decodeTags(candidate.Tags)) && policy.eligible(candidate.Highway, candidate.Tags) {
+			if candidate.DistanceMeters <= footRoadAttributionDistanceMeters && policy.drivableRoad(candidate.Highway, decodeTags(candidate.Tags)) && !policy.parkingCandidate(candidate.Highway, decodeTags(candidate.Tags)) && policy.eligible(candidate.Highway, candidate.Tags) {
 				roadNearby[candidate.ObservationIndex] = true
 			}
 			if candidate.DistanceMeters <= 10 && pedestrianCrossing(candidate) {
@@ -399,7 +447,7 @@ func attributionCandidatesContext(ctx context.Context, mode MovementMode, policy
 			if g.canceled(&checks) {
 				return nil, nil, 0, ctx.Err()
 			}
-			if !drivableRoad(road.Highway, decodeTags(road.Tags)) || !policy.eligible(road.Highway, road.Tags) || road.DistanceMeters > footRoadDriftSearchRadiusMeters {
+			if !policy.drivableRoad(road.Highway, decodeTags(road.Tags)) || policy.parkingCandidate(road.Highway, decodeTags(road.Tags)) || !policy.eligible(road.Highway, road.Tags) || road.DistanceMeters > footRoadDriftSearchRadiusMeters {
 				continue
 			}
 			for _, sidewalk := range candidates {
@@ -526,6 +574,7 @@ type physicalSegment struct {
 	drivewayConnector     bool
 	accessoryConnector    bool
 	parkingAisleConnector bool
+	policy                pathPolicy
 }
 
 func physicalFromCandidate(candidate osm.MatcherCandidate) physicalSegment {
@@ -534,7 +583,7 @@ func physicalFromCandidate(candidate osm.MatcherCandidate) physicalSegment {
 		candidate.StartGraphNodeID, candidate.EndGraphNodeID,
 		candidate.LogicalPathID, candidate.LocalityRelationID, candidate.LengthMeters,
 		candidate.Highway, candidate.Tags, candidate.MotorForwardAllowed, candidate.MotorReverseAllowed,
-		candidate.StartLongitude, candidate.StartLatitude, candidate.EndLongitude, candidate.EndLatitude, false, false, false, false, false}
+		candidate.StartLongitude, candidate.StartLatitude, candidate.EndLongitude, candidate.EndLatitude, false, false, false, false, false, pathPolicy{}}
 }
 
 func physicalFromEdge(edge osm.MatcherIncidentEdge) physicalSegment {
@@ -543,10 +592,14 @@ func physicalFromEdge(edge osm.MatcherIncidentEdge) physicalSegment {
 		edge.StartGraphNodeID, edge.EndGraphNodeID,
 		edge.LogicalPathID, edge.LocalityRelationID, edge.LengthMeters,
 		edge.Highway, edge.Tags, edge.MotorForwardAllowed, edge.MotorReverseAllowed,
-		edge.StartLongitude, edge.StartLatitude, edge.EndLongitude, edge.EndLatitude, false, false, false, false, false}
+		edge.StartLongitude, edge.StartLatitude, edge.EndLongitude, edge.EndLatitude, false, false, false, false, false, pathPolicy{}}
 }
 
 func (segment physicalSegment) directed(origin GeographicObservation, forward bool) DirectedSegment {
+	displayClass := ""
+	if segment.policy.version != "" {
+		displayClass = DisplayClass(segment.policy.version, segment.policy.mode, segment.highway, segment.tags)
+	}
 	fromNode, toNode := segment.startNode, segment.endNode
 	from := localPoint(origin, segment.startLongitude, segment.startLatitude)
 	to := localPoint(origin, segment.endLongitude, segment.endLatitude)
@@ -572,10 +625,11 @@ func (segment physicalSegment) directed(origin GeographicObservation, forward bo
 		DrivewayConnector:     segment.drivewayConnector,
 		AccessoryConnector:    segment.accessoryConnector,
 		ParkingAisleConnector: segment.parkingAisleConnector,
-		RoadConnector: segment.highway == "service" && !namedPrivateNeighborhoodRoad(decodeTags(segment.tags)) &&
+		RoadConnector: segment.highway == "service" && !segment.policy.sharedNeighborhoodRoad(decodeTags(segment.tags)) &&
 			!pedestrianParkingAisle(segment.highway, decodeTags(segment.tags)) || strings.HasSuffix(segment.highway, "_link"),
 		IndependentPath: independentPedestrianWay(segment.highway, segment.tags),
-		ContinuityClass: continuityClassForWay(segment.highway, segment.tags),
+		ContinuityClass: continuityClassForWay(segment.highway, segment.tags, segment.policy),
+		DisplayClass:    displayClass,
 	}
 }
 

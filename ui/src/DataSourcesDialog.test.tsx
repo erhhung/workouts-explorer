@@ -31,6 +31,7 @@ afterEach(() => {
 function setup(
   items: Source[] = [],
   handler?: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined,
+  clockFormat: "12h" | "24h" = "12h",
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -49,7 +50,12 @@ function setup(
     onCloseFocus = vi.fn();
   const view = render(
     <QueryClientProvider client={client}>
-      <DataSourcesDialog session={session} onClose={onClose} onCloseFocus={onCloseFocus} />
+      <DataSourcesDialog
+        session={session}
+        preferences={{ clockFormat, timezone: "America/Los_Angeles" }}
+        onClose={onClose}
+        onCloseFocus={onCloseFocus}
+      />
     </QueryClientProvider>,
   );
   return { client, fetch, onClose, ...view };
@@ -70,6 +76,73 @@ async function credentials() {
   ])
     fireEvent.change(screen.getByLabelText(label, { exact: true }), { target: { value } });
 }
+
+test.each([
+  ["12h", "00:15", "12", "AM"],
+  ["12h", "12:15", "12", "PM"],
+  ["12h", "23:15", "11", "PM"],
+  ["24h", "00:15", "00", undefined],
+  ["24h", "23:15", "23", undefined],
+] as const)(
+  "daily time follows %s preferences for %s and stays visible while disabled",
+  async (clock, time, hours, period) => {
+    setup([{ ...existing, autoSyncTime: time }], undefined, clock);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: `Actions for ${existing.displayName}` }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Edit source" }));
+    expect(screen.getByRole("group", { name: "Time of day" })).toBeVisible();
+    const hour = screen.getByRole("combobox", { name: "Hours" });
+    const minute = screen.getByRole("combobox", { name: "Minutes" });
+    expect(hour).toHaveTextContent(hours);
+    expect(minute).toHaveTextContent("15");
+    expect(hour).toBeDisabled();
+    expect(minute).toBeDisabled();
+    if (period) expect(screen.getByRole("combobox", { name: "AM/PM" })).toHaveTextContent(period);
+    else expect(screen.queryByRole("combobox", { name: "AM/PM" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /Enable automated sync/ }));
+    expect(hour).toBeEnabled();
+    expect(minute).toBeEnabled();
+    await user.click(screen.getByRole("checkbox", { name: /Enable automated sync/ }));
+    expect(hour).toBeDisabled();
+    expect(hour).toHaveTextContent(hours);
+  },
+);
+
+test.each(["12h", "24h"] as const)(
+  "saves selected hours/minutes using canonical time in %s mode",
+  async (clock) => {
+    const source = { ...existing, autoSyncEnabled: true, autoSyncTime: "00:15" };
+    const { fetch } = setup(
+      [source],
+      (path, init) => {
+        if (path.startsWith(`/api/sources/${existing.id}`) && init?.method === "PATCH")
+          return json({ ...source, ...JSON.parse(String(init.body)) });
+      },
+      clock,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: `Actions for ${existing.displayName}` }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Edit source" }));
+    await user.click(screen.getByRole("combobox", { name: "Hours" }));
+    await user.click(screen.getByRole("option", { name: clock === "12h" ? "12" : "00" }));
+    await user.click(screen.getByRole("combobox", { name: "Minutes" }));
+    await user.click(screen.getByRole("option", { name: "45" }));
+    if (clock === "12h") {
+      await user.click(screen.getByRole("combobox", { name: "AM/PM" }));
+      await user.click(screen.getByRole("option", { name: "PM" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Edit source" })).not.toBeInTheDocument(),
+    );
+    const [, init] = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")!;
+    expect(JSON.parse(String(init?.body)).autoSyncTime).toBe(clock === "12h" ? "12:45" : "00:45");
+  },
+);
 
 test("empty table, type ordering, defaults, limits and Cancel clear the editor", async () => {
   setup();
@@ -106,6 +179,11 @@ test("empty table, type ordering, defaults, limits and Cancel clear the editor",
     const help = document.getElementById(control.getAttribute("aria-describedby")!);
     expect(help).toHaveAttribute("role", "tooltip");
     expect(help).toHaveClass("tooltip-content--portal");
+    expect(screen.getByRole("button", { name: `About ${label}` })).toHaveAttribute(
+      "aria-describedby",
+      control.getAttribute("aria-describedby"),
+    );
+    expect(control.closest(".tooltip-trigger")).toBeNull();
   }
   await user.click(screen.getByRole("combobox", { name: "Type" }));
   expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual([
@@ -122,7 +200,7 @@ test("empty table, type ordering, defaults, limits and Cancel clear the editor",
   expect(localHelp?.textContent).toBe(
     "Path in ingest worker container containing\nHealthAutoExport-YYYY-MM-DD.json files",
   );
-  expect(localHelp).toHaveClass("tooltip-content--multiline");
+  expect(localHelp).toHaveClass("info-tip-content");
   fireEvent.change(screen.getByLabelText("Path"), { target: { value: "/data/workouts" } });
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByLabelText("Path")).not.toBeInTheDocument();
@@ -159,7 +237,7 @@ test("create waits for connection success, sends owner CSRF and clears the edito
   expect(automated).not.toBeChecked();
   await user.click(automated);
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "New source" })).not.toBeInTheDocument(),
@@ -208,6 +286,7 @@ test("edit locks type, shows exact write-only placeholders, omits unchanged cred
   expect(JSON.parse(String(init?.body))).toEqual({
     displayName: existing.displayName,
     autoSyncEnabled: false,
+    autoSyncTime: "02:00",
     config: { version: 1, path: existing.config.path },
   });
   expect(screen.getByRole("cell", { name: "Disabled" })).toBeInTheDocument();
@@ -372,7 +451,7 @@ test.each(["health-auto-export-local", "health-auto-export-icloud"] as const)(
   },
 );
 
-test("edit loads its disabled flag, uses the shared twice-a-day label, and PATCH can enable sync", async () => {
+test("edit loads its disabled flag, labels daily source timing, and PATCH can enable sync", async () => {
   let source = existing;
   const { fetch } = setup([existing], (path, init) => {
     if (path === "/api/data-sync")
@@ -392,7 +471,7 @@ test("edit loads its disabled flag, uses the shared twice-a-day label, and PATCH
   await user.click(await screen.findByRole("button", { name: "Actions for Existing iCloud" }));
   await user.click(screen.getByRole("menuitem", { name: "Edit source" }));
   const checkbox = await screen.findByRole("checkbox", {
-    name: "Enable automated sync (twice a day)",
+    name: "Enable automated sync (once a day)",
   });
   expect(checkbox).not.toBeChecked();
   await user.click(checkbox);

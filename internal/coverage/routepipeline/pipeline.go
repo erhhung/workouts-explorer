@@ -39,6 +39,7 @@ func DefaultLimits() Limits {
 }
 
 type Config struct {
+	PathPolicyVersion       coverage.PathPolicyVersion
 	Rules                   coverage.Rules
 	Sampling                coverage.SamplingRules
 	RoadGeometry            coverage.RoadGeometryRules
@@ -60,9 +61,11 @@ type Evidence struct {
 	Clipped          osm.MatcherClippedPortion
 	RouteOrder       int
 	FirstTraversedAt time.Time
+	DisplayClass     string `json:",omitempty"`
 }
 
 type Stats struct {
+	UnsupportedServicePortions                                            int `json:",omitempty"`
 	Windows, Candidates, Suppressed, GraphNodes, GraphEdges, InvalidClips int
 	Splits                                                                map[coverage.SplitReason]int
 	WindowLimitRetries                                                    int `json:",omitempty"`
@@ -135,6 +138,13 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 	}
 	result := Result{Counts: Counts{OriginalPoints: len(observations), SampledPoints: len(points)}, Stats: Stats{Splits: make(map[coverage.SplitReason]int)}}
 	options := coverage.DefaultOSMEvaluationOptions()
+	options.PathPolicyVersion = cfg.PathPolicyVersion
+	options.ResidentialContextGenerations = make(map[int64]bool, len(allGenerations))
+	for _, generation := range allGenerations {
+		if generation.ImporterVersion >= 4 {
+			options.ResidentialContextGenerations[generation.GenerationID] = true
+		}
+	}
 	options.RoadGeometry = cfg.RoadGeometry
 	options.MaxCandidatesPerObservation = 16
 	options.MovementMode = cfg.MovementMode
@@ -313,8 +323,24 @@ func Evaluate(ctx context.Context, snapshot Snapshot, observations []coverage.Ge
 			result.Stats.InvalidClips++
 			continue
 		}
+		displayClass := item.portion.DisplayClass
+		if displayClass == "parking_aisle" {
+			if item.window < 0 || item.window >= len(windows) {
+				return Result{}, errors.New("service evidence has no matching window")
+			}
+			window := windows[item.window]
+			start, end := max(window.legStart, window.start-16), min(window.legEnd, window.start+WindowSize+16)
+			supported, supportErr := coverage.ServiceTraversalSupported(ctx, clip.GeoJSON, points[start:end], cfg.Rules, 8)
+			if supportErr != nil {
+				return Result{}, supportErr
+			}
+			if !supported {
+				result.Stats.UnsupportedServicePortions++
+				continue
+			}
+		}
 		result.Evidence = append(result.Evidence, Evidence{Portion: item.portion, Class: item.class, Clipped: clip,
-			RouteOrder: item.routeOrder, FirstTraversedAt: item.firstTraversedAt})
+			RouteOrder: item.routeOrder, FirstTraversedAt: item.firstTraversedAt, DisplayClass: displayClass})
 		segments[clip.SegmentID] = struct{}{}
 		usedGenerations[generationKey(clip.RegionID, clip.GenerationID)] = struct{}{}
 	}

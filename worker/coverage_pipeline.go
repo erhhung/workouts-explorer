@@ -195,7 +195,7 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 					if err != nil {
 						return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
 					}
-					if rebindCoverageSelection(&metadata, catalog, options.autoAdd) {
+					if rebindCoverageSelection(&metadata, catalog, options.autoAdd, productionMapProcessingRequirements()) {
 						metadata.WorkoutID, metadata.EventID, metadata.Origin = items[i].WorkoutID, items[i].EventID, items[i].Origin
 						metadata.ContentSHA256, metadata.OwnershipEpoch = items[i].ContentSHA256, items[i].OwnershipEpoch
 						items[i] = metadata
@@ -206,7 +206,7 @@ func replayIngestCoverage(ctx context.Context, db, osmDB *pgxpool.Pool, accountI
 					if err != nil {
 						return coverageHandoffError(err)
 					}
-					readiness, err := osm.ResolveRouteRegionsWithCatalog(ctx, osmDB, coordinates, minimumEventID, minimumCatalogRevision)
+					readiness, err := osm.ResolveRouteRegionsWithCatalog(ctx, osmDB, coordinates, minimumEventID, minimumCatalogRevision, productionMapProcessingRequirements())
 					if err != nil {
 						return &coverageReadinessFailure{cause: database.RedactOSMConnectionError(err)}
 					}
@@ -438,6 +438,9 @@ func refreshPreparedCoverageVectors(ctx context.Context, db *pgxpool.Pool, targe
 				targets[i].Generations[j].Generation = catalog.ActiveGenerations[targets[i].Generations[j].RegionID]
 			}
 		}
+		if current && !catalog.ProcessingReady(targets[i].Generations, productionMapProcessingRequirements()) {
+			targets[i].Generations = []osm.RegionGeneration{}
+		}
 		targets[i].CatalogFingerprint = catalog.Fingerprint
 		targets[i].CatalogRevision = catalog.Revision
 		targets[i].SelectionFingerprint = catalog.SelectionFingerprint
@@ -449,13 +452,15 @@ func waitCoverageHandoffRetry(ctx context.Context, cause error, retries int) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Three full attempts, including the initial OSM lookup. Do not turn an
-	// exhausted or mixed unknown/authority failure into a new physical-work retry.
-	if retries < 0 || retries >= 2 {
+	// Ordinary transaction races get three attempts. A source-ready snapshot may
+	// briefly lead the APP catalog observer; allow its specific gate error time
+	// to catch up without widening retries for mixed/authority failures.
+	if retries < 0 {
 		return cause
 	}
 	pending := []error{cause}
 	found := false
+	processingOnly := true
 	for visited := 0; len(pending) > 0; visited++ {
 		if visited >= 256 {
 			return cause
@@ -473,6 +478,7 @@ func waitCoverageHandoffRetry(ctx context.Context, cause error, retries int) err
 			if sql == nil || (sql.Code != "40001" && sql.Code != "55P03" && sql.Code != "40P01") {
 				return cause
 			}
+			processingOnly = processingOnly && sql.Code == "40001" && sql.Message == "updated map processing is required for this matcher"
 			found = true
 			continue
 		}
@@ -492,7 +498,18 @@ func waitCoverageHandoffRetry(ctx context.Context, cause error, retries int) err
 	if !found {
 		return cause
 	}
-	timer := time.NewTimer(min(25*time.Millisecond<<retries, 100*time.Millisecond))
+	maximum := 2
+	if processingOnly {
+		maximum = 12
+	}
+	if retries >= maximum {
+		return cause
+	}
+	delay := min(25*time.Millisecond<<retries, 100*time.Millisecond)
+	if processingOnly {
+		delay = 5 * time.Second
+	}
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():

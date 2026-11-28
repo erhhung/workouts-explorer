@@ -1,19 +1,11 @@
 import * as Dialog from "./Dialog";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { type DateRangePreference } from "./api";
 import { completeDateRangeOnBlur } from "./dateRange";
+import { DateInput } from "./DateInput";
+import { validISODate as validDate } from "./date";
 
 const EXPLICIT_RANGE = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/;
-
-function validDate(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  return (
-    new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
-      .toISOString()
-      .slice(0, 10) === value
-  );
-}
 
 export function CustomDateRangeDialog({
   open,
@@ -30,6 +22,15 @@ export function CustomDateRangeDialog({
   const errorRef = useRef<HTMLParagraphElement>(null);
   const [error, setError] = useState<{ message: string; fields: Array<"start" | "end"> }>();
   const explicit = EXPLICIT_RANGE.exec(range);
+  const [startValid, setStartValid] = useState(() => validDate(explicit?.[1] ?? ""));
+  const [endValid, setEndValid] = useState(() => validDate(explicit?.[2] ?? ""));
+  useEffect(() => {
+    if (!open) return;
+    const selected = EXPLICIT_RANGE.exec(range);
+    setStartValid(validDate(selected?.[1] ?? ""));
+    setEndValid(validDate(selected?.[2] ?? ""));
+    setError(undefined);
+  }, [open, range]);
   const changeOpen = (next: boolean) => {
     if (!next) setError(undefined);
     onOpenChange(next);
@@ -86,12 +87,13 @@ export function CustomDateRangeDialog({
             <div className="field-pair">
               <div className="field">
                 <label htmlFor={`${id}-start`}>Start date</label>
-                <input
+                <DateInput
                   id={`${id}-start`}
                   name="startDate"
-                  type="date"
                   defaultValue={explicit?.[1]}
                   required
+                  onValidityChange={setStartValid}
+                  onChange={() => setError(undefined)}
                   aria-invalid={error?.fields.includes("start") || undefined}
                   aria-describedby={error?.fields.includes("start") ? `${id}-error` : undefined}
                   onBlur={completeDateRangeOnBlur}
@@ -99,12 +101,13 @@ export function CustomDateRangeDialog({
               </div>
               <div className="field">
                 <label htmlFor={`${id}-end`}>End date</label>
-                <input
+                <DateInput
                   id={`${id}-end`}
                   name="endDate"
-                  type="date"
                   defaultValue={explicit?.[2]}
                   required
+                  onValidityChange={setEndValid}
+                  onChange={() => setError(undefined)}
                   aria-invalid={error?.fields.includes("end") || undefined}
                   aria-describedby={error?.fields.includes("end") ? `${id}-error` : undefined}
                 />
@@ -114,7 +117,12 @@ export function CustomDateRangeDialog({
               <Dialog.Close type="button" className="secondary range-dialog-action">
                 Cancel
               </Dialog.Close>
-              <button className="primary range-dialog-action">Apply</button>
+              <button
+                className="primary range-dialog-action"
+                disabled={!startValid || !endValid || Boolean(error)}
+              >
+                Apply
+              </button>
             </div>
           </form>
         </Dialog.Content>

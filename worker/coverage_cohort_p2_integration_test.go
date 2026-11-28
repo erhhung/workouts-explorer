@@ -251,7 +251,9 @@ func TestEligibleCohortCanceledFootprintMetadataIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte(strings.Replace(string(encoded), `"duration":120`, `"duration":121`, 1)), 0600); err != nil {
+			changed := strings.Replace(string(encoded), `"duration":120`, `"duration":121`, 1)
+			changed = strings.Replace(changed, `2026-08-01 12:02:00 +0000`, `2026-08-01 12:02:01 +0000`, 1)
+			if err := os.WriteFile(path, []byte(changed), 0600); err != nil {
 				t.Fatal(err)
 			}
 			updated := enqueueIngestJob(t, f.adminDB, keys, source)
@@ -259,7 +261,12 @@ func TestEligibleCohortCanceledFootprintMetadataIntegration(t *testing.T) {
 			assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.jobs WHERE account_id=$1 AND kind='coverage_update'`, f.accountID)
 			assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.ingest_coverage_handoffs WHERE account_id=$1 AND ingest_job_id=$2 AND outcome='existing' AND coverage_child_job_id=$3`, f.accountID, updated.childID, child)
 			assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.workout_coverage_states WHERE workout_id=$1 AND target_job_id IS NULL AND processing_state IN ('not_started','stale') AND route_input_revision=1`, workout)
-			assertCountQuery(t, f.adminDB, 1, `SELECT count(*) FROM app.job_progress WHERE job_id=$1 AND workouts_updated=1 AND workouts_updated_with_route=1`, updated.childID)
+			var updatedCount, updatedRoutes int64
+			progressScope := f.accountTx(f.ctx, f.adminDB)
+			if err := progressScope.QueryRow(f.ctx, `SELECT workouts_updated,workouts_updated_with_route FROM app.job_progress WHERE job_id=$1`, updated.childID).Scan(&updatedCount, &updatedRoutes); err != nil || updatedCount != 1 || updatedRoutes != 1 {
+				t.Fatalf("updated cancellation fixture progress: workouts=%d routes=%d err=%v", updatedCount, updatedRoutes, err)
+			}
+			f.commit(progressScope)
 			if !workerCallBool(t, f.adminDB, f.accountID, `SELECT app.delete_source($1,$2)`, source.sourceID, uuid.New()) {
 				t.Fatal("delete prior owner")
 			}

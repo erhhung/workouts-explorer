@@ -30,7 +30,8 @@ type CommandPipeline struct {
 var postgresRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
 
 var pipelineSQLFiles = map[string]string{
-	"postprocess": "postprocess.sql", "derive": "derive-batched.sql",
+	"residential-context": "residential-context-batched.sql",
+	"postprocess":         "postprocess.sql", "derive": "derive-batched.sql",
 	"clip-candidates": "clip-localities-candidates.sql", "clip-replacements": "clip-localities-replacements.sql",
 	"clip-apply": "clip-localities-apply.sql", "clip-residual": "clip-localities-residual.sql", "clip-finalize": "clip-localities-finalize.sql",
 	"attribute-parks-tags": "attribute-parks-batched.sql", "attribute-education": "attribute-education-batched.sql",
@@ -74,7 +75,7 @@ func (p CommandPipeline) Versions(ctx context.Context) (ToolVersions, error) {
 func (p CommandPipeline) StageFence(stage string) (string, error) {
 	value := []byte("pipeline-v1:" + stage)
 	if name, ok := pipelineSQLFiles[stage]; ok {
-		contents, err := os.ReadFile(filepath.Join(p.Root, name))
+		contents, err := os.ReadFile(filepath.Join(p.Root, "batches", name))
 		if err != nil {
 			return "", err
 		}
@@ -82,6 +83,37 @@ func (p CommandPipeline) StageFence(stage string) (string, error) {
 	}
 	sum := sha256.Sum256(value)
 	return fmt.Sprintf("%x", sum), nil
+}
+
+func (p CommandPipeline) StageFenceForGeneration(stage string, generation Generation) (string, error) {
+	if stage == "identity-label-overrides" && generation.importerVersion() >= 4 {
+		contents, err := os.ReadFile(filepath.Join(p.Root, "batches", pipelineSQLFile(stage, generation)))
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(append(contents, []byte("\npipeline-v2:"+stage)...))
+		return fmt.Sprintf("%x", sum), nil
+	}
+	if generation.importerVersion() < 4 || (stage != "tags-filter" && stage != "osm2pgsql") {
+		return p.StageFence(stage)
+	}
+	value := []byte("residential-import-v4:" + stage)
+	for _, name := range []string{"import.lua", "import-residential.lua"} {
+		contents, err := os.ReadFile(filepath.Join(p.Root, name))
+		if err != nil {
+			return "", err
+		}
+		value = append(value, contents...)
+	}
+	sum := sha256.Sum256(value)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func pipelineSQLFile(stage string, generation Generation) string {
+	if stage == "identity-label-overrides" && generation.importerVersion() >= 4 {
+		return "identity-label-overrides-sequential-batched.sql"
+	}
+	return pipelineSQLFiles[stage]
 }
 
 func (p CommandPipeline) Maintain(ctx context.Context, stage string, generation Generation) error {
@@ -158,15 +190,21 @@ func (p CommandPipeline) Run(ctx context.Context, stage string, generation Gener
 	variables := []string{
 		"--set=ON_ERROR_STOP=1", "--set=OSM_BUILD_SCHEMA=" + generation.SchemaName,
 		fmt.Sprintf("--set=OSM_GENERATION_ID=%d", generation.ID), "--set=OSM_REGION_ID=" + generation.RegionID,
-		fmt.Sprintf("--set=OSM_IMPORTER_VERSION=%d", ImporterVersion), fmt.Sprintf("--set=OSM_DERIVATION_VERSION=%d", DerivationVersion),
+		fmt.Sprintf("--set=OSM_IMPORTER_VERSION=%d", generation.importerVersion()), fmt.Sprintf("--set=OSM_DERIVATION_VERSION=%d", DerivationVersion),
 	}
 	switch stage {
 	case "tags-filter":
-		_, err := p.output(ctx, nil, "osmium", "tags-filter", "--overwrite", "--output", filtered, source,
+		filters := []string{
 			"w/highway", "w/leisure=park,nature_reserve", "w/boundary=protected_area,national_park",
 			"w/protected_area=national_park", "w/protection_title", "w/amenity=school,college,university", "w/landuse=education",
 			"r/boundary=administrative,protected_area,national_park", "r/leisure=park,nature_reserve",
-			"r/protected_area=national_park", "r/protection_title", "r/amenity=school,college,university", "r/landuse=education")
+			"r/protected_area=national_park", "r/protection_title", "r/amenity=school,college,university", "r/landuse=education"}
+		if generation.importerVersion() >= 4 {
+			filters = append(filters, "w/building", "r/building", "w/landuse=residential", "r/landuse=residential",
+				"n/addr:housenumber", "n/entrance")
+		}
+		args := append([]string{"tags-filter", "--overwrite", "--output", filtered, source}, filters...)
+		_, err := p.output(ctx, nil, "osmium", args...)
 		return nil, err
 	case "check-refs":
 		// The filter retains available relation members so municipality and park
@@ -174,9 +212,14 @@ func (p CommandPipeline) Run(ctx context.Context, stage string, generation Gener
 		_, err := p.output(ctx, nil, "osmium", "check-refs", filtered)
 		return nil, err
 	case "osm2pgsql":
-		_, err := p.output(ctx, environment, "osm2pgsql", "--database", databaseName, "--create", "--slim", "--drop", "--output=flex", "--style", filepath.Join(p.Root, "import.lua"), "--schema", generation.SchemaName, "--middle-schema", generation.SchemaName, filtered)
+		style := "import.lua"
+		if generation.importerVersion() >= 4 {
+			style = "import-residential.lua"
+			environment = append(environment, "OSM_IMPORT_ROOT="+p.Root)
+		}
+		_, err := p.output(ctx, environment, "osm2pgsql", "--database", databaseName, "--create", "--slim", "--drop", "--output=flex", "--style", filepath.Join(p.Root, style), "--schema", generation.SchemaName, "--middle-schema", generation.SchemaName, filtered)
 		return nil, err
-	case "postprocess", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate":
+	case "postprocess", "residential-context", "derive", "clip-candidates", "clip-replacements", "clip-apply", "clip-residual", "clip-finalize", "attribute-parks-tags", "attribute-education", "attribute-slivers", "identity-segments", "identity-edges", "identity-proximity", "identity-components", "identity-propagate", "identity-label-overrides", "identity-rewrite", "prepare-partitions", "validate":
 		args := []string{"-X", "--no-psqlrc"}
 		if stage != "validate" && !batchStages[stage] {
 			args = append(args, "--single-transaction")
@@ -185,7 +228,7 @@ func (p CommandPipeline) Run(ctx context.Context, stage string, generation Gener
 		if stage == "validate" {
 			args = append(args, "--tuples-only", "--no-align")
 		}
-		args = append(args, "--file", filepath.Join(p.Root, pipelineSQLFiles[stage]))
+		args = append(args, "--file", filepath.Join(p.Root, "batches", pipelineSQLFile(stage, generation)))
 		if atomicSQLStages[stage] {
 			checkpoint := fmt.Sprintf(`SELECT osm_catalog.complete_generation_stage(%d,'%s',checkpoint.batch_count,
 				checkpoint.cursor||'{"done":true}'::jsonb,checkpoint.rows_processed)

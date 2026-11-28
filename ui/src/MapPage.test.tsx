@@ -216,7 +216,7 @@ vi.mock("maplibre-gl", () => ({
       NavigationControl: class NavigationControl {},
       Popup: class Popup {
         content?: HTMLElement;
-        constructor() {
+        constructor(public options?: Record<string, unknown>) {
           popupInstances.push(this);
         }
         setLngLat = vi.fn(() => this);
@@ -2193,6 +2193,7 @@ describe("coverage hover stats", () => {
     await advance(1);
     expect(popupInstances).toHaveLength(1);
     expect(popupInstances[0].content).toHaveTextContent("Hover Road");
+    expect(popupInstances[0].options).toMatchObject({ anchor: "bottom", offset: 16 });
     expect(map.fitBounds).toHaveBeenCalledTimes(fits);
     expect(map.getSource("private-workout-coverage-highlight")).toBeUndefined();
     expect(
@@ -2678,7 +2679,7 @@ describe("coverage hover stats", () => {
   });
 });
 
-describe("Show on map coverage fallback", () => {
+describe("View on map coverage fallback", () => {
   const target = selection.workouts[0];
   const none: MapSelectionWorkout["coverageReadiness"] = {
     mapDataStatus: "pending",
@@ -2867,9 +2868,9 @@ describe("Show on map coverage fallback", () => {
       );
       expect(screen.getByRole("checkbox", { name: /Show Running/ })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: /Show Hiking/ })).toBeChecked();
-      expect(
-        screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li"),
-      ).toHaveClass("is-focused");
+      expect(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li")).toHaveClass(
+        "is-focused",
+      );
       expect(map.getLayer("private-workout-routes").layout.visibility).toBe(
         mode === "Routes" ? "visible" : "none",
       );
@@ -4060,7 +4061,7 @@ describe("direction marker camera readiness", () => {
       onDateRangeSelected: vi.fn(),
     };
     const view = render(<MapPage {...props} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     const map = mapInstances.at(-1)!;
     await waitFor(() => expect(map.getLayer(directionLayer)?.paint["icon-opacity"]).toBe(0.95));
     return { view, props, map, resolveSecondRoute: () => resolveSecondRoute(json(secondPoints)) };
@@ -4095,7 +4096,7 @@ describe("direction marker camera readiness", () => {
     });
     const counts = new Map<number, number>();
     for (const index of [1, 0, 1, 0, 1, 0]) {
-      const label = index === 0 ? /Running.*8\/08\/2026/ : /Hiking.*8\/01\/2026/;
+      const label = index === 0 ? /Running.*8\/8\/2026/ : /Hiking.*8\/1\/2026/;
       await userEvent.click(screen.getByRole("button", { name: label }));
       const points = index === 0 ? firstPoints : secondPoints;
       const scale = mapBehavior.projectionScale;
@@ -4165,7 +4166,7 @@ describe("direction marker camera readiness", () => {
     "explicit focus cancels a %s preview of a different route",
     async (preview) => {
       const { map } = await mountDirections();
-      await userEvent.hover(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+      await userEvent.hover(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }));
       if (preview === "active")
         await waitFor(() =>
           expect(map.getSource("private-workout-route-endpoints").data).toEqual(
@@ -4173,7 +4174,7 @@ describe("direction marker camera readiness", () => {
           ),
         );
       // Keyboard/programmatic activation need not move the pointer off the old preview.
-      fireEvent.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }));
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 800));
       });
@@ -4210,7 +4211,7 @@ describe("direction marker camera readiness", () => {
     ]);
     expect(map.setLayoutProperty).not.toHaveBeenCalled();
     mapBehavior.moving = true;
-    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }));
     await act(async () => resolveSecondRoute());
     await waitFor(() =>
       expect(map.getSource("private-workout-route-endpoints").data).toEqual(
@@ -4391,7 +4392,7 @@ describe("direction marker camera readiness", () => {
       addSource(id, spec);
       if (id === directionLayer) current = deferDirections(map);
     });
-    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }));
     // Source readiness alone cannot reveal a pending worker, including a stationary replacement.
     await waitFor(() => expect(map.getSource(directionLayer)).not.toBe(oldSource));
     expect(current?.completions).toHaveLength(1);
@@ -4549,7 +4550,7 @@ describe("MapPage", () => {
           onFocusedWorkoutChange={vi.fn()}
         />,
       );
-      await screen.findByRole("button", { name: /Running.*8\/08\/2026/ });
+      await screen.findByRole("button", { name: /Running.*8\/8\/2026/ });
       const map = mapInstances[0];
       await waitFor(() => expect(screen.getByRole("button", { name: "Coverage" })).toBeEnabled());
       map.fitBounds.mockClear();
@@ -4685,7 +4686,7 @@ describe("MapPage", () => {
         );
       }
       const view = render(<Harness enabled={false} />);
-      await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
       await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
       await screen.findByRole("heading", { name: "Road coverage" });
       const map = mapInstances.at(-1)!;
@@ -4762,7 +4763,7 @@ describe("MapPage", () => {
           <MapPage {...props} />
         </RetainedTab>,
       );
-      fireEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
       await waitFor(() =>
         expect(mapInstances.at(-1)!.getLayer("private-workout-route-focus")).toBeDefined(),
       );
@@ -4903,7 +4904,7 @@ describe("MapPage", () => {
     );
     const coverage = screen.getByRole("button", { name: "Coverage" });
     expect(coverage).toBeDisabled();
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     expect(new URLSearchParams(location.search).get("workoutId")).toBe(selection.workouts[0].id);
     await waitFor(() => expect(coverage).toBeEnabled());
     const map = mapInstances.at(-1)!;
@@ -5342,7 +5343,7 @@ describe("MapPage", () => {
         onDateRangeSelected={vi.fn()}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
     const review = await screen.findByRole("region", { name: "Coverage diagnostic review" });
     expect(within(review).getByRole("alert")).toHaveTextContent(
@@ -5386,7 +5387,7 @@ describe("MapPage", () => {
         onDateRangeSelected={vi.fn()}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
     expect(await screen.findByRole("alert", {}, { timeout: 3500 })).toHaveTextContent(
       "The diagnostic overlay could not be prepared because all available workers are currently busy. Please try again later.",
@@ -5527,9 +5528,7 @@ describe("MapPage", () => {
         tz: "America/Denver",
         workoutIds: [],
       });
-      expect(
-        screen.queryByRole("button", { name: /Running.*8\/08\/2026/ }),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Running.*8\/8\/2026/ })).not.toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: /Hiking/ })).not.toBeChecked();
       if (retryFails)
         expect(
@@ -5625,7 +5624,7 @@ describe("MapPage", () => {
       ).not.toBeInTheDocument();
       if (validFocus)
         expect(
-          screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li"),
+          screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li"),
         ).toHaveClass("is-focused");
       vi.useFakeTimers();
       await act(async () => vi.advanceTimersByTimeAsync(30_000));
@@ -5824,10 +5823,10 @@ describe("MapPage", () => {
     await waitFor(() => expect(bodies).toHaveLength(1));
     view.rerender(<Harness revision={1} />);
     expect(
-      await screen.findByRole("button", { name: /New import.*8\/08\/2026/ }),
+      await screen.findByRole("button", { name: /New import.*8\/8\/2026/ }),
     ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /New import/ })).not.toBeChecked();
-    expect(screen.queryByRole("button", { name: /Running.*8\/08\/2026/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Running.*8\/8\/2026/ })).not.toBeInTheDocument();
     expect(update).toHaveBeenCalledExactlyOnceWith([newImport]);
     expect(bodies).toHaveLength(3);
     expect(bodies[2].workoutIds).toEqual([]);
@@ -5838,7 +5837,7 @@ describe("MapPage", () => {
     expect(update).toHaveBeenCalledExactlyOnceWith([newImport]);
     expect(bodies).toHaveLength(3);
     expect(screen.queryByRole("button", { name: /Obsolete bootstrap/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /New import.*8\/08\/2026/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /New import.*8\/8\/2026/ })).toBeInTheDocument();
   });
 
   test("aborts and ignores a late diagnostic when focus changes", async () => {
@@ -5873,7 +5872,7 @@ describe("MapPage", () => {
         onDateRangeSelected={vi.fn()}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     await userEvent.click(screen.getByRole("button", { name: "Coverage" }));
     const preparing = await screen.findByRole("status", { name: "" });
     expect(preparing).toHaveClass("coverage-diagnostic-preparing");
@@ -5901,7 +5900,7 @@ describe("MapPage", () => {
       "circle-opacity",
       1,
     );
-    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }));
     expect(diagnosticRequest.signal?.aborted).toBe(true);
     resolveDiagnostic(json(diagnostic, 201));
     await act(async () => {
@@ -6451,7 +6450,7 @@ describe("MapPage", () => {
     const stylesBeforeHover = map.setStyle.mock.calls.length;
 
     vi.useFakeTimers();
-    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ });
+    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ });
     fireEvent.pointerEnter(hikingButton);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(249);
@@ -6541,15 +6540,15 @@ describe("MapPage", () => {
         onDateRangeSelected={vi.fn()}
       />,
     );
-    const running = await screen.findByRole("button", { name: /Running.*8\/08\/2026/ });
+    const running = await screen.findByRole("button", { name: /Running.*8\/8\/2026/ });
     expect(running.querySelector(".route-swatch")).toBeInTheDocument();
 
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
     const unavailableRunning = screen.getByRole("button", {
-      name: /Coverage pending.*Running.*8\/08\/2026/,
+      name: /Coverage pending.*Running.*8\/8\/2026/,
     });
-    const staleHiking = screen.getByRole("button", { name: /Coverage stale.*Hiking.*8\/01\/2026/ });
+    const staleHiking = screen.getByRole("button", { name: /Coverage stale.*Hiking.*8\/1\/2026/ });
     expect(unavailableRunning).toBeDisabled();
     expect(unavailableRunning.closest("li")).toHaveClass("is-coverage-unavailable");
     expect(unavailableRunning.querySelector(".coverage-route-status--pending")).toBeInTheDocument();
@@ -6557,9 +6556,7 @@ describe("MapPage", () => {
     expect(staleHiking).toBeEnabled();
     expect(staleHiking.querySelector(".coverage-route-status--stale")).toBeInTheDocument();
     expect(
-      screen
-        .queryByRole("button", { name: /Running.*8\/08\/2026/ })
-        ?.querySelector(".route-swatch"),
+      screen.queryByRole("button", { name: /Running.*8\/8\/2026/ })?.querySelector(".route-swatch"),
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -6571,14 +6568,14 @@ describe("MapPage", () => {
     });
     expect(selectionPosts).toBe(2);
     expect(
-      screen.getByRole("button", { name: /Coverage pending.*Running.*8\/08\/2026/ }),
+      screen.getByRole("button", { name: /Coverage pending.*Running.*8\/8\/2026/ }),
     ).toBeDisabled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
     expect(selectionPosts).toBe(3);
     const currentRunning = screen.getByRole("button", {
-      name: /Coverage current.*Running.*8\/08\/2026/,
+      name: /Coverage current.*Running.*8\/8\/2026/,
     });
     expect(currentRunning).toBeEnabled();
     expect(currentRunning.querySelector(".coverage-route-status--current")).toBeInTheDocument();
@@ -6873,7 +6870,7 @@ describe("MapPage", () => {
     expect(unavailableIcon.querySelector("path")).toHaveAttribute("stroke-width", "1.5");
     expect(unavailableIcon.querySelector("path")).toHaveAttribute("stroke-linecap", "round");
     expect(document.querySelector(".coverage-route-status--unprocessed")).not.toBeInTheDocument();
-    const unprocessed = screen.getByRole("button", { name: /Coverage pending.*8\/01\/2026/ });
+    const unprocessed = screen.getByRole("button", { name: /Coverage pending.*8\/1\/2026/ });
     expect(unprocessed).toBeDisabled();
     expect(unprocessed.querySelector(".coverage-route-status--pending")).toBeInTheDocument();
     for (const indicator of document.querySelectorAll(".coverage-route-status--pending"))
@@ -7645,7 +7642,12 @@ describe("MapPage", () => {
     expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("range-dialog-action");
     await user.type(screen.getByLabelText("Start date"), "2026-03-15");
     await user.tab();
-    expect(screen.getByLabelText("End date")).toHaveValue("2026-03-15");
+    expect(
+      screen
+        .getByLabelText("End date")
+        .closest(".date-input-control")!
+        .querySelector("[data-date-canonical]"),
+    ).toHaveValue("2026-03-15");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Select base map" }));
     expect(screen.getByRole("separator")).toBeInTheDocument();
@@ -7710,7 +7712,9 @@ describe("MapPage", () => {
     expect(endDate).toHaveValue(end);
     await user.tab();
     expect(endDate).toHaveFocus();
-    expect(endDate).toHaveValue(expected);
+    expect(
+      endDate.closest(".date-input-control")!.querySelector("[data-date-canonical]"),
+    ).toHaveValue(expected);
   });
 
   test("formats an explicit date range consistently in the trigger", async () => {
@@ -7913,13 +7917,13 @@ describe("MapPage", () => {
     )?.[0];
     expect(highlightLayer.filter).toEqual(["==", ["get", "workoutId"], requested.id]);
     expect(highlightLayer.paint["line-color"]).toBe("#c026ff");
-    expect(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "nearest" });
     scrollIntoView.mockClear();
-    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }));
     expect(scrollIntoView).not.toHaveBeenCalled();
     history.replaceState({}, "", "/map");
   });
@@ -7982,7 +7986,7 @@ describe("MapPage", () => {
       ),
     );
     expect(map.fitBounds).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li")).toHaveClass(
+    expect(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li")).toHaveClass(
       "is-hovered",
       "is-focused",
     );
@@ -8015,7 +8019,7 @@ describe("MapPage", () => {
       />,
     );
     const checkbox = await screen.findByRole("checkbox", { name: /Show Running/ });
-    const focusButton = screen.getByRole("button", { name: /Running.*8\/08\/2026/ });
+    const focusButton = screen.getByRole("button", { name: /Running.*8\/8\/2026/ });
     const row = focusButton.closest("li")!;
     vi.useFakeTimers();
     fireEvent.pointerEnter(checkbox.closest("label")!);
@@ -8042,7 +8046,7 @@ describe("MapPage", () => {
     fireEvent.click(checkbox);
     expect(checkbox).toBeChecked();
     expect(row).not.toHaveClass("is-focused");
-    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ });
+    const hikingButton = screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ });
     const hikingRow = hikingButton.closest("li")!;
     fireEvent.pointerEnter(hikingButton);
     act(() => vi.advanceTimersByTime(250));
@@ -8103,9 +8107,9 @@ describe("MapPage", () => {
     expect(map.fitBounds).toHaveBeenCalledTimes(fitsBeforeToggle);
     expect(map.setStyle).toHaveBeenCalledTimes(stylesBeforeToggle);
     expect(
-      screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li"),
+      screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li"),
     ).not.toHaveClass("is-focused");
-    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await user.click(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }));
     expect(map.fitBounds).toHaveBeenLastCalledWith(
       [
         [-105.3, 39.9],
@@ -8194,14 +8198,14 @@ describe("MapPage", () => {
       expect(map.removeLayer).not.toHaveBeenCalledWith(layer);
     }
     expect(map.removeSource).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await user.click(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }));
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Routes" }));
     await waitFor(() => expect(map.getCanvas()).toHaveFocus());
     await user.click(checkbox);
     expect(new URL(window.location.href).searchParams.has("workoutId")).toBe(false);
     expect(
-      screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li"),
+      screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li"),
     ).not.toHaveClass("is-focused");
   });
 
@@ -8250,7 +8254,7 @@ describe("MapPage", () => {
     const map = mapInstances.at(-1)!;
     await user.click(screen.getByRole("checkbox", { name: "Select all workout routes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Fit routes" })).toBeDisabled());
-    await user.click(screen.getByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await user.click(screen.getByRole("button", { name: /Running.*8\/8\/2026/ }));
     await waitFor(() =>
       expect(posted).toContainEqual({
         dateRangeEnum: "last30Days",
@@ -8371,7 +8375,7 @@ describe("MapPage", () => {
         lngLat: { lng: -105.2, lat: 40 },
       }),
     );
-    const row = screen.getByRole("button", { name: /Running.*8\/08\/2026/ }).closest("li");
+    const row = screen.getByRole("button", { name: /Running.*8\/8\/2026/ }).closest("li");
     expect(row).not.toHaveClass("is-hovered");
     act(() => vi.advanceTimersByTime(249));
     act(() =>
@@ -8397,8 +8401,9 @@ describe("MapPage", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(popupInstances).toHaveLength(1);
     expect(popupInstances[0].content).toHaveTextContent("Running8.25 km");
+    expect(popupInstances[0].options).toMatchObject({ anchor: "bottom", offset: 16 });
     expect(popupInstances[0].content.children).toHaveLength(4);
-    expect(popupInstances[0].content).toHaveTextContent("8/08/20266:00 - 7:45");
+    expect(popupInstances[0].content).toHaveTextContent("8/8/20266:00 - 7:45");
     vi.useRealTimers();
   });
 
@@ -8432,7 +8437,7 @@ describe("MapPage", () => {
     );
     await screen.findByRole("checkbox", { name: /Show Running/ });
     const map = mapInstances.at(-1)!;
-    for (const name of [/Running.*8\/08\/2026/, /Hiking.*8\/01\/2026/, /Running.*8\/08\/2026/]) {
+    for (const name of [/Running.*8\/8\/2026/, /Hiking.*8\/1\/2026/, /Running.*8\/8\/2026/]) {
       const previousSelections = selectionCount;
       await userEvent.click(screen.getByRole("button", { name }));
       // Changing the selected set still replaces the capability without losing overlay order.
@@ -8486,8 +8491,8 @@ describe("MapPage", () => {
     map.removeLayer.mockClear();
     map.setStyle.mockClear();
     for (const [name, workout] of [
-      [/Running.*8\/08\/2026/, selection.workouts[0]],
-      [/Hiking.*8\/01\/2026/, selection.workouts[1]],
+      [/Running.*8\/8\/2026/, selection.workouts[0]],
+      [/Hiking.*8\/1\/2026/, selection.workouts[1]],
     ] as const) {
       await userEvent.click(screen.getByRole("button", { name }));
       await waitFor(() => expect(map.getLayer("coverage-diagnostic-direction")).toBeTruthy());
@@ -8547,7 +8552,7 @@ describe("MapPage", () => {
       { properties: { workoutId: selection.workouts[1].id, sortOrder: 2 } },
     ]);
     act(() => map.handlers.get("click")?.({ point: { x: 80, y: 60 } }));
-    const row = screen.getByRole("button", { name: /Hiking.*8\/01\/2026/ }).closest("li")!;
+    const row = screen.getByRole("button", { name: /Hiking.*8\/1\/2026/ }).closest("li")!;
     await waitFor(() => expect(row).toHaveClass("is-hovered", "is-focused"));
     expect(hikingCheckbox).toBeChecked();
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
@@ -8600,7 +8605,9 @@ describe("MapPage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     view.unmount();
 
-    fetchMock.mockRejectedValueOnce(new Error("private provider detail"));
+    fetchMock
+      .mockRejectedValueOnce(new Error("private provider detail"))
+      .mockImplementationOnce(() => new Promise<Response>(() => undefined));
     render(
       <MapPage
         config={config}
@@ -8617,6 +8624,8 @@ describe("MapPage", () => {
     expect(
       screen.queryByText("Routes could not be prepared for this map."),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("Updating routes...")).toBeVisible();
+    expect(screen.queryByText("No workout routes in this range.")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("private provider detail");
   });
 
@@ -8674,7 +8683,7 @@ describe("MapPage", () => {
     },
   );
 
-  test("shows errors after dismissed progress and dismisses only the visible warning in priority order", async () => {
+  test("shows errors after dismissed progress and retries only the visible route failure", async () => {
     mapBehavior.emitInitialStyleLoad = false;
     mapBehavior.emitSetStyleLoad = false;
     mapBehavior.styleLoaded = false;
@@ -8700,9 +8709,9 @@ describe("MapPage", () => {
     expect(screen.queryByText(/The public base map could not be loaded/)).not.toBeInTheDocument();
     expect(screen.getByText("Routes could not be prepared for this map.")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss route preparation error" }));
-    expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
+    expect(screen.getByText("Updating routes...")).toBeVisible();
     expect(document.body).not.toHaveTextContent("private provider detail");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     view.rerender(<MapPage {...props} dateRange="last7Days" />);
     expect(screen.getByText("Updating routes...")).toBeVisible();
@@ -8710,9 +8719,113 @@ describe("MapPage", () => {
     expect(await screen.findByText("Routes could not be prepared for this map.")).toBeVisible();
     const requestsBeforeDismiss = fetchMock.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Dismiss route preparation error" }));
-    expect(document.querySelector(".map-banner")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(requestsBeforeDismiss);
+    expect(screen.getByText("Updating routes...")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(requestsBeforeDismiss + 1);
   });
+
+  test.each([408, 429, 500, 502, 503, 504, "network"])(
+    "recovers a transient %s initial failure without mistaking it for an empty range",
+    async (failure) => {
+      vi.useFakeTimers();
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValueOnce(
+          failure === "network" ? new TypeError("Failed to fetch") : new ApiError(Number(failure)),
+        )
+        .mockResolvedValueOnce(json(selection));
+      await act(async () => {
+        render(
+          <MapPage
+            config={config}
+            preferences={preferences}
+            csrfToken="csrf-map"
+            dateRange="last30Days"
+            onDateRangeSelected={vi.fn()}
+          />,
+        );
+      });
+      expect(screen.getByText("Loading workout routes...")).toBeVisible();
+      expect(screen.queryByText("No workout routes in this range.")).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+      expect(screen.getByRole("checkbox", { name: /Show Running/ })).toBeChecked();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  test.each(["dismiss", "retry", "return"])(
+    "recovers an exhausted initial request on %s with the retained map and selection scope",
+    async (recovery) => {
+      vi.useFakeTimers();
+      let attempts = 0;
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        if (String(input) === "/api/map-selections" && init?.method === "POST") {
+          attempts++;
+          return attempts <= 6
+            ? Promise.reject(new ApiError(502))
+            : Promise.resolve(json(selection));
+        }
+        throw new Error(`Unexpected request ${init?.method ?? "GET"} ${input}`);
+      });
+      const content = (
+        <MapPage
+          config={config}
+          preferences={preferences}
+          csrfToken="csrf-map"
+          dateRange="last30Days"
+          onDateRangeSelected={vi.fn()}
+        />
+      );
+      let view!: ReturnType<typeof render>;
+      await act(async () => {
+        view = render(
+          <RetainedTab id="/map" active>
+            {content}
+          </RetainedTab>,
+        );
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(12_500));
+      expect(attempts).toBe(6);
+      expect(screen.getByText("Routes could not be prepared for this map.")).toBeVisible();
+      expect(screen.getByText("Workout routes could not be loaded.")).toBeVisible();
+      expect(screen.queryByText("No workout routes in this range.")).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(60_000));
+      expect(attempts).toBe(6);
+      const stage = document.querySelector(".map-stage");
+      if (recovery === "return") {
+        view.rerender(
+          <RetainedTab id="/map" active={false}>
+            {content}
+          </RetainedTab>,
+        );
+        expect(attempts).toBe(6);
+        await act(async () => {
+          view.rerender(
+            <RetainedTab id="/map" active>
+              {content}
+            </RetainedTab>,
+          );
+        });
+      } else {
+        await act(async () => {
+          fireEvent.click(
+            screen.getByRole("button", {
+              name: recovery === "dismiss" ? "Dismiss route preparation error" : "Retry",
+            }),
+          );
+        });
+      }
+      expect(attempts).toBe(7);
+      expect(screen.getByRole("checkbox", { name: /Show Running/ })).toBeChecked();
+      expect(document.querySelector(".map-stage")).toBe(stage);
+      expect(
+        screen.queryByText("Routes could not be prepared for this map."),
+      ).not.toBeInTheDocument();
+      expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({
+        dateRangeEnum: "last30Days",
+        tz: "America/Denver",
+      });
+    },
+  );
 
   test("retries transient map selection failures while retaining the updating state", async () => {
     let attempts = 0;
@@ -9063,7 +9176,7 @@ describe("MapPage", () => {
         onDateRangeSelected={vi.fn()}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/08\/2026/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Running.*8\/8\/2026/ }));
     const coverage = screen.getByRole("button", { name: "Coverage" });
     await waitFor(() => expect(coverage).toBeEnabled());
     await userEvent.click(coverage);

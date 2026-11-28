@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,12 +42,16 @@ type workoutSort struct {
 	field, direction string
 }
 
+const workoutPaceExpression = `CASE WHEN route.pace_distance_meters>0 THEN
+    route.pace_elapsed_seconds::numeric*1000/(60*route.pace_distance_meters::numeric)
+    WHEN metrics.distance_value>0 THEN w.provider_duration/(60*metrics.distance_value) END`
+
 var workoutSortExpressions = map[string]string{
 	"date":          "w.started_at",
 	"type":          "wt.provider_label COLLATE \"C\"",
 	"duration":      "w.provider_duration",
 	"distance":      "metrics.distance_value",
-	"pace":          "CASE WHEN metrics.distance_value > 0 THEN w.provider_duration / (60 * metrics.distance_value) END",
+	"pace":          workoutPaceExpression,
 	"calories":      "metrics.total_energy_value",
 	"heartRate":     "metrics.heart_rate_value",
 	"elevationGain": "metrics.elevation_value",
@@ -157,10 +162,11 @@ func queryWorkoutColumnExtents(ctx context.Context, tx pgx.Tx, dateRange resolve
 	filter, arguments := dateRange.filter("w.local_start_date", 1)
 	err := tx.QueryRow(ctx, `SELECT count(*)::bigint,trim_scale(max(w.provider_duration))::text,
 		trim_scale(max(metrics.distance_value))::text,
-		trim_scale(max(CASE WHEN metrics.distance_value>0 THEN w.provider_duration/(60*metrics.distance_value) END))::text,
+		trim_scale(max(`+workoutPaceExpression+`))::text,
 		trim_scale(max(metrics.calories_value))::text,trim_scale(max(metrics.heart_rate_value))::text,
 		trim_scale(max(metrics.elevation_gain_value))::text
 	 FROM app.workouts w
+	 LEFT JOIN app.workout_routes route ON route.account_id=w.account_id AND route.workout_id=w.id
 	 LEFT JOIN LATERAL (SELECT
 		max(value) FILTER (WHERE metric='distance' AND unit='km') AS distance_value,
 		max(value) FILTER (WHERE metric='total_energy' AND unit='kcal') AS calories_value,
@@ -661,8 +667,8 @@ func parseWorkoutSort(raw *[]string) ([]workoutSort, error) {
 const workoutSelect = `SELECT w.id,w.source_id,wt.id,wt.type_key,wt.provider_label,w.started_at,w.ended_at,
  w.provider_duration::text,w.local_start_date,w.timezone_name,w.start_offset_minutes,w.end_offset_minutes,
  w.is_indoor,w.location,metrics.distance_value::text,metrics.distance_unit,
-	 CASE WHEN metrics.distance_value > 0 THEN trim_scale(w.provider_duration / (60 * metrics.distance_value))::text END,
-	 CASE WHEN metrics.distance_value > 0 THEN 'min/km' END,
+	 trim_scale((` + workoutPaceExpression + `))::text,
+	 CASE WHEN route.pace_distance_meters>0 OR metrics.distance_value>0 THEN 'min/km' END,
 	 metrics.total_energy_value::text,metrics.total_energy_unit,metrics.active_energy_value::text,metrics.active_energy_unit,
 	 metrics.heart_rate_value::text,metrics.heart_rate_unit,metrics.maximum_heart_rate_value::text,metrics.maximum_heart_rate_unit,
 	 metrics.elevation_value::text,metrics.elevation_unit,route.minimum_altitude::text,
@@ -762,15 +768,26 @@ func scanWorkout(row interface{ Scan(...any) error }) (generated.Workout, error)
 	setMetric(&item.MaximumElevation, maximumElevationValue, maximumElevationUnit)
 	item.SplitPaces.Kilometer.SetNull()
 	item.SplitPaces.Mile.SetNull()
-	if fastestKilometer != nil && *fastestKilometer != "" && slowestKilometer != nil && *slowestKilometer != "" {
+	if consistentPaceRange(fastestKilometer, slowestKilometer, paceValue, 1) {
 		setNullable(&item.SplitPaces.Kilometer, &generated.SplitPaceRange{FastestSeconds: *fastestKilometer, SlowestSeconds: *slowestKilometer})
 	}
-	if fastestMile != nil && *fastestMile != "" && slowestMile != nil && *slowestMile != "" {
+	if consistentPaceRange(fastestMile, slowestMile, paceValue, 1.609344) {
 		setNullable(&item.SplitPaces.Mile, &generated.SplitPaceRange{FastestSeconds: *fastestMile, SlowestSeconds: *slowestMile})
 	}
 	item.RouteAvailable = item.RoutePointCount > 0
 	setNullable(&item.DisplayTimezone, displayTimezone(timezone, startOffset))
 	return item, nil
+}
+
+func consistentPaceRange(fastest, slowest, averageMinutesPerKM *string, unitKilometers float64) bool {
+	if fastest == nil || slowest == nil || averageMinutesPerKM == nil {
+		return false
+	}
+	f, fe := strconv.ParseFloat(*fastest, 64)
+	s, se := strconv.ParseFloat(*slowest, 64)
+	a, ae := strconv.ParseFloat(*averageMinutesPerKM, 64)
+	a *= 60 * unitKilometers
+	return fe == nil && se == nil && ae == nil && !math.IsNaN(f) && !math.IsNaN(s) && !math.IsNaN(a) && !math.IsInf(f, 0) && !math.IsInf(s, 0) && !math.IsInf(a, 0) && f > 0 && s >= f && a > 0 && math.Round(f) <= math.Round(a) && math.Round(a) <= math.Round(s)
 }
 
 func querySummary(ctx context.Context, tx pgx.Tx, dateRange resolvedRange) ([]generated.WorkoutTypeSummary, generated.SummaryTotals, error) {

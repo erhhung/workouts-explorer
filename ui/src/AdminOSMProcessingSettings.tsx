@@ -3,7 +3,12 @@ import { useRef, useState } from "react";
 import { ApiError, api, type Session } from "./api";
 import { useTabActive } from "./RetainedTab";
 
-type Settings = { monitorDatabaseStorage: boolean; revision: number; updatedAt: string };
+type Settings = {
+  monitorDatabaseStorage: boolean;
+  storageMetricsConfigured?: boolean;
+  revision: number;
+  updatedAt: string;
+};
 const key = ["admin-osm-processing-settings"] as const;
 
 export function AdminOSMProcessingSettings({ session }: { session: Session }) {
@@ -45,14 +50,15 @@ export function AdminOSMProcessingSettings({ session }: { session: Session }) {
       if (error instanceof ApiError && error.status === 409) void query.refetch();
     },
   });
-  const value = draft ?? query.data?.monitorDatabaseStorage ?? true,
+  const configured = query.data?.storageMetricsConfigured !== false,
+    value = configured && (draft ?? query.data?.monitorDatabaseStorage ?? true),
     dirty = query.data && value !== query.data.monitorDatabaseStorage;
   return (
     <div className="sync-card admin-section">
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (!query.data || !dirty || save.isPending) return;
+          if (!query.data || !configured || !dirty || save.isPending) return;
           save.mutate({ monitor: value, revision: query.data.revision, sessionID: session.id });
         }}
       >
@@ -61,7 +67,7 @@ export function AdminOSMProcessingSettings({ session }: { session: Session }) {
             <input
               type="checkbox"
               checked={value}
-              disabled={!query.data || save.isPending}
+              disabled={!query.data || !configured || save.isPending}
               onChange={(event) => {
                 setDraft(event.target.checked);
                 save.reset();
@@ -70,6 +76,9 @@ export function AdminOSMProcessingSettings({ session }: { session: Session }) {
             <span>Monitor available database storage</span>
           </label>
         </div>
+        {query.data && !configured && (
+          <p className="muted">Storage metrics are disabled or not configured in Helm.</p>
+        )}
         <p className="muted">
           Check free database space during region processing. Turn this off to skip storage probes,
           metrics-settle waits and storage-triggered vacuuming; cleanup and required processing
@@ -79,10 +88,16 @@ export function AdminOSMProcessingSettings({ session }: { session: Session }) {
           Applies whenever a download or reprocessing job starts or resumes. Running jobs keep their
           current setting until the next start or resume.
         </p>
-        {query.isPending && <p role="status">Loading OSM processing settings...</p>}
+        {query.isPending && (
+          <p className="content-state-message content-state-message--centered" role="status">
+            Loading OSM processing settings...
+          </p>
+        )}
         {query.isError && (
           <div role="alert">
-            <p>OSM processing settings are unavailable.</p>
+            <p className="content-state-message content-state-message--centered">
+              OSM processing settings are unavailable.
+            </p>
             <button type="button" className="secondary" onClick={() => void query.refetch()}>
               Retry
             </button>
@@ -99,7 +114,7 @@ export function AdminOSMProcessingSettings({ session }: { session: Session }) {
           <button
             type="submit"
             className="primary preferences-action"
-            disabled={!dirty || save.isPending}
+            disabled={!configured || !dirty || save.isPending}
             aria-busy={save.isPending}
           >
             {save.isPending ? "Saving..." : "Save"}

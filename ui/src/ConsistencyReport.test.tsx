@@ -233,7 +233,7 @@ describe("Consistency report", () => {
     const links = within(screen.getByRole("navigation", { name: "Reports" })).getAllByRole(
       "button",
     );
-    expect(links.map((link) => link.textContent)).toEqual(["Consistency", "New Coverage"]);
+    expect(links.map((link) => link.textContent)).toEqual(["Consistency", "New coverage"]);
     expect(links[0]).toHaveAttribute("aria-current", "page");
     expect(screen.getAllByRole("button", { expanded: true })).toHaveLength(7);
     expect(screen.getByRole("button", { name: "Week", pressed: true })).toBeInTheDocument();

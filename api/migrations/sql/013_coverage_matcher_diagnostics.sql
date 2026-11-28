@@ -33,7 +33,7 @@ CREATE TABLE app.coverage_diagnostic_runs (
 CREATE TABLE app.coverage_diagnostic_generations (
     account_id uuid NOT NULL,
     run_id uuid NOT NULL,
-    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'),
+    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'),
     generation_id bigint NOT NULL CHECK (generation_id > 0),
     source_url text NOT NULL CHECK (length(source_url) BETWEEN 1 AND 4096),
     source_sha256 bytea NOT NULL CHECK (octet_length(source_sha256) = 32),

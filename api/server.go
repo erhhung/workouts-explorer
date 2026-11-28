@@ -21,6 +21,7 @@ import (
 	"github.com/erhhung/workouts-explorer/api/generated"
 	"github.com/erhhung/workouts-explorer/internal/config"
 	"github.com/erhhung/workouts-explorer/internal/database"
+	"github.com/erhhung/workouts-explorer/internal/osm"
 	"github.com/erhhung/workouts-explorer/internal/sourcecrypto"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
@@ -36,17 +37,18 @@ import (
 var openAPIDocument []byte
 
 type Server struct {
-	config      config.API
-	db          *pgxpool.Pool
-	tileClient  *http.Client
-	tiles       *mapTileService
-	tileContext context.Context
-	swagger     http.Handler
-	passwords   *passwordHasher
-	delivery    *deliveryService
-	avatars     *avatarService
-	sourceKeys  *sourcecrypto.Keyring
-	diagnostics *coverageDiagnosticService
+	config       config.API
+	db           *pgxpool.Pool
+	tileClient   *http.Client
+	tiles        *mapTileService
+	tileContext  context.Context
+	swagger      http.Handler
+	passwords    *passwordHasher
+	delivery     *deliveryService
+	avatars      *avatarService
+	sourceKeys   *sourcecrypto.Keyring
+	diagnostics  *coverageDiagnosticService
+	storageUsage *osm.StorageUsageReader
 }
 
 func NewHandler(cfg config.API, db *pgxpool.Pool, logger *slog.Logger) (http.Handler, error) {
@@ -85,6 +87,7 @@ func NewHandlerContext(ctx context.Context, cfg config.API, db *pgxpool.Pool, lo
 		return nil, err
 	}
 	server := &Server{config: cfg, db: db, tileContext: ctx, swagger: swagger, passwords: newPasswordHasher(cfg.PasswordMinimum), delivery: delivery, avatars: newAvatarService(), sourceKeys: sourceKeys, diagnostics: diagnostics}
+	server.storageUsage = &osm.StorageUsageReader{PrometheusURL: cfg.OSMPrometheusURL, SelectorLabels: cfg.OSMStorageSelectorLabels, Databases: cfg.OSMStorageDatabases}
 	startSecurityMaintenance(ctx, db, logger)
 	csp, err := swaggerContentSecurityPolicy(swagger)
 	if err != nil {

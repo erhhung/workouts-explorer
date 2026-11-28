@@ -5,8 +5,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, api, type Session } from "./api";
 import { CoverageCellValue } from "./CoverageTableCell";
 import { useTabActive } from "./RetainedTab";
-import { formatDateOnly } from "./date";
-import { dateTimeFormatter, numberFormatter } from "./formatters";
+import { formatDateOnly, formatEnglishDate } from "./date";
+import { numberFormatter } from "./formatters";
 
 export type DirectoryEntry = {
   id: string;
@@ -149,6 +149,7 @@ function UserActions({
             </>
           ) : (
             <>
+              <DropdownMenu.Separator />
               {!checkingSessions &&
                 entry.state === "active" &&
                 Date.parse(entry.activeSessionExpiresAt ?? "") > Date.now() && (
@@ -603,11 +604,11 @@ export function AdminUsers({
                 </td>
                 <td>
                   {entry.registeredAt ? (
-                    dateTimeFormatter("en-US", {
+                    formatEnglishDate(new Date(entry.registeredAt), {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
-                    }).format(new Date(entry.registeredAt))
+                    })
                   ) : (
                     <span className="workout-table-na">n/a</span>
                   )}
@@ -1046,7 +1047,7 @@ function UsageDialog({
                 <dd>
                   {data
                     ? data.lastLoginAt
-                      ? dateTimeFormatter("en-US", {
+                      ? formatEnglishDate(new Date(data.lastLoginAt), {
                           month: "short",
                           day: "numeric",
                           year: "numeric",
@@ -1054,7 +1055,7 @@ function UsageDialog({
                           minute: "2-digit",
                           hour12: true,
                           timeZone: timezone,
-                        }).format(new Date(data.lastLoginAt))
+                        })
                       : "n/a"
                     : "Loading..."}
                 </dd>

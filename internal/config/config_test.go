@@ -63,7 +63,7 @@ func TestOTLPEndpointDefaultsAndOverrides(t *testing.T) {
 		endpoint string
 		unset    bool
 	}{
-		{"default", "grpcs://otel-gateway-collector.observability.svc.cluster.local:4317", true},
+		{"default disabled", "", true},
 		{"explicitly disabled", "", false},
 		{"legacy HTTP", "http://collector:4328", false},
 		{"legacy HTTPS", "https://collector:4318", false},

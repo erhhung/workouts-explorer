@@ -232,8 +232,9 @@ func readMapSelection(ctx context.Context, tx pgx.Tx, accountID, selectionID uui
 		       coverage.coverage_minimum_longitude,coverage.coverage_minimum_latitude,
 		       coverage.coverage_maximum_longitude,coverage.coverage_maximum_latitude,
 		       metrics.distance_value::text,metrics.distance_unit,
-		       CASE WHEN metrics.speed_value>0 THEN trim_scale(60/metrics.speed_value)::text END,
-		       CASE WHEN metrics.speed_value>0 THEN 'min/km' END,
+		       CASE WHEN route.pace_distance_meters>0 THEN trim_scale(route.pace_elapsed_seconds::numeric*1000/(60*route.pace_distance_meters::numeric))::text
+                    WHEN metrics.distance_value>0 THEN trim_scale(workout.provider_duration/(60*metrics.distance_value))::text END,
+		       CASE WHEN route.pace_distance_meters>0 OR metrics.distance_value>0 THEN 'min/km' END,
 		       metrics.energy_value::text,metrics.energy_unit,metrics.heart_rate_value::text,metrics.heart_rate_unit,
 		       metrics.elevation_value::text,metrics.elevation_unit,
 		       coverage.readiness_state,coverage.processing_state,coverage.applied_result_status,

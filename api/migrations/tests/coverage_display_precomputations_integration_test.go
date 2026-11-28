@@ -595,7 +595,7 @@ func coverageDisplayMigrateCurrent(t *testing.T, ctx context.Context) {
 		t.Fatal(err)
 	}
 	var historical bool
-	if err := db.QueryRowContext(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=31 AND migration_baseline=27
+	if err := db.QueryRowContext(ctx, `SELECT schema_version=$1 AND minimum_runtime_version=32 AND migration_baseline=27
 		AND (SELECT count(*)=$1+1 AND count(DISTINCT version_id)=$1+1 AND min(version_id)=0 AND max(version_id)=$1 AND bool_and(is_applied)
 			FROM public.goose_db_version) FROM app.schema_metadata WHERE singleton`, database.SupportedSchemaVersion).Scan(&historical); err != nil || !historical {
 		t.Fatalf("display tests require an isolated current Goose fixture: %t %v", historical, err)
@@ -752,9 +752,12 @@ func coverageDisplayProjectionParity(t *testing.T, db testDatabases, f coverageD
 		JOIN app.path_segments segment USING(account_id,region_id,generation_id,physical_segment_id)
 		LEFT JOIN app.coverage_paths path ON path.account_id=match.account_id AND path.logical_path_id=match.logical_path_id
 		WHERE match.account_id=$1 AND (
-			(NOT(segment.highway='service' AND COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle'))
-			 AND segment.tags->>'amenity' IS DISTINCT FROM 'parking' AND path.logical_path_id IS NOT NULL
-			 AND (path.name IS NOT NULL OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park')
+			((match.display_class IN ('ordinary','shared_road','parking_aisle') OR (COALESCE(match.display_class,'legacy')='legacy'
+			 AND (NOT(segment.highway='service' AND COALESCE(segment.tags->>'service','') IN ('driveway','parking_aisle'))
+			  OR (segment.tags->>'service'='driveway' AND NULLIF(btrim(segment.tags->>'name'),'') IS NOT NULL
+				AND lower(btrim(COALESCE(segment.tags->>'access','')))='private'))
+			 AND segment.tags->>'amenity' IS DISTINCT FROM 'parking')) AND path.logical_path_id IS NOT NULL
+			 AND (path.name IS NOT NULL OR match.display_class='parking_aisle' OR segment.tags->>'workouts:park_kind' IN ('state_park','national_park')
 				OR NOT(segment.tags ? 'workouts:park_id')))
 			OR segment.tags->>'workouts:park_id' IS NOT NULL)
 	), expected AS (
@@ -776,13 +779,16 @@ func coverageDisplayProjectionParity(t *testing.T, db testDatabases, f coverageD
 	for _, oracle := range []struct{ table, query string }{
 		{"workout_path_display_partials", `SELECT account_id,workout_id,
 			COALESCE(NULLIF(tags->>'workouts:education_id','')::uuid,logical_path_id) entity_id,logical_path_id,
-			(tags->>'workouts:park_kind' IN ('state_park','national_park') OR NOT(tags ? 'workouts:park_id')) IS TRUE qualifies_without_name,
+			(display_class='parking_aisle' OR tags->>'workouts:park_kind' IN ('state_park','national_park') OR NOT(tags ? 'workouts:park_id')) IS TRUE qualifies_without_name,
 			min(region_id) region_id,bool_or(tags ? 'workouts:education_id') education_key_present,
 			min(tags->>'workouts:education_name') education_name,
 			ST_XMin(ST_Extent(geom)::box2d) minimum_longitude,ST_YMin(ST_Extent(geom)::box2d) minimum_latitude,
 			ST_XMax(ST_Extent(geom)::box2d) maximum_longitude,ST_YMax(ST_Extent(geom)::box2d) maximum_latitude
-			FROM evidence WHERE NOT(highway='service' AND COALESCE(tags->>'service','') IN ('driveway','parking_aisle'))
-			AND tags->>'amenity' IS DISTINCT FROM 'parking' GROUP BY account_id,workout_id,entity_id,logical_path_id,qualifies_without_name`},
+			FROM evidence WHERE (display_class IN ('ordinary','shared_road','parking_aisle') OR (COALESCE(display_class,'legacy')='legacy'
+			AND (NOT(highway='service' AND COALESCE(tags->>'service','') IN ('driveway','parking_aisle'))
+				OR (tags->>'service'='driveway' AND NULLIF(btrim(tags->>'name'),'') IS NOT NULL
+					AND lower(btrim(COALESCE(tags->>'access','')))='private'))
+			AND tags->>'amenity' IS DISTINCT FROM 'parking')) GROUP BY account_id,workout_id,entity_id,logical_path_id,qualifies_without_name`},
 		{"workout_path_display_context", `SELECT account_id,workout_id,
 			COALESCE(NULLIF(tags->>'workouts:education_id','')::uuid,logical_path_id) entity_id,
 			min(tags->>'workouts:park_name') locality_name FROM evidence

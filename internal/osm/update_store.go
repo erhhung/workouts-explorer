@@ -19,6 +19,16 @@ type PostgreSQLUpdateStore struct {
 	WaitForLock  bool
 }
 
+func (s PostgreSQLUpdateStore) RecordBuildDatabaseSize(ctx context.Context, generation Generation) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE osm_catalog.generations g SET
+        build_database_bytes=(SELECT COALESCE(sum(pg_total_relation_size(c.oid)),0)::bigint
+            FROM pg_class c WHERE c.relnamespace=to_regnamespace(g.schema_name::text) AND c.relkind IN('r','m')),
+        build_database_measured_at=clock_timestamp()
+        WHERE g.id=$1 AND g.region_id=$2 AND g.schema_name=$3 AND g.promoted_at IS NULL
+            AND to_regnamespace(g.schema_name::text) IS NOT NULL`, generation.ID, generation.RegionID, generation.SchemaName)
+	return err
+}
+
 func (s PostgreSQLUpdateStore) PromotedGenerationNumber(ctx context.Context, buildID int64, region string) (int64, error) {
 	var number int64
 	err := s.Pool.QueryRow(ctx, `SELECT `+regionalGenerationSQL+` FROM osm_catalog.generations g WHERE g.id=$1 AND g.region_id=$2 AND g.promoted_at IS NOT NULL`, buildID, region).Scan(&number)
@@ -196,12 +206,12 @@ func (s PostgreSQLUpdateStore) Resume(ctx context.Context, id int64, regionID st
 		return Generation{}, nil, fmt.Errorf("generation %d is operator-blocked; run unblock before resuming", id)
 	}
 	var generation Generation
-	err := s.Pool.QueryRow(ctx, `SELECT candidate.id,candidate.region_id,candidate.schema_name::text,candidate.source_url,region.generation_high_watermark+1
+	err := s.Pool.QueryRow(ctx, `SELECT candidate.id,candidate.region_id,candidate.schema_name::text,candidate.source_url,region.generation_high_watermark+1,candidate.importer_version
         FROM osm_catalog.generations candidate JOIN osm_catalog.regions region ON region.id=candidate.region_id
-		WHERE candidate.id=$1 AND candidate.region_id=$2 AND candidate.state IN ('building','validating') AND candidate.importer_version=$3 AND candidate.derivation_version=$4
+		WHERE candidate.id=$1 AND candidate.region_id=$2 AND candidate.state IN ('building','validating') AND candidate.importer_version IN (3,$3) AND candidate.derivation_version=$4
 		AND candidate.osmium_version=$5 AND candidate.osm2pgsql_version=$6 AND candidate.source_sha256 IS NOT NULL AND candidate.source_header_timestamp IS NOT NULL
 		AND EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name=candidate.schema_name::text)`,
-		id, regionID, ImporterVersion, DerivationVersion, versions.Osmium, versions.Osm2pgsql).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration)
+		id, regionID, ImporterVersion, DerivationVersion, versions.Osmium, versions.Osm2pgsql).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration, &generation.ImporterVersion)
 	if err != nil {
 		return Generation{}, nil, fmt.Errorf("generation %d is not resumable: %w", id, err)
 	}
@@ -229,7 +239,7 @@ func (s PostgreSQLUpdateStore) Resume(ctx context.Context, id int64, regionID st
 		return Generation{}, nil, err
 	}
 	foundIncomplete := false
-	for _, stage := range pipelineStages {
+	for _, stage := range generationPipelineStages(generation) {
 		if stage == "validate" {
 			continue
 		}
@@ -444,9 +454,9 @@ func (s PostgreSQLUpdateStore) Reserve(ctx context.Context, regionID string, ver
 		) OVERRIDING SYSTEM VALUE
 		SELECT allocated.id,region.id,'building',('osm_build_'||allocated.id)::name,
 			region.source_url,$2,$3,$4,$5,NULLIF($6,'')::uuid FROM region CROSS JOIN allocated
-		RETURNING id,region_id,schema_name::text,source_url,(SELECT next_generation FROM region)`, regionID, versions.Osmium,
+		RETURNING id,region_id,schema_name::text,source_url,(SELECT next_generation FROM region),importer_version`, regionID, versions.Osmium,
 		versions.Osm2pgsql, ImporterVersion, DerivationVersion, s.ControlJobID).Scan(
-		&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration)
+		&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.RegionalGeneration, &generation.ImporterVersion)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -472,8 +482,8 @@ func (s PostgreSQLUpdateStore) ReserveEvaluation(ctx context.Context, regionID s
 	INSERT INTO osm_catalog.generations(id,region_id,state,schema_name,source_url,osmium_version,osm2pgsql_version,importer_version,derivation_version)
 	OVERRIDING SYSTEM VALUE SELECT allocated.id,region.id,'evaluating',('osm_build_'||allocated.id)::name,
 		region.source_url,$2,$3,$4,$5 FROM region CROSS JOIN allocated
-	RETURNING id,region_id,schema_name::text,source_url`, regionID, versions.Osmium, versions.Osm2pgsql,
-		ImporterVersion, DerivationVersion).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL)
+	RETURNING id,region_id,schema_name::text,source_url,importer_version`, regionID, versions.Osmium, versions.Osm2pgsql,
+		ImporterVersion, DerivationVersion).Scan(&generation.ID, &generation.RegionID, &generation.SchemaName, &generation.SourceURL, &generation.ImporterVersion)
 	if err != nil {
 		return Generation{}, err
 	}

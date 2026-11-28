@@ -43,6 +43,7 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 	defer ownerDB.Close()
 	sender := &recordingSender{}
 	server := integrationServer(t, db, sender)
+	server.config.OSMStorageMetricsEnabled = true
 	principal, account := insertSourceTestUser(t, ownerDB)
 	admin := insertIngestTestAdministrator(t, ownerDB)
 	hash, err := server.passwords.hash(ctx, "synthetic admin password")
@@ -144,7 +145,7 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 	ownerCookie := &http.Cookie{Name: sessionCookieName, Value: ownerToken}
 	t.Run("dual cookies are deterministic and role APIs deny crossing", func(t *testing.T) {
 		for _, pair := range [][]*http.Cookie{{ownerCookie, cookie}, {cookie, ownerCookie}} {
-			for _, path := range []string{"/api/session", "/api/admin/session", "/api/admin/users", "/api/admin/directory", "/api/admin/config"} {
+			for _, path := range []string{"/api/session", "/api/admin/session", "/api/admin/users", "/api/admin/directory", "/api/admin/config", "/api/admin/osm/storage-usage"} {
 				w := request("GET", path, "", "", "", pair...)
 				if w.Code != 200 {
 					t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
@@ -164,6 +165,12 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 		ownerBearer := insertTestSession(t, db, principal, "bearer", "")
 		if request("GET", "/api/admin/users", "", "", ownerBearer, cookie).Code != 403 {
 			t.Fatal("owner bearer obtained admin directory")
+		}
+		if request("GET", "/api/admin/osm/storage-usage", "", "", ownerBearer, cookie).Code != 403 {
+			t.Fatal("owner bearer obtained administrator storage observations")
+		}
+		if response := request("GET", "/api/admin/osm/storage-usage", "", "", "", cookie); response.Header().Get("Cache-Control") != "private, no-store" || !strings.Contains(response.Body.String(), `"configured":false`) {
+			t.Fatal("unconfigured storage response is not a private bounded projection")
 		}
 		adminBearer := insertTestSession(t, db, admin, "bearer", "")
 		for _, path := range []string{"/api/session", "/api/me", "/api/me/preferences", "/api/sources", "/api/jobs", "/api/notifications", "/api/workouts"} {
@@ -694,6 +701,19 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 			t.Fatal("settings changes not audited exactly once", audits, err)
 		}
 	})
+	t.Run("unconfigured metrics force monitoring off and reject enable", func(t *testing.T) {
+		server.config.OSMStorageMetricsEnabled = false
+		defer func() { server.config.OSMStorageMetricsEnabled = true }()
+		const path = "/api/admin/osm/processing-settings"
+		response := request("GET", path, "", "", "", cookie)
+		var settings osmProcessingSettings
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &settings) != nil || settings.MonitorDatabaseStorage || settings.StorageMetricsConfigured {
+			t.Fatal("unconfigured metrics were enabled")
+		}
+		if request("PATCH", path, fmt.Sprintf(`{"monitorDatabaseStorage":true,"revision":%d}`, settings.Revision), browser.CsrfToken, "", cookie).Code != 400 {
+			t.Fatal("monitoring enabled without deployment support")
+		}
+	})
 	t.Run("region updates admit coalesced commands and retain ordered cancellation history", func(t *testing.T) {
 		server.config.OSMUpdatesEnabled = true
 		defer func() { server.config.OSMUpdatesEnabled = false }()
@@ -761,6 +781,21 @@ func TestM10AdminFoundationIntegration(t *testing.T) {
 		if detail.Code != 200 || json.Unmarshal(detail.Body.Bytes(), &update) != nil || len(update.Steps) != 58 || update.Steps[0].Name != "prepare-source" || update.Steps[1].Name != "download" || update.Steps[20].Name != "clip-replacements" {
 			t.Fatalf("ordered progress: %d %s", detail.Code, detail.Body.String())
 		}
+		server.config.OSMUpdatesEnabled = false
+		for _, action := range []string{"download", "reprocess", "delete"} {
+			if response := request("POST", path, fmt.Sprintf(`{"regionId":%q,"action":%q}`, region, action), browser.CsrfToken, "", cookie); response.Code != 503 {
+				t.Fatalf("disabled %s accepted: %d", action, response.Code)
+			}
+		}
+		for _, action := range []string{"pause", "resume", "cancel", "clear"} {
+			if response := request("POST", path+"/"+update.ID+"/commands", fmt.Sprintf(`{"action":%q}`, action), browser.CsrfToken, "", cookie); response.Code != 503 {
+				t.Fatalf("disabled %s accepted: %d", action, response.Code)
+			}
+		}
+		if response := request("GET", path+"/"+update.ID, "", "", "", cookie); response.Code != 200 {
+			t.Fatal("disabled updates hid read-only progress")
+		}
+		server.config.OSMUpdatesEnabled = true
 		validateRecordedResponse(t, "GET", path+"/"+update.ID, detail)
 		batchStart := time.Now().UTC().Truncate(time.Millisecond).Add(-64 * time.Second)
 		for _, q := range []string{`UPDATE app.osm_region_updates SET state='processing',current_order=20,elapsed_total_ms=2000000 WHERE id=$1`,

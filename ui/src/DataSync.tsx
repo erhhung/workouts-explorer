@@ -43,11 +43,13 @@ import {
   type Preferences,
   type SourceStatus,
 } from "./api";
-import { InfoTip, instantZone, ZoneBadge } from "./Tooltip";
+import { InfoTip, instantZone, Tooltip, ZoneBadge } from "./Tooltip";
 import { completeDateRangeOnBlur } from "./dateRange";
 import { PageNavigation } from "./PageNavigation";
 import { ContentBackground } from "./ContentBackground";
 import { autoSyncIntervalLabel } from "./formatters";
+import { DateInput } from "./DateInput";
+import { formatEnglishDate, formatDateOnly, type DateFormat } from "./date";
 
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "running"]);
 const ACTIVITY_LABELS: Record<IngestActivity["phase"], string> = {
@@ -72,6 +74,18 @@ const RETRY_EXPLANATIONS = {
 };
 
 type RetryUnavailableReason = keyof typeof RETRY_EXPLANATIONS;
+type HistoryCommand = "retry" | "cancel";
+type BlockedJobRetry = { jobId: string; reason: RetryUnavailableReason; dataUpdateCount: number };
+
+function historyCommandStatus(job: JobSummary, command: HistoryCommand) {
+  const status = job.displayStatus ?? job.status;
+  return (
+    job.operation !== "workout_deletion" &&
+    (command === "retry"
+      ? status === "failed" || status === "partially_succeeded"
+      : status === "running" || status === "queued")
+  );
+}
 
 function jobActionPolicy(job: JobDetail, blockedReason?: RetryUnavailableReason) {
   const deletion = job.operation === "workout_deletion",
@@ -150,31 +164,39 @@ function dateTime(
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unavailable";
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone,
-      hour12: preferences.clockFormat === "12h",
-    }).format(date);
-  } catch {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+    return formatEnglishDate(
       date,
+      {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone,
+        hour12: preferences.clockFormat === "12h",
+      },
+      preferences.dateFormat,
+    );
+  } catch {
+    return formatEnglishDate(
+      date,
+      { dateStyle: "medium", timeStyle: "short" },
+      preferences.dateFormat,
     );
   }
 }
 
-function calendarDate(value: string | undefined) {
+function calendarDate(value: string | undefined, order?: DateFormat) {
   if (!value) return "Never";
   const date = new Date(`${value}T00:00:00Z`);
-  return Number.isNaN(date.getTime())
-    ? "Unavailable"
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
+  return Number.isNaN(date.getTime()) ? "Unavailable" : formatDateOnly(value, order);
 }
 
-function staleSourceMessage(source: DataSyncSource, includeSourceName: boolean) {
+function staleSourceMessage(
+  source: DataSyncSource,
+  includeSourceName: boolean,
+  order?: DateFormat,
+) {
   const subject = includeSourceName ? ` for ${source.displayName}` : "";
   return source.freshness.lastNewExportDate
-    ? `No new export has been discovered${subject} since ${calendarDate(source.freshness.lastNewExportDate)}.`
+    ? `No new export has been discovered${subject} since ${calendarDate(source.freshness.lastNewExportDate, order)}.`
     : `No recent export has been discovered${subject}.`;
 }
 
@@ -583,7 +605,7 @@ function HistoryFilter({
 function QueryError({ copy, retry }: { copy: string; retry: () => void }) {
   return (
     <div className="sync-query-error" role="alert">
-      <span>{copy}</span>
+      <span className="content-state-message">{copy}</span>
       <button type="button" className="secondary" onClick={retry}>
         Try again
       </button>
@@ -808,7 +830,11 @@ function ArtifactDisclosure({
             ref={resultsRef}
             style={resultsMinHeight ? { minHeight: resultsMinHeight } : undefined}
           >
-            {query.isPending && !data && <p role="status">Loading {kind}...</p>}
+            {query.isPending && !data && (
+              <p className="content-state-message content-state-message--centered" role="status">
+                Loading {kind}...
+              </p>
+            )}
             {query.isError && (
               <QueryError
                 copy={`${label} are unavailable.`}
@@ -819,7 +845,9 @@ function ArtifactDisclosure({
               />
             )}
             {data && data.items.length === 0 && (
-              <p>No {failuresOnly ? "failed files" : kind} recorded.</p>
+              <p className="content-state-message content-state-message--centered">
+                No {failuresOnly ? "failed files" : kind} recorded.
+              </p>
             )}
             {data && kind === "files" && (
               <ul className="artifact-list">
@@ -1024,6 +1052,9 @@ function JobHistoryActions({
             }}
           >
             <DropdownMenu.Item onSelect={() => onView(job.id)}>View detail</DropdownMenu.Item>
+            {((prepared && "error" in prepared) ||
+              action?.policy.cancel ||
+              action?.policy.retry) && <DropdownMenu.Separator />}
             {prepared && "error" in prepared && (
               <DropdownMenu.Item
                 onSelect={(event) => {
@@ -1050,6 +1081,213 @@ function JobHistoryActions({
               >
                 {action.policy.retryLabel}
               </DropdownMenu.Item>
+            )}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </span>
+  );
+}
+
+function JobHistoryBulkActions({
+  jobs,
+  scope,
+  enabled,
+  busy,
+  blockedRetry,
+  onRun,
+}: {
+  jobs: JobSummary[];
+  scope: string;
+  enabled: boolean;
+  busy: boolean;
+  blockedRetry: BlockedJobRetry | null;
+  onRun: (command: HistoryCommand, targets: JobDetail[]) => void;
+}) {
+  const client = useQueryClient(),
+    trigger = useRef<HTMLButtonElement>(null);
+  const [requested, setRequested] = useState(false);
+  const [prepared, setPrepared] = useState<{
+    retry: JobDetail[];
+    cancel: JobDetail[];
+    failed: boolean;
+  }>();
+  const version = useRef(0),
+    available = useRef(enabled && !busy);
+  available.current = enabled && !busy;
+  function close() {
+    version.current++;
+    setRequested(false);
+    setPrepared(undefined);
+  }
+  async function prepare() {
+    if (!available.current) return;
+    const current = ++version.current;
+    setRequested(true);
+    setPrepared(undefined);
+    const candidates = [
+      ...new Map(
+        jobs
+          .filter(
+            (job) => historyCommandStatus(job, "retry") || historyCommandStatus(job, "cancel"),
+          )
+          .map((job) => [job.id, job]),
+      ).values(),
+    ];
+    const result: { retry: JobDetail[]; cancel: JobDetail[]; failed: boolean } = {
+      retry: [],
+      cancel: [],
+      failed: false,
+    };
+    let next = 0;
+    // Bound detail lookups; command submissions themselves remain sequential.
+    await Promise.all(
+      Array.from({ length: Math.min(4, candidates.length) }, async () => {
+        while (current === version.current && available.current && next < candidates.length) {
+          const summary = candidates[next++];
+          try {
+            const job = await client.fetchQuery({
+              queryKey: ["job", summary.id],
+              staleTime: 0,
+              retry: false,
+              queryFn: async ({ signal }) => {
+                const value = await api<JobDetail>(`/api/jobs/${encodeURIComponent(summary.id)}`, {
+                  signal,
+                });
+                if (value.id !== summary.id) throw new Error("Run identity changed");
+                return value;
+              },
+            });
+            if (current !== version.current || !available.current) return;
+            const count = client.getQueryState(["job", job.id])?.dataUpdateCount ?? 0;
+            const blocked =
+              blockedRetry?.jobId === job.id &&
+              (!job.retryEligibility || count <= blockedRetry.dataUpdateCount)
+                ? blockedRetry.reason
+                : undefined;
+            const policy = jobActionPolicy(job, blocked);
+            if (
+              historyCommandStatus(summary, "retry") &&
+              historyCommandStatus(job, "retry") &&
+              policy.retry &&
+              !policy.retryDisabled &&
+              policy.retryLabel === "Retry run"
+            )
+              result.retry.push(job);
+            if (
+              historyCommandStatus(summary, "cancel") &&
+              historyCommandStatus(job, "cancel") &&
+              policy.cancel &&
+              !job.cancelRequested
+            )
+              result.cancel.push(job);
+          } catch {
+            result.failed = true;
+          }
+        }
+      }),
+    );
+    const order = new Map(candidates.map((job, index) => [job.id, index]));
+    result.retry.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    result.cancel.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    if (current === version.current && available.current) setPrepared(result);
+  }
+  useEffect(() => {
+    close();
+  }, [enabled, busy, scope]);
+  useEffect(
+    () => () => {
+      version.current++;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!requested || prepared) return;
+    const outside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && trigger.current?.contains(event.target))) close();
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("keydown", escape);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", close);
+    };
+  }, [requested, prepared]);
+  return (
+    <span
+      className="history-action-control"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <DropdownMenu.Root
+        open={requested && enabled && Boolean(prepared)}
+        onOpenChange={(open) => {
+          if (open) void prepare();
+          else close();
+        }}
+      >
+        <DropdownMenu.Trigger
+          ref={trigger}
+          className="workout-action-trigger"
+          disabled={!enabled || busy}
+          aria-busy={requested && !prepared}
+          aria-label="Task history actions"
+        >
+          <span aria-hidden="true">...</span>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="menu-content workout-action-menu history-action-menu"
+            align="end"
+            sideOffset={6}
+            collisionPadding={{ left: 1, top: 5, bottom: 5 }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (trigger.current?.isConnected && enabled) {
+                const target = trigger.current.disabled
+                  ? trigger.current.closest<HTMLElement>(".history-section")
+                  : trigger.current;
+                target?.focus({ preventScroll: true });
+              }
+            }}
+          >
+            <DropdownMenu.Label className="history-action-menu-label">
+              Jobs on this page only
+            </DropdownMenu.Label>
+            <DropdownMenu.Item
+              disabled={busy || !prepared?.retry.length || prepared.failed}
+              onSelect={() => {
+                if (prepared) onRun("retry", prepared.retry);
+              }}
+            >
+              Retry (partially) failed jobs
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              className="danger-item"
+              disabled={busy || !prepared?.cancel.length || prepared.failed}
+              onSelect={() => {
+                if (prepared) onRun("cancel", prepared.cancel);
+              }}
+            >
+              Cancel running/queued jobs
+            </DropdownMenu.Item>
+            {prepared?.failed && (
+              <>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    void prepare();
+                  }}
+                >
+                  Reload actions
+                </DropdownMenu.Item>
+              </>
             )}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
@@ -1433,12 +1671,14 @@ function NotificationBanner({
   const sourceFailure =
     notification.subjectType === "source" && notification.type === "source-connection-failed";
   return (
-    <article className={`sync-notification sync-notification--${notification.severity}`}>
+    <article
+      className={`sync-notification sync-notification--${notification.severity}${["unresolved", "remind"].includes(notification.state) ? " dismissible-notice" : ""}`}
+    >
       <div>
         <strong>{notification.title}</strong>
         <p>
           {notification.type === "source-stale" && notification.subjectType === "source" && source
-            ? staleSourceMessage(source, true)
+            ? staleSourceMessage(source, true, preferences.dateFormat)
             : notification.message}
         </p>
         {notification.state === "remind" && notification.remindAt && (
@@ -1551,6 +1791,9 @@ export function DataSync({
     reason: RetryUnavailableReason;
     dataUpdateCount: number;
   } | null>(null);
+  const bulkCommandJobs = useRef(new Set<string>());
+  const currentCSRF = useRef(csrfToken);
+  currentCSRF.current = csrfToken;
   const previousStatus = useRef<{ id: string; status: JobStatus } | undefined>(undefined);
   const formErrorId = useId();
   const reprocessHelpId = useId();
@@ -1804,7 +2047,11 @@ export function DataSync({
       ACTIVE_STATUSES.has(previousStatus.current.status) &&
       !ACTIVE_STATUSES.has(status)
     ) {
-      setAnnouncement(`Run ${STATUS_LABELS[detail.data?.displayStatus ?? status].toLowerCase()}.`);
+      if (!id || !bulkCommandJobs.current.has(id))
+        setAnnouncement(
+          `Run ${STATUS_LABELS[detail.data?.displayStatus ?? status].toLowerCase()}.`,
+        );
+      if (id) bulkCommandJobs.current.delete(id);
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     }
     previousStatus.current = status && id ? { id, status } : undefined;
@@ -1912,6 +2159,98 @@ export function DataSync({
     }
   }
 
+  async function runHistoryCommand(command: HistoryCommand, targets: JobDetail[]) {
+    if (
+      commandLock.current ||
+      !tabActiveRef.current ||
+      !mounted.current ||
+      jobs.isPlaceholderData ||
+      jobs.isPending ||
+      jobs.error
+    )
+      return;
+    const visible = new Map((jobs.data?.items ?? []).map((job) => [job.id, job]));
+    const eligible = [...new Map(targets.map((job) => [job.id, job])).values()].filter((job) => {
+      const row = visible.get(job.id),
+        policy = jobActionPolicy(job);
+      return (
+        row &&
+        historyCommandStatus(row, command) &&
+        historyCommandStatus(job, command) &&
+        (command === "retry"
+          ? policy.retry && !policy.retryDisabled && policy.retryLabel === "Retry run"
+          : policy.cancel && !job.cancelRequested)
+      );
+    });
+    if (!eligible.length) return;
+    commandLock.current = true;
+    setCommandBusy(command);
+    setCommandJobId(undefined);
+    bulkCommandJobs.current = new Set([
+      ...eligible.map((job) => job.id),
+      ...(effectiveJobId ? [effectiveJobId] : []),
+    ]);
+    const executionCSRF = csrfToken;
+    let accepted = 0,
+      failed = 0;
+    setAnnouncement(
+      command === "retry"
+        ? "Retrying failed jobs..."
+        : "Requesting cancellation of running jobs...",
+    );
+    try {
+      for (let index = 0; index < eligible.length; index++) {
+        if (!mounted.current || currentCSRF.current !== executionCSRF) {
+          failed += eligible.length - index;
+          break;
+        }
+        const job = eligible[index];
+        try {
+          if (command === "retry") {
+            await api<IngestAccepted>(
+              `/api/jobs/${encodeURIComponent(job.id)}/retry`,
+              { method: "POST", body: "{}" },
+              executionCSRF,
+            );
+          } else {
+            const updated = await api<JobDetail>(
+              `/api/jobs/${encodeURIComponent(job.id)}/cancellation`,
+              { method: "POST", body: "{}" },
+              executionCSRF,
+            );
+            if (mounted.current && currentCSRF.current === executionCSRF)
+              queryClient.setQueryData(["job", job.id], updated);
+          }
+          accepted++;
+        } catch (error) {
+          failed++;
+          if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+            failed += eligible.length - index - 1;
+            break;
+          }
+        }
+      }
+      if (!mounted.current || currentCSRF.current !== executionCSRF) return;
+      await Promise.all([
+        refreshOperations(),
+        ...eligible.map((job) => queryClient.invalidateQueries({ queryKey: ["job", job.id] })),
+      ]);
+      if (!mounted.current || currentCSRF.current !== executionCSRF) return;
+      const label = command === "retry" ? "Retry all" : "Cancel all";
+      setAnnouncement(
+        failed
+          ? `${label}: ${accepted} accepted; ${failed} could not be accepted. Review the refreshed runs and try again.`
+          : `${label} accepted.`,
+      );
+    } finally {
+      commandLock.current = false;
+      if (mounted.current) {
+        setCommandBusy(null);
+        setCommandJobId(undefined);
+      }
+    }
+  }
+
   const dismiss = useMutation({
     mutationFn: (id: string) =>
       api<Notification>(
@@ -2004,6 +2343,16 @@ export function DataSync({
       onRetry={(job) => void retry(job)}
     />
   );
+  const historyBulkActions = () => (
+    <JobHistoryBulkActions
+      jobs={jobs.data?.items ?? []}
+      scope={`${historyPage}:${operationFilter}:${statusFilter}:${jobs.data?.items.map((job) => job.id).join(",") ?? ""}`}
+      enabled={!historyReadonly}
+      busy={commandBusy !== null}
+      blockedRetry={blockedRetry}
+      onRun={(command, targets) => void runHistoryCommand(command, targets)}
+    />
+  );
   return (
     <main className="data-sync-page content-background" data-app-content tabIndex={-1}>
       <ContentBackground />
@@ -2018,7 +2367,11 @@ export function DataSync({
         Back to Summary
       </a>
       <div
-        className={announcement ? "sync-feedback sync-command-feedback" : "visually-hidden"}
+        className={
+          announcement
+            ? "sync-feedback sync-command-feedback dismissible-notice"
+            : "visually-hidden"
+        }
         role="status"
         aria-label="Sync feedback"
         aria-atomic="true"
@@ -2046,7 +2399,10 @@ export function DataSync({
         <p className="notification-truncation">More notifications are available.</p>
       )}
       {dismiss.isError && (
-        <div className="sync-feedback sync-command-feedback sync-inline-error" role="alert">
+        <div
+          className="sync-feedback sync-command-feedback sync-inline-error dismissible-notice"
+          role="alert"
+        >
           <span>The notification could not be dismissed.</span>
           <button type="button" className="secondary" onClick={() => dismiss.reset()}>
             Dismiss
@@ -2063,7 +2419,11 @@ export function DataSync({
             </div>
           </div>
           {snapshot.isPending && (
-            <p className="sync-retrieval-state" role="status" aria-busy="true">
+            <p
+              className="sync-retrieval-state content-state-message content-state-message--centered"
+              role="status"
+              aria-busy="true"
+            >
               Retrieving sources...
             </p>
           )}
@@ -2133,7 +2493,7 @@ export function DataSync({
               </fieldset>
               <fieldset aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}>
                 <legend>Scope</legend>
-                <div className="sync-radio-options">
+                <div className="field-pair sync-radio-options">
                   <label>
                     <input
                       type="radio"
@@ -2167,10 +2527,9 @@ export function DataSync({
                 <div className="field-pair sync-date-fields">
                   <div className="field">
                     <label htmlFor="sync-start-date">Start date</label>
-                    <input
+                    <DateInput
                       id="sync-start-date"
                       name="startDate"
-                      type="date"
                       aria-invalid={formErrorArea === "dates" || undefined}
                       aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}
                       onBlur={completeDateRangeOnBlur}
@@ -2178,10 +2537,9 @@ export function DataSync({
                   </div>
                   <div className="field">
                     <label htmlFor="sync-end-date">End date</label>
-                    <input
+                    <DateInput
                       id="sync-end-date"
                       name="endDate"
-                      type="date"
                       aria-invalid={formErrorArea === "dates" || undefined}
                       aria-describedby={formErrorArea === "dates" ? formErrorId : undefined}
                     />
@@ -2189,8 +2547,15 @@ export function DataSync({
                 </div>
               )}
               {rangeMode === "bounded" && (
-                <span className="tooltip manual-reprocess">
-                  <label className="tooltip-trigger manual-reprocess-option">
+                <Tooltip
+                  id={reprocessHelpId}
+                  className="manual-reprocess"
+                  bubbleClassName="manual-reprocess-help"
+                  content="Download and process every eligible file in this date range, including previously successful files. This may be slow and transfer substantial data."
+                  asChild
+                  focusable={false}
+                >
+                  <label className="manual-reprocess-option">
                     <input
                       type="checkbox"
                       name="reprocessAllFiles"
@@ -2201,11 +2566,7 @@ export function DataSync({
                     />
                     <span>Reprocess all files in this date range</span>
                   </label>
-                  <span className="tooltip-content" id={reprocessHelpId} role="tooltip">
-                    Download and process every eligible file in this date range, including
-                    previously successful files. This may be slow and transfer substantial data.
-                  </span>
-                </span>
+                </Tooltip>
               )}
               <button type="submit" className="primary" disabled={ingest.isPending}>
                 {ingest.isPending ? "Starting sync..." : "Start sync"}
@@ -2229,7 +2590,10 @@ export function DataSync({
             )}
           </div>
           {snapshot.isPending && (
-            <p className="sync-retrieval-state" role="status">
+            <p
+              className="sync-retrieval-state content-state-message content-state-message--centered"
+              role="status"
+            >
               Retrieving schedule...
             </p>
           )}
@@ -2267,7 +2631,9 @@ export function DataSync({
                     <span>Stale after</span>
                     <InfoTip
                       label="About Stale after"
-                      content="Show a warning after this period if no new workouts have been imported by auto-sync"
+                      content={
+                        "Show a warning after this period if no new\nworkouts have been imported by auto-sync"
+                      }
                     />
                   </dt>
                   <dd>
@@ -2305,7 +2671,9 @@ export function DataSync({
                       </div>
                       <div>
                         <dt>Latest export date</dt>
-                        <dd>{calendarDate(source.freshness.lastNewExportDate)}</dd>
+                        <dd>
+                          {calendarDate(source.freshness.lastNewExportDate, preferences.dateFormat)}
+                        </dd>
                       </div>
                       {source.freshness.lastSyncStartedAt && (
                         <div>
@@ -2314,7 +2682,9 @@ export function DataSync({
                         </div>
                       )}
                     </dl>
-                    {source.freshness.staleSince && <p>{staleSourceMessage(source, false)}</p>}
+                    {source.freshness.staleSince && (
+                      <p>{staleSourceMessage(source, false, preferences.dateFormat)}</p>
+                    )}
                   </article>
                 ))}
               </div>
@@ -2333,7 +2703,9 @@ export function DataSync({
         >
           {detail.isPending && !displayedDetail && (
             <div className="sync-card">
-              <p role="status">Loading run detail...</p>
+              <p className="content-state-message content-state-message--centered" role="status">
+                Loading run detail...
+              </p>
             </div>
           )}
           {detail.isError && (
@@ -2376,7 +2748,12 @@ export function DataSync({
         </section>
       )}
 
-      <section className="history-section" aria-labelledby="history-heading" data-paging-region>
+      <section
+        className="history-section"
+        aria-labelledby="history-heading"
+        data-paging-region
+        tabIndex={-1}
+      >
         <div className="history-heading">
           <div>
             <p className="card-kicker">Task history</p>
@@ -2406,7 +2783,7 @@ export function DataSync({
           </div>
         </div>
         {jobs.isPending && (
-          <p className="sync-history-state" role="status">
+          <p className="sync-history-state content-state-message" role="status">
             Loading task history...
           </p>
         )}
@@ -2414,7 +2791,7 @@ export function DataSync({
           <QueryError copy="Task history is unavailable." retry={() => void jobs.refetch()} />
         )}
         {jobs.data?.items.length === 0 && (
-          <p className="sync-history-state">No tasks match these filters.</p>
+          <p className="sync-history-state content-state-message">No tasks match these filters.</p>
         )}
         {jobs.data && jobs.data.items.length > 0 && (
           <div
@@ -2438,8 +2815,9 @@ export function DataSync({
                     <th scope="col">Operation</th>
                     <th scope="col">Results</th>
                     <th scope="col">Status</th>
-                    <th scope="col">
+                    <th scope="col" className="history-actions-cell">
                       <span className="visually-hidden">Action</span>
+                      {historyBulkActions()}
                     </th>
                   </tr>
                 </thead>
@@ -2466,6 +2844,7 @@ export function DataSync({
               </table>
             </div>
             <div className="sync-history-cards">
+              <div className="history-card-actions">{historyBulkActions()}</div>
               {jobs.data.items.map((job) => (
                 <article
                   key={job.id}

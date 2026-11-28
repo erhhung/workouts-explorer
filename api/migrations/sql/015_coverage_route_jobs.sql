@@ -23,7 +23,7 @@ CREATE TABLE app.workout_coverage_states (
     route_input_sha256 bytea NOT NULL CHECK (octet_length(route_input_sha256) = 32),
     readiness_state text NOT NULL CHECK (readiness_state IN ('unresolved', 'pending', 'unavailable', 'map_data_ready')),
     processing_state text NOT NULL DEFAULT 'not_started' CHECK (processing_state = 'not_started'),
-    reason text CHECK (reason IN ('region_not_active', 'no_provider_region')),
+    reason text CHECK (reason IN ('region_not_active', 'region_reprocessing_required', 'no_provider_region')),
     created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     map_data_ready_at timestamptz,
@@ -32,7 +32,7 @@ CREATE TABLE app.workout_coverage_states (
     CHECK (
         (
             readiness_state = 'pending'
-            AND reason = 'region_not_active'
+            AND reason IN ('region_not_active','region_reprocessing_required')
         )
         OR (
             readiness_state = 'unavailable'
@@ -49,7 +49,7 @@ CREATE TABLE app.workout_coverage_states (
 CREATE TABLE app.workout_coverage_regions (
     account_id uuid NOT NULL,
     workout_id uuid NOT NULL,
-    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'),
+    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'),
     desired_osm_generation bigint NOT NULL CHECK (desired_osm_generation > 0),
     created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
@@ -162,7 +162,7 @@ DECLARE region_value jsonb; changed boolean;
 BEGIN
     PERFORM app.assert_workout_coverage_job_lease(target_account_id, target_job_id, claiming_worker, current_lease_token);
     IF new_readiness_state NOT IN ('pending', 'unavailable', 'map_data_ready')
-       OR (new_readiness_state = 'pending' AND new_reason IS DISTINCT FROM 'region_not_active')
+       OR (new_readiness_state = 'pending' AND (new_reason IS NULL OR new_reason NOT IN ('region_not_active','region_reprocessing_required')))
        OR (new_readiness_state = 'unavailable' AND new_reason IS DISTINCT FROM 'no_provider_region')
        OR (new_readiness_state = 'map_data_ready' AND new_reason IS NOT NULL)
        OR new_regions IS NULL OR jsonb_typeof(new_regions) IS DISTINCT FROM 'array'
@@ -177,7 +177,7 @@ BEGIN
     FOR region_value IN SELECT value FROM jsonb_array_elements(new_regions) LOOP
         IF jsonb_typeof(region_value) IS DISTINCT FROM 'object' OR (SELECT count( * ) FROM jsonb_object_keys(region_value)) <> 2
            OR NOT (region_value ? 'regionId' AND region_value ? 'generation')
-           OR region_value->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'
+           OR region_value->> 'regionId' !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'
            OR region_value->> 'generation' !~ '^[1-9][0-9]*$' THEN
             RAISE EXCEPTION 'invalid workout coverage region' USING ERRCODE = '22023';
         END IF;
@@ -429,7 +429,7 @@ ADD CONSTRAINT jobs_running_lease_v16_check CHECK (
 CREATE TABLE app.coverage_job_contexts (
     job_id uuid PRIMARY KEY,
     account_id uuid NOT NULL,
-    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$'),
+    region_id text NOT NULL CHECK (region_id ~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$'),
     target_osm_generation bigint NOT NULL CHECK (target_osm_generation > 0),
     target_work_revision bigint NOT NULL CHECK (target_work_revision > 0),
     rules_version text NOT NULL CHECK (rules_version = 'coverage-experimental-v1'),
@@ -576,6 +576,41 @@ CREATE TABLE app.matcher_slots (
     FOREIGN KEY (job_id, account_id) REFERENCES app.jobs (id, account_id) ON DELETE CASCADE,
     CHECK ((slot_kind = 'production') = (job_id IS NOT NULL))
 );
+
+-- Public map-processing capabilities observed with the active catalog snapshot.
+-- This is global control metadata, not tenant route data.
+CREATE TABLE app.coverage_map_processing_versions (
+    region_id text PRIMARY KEY,
+    generation bigint NOT NULL CHECK(generation>0),
+    importer_version integer NOT NULL CHECK(importer_version>0),
+    derivation_version integer NOT NULL CHECK(derivation_version>0)
+);
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER TABLE app.coverage_map_processing_versions OWNER TO workouts_security_owner;
+REVOKE ALL ON app.coverage_map_processing_versions FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+
+-- +goose StatementBegin
+CREATE FUNCTION app.coverage_processing_ready(vector jsonb,policy text) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+DECLARE selected jsonb;
+BEGIN
+    IF policy IS DISTINCT FROM 'coverage-path-policy-experimental-v84' THEN RETURN true; END IF;
+    IF jsonb_typeof(vector) IS DISTINCT FROM 'array' OR jsonb_array_length(vector)=0 THEN RETURN false; END IF;
+    FOR selected IN SELECT value FROM jsonb_array_elements(vector) LOOP
+        IF selected->>'regionId' IS NULL OR selected->>'generation' IS NULL
+            OR selected->>'generation' !~ '^[1-9][0-9]*$' THEN RETURN false; END IF;
+        IF NOT EXISTS(SELECT 1 FROM app.coverage_map_processing_versions version
+            WHERE version.region_id=selected->>'regionId' AND version.generation=(selected->>'generation')::bigint
+                AND version.importer_version>=4 AND version.derivation_version>=21) THEN RETURN false; END IF;
+    END LOOP;
+    RETURN true;
+END;
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.coverage_processing_ready(jsonb,text) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.coverage_processing_ready(jsonb,text) FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
 
 CREATE INDEX matcher_slots_account_idx ON app.matcher_slots (account_id);
 
@@ -803,6 +838,26 @@ $function$;
 
 -- +goose StatementEnd
 
+-- Serialize only Coverage admission. Shared lifecycle protection remains
+-- compatible with foreign-key checks and other read-only account guards.
+-- +goose StatementBegin
+CREATE FUNCTION app.lock_coverage_admission(target_account uuid) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,app AS $function$
+BEGIN
+    PERFORM 1 FROM app.accounts WHERE id=target_account AND target_account=app.current_account_id() AND state='active' FOR SHARE NOWAIT;
+    IF NOT FOUND THEN RETURN false; END IF;
+    IF NOT pg_try_advisory_xact_lock(hashtextextended('coverage-admission:'||target_account::text,0)) THEN
+        RAISE EXCEPTION 'coverage admission is busy' USING ERRCODE='55P03';
+    END IF;
+    RETURN true;
+END;
+$function$;
+-- +goose StatementEnd
+GRANT CREATE ON SCHEMA app TO workouts_security_owner;
+ALTER FUNCTION app.lock_coverage_admission(uuid) OWNER TO workouts_security_owner;
+REVOKE CREATE ON SCHEMA app FROM workouts_security_owner;
+REVOKE ALL ON FUNCTION app.lock_coverage_admission(uuid) FROM PUBLIC,workouts_api,workouts_worker,workouts_coverage_worker,workouts_tiles;
+
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION app.request_owned_job_cancellation (target_job_id uuid, requester_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
 SET
@@ -892,7 +947,7 @@ SET
 DECLARE target jsonb; child_id uuid; child_count integer := 0; existing_job uuid; actual_parent uuid; generations jsonb;
 BEGIN
     IF target_account_id <> app.current_account_id() OR new_parent_id IS NULL OR
-       target_region_id !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$' OR target_osm_generation < 1 OR
+       target_region_id !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$' OR target_osm_generation < 1 OR
        target_work_revision < 1 OR target_rules <> 'coverage-experimental-v1' OR
        target_sampling <> 'coverage-sampling-experimental-v1' OR
        target_policy !~ '^coverage-path-policy-experimental-v[1-9][0-9]*$' OR
@@ -900,8 +955,7 @@ BEGIN
        jsonb_array_length(route_targets) NOT BETWEEN 1 AND 1000 THEN
         RAISE EXCEPTION 'invalid coverage update target' USING ERRCODE = '22023';
     END IF;
-    PERFORM 1 FROM app.accounts WHERE id = target_account_id AND state = 'active' FOR UPDATE;
-    IF NOT FOUND THEN RETURN; END IF;
+    IF NOT app.lock_coverage_admission(target_account_id) THEN RETURN; END IF;
     SELECT context.job_id INTO existing_job FROM app.coverage_job_contexts context
       JOIN app.jobs job ON job.id = context.job_id AND job.account_id = context.account_id
      WHERE context.account_id = target_account_id AND context.region_id = target_region_id
@@ -1013,7 +1067,8 @@ BEGIN
          WHERE child.kind = 'coverage_update_route' AND parent.kind = 'coverage_update'
            AND ((child.status = 'queued' AND child.cancel_requested_at IS NULL) OR
                 (child.status = 'running' AND child.lease_expires_at < transaction_timestamp()))
-           AND NOT child.id = ANY(attempted)
+            AND NOT child.id = ANY(attempted)
+            AND app.coverage_processing_ready(route.target_generations,parent_context.path_policy_version)
          ORDER BY parent_context.last_child_claimed_at NULLS FIRST, parent.created_at, child.created_at, child.id LIMIT 1;
         IF NOT FOUND THEN RETURN; END IF;
         attempted := array_append(attempted, candidate.id);
@@ -1255,7 +1310,7 @@ DECLARE limits app.matcher_slot_limits%ROWTYPE;
 BEGIN
     IF target_account_id <> app.current_account_id() OR owner_id = '' OR new_slot_token IS NULL OR request_token IS NULL OR
        cardinality(requested_regions) NOT BETWEEN 0 AND 256 OR slot_duration < interval '1 second' OR slot_duration > interval '2 minutes' OR
-       EXISTS (SELECT 1 FROM unnest(requested_regions) region WHERE region !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9-]{0,63}$') THEN
+       EXISTS (SELECT 1 FROM unnest(requested_regions) region WHERE region !~ '^[a-z][a-z0-9-]{0,63}:[a-z][a-z0-9/-]{0,191}$') THEN
         RAISE EXCEPTION 'invalid diagnostic matcher slot arguments' USING ERRCODE = '22023';
     END IF;
     PERFORM 1 FROM app.matcher_slot_guard WHERE singleton FOR UPDATE;

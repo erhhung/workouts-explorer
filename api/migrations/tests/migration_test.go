@@ -103,7 +103,7 @@ func TestStatusAndDisplayMigrationCheckpoints(t *testing.T) {
 		functions int
 	}{
 		{"029_ingest_status_reporting.sql", 29, 34},
-		{"030_coverage_display.sql", 30, 32},
+		{"030_coverage_display.sql", 30, 33},
 	} {
 		t.Run(checkpoint.file, func(t *testing.T) {
 			raw, err := migrations.Files.ReadFile(checkpoint.file)
@@ -207,6 +207,9 @@ func TestMigrationTestLayout(t *testing.T) {
 		t.Fatal("migration test directory is empty")
 	}
 	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() == "testdata" {
+			continue
+		}
 		if entry.IsDir() || !stdstrings.HasSuffix(entry.Name(), "_test.go") {
 			t.Fatalf("unexpected test directory entry %q", entry.Name())
 		}
@@ -747,7 +750,7 @@ func TestWorkoutCoverageReadinessMigrationContract(t *testing.T) {
 	for _, required := range []string{
 		"CREATE TABLE app.workout_coverage_states", "CREATE TABLE app.workout_coverage_regions",
 		"route_input_revision", "octet_length(route_input_sha256)=32", "processing_state='not_started'",
-		"'unresolved','pending','unavailable','map_data_ready'", "'region_not_active','no_provider_region'",
+		"'unresolved','pending','unavailable','map_data_ready'", "'region_not_active','region_reprocessing_required','no_provider_region'",
 		"ON DELETE CASCADE", "FORCE ROW LEVEL SECURITY", "CREATE FUNCTION app.initialize_workout_coverage",
 		"CREATE FUNCTION app.assert_workout_coverage_job_lease", "coverage readiness requires a live ingest lease",
 		"prior_digest=new_route_input_sha256", "route_input_revision=prior_revision+1",

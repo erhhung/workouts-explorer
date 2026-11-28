@@ -15,6 +15,7 @@ const runtimeCoverageMetadataReadinessSQL = `
 				'route_input_sha256:bytea:true','generations:jsonb:true','matching_descriptor:jsonb:true','job_id:uuid:true']),
 			('coverage_reconciliation_wakes',ARRAY['account_id:uuid:true','transaction_id:bigint:true'])
 		), functions(signature,language,volatility,definer,worker,coverage,result) AS (VALUES
+			('app.coverage_processing_ready(jsonb,text)','plpgsql','s',true,false,false,'boolean'),
 			('app.coverage_matching_descriptor(text,text,text,double precision,text)','sql','i',false,false,false,'jsonb'),
 			('app.capture_coverage_matching_descriptor()','plpgsql','v',true,false,false,'trigger'),
 			('app.stamp_coverage_applied_match_proof()','plpgsql','v',true,false,false,'trigger'),
@@ -45,6 +46,16 @@ const runtimeCoverageMetadataReadinessSQL = `
 		)
 		SELECT (SELECT schema_version >= $1 AND minimum_runtime_version >= 29 AND minimum_runtime_version <= $1
 			AND migration_baseline=27 FROM app.schema_metadata WHERE singleton)
+		AND EXISTS(SELECT 1 FROM pg_class c WHERE c.oid=to_regclass('app.coverage_map_processing_versions')
+			AND c.relkind='r' AND c.relpersistence='p' AND pg_get_userbyid(c.relowner)='workouts_security_owner'
+			AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity
+			AND ARRAY(SELECT a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::text
+				FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum)
+				=ARRAY['region_id:text:true','generation:bigint:true','importer_version:integer:true','derivation_version:integer:true']
+			AND NOT EXISTS(SELECT 1 FROM pg_roles r WHERE r.rolname IN('workouts_api','workouts_worker','workouts_coverage_worker','workouts_tiles')
+				AND (has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+					OR has_any_column_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+			AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) a WHERE a.grantee<>c.relowner))
 		AND NOT EXISTS (
 			SELECT 1 FROM relations expected LEFT JOIN pg_class c ON c.oid=to_regclass('app.'||expected.name)
 			WHERE c.oid IS NULL OR c.relkind<>'r' OR c.relpersistence<>'p'
@@ -89,6 +100,7 @@ const runtimeCoverageMetadataReadinessSQL = `
 							AND NOT (expected.coverage AND acl.grantee='workouts_coverage_worker'::regrole::oid))))
 		AND NOT EXISTS (
 			SELECT 1 FROM (VALUES
+				('coverage_processing_ready','5edc9383c4a773d3721d58b94e01ea33'),
 				('wake_coverage_reconciliation','0f864db6c36ffcda74e50d93fe2952a6'),
 				('coverage_matching_descriptor','34490d61ae8f9402e3d0894437f191e3'),
 				('capture_coverage_matching_descriptor','20a7152f5f9e77ba73fc13fdedd28bed'),
@@ -97,8 +109,8 @@ const runtimeCoverageMetadataReadinessSQL = `
 				('coverage_applied_target_current','8110deeeb2690e0a8feb58536095f5a7'),
 				('coverage_verified_route_digest','90d8a0b61f91324a2d8709542a988eb1'),
 				('read_coverage_catalog_observation','441766201a9467b4fa10d23f094d660e'),
-				('observe_coverage_catalog','680d73736e59d3e9e0a11a652e22228f'),
-				('coverage_selection_metadata','4f6b49278a7ed2b3e770351e019ae80f'),
+				('observe_coverage_catalog','a6b36c03a7323f085b0f77d045c103a6'),
+				('coverage_selection_metadata','eacf689361145ebb2ca14d3456297055'),
 				('coverage_route_actionable','440c63ec4d2037a2d6b6b22a3a8d8926'),
 				('read_coverage_selection_metadata','dcf89c494b7b84d541dad54310ca068a'),
 				('ingest_coverage_route_needs_proof','d572133790b50c4acb572ace741a7139'),
@@ -110,8 +122,8 @@ const runtimeCoverageMetadataReadinessSQL = `
 				('claim_coverage_reconciliation','f276e51e64a003c40087c07af4d74f3d'),
 				('read_coverage_reconciliation_routes','ed5bdc8e96df06bbac6a49f24e6e88d2'),
 				('advance_coverage_reconciliation','a7e23e47f1a28b2315b16b38f445df60'),
-				('apply_coverage_selection','94c6e6eb953f9fcf8cf893ee1f786ca5'),
-				('defer_coverage_reconciliation_route','1a6466f46d61adf880dbde142e9484fc')
+				('apply_coverage_selection','2ad84b52337be15c713bf1727a577599'),
+				('defer_coverage_reconciliation_route','08761fbd2bfb0d02a11285e92df1c103')
 			) expected(name,body_hash) JOIN functions signature ON split_part(signature.signature,'(',1)='app.'||expected.name
 			LEFT JOIN pg_proc p ON p.oid=to_regprocedure(signature.signature)
 			WHERE p.oid IS NULL OR md5(p.prosrc)<>expected.body_hash)

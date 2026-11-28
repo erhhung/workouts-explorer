@@ -25,8 +25,42 @@ type RegionGeneration struct {
 }
 
 type ActiveRegion struct {
-	RegionID    string `json:"regionId"`
-	DisplayName string `json:"displayName"`
+	RegionID          string `json:"regionId"`
+	DisplayName       string `json:"displayName"`
+	Generation        int64  `json:"generation,omitempty"`
+	ImporterVersion   int    `json:"importerVersion,omitempty"`
+	DerivationVersion int    `json:"derivationVersion,omitempty"`
+}
+
+type MapProcessingVersion struct {
+	Generation        int64 `json:"generation"`
+	ImporterVersion   int   `json:"importerVersion"`
+	DerivationVersion int   `json:"derivationVersion"`
+}
+
+type MapProcessingRequirements struct{ ImporterVersion, DerivationVersion int }
+
+func (catalog RouteRegionCatalog) ProcessingReady(vector []RegionGeneration, required MapProcessingRequirements) bool {
+	if required.ImporterVersion == 0 && required.DerivationVersion == 0 {
+		return true
+	}
+	if len(vector) == 0 {
+		return false
+	}
+	for _, selected := range vector {
+		version, found := catalog.ProcessingVersions[selected.RegionID]
+		if !found || version.Generation != selected.Generation || version.ImporterVersion < required.ImporterVersion || version.DerivationVersion < required.DerivationVersion {
+			return false
+		}
+	}
+	return true
+}
+
+func (catalog RouteRegionCatalog) QualifyProcessing(readiness RouteRegionReadiness, required MapProcessingRequirements) RouteRegionReadiness {
+	if readiness.State == "map_data_ready" && !catalog.ProcessingReady(readiness.Regions, required) {
+		readiness.State, readiness.Reason, readiness.Regions = "pending", "region_reprocessing_required", []RegionGeneration{}
+	}
+	return readiness
 }
 
 type RouteRegionReadiness struct {
@@ -45,6 +79,7 @@ type RouteRegionCatalog struct {
 	PromotionEventID     int64
 	ActiveGenerations    map[string]int64
 	ActiveRegions        []ActiveRegion
+	ProcessingVersions   map[string]MapProcessingVersion
 }
 
 func ActiveRegions(ctx context.Context, pool *pgxpool.Pool) ([]ActiveRegion, error) {
@@ -133,8 +168,8 @@ func ResolveRouteRegionsAtPromotion(ctx context.Context, pool *pgxpool.Pool, poi
 // ResolveRouteRegionsWithCatalog binds ROI to the complete selection catalog,
 // including competing regions that were not chosen for this route. Both reads
 // share one read-only repeatable-read snapshot; no geometry leaves the catalog.
-func ResolveRouteRegionsWithCatalog(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64) (RouteRegionReadiness, error) {
-	return ResolveRouteRegionsWithCatalogBudget(ctx, pool, points, minimumEventID, minimumCatalogRevision, 0)
+func ResolveRouteRegionsWithCatalog(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64, required ...MapProcessingRequirements) (RouteRegionReadiness, error) {
+	return ResolveRouteRegionsWithCatalogBudget(ctx, pool, points, minimumEventID, minimumCatalogRevision, 0, required...)
 }
 
 // RouteRegionResolutionError identifies only the point-query stage. Connection,
@@ -152,7 +187,7 @@ var ErrRouteRegionResultInvalid = errors.New("OSM provider region query returned
 
 // The budget starts after the authorized catalog snapshot/freshness read. It
 // bounds actual ROI only, not APP authority or a whole reconciliation campaign.
-func ResolveRouteRegionsWithCatalogBudget(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64, roiBudget time.Duration) (RouteRegionReadiness, error) {
+func ResolveRouteRegionsWithCatalogBudget(ctx context.Context, pool *pgxpool.Pool, points []RouteCoordinate, minimumEventID, minimumCatalogRevision int64, roiBudget time.Duration, required ...MapProcessingRequirements) (RouteRegionReadiness, error) {
 	snapshot, err := BeginMatcherSnapshot(ctx, pool)
 	if err != nil {
 		return RouteRegionReadiness{}, err
@@ -160,6 +195,9 @@ func ResolveRouteRegionsWithCatalogBudget(ctx context.Context, pool *pgxpool.Poo
 	defer closeMatcherSnapshot(ctx, snapshot)
 	catalog, err := readRouteRegionCatalog(ctx, snapshot.tx, minimumEventID, minimumCatalogRevision)
 	if err != nil {
+		return RouteRegionReadiness{}, err
+	}
+	if err := snapshot.OptimizeRouteQueries(ctx); err != nil {
 		return RouteRegionReadiness{}, err
 	}
 	roiCtx := ctx
@@ -183,6 +221,9 @@ func ResolveRouteRegionsWithCatalogBudget(ctx context.Context, pool *pgxpool.Poo
 	readiness.CatalogFingerprint = catalog.Fingerprint
 	readiness.CatalogRevision = catalog.Revision
 	readiness.SelectionFingerprint = catalog.SelectionFingerprint
+	if len(required) > 0 {
+		readiness = catalog.QualifyProcessing(readiness, required[0])
+	}
 	return readiness, nil
 }
 
@@ -200,9 +241,9 @@ func ReadRouteRegionCatalog(ctx context.Context, pool *pgxpool.Pool, minimumEven
 
 func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID, minimumCatalogRevision int64) (RouteRegionCatalog, error) {
 	var catalog RouteRegionCatalog
-	var fingerprint, selection, heads, active []byte
+	var fingerprint, selection, heads, active, processing []byte
 	if err := tx.QueryRow(ctx, readRouteRegionCatalogSQL).Scan(&catalog.Revision, &fingerprint,
-		&selection, &heads, &active, &catalog.PromotionEventID); err != nil {
+		&selection, &heads, &active, &catalog.PromotionEventID, &processing); err != nil {
 		return RouteRegionCatalog{}, fmt.Errorf("read OSM route region catalog proof: %w", err)
 	}
 	if catalog.Revision < 1 || len(fingerprint) != 32 || len(selection) != 32 || catalog.PromotionEventID < 0 {
@@ -223,11 +264,27 @@ func readRouteRegionCatalog(ctx context.Context, tx pgx.Tx, minimumEventID, mini
 	if catalog.ActiveGenerations == nil || catalog.ActiveRegions == nil {
 		return RouteRegionCatalog{}, errors.New("missing OSM route region catalog metadata")
 	}
+	if err := json.Unmarshal(processing, &catalog.ProcessingVersions); err != nil || catalog.ProcessingVersions == nil {
+		return RouteRegionCatalog{}, errors.New("invalid OSM processing capability metadata")
+	}
+	for i := range catalog.ActiveRegions {
+		item := &catalog.ActiveRegions[i]
+		version, found := catalog.ProcessingVersions[item.RegionID]
+		if !found || version.Generation != catalog.ActiveGenerations[item.RegionID] || version.ImporterVersion < 1 || version.DerivationVersion < 1 {
+			return RouteRegionCatalog{}, errors.New("inconsistent OSM processing capability metadata")
+		}
+		item.Generation, item.ImporterVersion, item.DerivationVersion = version.Generation, version.ImporterVersion, version.DerivationVersion
+	}
 	return catalog, nil
 }
 
 const readRouteRegionCatalogSQL = `SELECT revision,fingerprint,selection_fingerprint,
-	active_generations,active_regions,osm_catalog.promotion_event_head()
+	active_generations,active_regions,osm_catalog.promotion_event_head(),
+	(SELECT COALESCE(jsonb_object_agg(g.region_id,jsonb_build_object('generation',g.id,
+	'importerVersion',g.importer_version,'derivationVersion',g.derivation_version)),'{}'::jsonb)
+	FROM jsonb_each_text(active_generations) head
+	JOIN osm_catalog.generations g ON g.id=head.value::bigint AND g.region_id=head.key
+	WHERE g.state='active')
 	FROM osm_catalog.route_region_catalog_state WHERE singleton`
 
 type regionQuerier interface {
@@ -270,7 +327,7 @@ const resolveRouteRegionsSQL = `
 			SELECT ordinal::integer AS ordinal,ST_SetSRID(ST_MakePoint(longitude,latitude),4326) AS location
 			FROM unnest($1::double precision[],$2::double precision[]) WITH ORDINALITY point(longitude,latitude,ordinal)
 		)
-		SELECT point.ordinal,active.region_id,active.generation_id,(catalog.region_id IS NOT NULL)
+		SELECT point.ordinal,active.region_id,active.generation_id,(active.region_id IS NOT NULL OR catalog.region_id IS NOT NULL)
 		FROM route_point point
 		LEFT JOIN LATERAL (
 			SELECT region.id AS region_id,generation.id AS generation_id
@@ -281,7 +338,7 @@ const resolveRouteRegionsSQL = `
 		) active ON true
 		LEFT JOIN LATERAL (
 			SELECT region.id AS region_id FROM osm_catalog.regions region
-			WHERE ST_Covers(region.boundary,point.location)
+			WHERE active.region_id IS NULL AND ST_Covers(region.boundary,point.location)
 			ORDER BY region.geographic_area_m2,region.id LIMIT 1
 		) catalog ON true
 		ORDER BY point.ordinal`

@@ -2,8 +2,34 @@ package coverage
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
+
+func TestServiceRoadPolicySharedWithCoverageDisplay(t *testing.T) {
+	data, err := os.ReadFile("testdata/service-road-policy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Label    string          `json:"label"`
+		Highway  string          `json:"highway"`
+		Tags     json.RawMessage `json:"tags"`
+		Eligible bool            `json:"eligible"`
+	}
+	if err := json.Unmarshal(data, &fixtures); err != nil || len(fixtures) == 0 {
+		t.Fatalf("invalid shared service-road policy fixtures: %v", err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.Label, func(t *testing.T) {
+			for _, mode := range []MovementMode{MovementFoot, MovementBicycle} {
+				if got := experimentalPathPolicy(mode).eligible(fixture.Highway, fixture.Tags); got != fixture.Eligible {
+					t.Errorf("%s eligible=%t want=%t", mode, got, fixture.Eligible)
+				}
+			}
+		})
+	}
+}
 
 func TestWorkoutAwarePathEligibility(t *testing.T) {
 	tests := []struct {

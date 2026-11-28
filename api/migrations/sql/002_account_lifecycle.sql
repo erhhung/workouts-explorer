@@ -108,7 +108,9 @@ CREATE TABLE app.preferences (
     CONSTRAINT preferences_custom_date_ranges_bounded CHECK (
         cardinality(recent_custom_date_ranges) <= custom_date_range_limit
         AND array_position(recent_custom_date_ranges, NULL) IS NULL
-    )
+    ),
+    date_format text NOT NULL DEFAULT 'mm/dd/yyyy',
+    CONSTRAINT preferences_date_format_check CHECK (date_format IN ('mm/dd/yyyy','dd/mm/yyyy','yyyy/mm/dd'))
 );
 
 ALTER TABLE app.preferences ENABLE ROW LEVEL SECURITY;

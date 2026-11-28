@@ -1,5 +1,6 @@
 import type { ConsistencyBucket, ConsistencyGrouping, Preferences } from "./api";
-import { dateTimeFormatter, numberFormatter } from "./formatters";
+import { numberFormatter } from "./formatters";
+import { formatEnglishDate, type DateFormat } from "./date";
 import { formatDuration, formatWorkoutMetric } from "./Summary";
 
 export const CONSISTENCY_CHARTS = [
@@ -53,19 +54,35 @@ export function isPerfectConsistencyMonth(
   );
 }
 
-export function consistencyBucketLabel(value: string, group: ConsistencyGrouping) {
+export function consistencyBucketLabel(
+  value: string,
+  group: ConsistencyGrouping,
+  order?: DateFormat,
+) {
   if (group === "week")
-    return `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}/${value.slice(2, 4)}`;
-  return dateTimeFormatter("en-US", { month: "short", year: "numeric", timeZone: "UTC" }).format(
-    new Date(`${value}T00:00:00Z`),
+    return formatEnglishDate(
+      new Date(value + "T00:00:00Z"),
+      { month: "numeric", day: "numeric", year: "2-digit", timeZone: "UTC" },
+      order,
+    );
+  return formatEnglishDate(
+    new Date(value + "T00:00:00Z"),
+    { month: "short", year: "numeric", timeZone: "UTC" },
+    order,
   );
 }
 
-export function consistencyTooltipLabel(value: string, group: ConsistencyGrouping) {
+export function consistencyTooltipLabel(
+  value: string,
+  group: ConsistencyGrouping,
+  order?: DateFormat,
+) {
   if (group === "week")
-    return `Week of ${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}/${value.slice(0, 4)}`;
-  return dateTimeFormatter("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(
-    new Date(`${value}T00:00:00Z`),
+    return `Week of ${formatEnglishDate(new Date(value + "T00:00:00Z"), { month: "numeric", day: "numeric", year: "numeric", timeZone: "UTC" }, order)}`;
+  return formatEnglishDate(
+    new Date(value + "T00:00:00Z"),
+    { month: "long", year: "numeric", timeZone: "UTC" },
+    order,
   );
 }
 

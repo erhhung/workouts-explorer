@@ -88,7 +88,7 @@ minor-word rules include mit/et/y/with/de/da/la/includes and the intact a.k.a.
 abbreviation, with the first-word exception. Boundary rounding also explicitly
 sets `line-round-limit: 0`, disabling the default shallow-angle miter shortcut.
 
-Click a row or choose **Show boundaries** to inspect a cached region polygon on
+Click a row or choose **View boundaries** to inspect a cached region polygon on
 the theme-appropriate Streets map. Its magenta fill is 25% opaque with a 5px
 outline beneath labels/symbols, and opening fits the boundary extent. The same
 map and WebGL canvas persist through dismissals, region changes and theme swaps;

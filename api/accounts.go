@@ -605,7 +605,7 @@ func (s *Server) UpdateMyPreferences(w http.ResponseWriter, r *http.Request, par
 	for index := range current.WorkoutColumns {
 		columns[index] = string(current.WorkoutColumns[index])
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,coverage_diagnostics_enabled=$9,custom_date_range_limit=$10,recent_custom_date_ranges=$11,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$12`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), current.CoverageDiagnosticsEnabled, current.CustomDateRangeLimit, current.RecentCustomDateRanges, *session.accountID)
+	_, err = tx.Exec(r.Context(), `UPDATE app.preferences SET theme=$1,units=$2,timezone=$3,first_weekday=$4,clock_format=$5,workout_columns=$6,page_size=$7,date_range=$8,coverage_diagnostics_enabled=$9,custom_date_range_limit=$10,recent_custom_date_ranges=$11,date_format=$12,initialized_at=COALESCE(initialized_at,transaction_timestamp()),updated_at=transaction_timestamp() WHERE account_id=$13`, current.Theme, current.Units, current.Timezone, current.FirstWeekday, current.ClockFormat, columns, current.PageSize, nullableStringValue(current.DateRange), current.CoverageDiagnosticsEnabled, current.CustomDateRangeLimit, current.RecentCustomDateRanges, current.DateFormat, *session.accountID)
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
@@ -900,11 +900,11 @@ func readPreferencesTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, forU
 	var result generated.Preferences
 	var columns []string
 	var dateRange *string
-	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,coverage_diagnostics_enabled,initialized_at IS NOT NULL,custom_date_range_limit,recent_custom_date_ranges FROM app.preferences WHERE account_id=$1`
+	query := `SELECT theme,units,timezone,first_weekday,clock_format,workout_columns,page_size,date_range,coverage_diagnostics_enabled,initialized_at IS NOT NULL,custom_date_range_limit,recent_custom_date_ranges,date_format FROM app.preferences WHERE account_id=$1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.CoverageDiagnosticsEnabled, &result.Initialized, &result.CustomDateRangeLimit, &result.RecentCustomDateRanges)
+	err := tx.QueryRow(ctx, query, accountID).Scan(&result.Theme, &result.Units, &result.Timezone, &result.FirstWeekday, &result.ClockFormat, &columns, &result.PageSize, &dateRange, &result.CoverageDiagnosticsEnabled, &result.Initialized, &result.CustomDateRangeLimit, &result.RecentCustomDateRanges, &result.DateFormat)
 	if err != nil {
 		return generated.Preferences{}, err
 	}
@@ -938,6 +938,9 @@ func applyPreferencesPatch(value *generated.Preferences, patch generated.Prefere
 	if patch.ClockFormat != nil {
 		value.ClockFormat = generated.PreferencesClockFormat(*patch.ClockFormat)
 	}
+	if patch.DateFormat != nil {
+		value.DateFormat = generated.PreferencesDateFormat(*patch.DateFormat)
+	}
 	if patch.PageSize != nil {
 		value.PageSize = *patch.PageSize
 	}
@@ -970,6 +973,9 @@ func (s *Server) validatePreferences(value generated.Preferences) (string, strin
 	}
 	if value.ClockFormat != "12h" && value.ClockFormat != "24h" {
 		return "clockFormat", "clock format is unsupported"
+	}
+	if value.DateFormat != "mm/dd/yyyy" && value.DateFormat != "dd/mm/yyyy" && value.DateFormat != "yyyy/mm/dd" {
+		return "dateFormat", "date format is unsupported"
 	}
 	if value.Timezone == "Local" || strings.HasPrefix(value.Timezone, "/") || strings.Contains(value.Timezone, "..") {
 		return "timezone", "time zone must be an IANA time zone name"

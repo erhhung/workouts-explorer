@@ -185,7 +185,7 @@ As a user, I want display preferences to persist so that the product matches how
 
 ### Behavior
 
-1. The Preferences dialog allows changing full display name, theme, units, default time zone, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary, Road Coverage, Stats report tables and their detail dialogs.
+1. The Preferences dialog allows changing full display name, theme, units, default time zone, date format, first weekday, clock format, workout columns, and table rows per page. The row preference applies to Summary, Road Coverage, Stats report tables and their detail dialogs.
 2. Dark theme is the default; light theme is available.
 3. Imperial units, Monday week start, and 12-hour time are defaults.
 4. The last-used date-range preference is restored on a later session.
@@ -196,12 +196,32 @@ As a user, I want display preferences to persist so that the product matches how
 9. Summary, Map and Stats date menus and the Map base-map menu match their trigger's width, align to its left edge, and open 12px below it. Lists scroll within available space rather than shifting the requested anchor.
 10. Preferences reuses standard compact-dialog spacing around its header, scrolling body and Cancel/Save footer, including the action gap. Its header contains the title and close control without the explanatory subheading. Header/actions remain fixed while only the body scrolls; Save/Cancel and content-focus return retain their existing behavior.
 11. Newly registered personal accounts start with Workout log columns **Date, Type, Duration, Distance, Calories**, in that order. Registration explicitly seeds these preferences; first browser initialization preserves them. Existing saved column selections are not backfilled or reset.
+12. **Date format** offers **mm/dd/yyyy** (default), **dd/mm/yyyy** and
+    **yyyy/mm/dd**, independently of the clock format/time zone. The application
+    currently uses English month/weekday names only. Written dates follow the same
+    ordering: **Oct 5, 2026**, **5 Oct 2026**, **2026 Oct 5**. Month/year formats
+    likewise become **October 2026** or **2026 October**. Numeric displays retain
+    their selected ordering without zero-padding month/day, including date-entry
+    values: **7/4/2026**, **4/7/2026**, **2026/7/4**. Format-choice names/placeholders
+    remain mm/dd/yyyy, dd/mm/yyyy and yyyy/mm/dd; canonical ISO values remain padded.
+    Shared
+    pure date helpers and bounded formatter caches own ordering, not per-component
+    string concatenation or ambient browser locale. Calendar dates remain calendar
+    dates without time-zone shifting; timestamp dates use their own actual zone
+    and preserve DST, recorded offsets and selected clock precision. ISO API,
+    database, sorting, filtering and route-selection values remain unchanged.
+13. Display settings use these two-column rows, stacking naturally on narrow
+    screens: **Theme | Units**, **Time zone | Clock format**,
+    **Date format | First weekday**,
+    **Custom date ranges | Table rows per page**. Saving applies the preference to
+    retained views and persists it across login/reload. The default is folded into
+    the existing user-preferences migration, without a new migration number.
 
 ### Validation
 
 - Default time zone must be an IANA time zone name.
 - Page size cannot exceed the operator-configured maximum.
-- Theme, units, week start, and clock format accept documented enum values only.
+- Theme, units, date format, week start, and clock format accept documented enum values only.
 
 ### Failure cases
 
@@ -364,8 +384,13 @@ As a data owner, I want to configure source adapters through the app or REST API
   Apple authentication is introduced.
 - On iCloud forms, Path spans the form; Apple ID and Password share the next row;
   Cookies is a full-width three-visible-line textarea; Trust token is a full-width
-  single-line input. All input help uses the shared styled cursor-follow tooltip,
-  never native `title` attributes. The last visible fields and footer actions have
+  single-line input. Existing field help belongs to a small muted circled question
+  mark beside each label, reusing Automated sync's `InfoTip`. Its help cursor and
+  shared 750ms hover delay reveal a portaled tooltip centered above the pointer;
+  hovering/focusing the input itself does not reveal help. Keep the field linked
+  to its description and retain keyboard access, click-to-pin, and dismissal.
+  Escape dismisses active help before closing the editor. Never use native `title`
+  attributes. The last visible fields and footer actions have
   equal standard spacing above/below the divider, without a blank reserved area.
 - Editing leaves every write-only input empty with dimmed placeholder exactly
   **existing value retained unless provided**. Only placeholder glyphs use scoped
@@ -385,11 +410,24 @@ As a data owner, I want to configure source adapters through the app or REST API
   the editor, not an already accepted server mutation. Submitted write-only values
   are cleared after acknowledgement. New UI-created sources default to Auto Sync disabled;
   edits load the stored flag. The last field, below Path or Trust token, is
-  **Enable automated sync (<interval>)**. It uses the same shared cadence formatter
-  and schedule response as the Data Sync Automated card, lowercased (for example,
-  **once a day**). It maps directly to `autoSyncEnabled` on POST/PATCH and retains
+  **Enable automated sync (once a day)**. Its highlighted border also contains
+  **Time of day** to the right on the same desktop row. Reuse shared styled selects
+  for hours and minutes, plus AM/PM only for the owner's 12-hour clock preference;
+  24-hour mode offers hours 00-23. Keep the time visible, disabled and muted when
+  automated sync is unchecked. It maps to the source's `autoSyncTime` as HH:mm,
+  interpreted in the owner's preferred time zone, independently for each source.
+  The checkbox maps directly to `autoSyncEnabled` on POST/PATCH and retains
   the chosen value while changing new-source type or retrying. No source-type
   mutation is exposed.
+- Source help labels keep the same label-to-input gap as Type and Name. The daily
+  sync frame uses equal padding above, below and to the right of the time selects.
+  Hours, minutes and AM/PM panels use compact single-line items without selection
+  checkmarks; selection remains indicated by the trigger value and ARIA state.
+  Disabled time selects keep their resting border on hover, both when Auto Sync
+  is unchecked and while Save is busy checking the source connection.
+- The source editor keeps its action labeled **Save** during saving and connection
+  checking. Disable it while busy to prevent repeat submissions; show connection
+  progress through the source Status in the table.
 - Rclone credential inputs have source-specific names, form-level autocomplete
   suppression, Password's `new-password` hint, and password-manager ignore hints
   for Apple ID/Password. These are browser hints, not a guarantee against a browser
@@ -500,19 +538,25 @@ As a data owner, I want new workout exports imported automatically without daily
 
 ### Behavior
 
-1. At the configured cadence, each account creates an ingest parent for all connected sources where `autoSyncEnabled` is true.
+1. Each source with a selected daily time runs independently at that local wall-clock time in the owner's preferred time zone. An account scheduler lease selects only connected, auto-sync-enabled sources whose individual timers are due; simultaneous due sources can share one parent. Changing a source time reschedules only that source, and Data Sync's Next run is the earliest upcoming enabled-source time.
 2. Each selected source runs as a child job.
 3. Incremental discovery processes new or changed files and, with the contract requiring 26, previously ownership-blocked files whose captured epoch is stale.
 4. A day without an export is a successful no-data result.
 5. A source becomes stale after the configured number of calendar days without a newly discovered export, default three.
 6. Staleness is a warning that may also mean the user did not work out; it is not an ingest-job failure.
+   The Automated sync Stale badge uses a filled dark-orange background and white
+   text in both themes, retaining its existing compact dimensions.
 7. A newly discovered export clears the stale condition and its reminder.
 8. Dismissing an unresolved stale warning follows reminder behavior.
 9. Scheduled success remains silent.
 10. Partial or complete failure creates a warning or error notification.
-11. The operator cadence defaults to `AUTO_SYNC_INTERVAL=24h` and may be set to `12h`; UI polling does not change sync cadence.
+11. Existing sources without a selected daily time retain the operator interval schedule (`AUTO_SYNC_INTERVAL=24h`, optionally `12h`) until saved with a time. Daily scheduling advances by local calendar days, not a fixed 24-hour duration; UI polling does not change it. On a spring-forward gap, the requested time shifts forward by the gap. On a repeated fall-back time, use the standard-time occurrence once. Changing the preferred time zone preserves each selected wall-clock time and recomputes its next occurrence.
 12. iCloud performs one application metadata discovery per sync. A successful object with unchanged remote ID, size and modification time skips without download unless its ownership-blocked epoch is stale. Same-metadata content overwrites remain undetectable absent forced reprocessing; native operations may make additional listings/HTTP requests.
 13. Successful checksums remain valid for all-blocked and mixed files. Any `skipped_live_owner` event marks the file with the epoch captured before ownership decisions. Same-epoch sync skips it; the next fresh incremental job after source deletion rereads it even with identical metadata/bytes. Adoption and cookie/auth generation changes do not advance this epoch.
+14. Automated sync's circled question-mark help uses the shared delayed,
+    cursor-centered portal. Preserve click-to-pin and keyboard access. Stale after
+    help contains exactly two explicit lines: **Show a warning after this period if no new**
+    and **workouts have been imported by auto-sync**, without changing its wording.
 
 ### Validation
 
@@ -528,7 +572,7 @@ As a data owner, I want new workout exports imported automatically without daily
 
 ### Acceptance criteria
 
-- Given two auto-sync sources, when the cadence fires, then one parent with two source children is created.
+- Given two sources with different daily times, when one is due, then only that source is included and the other's timer is unchanged. Sources due together can share one parent with their own children.
 - Given no new file, when incremental sync completes, then the child succeeds with zero imported workouts.
 - Given a terminal ingest with a failed child and at least one created or updated workout, then its status is partially_succeeded; successful reads, skips and unchanged workouts alone do not qualify under migration 029.
 
@@ -865,8 +909,12 @@ As a user, I want explicit dates and common shortcuts so that Summary, Map and S
 
 ## Feature: Review Summary
 
-Range totals retain their existing refresh fade when Summary revalidates on tab
-return: cards fade from 30% to full opacity over 500ms using ten equal 50ms steps
+Range totals reveal after the first successful load, after a successful data
+refresh, and when returning to the retained Summary tab with ready totals. Start
+the effect only while Summary is visible and its totals request has settled
+successfully; do not consume it while hidden or depend on a painted loading frame.
+Retain the card DOM and focus during refreshes. Cards fade from 30% to full opacity
+over 500ms using ten equal 50ms steps
 (`steps(10, end)`, seven percentage points per step). It does not delay requests
 or interactions, does not dim the Workout log, and becomes immediate under the
 reduced-motion preference.
@@ -952,6 +1000,25 @@ As a user, I want a concise statistical and tabular summary of workouts in a sel
 
 ### Behavior
 
+- The Pace cell shows overall average pace. Its help lists only fastest and
+  slowest normalized full/partial splits in the preferred distance unit, using
+  `11'32"/mi fastest | 28'11"/mi slowest` formatting.
+- GPS-derived split paces, altitude bounds and route-cache elevation gain use the
+  same accepted observations/components as raw route display/export, restricted
+  to the workout time window. Gaps, omitted observations and backward time add
+  neither distance nor elapsed time. Equal timestamps preserve continuity but
+  add no zero-time displacement/elevation. Partition the cumulative observed-leg
+  distance/time into kilometer/mile intervals plus the final partial interval;
+  normalize each partial's elapsed time to the unit before taking extrema.
+  The average uses those same observed totals (total time / total distance), not
+  an arithmetic mean of unequal-length splits or a separate provider-derived
+  average. Include stationary time in observed intervals, including a stopped
+  tail after an exact unit. Cached ranges must bracket their average in both
+  units; database invariants, native tests and API validation enforce this.
+  Keep cached spatial bounds enclosing the displayed geometry. Imported GPS and
+  reported Duration/Distance/calories/elevation totals remain unchanged. Only when
+  usable GPS pace is absent may the cell fall back to the source duration/distance,
+  with no contradictory GPS range exposed.
 - Date, Type, Duration, Distance, Pace, Calories, Heart rate and Elev gain each
   support a column filter. A short header click or Enter sorts as before; holding
   for the shared 500 ms opens its popup without sorting. Space or Arrow Down opens
@@ -1246,7 +1313,9 @@ so that I can see when I explored new places or returned after a long absence.
   a nonbreaking space on each side. Week tooltip dates are unpadded with
   four-digit years; values retain each chart's units. Suppress help during panning.
   After the shared initial delay, pointer help follows the cursor above it using
-  the same 0.65rem gap as Summary's Range totals hint. Movement within the bar does
+  the same 1.5rem gap as Summary's Range totals hint. Map canvas hover popups with
+  a bottom-center triangle use their separate 1rem cursor gap in all modes.
+  Movement within the bar does
   not restart the delay or auto-hide visible help; leaving the bar, scrolling it
   away, dragging, changing context or losing the window dismisses it. Keyboard
   focus retains the normal element-anchored help path.
@@ -1543,7 +1612,7 @@ As a user, I want common workout actions available from each Summary row.
 ### Behavior
 
 1. A right-aligned three-dot menu shows the actions listed below in fixed order.
-2. Show on map switches to Map, checks and focuses that workout, and fits its extent while retaining other checked routes. It preserves the active mode when the target is usable there; if production Coverage is active and the target has no coverage result, it switches to raw Routes before fitting so the target is visible. A current or stale usable coverage result preserves Coverage mode.
+2. View on map switches to Map, checks and focuses that workout, and fits its extent while retaining other checked routes. It preserves the active mode when the target is usable there; if production Coverage is active and the target has no coverage result, it switches to raw Routes before fitting so the target is visible. A current or stale usable coverage result preserves Coverage mode.
 3. View provenance shows the full chronological import-event history.
 4. Delete workout asks for confirmation naming the workout date and type.
 5. Summary provenance and deletion dialogs follow the shared compact-dialog
@@ -1557,11 +1626,15 @@ As a user, I want common workout actions available from each Summary row.
 
 | Order | Action | Availability |
 |---|---|---|
-| 1 | Show on map | Route exists |
+| 1 | View on map | Route exists |
 | 2 | View provenance | Always |
 | 3 | Export GeoJSON | Route exists |
 | 4 | Export points | Route exists |
 | 5 | Delete workout | Always |
+
+Separate the view actions from available export actions with a divider before the
+first export. Keep the existing divider before Delete workout, and omit the export
+divider when no export action is shown.
 
 ### Validation
 
@@ -1575,7 +1648,7 @@ As a user, I want common workout actions available from each Summary row.
 
 ### Acceptance criteria
 
-- Given a routed workout, when Show on map is selected, then only that workout is highlighted in Routes mode.
+- Given a routed workout, when View on map is selected, then only that workout is highlighted in Routes mode.
 - Given an unrouted workout, when its menu opens, then route-only actions are absent.
 - Given a confirmed deletion, when accepted, then the row is optimistically removed and a deletion job is available.
 
@@ -1638,7 +1711,7 @@ As a user, I want to compare the exact recorded paths of selected workouts.
   rather than a green checkmark, and shows **No map segments matched** in the
   shared styled tooltip. It cannot start hover/focus geometry requests or retain
   a misleading focused-row highlight. The raw route remains selectable in Routes;
-  a single-workout Show on map request falls back to Routes for an empty result.
+  a single-workout View on map request falls back to Routes for an empty result.
 - First-time empty evaluations must record this status even when they write no
   match rows. Later successful matching changes it to `matched`; removing all
   displayable evidence changes it back to `no_matches`. Failed or canceled
@@ -1896,6 +1969,8 @@ As a user, I want to see which roads, trails, and other paths I have visited and
 5a. The same source-ordered clipping splits roads/paths at qualifying park boundaries and formally unnamed roads/paths at qualifying education boundaries before attribution. Inside pieces receive the containing-area attribution; outside pieces retain normal identity. A partially overlapping original segment must not cause its entire inside portion to be discarded or its outside portion to be attributed. Holes, repeated crossings, original geometry and graph connectivity are preserved. Validation rejects material unsplit park/education crossings even when no attribution tag was assigned.
 6. Connected unnamed segments share one logical identity within the same attribution scope and road/path class across simple two-segment continuations, even when source lineage changes. At a larger branch, one source way remains connected and the only two incident segments of one exact broad class may continue across source ways; other cross-source branches remain separate. Disconnected components always receive separate identities, including when they shared an incoming legacy ID. Driveway, parking-aisle, and parking-area logical paths remain rendered but are omitted from user-facing statistics/history.
 6a. A non-road municipality piece of at most 25 meters is treated as a municipal-boundary sliver and reassigned to county scope only when the immediately adjacent pieces of the same clipped source segment both belong to that county and preserve the same name state and exact broad class. Park-attributed pieces and road pieces never use this exception.
+6b. A named private neighborhood road accepted by the matching policy remains an ordinary road in Coverage display, including when OSM tags it as `highway=service`, `service=driveway`, and `access=private`. Display lists/statistics, precomputed bounds, tiles, focused geometry and entity detail must preserve that exception. While matching and display contain overlapping qualification rules, changing either side requires relevant tests on both sides using shared accepted/rejected fixtures, even if only one implementation changes. Intended presentation differences and excluded ordinary driveway/parking cases must remain explicit and tested; see [ADR 0009](decisions/009-coverage-matching-rules.md#matching-and-display-changes-must-be-cross-tested).
+6c. Policy v84: shared neighborhood access roads serving multiple homes count whether named or unnamed, including when tagged as driveways; single-house driveways remain excluded. Names, private-access tags and length alone must not substitute for shared-access evidence. Importer v4 derives that evidence from the same PBF's public residential building/address/frontage context, excludes outbuildings and duplicated addresses/footprints, and leaves insufficient evidence unclassified. Genuinely traversed parking-lot aisles may render as covered and remain unnamed when OSM supplies no formal name, so the Road Coverage table hides them by default under its existing unnamed-row control. Proximity to an entrance alone cannot grant Coverage, and unsupported spans are never filled. Current matches persist their display classification so display does not independently reject matcher-approved service roads. Retained legacy results keep their original rules until versioned rematching; see [ADR 0009](decisions/009-coverage-matching-rules.md#shared-residential-access-and-parking-aisles).
 7. Durable segment evidence contains at most one match per workout and physical segment. Overlapping or contiguous decoded traversal spans are dissolved regardless of direction, so repeated passes and GPS jitter neither create duplicate matches nor inflate covered length.
 8. Genuinely disjoint visited spans on one physical segment remain separate components of that match's `MultiLineString`; persistence never fills the untraversed gap between them.
 9. One logical path receives at most one attribution from a workout, even when the workout matches several member segments or traverses them repeatedly.
@@ -2160,7 +2235,7 @@ their cache validity additionally includes display policy/revision.
 - Given an unnamed trail, when inspected with unnamed paths enabled, then it appears as **Trail** with its locality and stable identity rather than being omitted.
 - Given named and unnamed paths wholly inside Yosemite National Park, when Coverage renders, then each path remains separately visible with `Yosemite National Park` as City/Region, unnamed paths use a type-specific fallback such as `Bike path`, and the park entity has no fabricated municipality.
 - Given the date range or workout subset changes, when path details render, then first and latest visit remain the all-time date-only extrema.
-- Given Coverage stats is open, when it is closed or Show on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
+- Given Coverage stats is open, when it is closed or View on map is selected, then the already-mounted map is revealed without a new MapLibre instance.
 - Given sustained Coverage hover, only the stats endpoint is requested after
   250ms; the popup still waits 750ms, including on cached returns. Moving across
   different entities for less than 250ms each makes no stats requests.
@@ -2281,7 +2356,8 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
    Enter/Space on its focus target performs View detail once. Menu interactions
    must not activate the row. Mobile cards provide the same row/action choices.
 17c. Reuse Workout log's ellipsis button and popup sizing/alignment/offset. Always
-   put View detail first. Query authoritative parent details only when opening the
+   put View detail first, with a divider below it only when another menu action is
+   present. Query authoritative parent details only when opening the
    menu, then use the same action policy as Run detail for Cancel run, Retry run
    or Retry deletion, including cancellation, supersession and retry-chain guards.
    Pending/failed reads cannot enable stale commands. Commands capture the chosen
@@ -2299,6 +2375,53 @@ As a user, I want progress and safe diagnostics for asynchronous operations.
    content viewport, position it at the viewport top plus the inter-panel gap,
    clamping naturally when there is insufficient scrollable content. Background
    polling, inactive tabs and superseded requests must not repeat this landing.
+17f. The Task history action-column header has an ellipsis aligned above row
+   ellipses. Its menu has an all-caps column-header-style **Jobs on this page only**
+   label without a divider beneath it, followed by **Retry (partially) failed jobs**
+   and **Cancel running/queued jobs**, scoped to eligible jobs on the currently shown filtered page.
+   Align the heading's text left edge with action text, and balance visible space
+   above/below the heading against the first action's centered text inset.
+   Use the same authoritative detail/action policy as row menus: retry includes
+   Failed/Partially succeeded runs with enabled Retry run, not Canceled runs,
+   superseded runs, old retry-chain attempts, route children or Retry deletion.
+   Cancellation includes Running/Queued runs with enabled Cancel run, excluding
+   pending cancellation and operations without cancellation support. A mobile
+   history toolbar exposes the same actions above cards.
+17g. Prepare complete fresh eligibility with at most four concurrent detail reads
+   before opening the bulk menu. A failed read offers Reload actions, not guessed
+   commands. Submit accepted targets sequentially through the existing CSRF-
+   protected endpoints, sharing the single-command lock. Preserve page/filter and
+   detail navigation. Refresh affected snapshots/details and report **Retry all
+   accepted.** or **Cancel all accepted.** only when every submitted command was
+   accepted. Partial failures report accepted/rejected counts; authentication or
+   CSRF failure, changed owner context and unmount stop further dispatch. Popup
+   preparation cannot reopen after Escape, blur, tab/filter/page change or unmount.
+
+All date-entry fields use the shared DateInput, including manual sync and
+the Custom date range dialog shared by Summary, Map and Stats. Replace the small
+browser calendar indicator with a real calendar button covering the entire
+right-hand 44px field area (inside its border), using a pointer cursor. The styled
+**Show calendar picker** hint uses the shared 750ms hover delay and no native
+title tooltip. Keep the native picker/typing, labels, FormData names, validation,
+disabled/read-only semantics and start-blur date completion. Preserve field Tab
+order; Alt+Down from the date input opens the native picker without submitting.
+The visible field accepts/formats text in the selected date order, with strict
+calendar validation and ISO paste support; compact digits also work on numeric
+mobile keyboards. An invisible, correctly anchored native date input owns the ISO
+FormData value and calendar picker. Native picker selection updates visible text,
+and start-blur completion synchronously updates the paired end field. Selecting a
+field selects its text for replacement rather than appending to a copied date.
+Picker activation uses the synchronous native showPicker API when available;
+unsupported hosts retain date entry/focus. Portaled calendar help remains in the
+modal accessibility tree without live announcements.
+The date control's valid hover border remains accented across both text and the
+calendar's complete padded target; the icon accents at the same time. Invalid
+entered dates immediately receive a three-pixel inward error frame while typing,
+before focus leaves the field, matching the form-validity/Apply state. Include the calendar
+edge, without resizing the field or blocking pointer input. Preserve disabled/
+read-only behavior and clear invalid styling after valid correction or picker
+selection. Custom-range Apply is disabled while either required date is empty or
+calendar-invalid; range completion and picker changes update that validity too.
 
 ### Ingest Activity Messages
 

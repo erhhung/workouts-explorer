@@ -378,12 +378,13 @@ describe("Stats New Coverage", () => {
     const { fetch } = mockReports();
     render(<Harness />);
     expect(screen.getByRole("navigation", { name: "Reports" })).toContainElement(
-      screen.getByRole("button", { name: "New Coverage" }),
+      screen.getByRole("button", { name: "New coverage" }),
     );
-    expect(screen.getByRole("button", { name: "New Coverage" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "New coverage" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(screen.getByRole("heading", { name: "New Coverage" })).toBeInTheDocument();
     expect(
       within(screen.getByRole("group", { name: "Show new visits by" })).getByRole("button", {
         name: "Month",

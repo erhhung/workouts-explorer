@@ -140,7 +140,7 @@ export function DialogTableViewport({
         </tbody>
       </table>
       {message && (
-        <div className="dialog-table-empty" role="status">
+        <div className="dialog-table-empty content-state-message" role="status">
           <span>{message}</span>
         </div>
       )}

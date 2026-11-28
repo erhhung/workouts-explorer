@@ -1,520 +1,206 @@
-# OSM Import Spike
+# OSM Maps and Coverage
 
-Milestone 7 uses a full-refresh, selective import. The source PBF is filtered
-with Osmium to `highway=*` ways, administrative boundary relations, and their
-required references before `osm2pgsql` flexible output loads a generation-specific
-candidate schema.
+Workouts Explorer uses OpenStreetMap (OSM) data to turn recorded workout routes
+into Coverage: the roads and paths a person has actually travelled. This directory
+contains the map importer, processing SQL, optional operator Job templates and
+synthetic regression data.
 
-The current assets implement the measured NorCal import and graph derivation.
-ADR 009 accepts matcher rules `coverage-experimental-v1`, adaptive sampling,
-and path policy `coverage-path-policy-experimental-v82` as the production baseline.
+There are two different map layers to keep in mind:
 
-Importer version 3 and derivation version 21 retain bounded named local, state,
-and national-park polygons during generation construction and attach stable park
-metadata to fully contained path segments. Local parks require an authoritative
-named municipality and keep municipality-scoped IDs. State and national parks may
-cover segments without a municipality; their IDs are scoped by provider region
-and OSM source identity. Roads and paths inside those regional parks use the park
-name as their application display context instead of municipality or county.
-Before attribution, the existing resumable clipping stages split segments at
-locality and qualifying park boundaries, and unnamed segments at qualifying
-education boundaries. A boundary-crossing source way therefore contributes its
-inside pieces without attributing the outside pieces. Polygon holes and repeated
-crossings retain their source order and graph connectivity. Validation rejects
-remaining material park/education crossings, including untagged segments.
-Connectivity scope is the selected named park when present, otherwise municipality,
-otherwise county, otherwise provider region. Both `admin_level=8` municipalities
-and `admin_level=6` counties are retained; the smallest covering polygon wins so
-a municipality takes precedence inside its containing county. Physical segments
-share an identity only when exact graph endpoints connect, normalized names match
-(with one null-name sentinel), and both belong to the same road/path class.
-Cycleways and footways are both paths; unnamed segments cannot bridge that
-boundary. Named segments merge across graph-connected road/path transitions
-and branches because the name supplies semantic identity. Named road segments
-also gain bounded proximity edges within one scope/name: 15 m generally, or 50 m
-when both are explicitly one-way, so divided carriageways remain one attribution
-without broadly joining nearby roads. Unnamed cross-source segments merge at
-simple two-segment continuations. At a larger unnamed branch, the only two
-segments of one exact broad class also continue across source ways; other
-cross-source branches remain separate. Segments from one OSM way remain continuous.
-Park scope prevents contained geometry from bridging outside, and municipality
-scope keeps cities separate. Every final identity is derived from its physical-
-segment component, so park/outside, road/path, named/unnamed, and disconnected-
-component boundaries remain explicit even when incoming logical IDs were shared.
-For non-road geometry, a municipality-attributed clipping piece no longer than
-25 m is absorbed into county scope when the immediately preceding and following
-pieces of the same source segment belong to that same county and have the same
-name state and exact broad class. Park-attributed pieces are never absorbed.
+- **The base map** supplies the background streets, labels and terrain shown in
+  the Map tab. It comes from the configured map-style provider.
+- **The Coverage map data** is downloaded and processed by this application. The
+  matcher uses it to interpret workout GPS, and the application renders the
+  resulting covered geometry over the base map.
 
-Named educational grounds are retained from `amenity=school|college|university`
-and named `landuse=education` polygons. Only formally unnamed roads/paths receive
-education tags and education-area identity scope; named campus geometry retains
-its own OSM name and normal scope. Matcher copies expose the education name as
-the display/path name fallback without overwriting canonical OSM `name` tags.
-Park polygons are build-only and are not copied into canonical storage.
-Existing generations and copied workout evidence do not change when an updater
-image is published: derivation changes require a new regional build/promotion
-followed by application Coverage reconciliation. Never fix a missing inside
-portion by assigning an entire cross-boundary segment to a facility.
-Application reconciliation converts matching segment metadata into
-once-per-workout park visits. Driveway and parking geometry remains
-matchable and tile-visible but is omitted from path statistics.
+A street appearing on the background map does not by itself mean its current OSM
+data has been processed here, that the workout travelled it, or that matching has
+finished.
 
-## Storage-Constrained Rebuild
-
-The deployed OSM database does not have capacity for another approximately 5 GB
-generation beside the current tables. When importer or derivation changes require
-a full rebuild, do not use the normal build-then-promote flow on that environment.
-First stop coverage matching, diagnostics, and OSM update work; preserve the
-application database's copied coverage; detach and drop the current generation's
-canonical data partitions plus any leftover build schemas; then import and
-validate the replacement generation in place before restarting OSM-dependent
-services and reconciliation. Preserve `osm_catalog` migrations, region
-configuration, and provider-catalog tables; this is a data-generation rebuild,
-not a catalog-schema reset.
-Treat the interval as planned OSM matching downtime. Confirm available storage
-before import and do not assume old tables can be deleted only after the new
-generation is populated.
-
-For the original national-park rollout on an unpatched xdev application schema
-19 database, generate and review the in-place patch before publishing its images:
-
-```sh
-./scripts/xdev-national-park-coverage-hotpatch.sh > /tmp/national-park-hotpatch.sql
-psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/national-park-hotpatch.sql
-```
-
-The script is intentionally not run by builds or migrations. It preserves the
-19/18 schema/runtime metadata, relaxes only park-locality storage, and replaces
-the affected schema-18/19 functions. Stop coverage writes while applying it.
-After image publication, perform the storage-constrained replacement above with
-the required importer/derivation versions, then restart OSM-dependent services
-and run coverage reconciliation. Publishing images or applying the hotpatch alone
-does not add national parks to an existing OSM generation.
-
-For recovery from the failed derivation-v6 generation-9 import, use this
-storage-constrained sequence:
-
-1. Stop coverage workers, diagnostics that hold OSM snapshots, and all OSM update
-   jobs. Confirm the application database still contains copied segments, matches,
-   attributions, and rollups. Verify generation 9 is still `building` and
-   `osm_build_9` is absent, then manually mark that catalog row `failed` with
-   a bounded operator failure summary. Do not recreate or resume generation 9.
-2. Publish the importer-3/derivation-6 updater containing transactional stage
-   retries and the compatible worker image. No application migration or API
-   signature change is required.
-3. Confirm migrations through OSM catalog migration 008 are present. Do not drop
-   `osm_catalog`, region/provider rows, promotion events, or timezone data. Verify
-   enough free space for one complete build plus temporary and WAL growth.
-4. Run one manual regional update for `geofabrik:norcal`. It must reserve generation
-   10 and report importer/derivation `3/6`; abort if another generation number or
-   version is reserved. Monitor edge/component table sizes, PostgreSQL temporary
-   bytes, and WAL growth during `attribute-parks`.
-5. Require validation to show zero provenance, source, logical-path, geometry,
-   park, endpoint-index, and `remainingConnectedAttributionSplits` failures. Review
-   `attributionScopeRebasedSegments`, `attributionScopeRebasedLogicalIds`,
-   `attributionIdentityLogicalIdEdges`, `attributionIdentityAffectedLogicalIds`,
-   `attributionIdentityMergedComponents`, total paths, segment length, schema bytes,
-   and representative Yosemite and Stevens Creek/Sleeper Park identities before
-   promotion. The database promotion wrapper independently rejects a nonzero split.
-6. After generation 10 is active and storage GC completes, restart OSM readers and
-   coverage reconciliation. Reconciliation copies generation-10 merged logical IDs
-   using existing segment/API signatures and repopulates dependent application rows.
-   Compare copied counts and representative entities before restoring normal scheduling.
-
-The interval between retiring generation 8 and promoting generation 10 is planned
-OSM matching downtime. Keep a database backup or volume snapshot as rollback
-protection because storage constraints remove the online generation-8 rollback.
-
-Pinned tools:
-
-- Osmium 1.19.0
-- osm2pgsql 2.3.1
-
-The candidate schema name must match `osm_build_<generation>` and is supplied
-in `OSM_BUILD_SCHEMA`. The manual updater owns the complete import and promotion
-lifecycle.
-
-`postprocess.sql` adds the meter-based geography index required by matching and
-derives OSM administrative-level-8 municipal locality polygons. Park attribution
-uses four index-driven endpoint joins to stage deduplicated same-road/path-class
-segment edges. For unnamed groups, branch-node incidence prunes cross-source
-edges when more than two eligible segments meet. Named edges remain intact.
-Parent-compressed connected components contain only participating segments;
-the final identities are applied by writing one logged, checkpointed replacement
-segment table instead of creating millions of old/new tuple versions in place.
-The indexed source is dropped when attribution commits, then
-`prepare-partitions.sql` adds fixed region/generation provenance,
-replaces keys, builds the canonical indexes, and gives the three promoted tables
-generation-qualified names. `validate.sql` then records exact preparation,
-source-version, logical-path, geometry, locality, park-kind, national-park
-area, remaining connected-split, component-count, and storage gates. The updater
-then calls `osm_catalog.promote_region_generation(...)` directly to atomically
-detach the prior region leaves, move and attach the prepared leaves, advance
-catalog state, and queue detached storage for GC.
-Promotion never performs a full-table `INSERT SELECT`.
-
-## Manual regional update
-
-Build the dedicated amd64 importer image with `make images`, or directly with:
-
-```sh
-buildah build --file worker/osm-update.Dockerfile --tag workouts-osm:local .
-```
-
-The command contract is:
-
-- `OSM_MIGRATION_DATABASE_URL`: catalog owner/migration PostgreSQL URL. It is
-  passed to libpq as `PGDATABASE`, never as a subprocess argument.
-- `OSM_REGION_ID`: configured catalog ID, for example `geofabrik:norcal`.
-- `OSM_MAX_DOWNLOAD_BYTES`: positive hard limit for the source response stream.
-- `OSM_UPDATE_SCRATCH`: writable directory for generation-scoped source and
-  filtered PBFs.
-- `OSM_PIPELINE_ROOT`: directory containing the checked-in Lua and SQL assets.
-
-The image defaults the last two paths to `/scratch` and `/app/osm`. It is based
-on the amd64 digest of `iboates/osm2pgsql:2.3.1`, copies `osmium` from the amd64
-digest of `iboates/osmium:1.19.0`, and installs the PostgreSQL 18 client and CA
-certificates. Startup refuses any reported Osmium or osm2pgsql version other
-than 1.19.0 and 2.3.1. It runs as UID/GID 65532 and supports a read-only root
-filesystem with only `/scratch` writable.
-
-No scheduled or release-hook Helm Job is installed. Updates are deliberately
-operator-initiated and region-specific. Here, "operator" means the human with
-Kubernetes and storage authority, normally the administrator running this
-procedure. The example Job has an 8 GiB bounded `emptyDir`, at least 4 GiB
-memory, and no retries.
-
-Prefer the interactive operator CLI. It launches a short-lived status Job,
-displays the current stage, cursor, failure, and storage block, and offers only
-actions valid for that state. Long-running `start` and `resume` Jobs remain in
-the namespace for monitoring; short `status`, `unblock`, and `abort` Jobs are
-removed after their output is captured. A new `start` Job reserves import
-capacity: 2 CPU, 3 GiB memory, and 2 GiB ephemeral storage. A `resume` Job is
-valid only after the durable `osm2pgsql` checkpoint, so its database-heavy
-stages request only 100m CPU, 256 MiB memory, and 64 MiB ephemeral storage.
-Short operator Jobs request 10m CPU, 64 MiB memory, and 16 MiB ephemeral storage.
-All profiles retain higher limits where useful, and status inspection remains
-schedulable while PostgreSQL performs the rebuild work.
-
-```sh
-export KUBE_CONTEXT=xdev
-export OSM_UPDATE_IMAGE=harbor.fourteeners.local/library/workouts-osm:dev-20260925
-export OSM_REGION_ID=geofabrik:norcal
-
-make osm-update
-```
-
-The CLI defaults the namespace, Secret names, image pull Secret (`workouts-harbor`),
-database key, and one-GiB download limit to the values shown in
-`osm/manual-update-job.yaml`. Override `OSM_NAMESPACE`,
-`OSM_IMAGE_PULL_SECRET`, `OSM_DATABASE_SECRET`, `OSM_DATABASE_KEY`,
-`OSM_DATABASE_TLS_SECRET`, or `OSM_MAX_DOWNLOAD_BYTES` when the deployment uses
-different values. It does not need a database URL on the workstation because
-the probe and action commands read the existing Kubernetes Secret inside their
-Jobs.
-
-The Job checks for `/app/osm-operator-v1` before invoking the updater. Images
-built before the interactive action protocol therefore fail the status probe
-instead of accidentally starting a rebuild.
-
-Immediately before creating a long-running `start` or `resume` Job, the CLI
-deletes prior Jobs labeled `app.kubernetes.io/component=osm-update` and waits for
-their pods to terminate. Completed, failed, and superseded updater Jobs therefore
-do not accumulate, and a replacement is not launched alongside an older Job.
-
-For scripted/manual rendering, export all placeholders in
-`osm/manual-update-job.yaml`, including `OSM_UPDATE_ACTION` and command-specific
-values, then pass it through `envsubst` as before.
-
-### Operator monitoring procedure
-
-Treat an OSM rebuild and its application reconciliation as one supervised
-operation. Do not start the Job and leave an unbounded `kubectl wait` running.
-
-Do not expand PostgreSQL PVCs without prior operator authorization. If free
-space becomes low during a rebuild, first inspect the affected Longhorn volumes
-for old snapshots and report their reclaimable storage. Suggest deleting
-unneeded old snapshots to free space, but do not delete snapshots or resize PVCs
-without explicit authorization. If authorized cleanup cannot provide sufficient
-headroom, pause or stop the rebuild safely and request a storage decision rather
-than expanding a claim unilaterally.
-
-Before every resumable unit, verify free space on the PostgreSQL primary
-filesystem. Require at least 10% of usable PVC capacity at unit start (3 GiB for
-a 30 GiB PVC). If the threshold is not met, the updater must stop before running
-unit SQL, log and notify the measured capacity/free-space reason, mark the unit
-operator-blocked, and disable automatic retry. Free space may temporarily fall
-below the threshold during a running unit, but cleanup must finish and the
-preflight must pass again before the next unit. Resume requires explicit operator
-clearance after manual intervention; clearance does not waive the threshold.
-
-1. During the first minute after creating the `osm-update` Job, use either a
-   `kubectl wait` bounded to at most one minute or follow the Job logs for at
-   most one minute. Confirm that the pod reaches Running/Ready, reports the
-   expected Osmium and osm2pgsql versions, and reserves exactly one new `building`
-   generation with the expected importer and derivation versions.
-
-   ```sh
-   kubectl --context "$KUBE_CONTEXT" wait --for=condition=Ready pod \
-     -l job-name="$OSM_JOB_NAME" --timeout=1m -n workouts-explorer
-   timeout --signal=INT 1m kubectl --context "$KUBE_CONTEXT" logs \
-     -f "job/$OSM_JOB_NAME" --since=1m --timestamps -n workouts-explorer
-   ```
-
-2. In that same startup check, inspect `osm_catalog.generations`,
-   `pg_stat_activity`, and PostgreSQL blockers. A previous execution must not
-   leave a stale `building`/`validating` generation, session, transaction, or
-   database lock that prevents the new execution from starting normally. Resolve
-   stale state deliberately before continuing; never launch a second updater to
-   work around it.
-3. Monitor the long rebuild using repeated waits or log-following intervals of at
-   most ten minutes. After every interval, verify expected stage progress in the
-   logs and catalog, inspect active PostgreSQL work and blockers, and check primary
-   storage plus replication health. A heartbeat without expected database work,
-   an unchanged stage beyond its normal duration, or shrinking storage headroom
-   requires investigation before another interval.
-
-   ```sh
-   timeout --signal=INT 10m kubectl --context "$KUBE_CONTEXT" logs \
-     -f "job/$OSM_JOB_NAME" --since=1m --timestamps -n workouts-explorer
-   ```
-
-4. After the Job completes, independently verify the promoted generation,
-   validation report, importer/derivation versions, canonical row counts, target
-   attribution, and absence of residual build schemas. Confirm storage GC removed
-   retired-generation data, remove the prior-generation operational backup only
-   after the new generation is verified, and ensure PostgreSQL storage and
-   replication are healthy before starting application reconciliation.
-5. If Coverage reconciliation is required, maintain one rolling page of active
-   Coverage route jobs; the current operator page size is 25. Use repeated waits
-   of at most five minutes and inspect parent plus route-child status after every
-   interval. At each check, selectively retry the latest **Failed** or
-   **Partially completed** parents first, count the queued/running route jobs
-   created by those retries, then enqueue new routes until exactly one page (25
-   jobs at the current setting) is queued or running. This keeps workers utilized
-   while bounding the active backlog. Do not wait for the final job in the prior
-   window to finish before topping the window back up.
-
-   ```sh
-   timeout --signal=INT 5m kubectl --context "$KUBE_CONTEXT" logs \
-     -f deployment/workouts-explorer-coverage-worker --since=1m \
-     --timestamps -n workouts-explorer
-   ```
-6. Retry only the latest parent in each lineage with status **Failed** or
-   **Partially completed** through the normal selective retry mechanism; an older
-   unsuccessful parent with a newer retry is historical and must not be retried
-   again. Recheck retries in at-most-five-minute intervals, refill the active
-   window after accounting for them, and continue until every eligible route has
-   updated successfully or its supported retries are exhausted. Only then declare
-   reconciliation complete.
-
-Record generation IDs, Job IDs, validation counts, retries, backup cleanup, and
-final storage/replication health in the operator report.
-
-### Resuming a failed database stage
-
-After `osm2pgsql` completes, every stage transition is recorded in
-`osm_catalog.generation_stages`. A later failure keeps the generation in
-`building`, retains its build schema, and marks only the failed stage. Do not
-start a new generation. Resume with an image containing the same fenced SQL as
-the retained stage, inspect the retained cursor, and recreate the update Job with
-an explicit resume command. If stage SQL must change, its checksum fence rejects
-mixing old and new batch output; explicitly abort that generation and start a
-new rebuild instead.
-
-```sh
-/app/osm-update status --generation <generation-id>
-/app/osm-update resume --generation <generation-id>
-```
-
-The operator discovers the Prometheus Service ClusterIP from the `homelab`
-context and injects it as a host alias for the unauthenticated internal endpoint
-at `https://prometheus-stack-prometheus.monitoring.svc.cluster.local:9090`.
-`SSL_CERT_FILE` points to the already mounted homelab CA. The manual Job defaults
-`OSM_PROMETHEUS_PVC_TEMPLATE` to `data-{{POD}}` and
-`OSM_PROMETHEUS_MAX_SAMPLE_AGE` to two minutes. The updater queries
-`pg_replication_is_replica` to map the SQL backend address to the current primary
-pod, substitutes that pod into the PVC template, then independently queries raw
-`kubelet_volume_stats_available_bytes` and
-`kubelet_volume_stats_capacity_bytes` samples for the derived claim. It rejects
-missing, stale, or duplicate mappings instead of aggregating them.
-DNS, connection, timeout, HTTP 429, HTTP 5xx, and an empty primary-address
-mapping are retried four times after 5, 10, 30, and 60 seconds. Ambiguous or
-invalid mappings, missing or stale storage metrics, primary changes, and
-insufficient storage are not retried.
-
-Updater logs display timestamps using the `America/Los_Angeles` timezone, and
-bracket each executable batch with searchable start/completion banners containing
-the generation ID, derivation version, durable stage name, and batch elapsed time.
-
-For every batch covered by PostgreSQL storage preflight, the updater logs the
-primary PVC capacity and free space immediately after the start banner. It
-samples storage while the batch runs, then waits for a fresh post-transaction
-Prometheus sample and logs the observed pre-cleanup low-water mark and post-GC
-free space immediately before the completion banner. The node in parentheses is
-the Kubernetes node exporting the PVC metric:
+## From a Regional Download to Coverage
 
 ```text
-PVC: data-postgresql-postgresql-0 (k8s4) | capacity: 29.94 GiB | free: 7.29 GiB (24%)
-PVC: data-postgresql-postgresql-0 (k8s4) | pre-GC: 2.38 GiB | post-GC: 7.03 GiB (23%)
+Regional OSM extract (.osm.pbf)
+    -> selective import into an isolated candidate build
+    -> public residential context and road/path derivation
+    -> boundary clipping, attribution, identities and indexes
+    -> validation
+    -> promotion as the region's active generation
+    -> workout readiness checks and versioned matching
+    -> durable Coverage, map overlays and visit statistics
 ```
 
-Propagation uses phase-specific batch sizes because hook updates are much more
-expensive than compression scans: 100,000 hook roots, 1,000,000 compression
-rows, and 500,000 assignment rows. The controller runs component-table vacuum
-maintenance after a propagation batch only when that batch's sampled PVC
-low-water observation is below 15% free; at 15% or more it skips vacuum overhead.
-Propagation cursors also persist the next batch ordinal and the pass total. The
-start and completion banners render `(N of M)`, and the ordinal resets to 1 each
-time convergence begins a new compression or hook pass.
+### 1. Choose and Download a Region
 
-If status reports an active storage block, reclaim or explicitly authorize
-storage first, then record approval and resume separately:
+The administrator's Regions page lists regional extracts discovered from the
+configured providers. **Download region** obtains data for an unprocessed region;
+**Reprocess region** builds a replacement for an already processed one.
 
-```sh
-/app/osm-update unblock --generation <generation-id> \
-  --approved-by "$USER" --note "snapshot cleanup completed"
-/app/osm-update resume --generation <generation-id>
-```
+Both operations download the provider's current PBF file. Reprocessing is not
+simply a new matcher pass over the existing map tables. The source URL, content
+hash, source timestamp and tool/processing versions identify the build's inputs.
 
-Normally, do not run those container commands directly. After resolving an
-insufficient-storage incident, rerun `make osm-update`, choose
-**Unblock**, enter a remediation note, then choose **Resume** on the next prompt.
-`unblock` records who approved the intervention and what changed. `resume`
-launches the retained build and immediately performs a new storage preflight;
-it still refuses to execute SQL if the claim remains below 10% free.
+A resumable job is different: **Resume processing** continues retained, compatible
+checkpoints and does not repeat a completed source import. Canceling an
+unpromoted build discards that candidate; deleting a region removes its active
+map data and is a separate operation.
 
-`unblock` records operator approval but does not execute SQL. `resume` starts the
-retained controller, which then runs a fresh preflight and continues from the
-committed cursor. During a healthy run the controller advances directly from one
-committed batch to the next; `resume` is only needed after the process exits.
-Clearance never bypasses preflight. To permanently discard retained work, use
-the separately locked destructive command:
+### 2. Keep the Relevant OSM Features
 
-```sh
-/app/osm-update abort --generation <generation-id> \
-  --reason "operator-approved rebuild replacement"
-```
+OSM represents points as **nodes**, ordered lines or closed outlines as **ways**,
+and related features or complex areas as **relations**. Regional downloads package
+these objects in a compact binary PBF file. The updater uses `osmium` to filter
+that file and `osm2pgsql` with the Lua import definitions to load the selected
+features into PostgreSQL/PostGIS.
 
-Resume verifies the generation is still building, the schema exists, pinned tool
-versions and importer/derivation versions match, and `osm2pgsql` has a completed
-checkpoint. It skips completed stages and reruns the first incomplete or failed
-stage. Validation is always rerun before promotion. Download, filtering, and
-`osm2pgsql` remain non-resumable because their source files are pod-local; a
-failure before the `osm2pgsql` checkpoint is cleaned up and requires a new
-generation. Operator cancellation after that checkpoint is resumable and must not
-drop the build schema.
+The importer selects public map features needed by Coverage, retaining their
+necessary node and relation references:
 
-Before catalog cleanup, reservation, or resume, the updater acquires one
-database-wide advisory lock. The lock permits only one updater across all
-regions. Once it owns that lock, it terminates stale PostgreSQL backends whose
-application name is `workouts-osm-update`, then verifies that no conflicting
-table or row locks remain on `osm_build_*`, `generation_stages`, or
-`generation_storage_blocks`. It never terminates unrelated API, tile, migration,
-or HA sessions; a conflicting foreign lock fails startup for operator review.
+| Data | How the app uses it |
+| --- | --- |
+| Highway ways and ordered nodes | Road/path geometry, exact connections, direction and source lineage. |
+| Road and access tags | Names, road classes, service subtypes, one-way information and movement-mode interpretation. |
+| Administrative boundaries | Municipality/county attribution and grouping scope. |
+| Parks and protected areas | Park attribution and display context. |
+| Educational grounds | Shared campus identity for otherwise unnamed internal roads and paths. |
+| Building footprints, residential land use, addresses and entrances | Evidence that an access road serves multiple homes rather than a single property. |
 
-The coarse stage ledger is supplemented by restart-safe keyset batch cursors for
-long clip, attribution, graph, and rewrite phases. The normative performance and
-failure contract is `docs/osm-resumable-rebuild.md`. Batches target 10-15 minutes
-on the production reference cluster and may not be deliberately sized above 15
-minutes without an internal durable checkpoint, limiting recovery loss to the
-current uncommitted batch. Automatic region preparation uses the same updater
-and resume contract.
+The PBF is a public map input, not a container for workout data. Private GPS and
+durable workout Coverage live in the application database. Map-processing jobs
+do not import private workout routes into the OSM database.
 
-A **stage** is the durable catalog phase and SQL fence. A **batch** (or **unit**)
-is one cursor-advancing transaction within that stage. Log banners bracket
-batches, so a batched stage can emit the same banner name multiple times before
-its stage row becomes `completed`.
+### 3. Build a Usable Road and Path Network
 
-One `building`/`validating` generation per region is enforced globally by the
-catalog's partial unique index. The command transactionally allocates its ID and
-`osm_build_<id>` schema, records source bytes, SHA-256, header timestamp, and
-exact tool versions, then runs reference-complete filtering, reference checking,
-flex import, postprocessing, derivation, clipping, partition preparation, and
-validation. Only a passing validation report moves to `validating` and invokes
-the schema-4 promotion function.
+Processing runs in a candidate schema, leaving the previously promoted map in
+service. It derives connected physical segments from source ways, splits geometry
+where attribution boundaries require it, and assigns stable logical identities.
 
-Before the durable `osm2pgsql` checkpoint, failure stores a bounded summary and
-drops the candidate schema. After that checkpoint, ordinary stage failures and
-storage blocks retain the candidate for explicit resume or abort. After
-promotion, detached leaves and the residual build
-schema are processed through `storage_gc`. A GC failure is reported but never
-fails the active generation; `failed` and `queued` GC records are retried at the
-start and end of a later invocation.
+These distinctions matter:
 
-Every mutating PostgreSQL unit commits its output and stage checkpoint in one
-transaction. The updater never blindly retries a batch after a connection loss,
-because the commit result may be ambiguous; a later `resume` reloads the durable
-cursor and either advances or safely repeats the uncommitted unit. Read-only
-validation may retry recognized transient connections up to five attempts with
-5, 15, 30, and 60 second delays. Syntax, constraint, and validation failures do
-not retry. Diagnostics are bounded, redact PostgreSQL URLs, stream command output,
-and emit one-minute heartbeats for long-running units.
+- Sharing a name does not automatically join disconnected streets.
+- Unnamed ways do not all become one street or path.
+- Road/path class, exact connectivity, locality and park/campus scope affect
+  attribution and grouping.
+- A way crossing an area boundary contributes only the appropriate inside
+  pieces; its entire length is not assigned to that area.
+- OSM source IDs, source versions and segment lineage remain attached to the
+  derived geometry.
 
-A pod crash before `osm2pgsql` remains non-resumable because its PBFs are stored
-in `emptyDir`. After the durable import checkpoint, PBF loss is harmless: all
-remaining work and cursors are in PostgreSQL, so the operator recreates the Job
-with `resume` rather than failing the generation or deleting its build schema.
+Residential processing compiles public frontage/unit evidence into shared-access
+classification. Garages, sheds and other non-residential structures must not
+inflate the home count. Duplicate addresses and relation-member footprints are
+deduplicated. Ambiguous access roads remain unclassified rather than being
+accepted merely because they are long, named or marked private. Raw context
+scratch is removed once its derived evidence has been recorded.
 
-`derive-batched.sql` builds the physical graph in durable source-way batches to
-avoid global sort, temporary-file, and shared-memory spikes. The checkpointed
-`clip-localities-*.sql` stages rewrite only municipal-boundary candidates at
-ordered source-line fractions.
-Pieces that cannot be covered by one locality within 1 cm retain matchable
-geometry but abstain from municipal attribution.
+Expensive work uses bounded, checkpointed units. When storage monitoring is
+configured and enabled, checks surround those units. A failed or paused candidate
+can retain completed work without replacing the active map.
 
-## Identity rule evaluation
+### 4. Validate and Promote
 
-`/app/osm-identity-eval` evaluates candidate attribution rules without promoting
-or retiring canonical data. It reserves an `evaluating` catalog scratch generation,
-which does not consume the region's single production `building` slot. By default
-it copies active canonical segments for Cupertino, Mountain View, Sunnyvale, and
-Saratoga, plus complete source ways named by the checked-in regression corpus,
-into a uniquely named logged scratch schema, preserves their existing park/locality
-attribution, runs the exact checkpointed production identity stages with storage
-preflight before scratch reservation, every setup mutation, and every stage unit.
-A normal run drops its schema before marking the scratch generation failed-by-design.
-A crashed evaluator or failed schema cleanup remains `evaluating`, can be inspected
-by generation ID, and can be aborted without blocking a production rebuild.
-`--keep-schema` deliberately leaves that recoverable `evaluating` record. It reports
-baseline versus candidate component counts, the largest candidate components, and
-the checked-in Stevens Creek, Meteor Drive, and Cupertino branch regressions.
+Validation checks geometry, source lineage, boundary attribution, logical
+identities and required indexes. A successful candidate is promoted atomically
+as the region's new active generation. Failed candidates do not replace the
+previously usable generation.
 
-When `MIGRATION_DATABASE_URL` is provided, the evaluator also maps existing
-application physical-segment matches through candidate IDs and reports aggregate
-entity/workout-attribution splits and merges. It never writes application data or
-creates Coverage jobs. Use `--without-application-projection` for an OSM-only run,
-`--keep-schema` for manual inspection, or `--full-region` with an explicitly large
-`--max-segments` value for an operator-only regional smoke test.
+Retired storage is cleaned up through the managed lifecycle. Maintenance and
+cleanup are part of processing; a successful SQL derivation alone is not the
+same as a fully completed region update.
 
-Render `osm/manual-identity-eval-job.yaml` with an explicit temporary evaluator
-image, secret keys, locality list, and segment limit. Evaluator stdout is one JSON
-report; stage progress goes to stderr. Any failed known regression or retained
-required-edge split makes the command exit nonzero after writing the report.
+### 5. Match Workouts Against Compatible Map Data
 
-## Timezone boundaries
+Matching is a separate operation from regional processing. It uses workout GPS
+and an observed, compatible map-generation snapshot to determine positive-length
+traversals. It should not color an entire street just because a route passed its
+entrance or touched one point.
 
-Workout timezone resolution uses the `timezone-boundary-builder` combined
-GeoJSON release, licensed under the Open Database License (ODbL) 1.0. The Helm
-chart pins the release URL and SHA-256 digest. A pre-deployment job downloads
-that immutable artifact, streams its polygons into versioned OSM catalog
-tables, validates them with PostGIS, and atomically promotes the completed
-dataset. Workout ingestion and backfill then query only the local OSM database;
-they do not call a geocoding or timezone service.
+The basic policy includes these distinctions:
 
-The default artifact is release `2026c` `timezones.geojson.zip`. To import a
-previously downloaded artifact manually:
+- Ordinary roads and independently useful paths can contribute Coverage for
+  appropriate workout movement modes.
+- Shared neighborhood access roads can count whether named or unnamed. Private
+  ownership alone does not make them individual-house driveways.
+- Individual-house driveways remain excluded; shared-access classification needs
+  evidence rather than a name or access tag alone.
+- Genuinely traversed parking aisles can appear as covered geometry. An aisle
+  without a formal name stays unnamed and follows the Road Coverage table's
+  default unnamed-row hiding.
+- Sidewalks, crossings and short connectors may help interpret a continuous
+  route without being counted as a second copy of the adjacent road.
+- Stationary jitter, nearby parallel streets, unsupported shortcuts and gaps in
+  the recording must not create travelled geometry.
 
-```sh
-OSM_MIGRATION_DATABASE_URL=postgresql://... \
-TIMEZONE_BOUNDARY_ARCHIVE=/data/timezones.geojson.zip \
-TIMEZONE_BOUNDARY_RELEASE=2026c \
-TIMEZONE_BOUNDARY_SOURCE_URL=https://github.com/evansiroky/timezone-boundary-builder/releases/download/2026c/timezones.geojson.zip \
-TIMEZONE_BOUNDARY_SHA256=7d3f0c5a33b6acd891335c0ad5ba767736b6914cb1a1d68c71921c17ce358948 \
-go run ./worker/cmd/timezone-import
-```
+A matcher policy can require data introduced by a newer importer or derivation
+contract. Work for that policy must wait until a compatible regional generation
+is **promoted**; an unfinished candidate is not sufficient. Existing valid
+Coverage remains usable while updated maps and replacement matches are pending.
 
-Promotion is idempotent for an already-active release and digest. Geometry from
-the previously active release is removed only after the replacement is active;
-its provenance row remains retired in the catalog.
+Successful matching stores copied segment metadata and covered geometry in the
+application database, along with its input, map and policy provenance. Display
+uses the matcher's stored classification for current results. Date/workout scope,
+grouping, tile clipping and unnamed-row visibility remain display concerns.
+Retained older results keep their compatibility behavior until rematched.
+
+## Generations and Versions
+
+These values describe different things and are not interchangeable:
+
+| Term | Meaning | When it changes |
+| --- | --- | --- |
+| **Region generation** | The numbered, successfully promoted map edition for one region. This is the Generation value shown in the administrator's Regions table. | Each successful promotion advances that region's number. Failed attempts do not consume a promoted generation number. |
+| **Internal build ID** | The database identifier allocated to a processing attempt, before it succeeds. It identifies the candidate schema and its checkpoints. | A fresh build receives a new ID, including builds that later fail or are canceled. Resuming a retained build keeps its ID. |
+| **Importer version** | The extraction/input contract: what the downloaded PBF retains and how that public source context is prepared for later processing. | Changes to required source features or their import/context contract. |
+| **Derivation version** | The processing contract for turning imported ways and boundaries into the physical matching network, attribution and logical identities. | Changes to those derivation rules. |
+| **Matcher policy version** | The rules used to interpret workout movement against map data and decide which traversals receive Coverage. | Changes to matching eligibility or traversal interpretation. |
+
+For example, several regions can have the same generation number while using
+different importer versions. A rebuild can advance a region's generation without
+changing either processing version. An importer update can add required context
+without changing physical segment derivation. A matcher-only change can require
+rematching workouts without requiring another PBF download.
+
+The internal build ID is globally allocated; the displayed generation number is
+region-specific. Do not substitute one for the other when inspecting jobs.
+
+## Ready, Stale and Pending Work
+
+- **Ready** means a promoted map meets current map-processing requirements.
+- **Stale** means the promoted map uses an older required importer/derivation
+  contract. It is still usable, but needs reprocessing for the newer contract.
+- A retained job can instead show Downloading, Processing, Failed, Paused or
+  Canceled. That operation status takes precedence until it finishes or is
+  cleared; it does not erase an existing promoted map.
+- A matcher-only policy change affects workout Coverage currentness, not the
+  region's processing status, unless it also introduces new map-data requirements.
+
+Publishing a new application image does not rewrite processed maps or relabel old
+workout results. Compatible regional processing and versioned workout matching
+are explicit steps. Checkpoints also retain exact processing fences: a resume
+must preserve the interpretation under which its completed work was produced.
+
+## Files and Operating Instructions
+
+| Path | Purpose |
+| --- | --- |
+| `import.lua` | Core road/boundary extraction and compatibility entry point for retained older builds. |
+| `import-residential.lua` | Extends extraction with residential context for fresh builds. |
+| `batches/` | Postprocessing, context classification, derivation, clipping, attribution, identity, partition and validation SQL. |
+| `manual-update-job.yaml` | Optional operator-rendered wrapper for the same updater used by controller-managed jobs. |
+| `manual-identity-eval-job.yaml` | Optional identity/attribution evaluation without promoting a replacement map. |
+| `testdata/` | Small synthetic regression inputs. |
+| `Containerfile` | Updater/evaluator image packaging. |
+
+Controller-managed jobs use the application's admission, progress, pause/resume,
+cancellation and audit workflow. For standalone operations,
+[`scripts/osm-update-operator.sh`](../scripts/osm-update-operator.sh) renders the
+manual Job template with `envsubst`; the Go updater does not read that YAML.
+
+Further reading:
+
+- [Region-update lifecycle and operations](../docs/osm-region-updates.md)
+- [Provider catalog discovery](../docs/osm-catalog-refresh.md)
+- [Read replicas and snapshot freshness](../docs/osm-read-replicas.md)
+- [Coverage readiness and stale results](../docs/coverage-readiness.md)
+- [Matching policies and cross-testing](../docs/decisions/009-coverage-matching-rules.md)
+- [Application database contracts](../docs/database-migrations.md)

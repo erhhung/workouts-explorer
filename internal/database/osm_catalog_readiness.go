@@ -12,6 +12,12 @@ const runtimeOSMCatalogReadinessSQL = `
     AND to_regclass('app.osm_region_catalog') IS NOT NULL
     AND to_regclass('app.osm_region_workouts') IS NOT NULL
     AND to_regprocedure('app.admin_osm_region_workout_counts(uuid)') IS NOT NULL
+    AND to_regprocedure('app.admin_osm_region_workout_progress(uuid)') IS NOT NULL
+    AND to_regprocedure('app.lock_coverage_admission(uuid)') IS NOT NULL
+    AND to_regprocedure('app.lock_coverage_target_jobs(uuid,uuid[])') IS NOT NULL
+    AND NOT has_function_privilege('workouts_api','app.lock_coverage_admission(uuid)','EXECUTE')
+    AND NOT has_function_privilege('workouts_coverage_worker','app.lock_coverage_target_jobs(uuid,uuid[])','EXECUTE')
+    AND to_regprocedure('app.read_priority_coverage_reconciliation_routes(uuid,bigint,text,uuid,uuid,integer)') IS NOT NULL
     AND has_function_privilege('workouts_api','app.admin_osm_region_workout_counts(uuid)','EXECUTE')
     AND NOT has_table_privilege('workouts_api','app.osm_region_workouts','SELECT')
     AND to_regclass('app.osm_provider_catalogs') IS NOT NULL

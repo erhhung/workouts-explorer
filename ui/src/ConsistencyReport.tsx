@@ -21,6 +21,7 @@ import {
 } from "./api";
 import { dateRangeRequest } from "./DateRangePicker";
 import { useTabActive } from "./RetainedTab";
+import { useDateFormat } from "./DateFormat";
 import { useKeyboardShortcut } from "./keyboardShortcuts";
 import { dismissActivePortalTooltip, Tooltip } from "./Tooltip";
 import {
@@ -77,6 +78,7 @@ function BarChart({
   preferences: Preferences;
   active: boolean;
 }) {
+  const dateFormat = useDateFormat();
   const scroll = useRef<HTMLDivElement>(null),
     measureLabel = useRef<HTMLSpanElement>(null);
   const axis = useRef<HTMLDivElement>(null),
@@ -97,8 +99,11 @@ function BarChart({
   const suppressClick = useRef(false);
   const [pan, setPan] = useState<"idle" | "pressed" | "dragging">("idle");
   const labels = useMemo(
-    () => data.buckets.map((bucket) => consistencyBucketLabel(bucket.bucketStart, data.groupBy)),
-    [data.buckets, data.groupBy],
+    () =>
+      data.buckets.map((bucket) =>
+        consistencyBucketLabel(bucket.bucketStart, data.groupBy, dateFormat),
+      ),
+    [data.buckets, data.groupBy, dateFormat],
   );
   const values = useMemo(
     () => data.buckets.map((bucket) => consistencyValue(bucket, chart, preferences.units)),
@@ -351,7 +356,7 @@ function BarChart({
                   capped = value !== null && value > scale.max;
                 const ratio = value === null ? 0 : Math.max(0, Math.min(1, value / scale.max));
                 const formatted = formatConsistencyValue(value, chart, preferences.units, true);
-                const description = `${consistencyTooltipLabel(data.buckets[index].bucketStart, data.groupBy)} \u00a0━\u00a0 ${formatted}${value === null && data.buckets[index].workoutCount === 0 ? " (no workouts)" : ""}`;
+                const description = `${consistencyTooltipLabel(data.buckets[index].bucketStart, data.groupBy, dateFormat)} \u00a0━\u00a0 ${formatted}${value === null && data.buckets[index].workoutCount === 0 ? " (no workouts)" : ""}`;
                 const perfect = isPerfectConsistencyMonth(data.buckets[index], data.groupBy, chart);
                 return (
                   <div
@@ -625,7 +630,7 @@ export function ConsistencyReport({
                       active={enabled && open}
                     />
                   ) : (
-                    <div className="consistency-chart consistency-placeholder">
+                    <div className="consistency-chart consistency-placeholder content-state-message">
                       {query.isError ? "Report unavailable." : "Loading chart..."}
                     </div>
                   )}

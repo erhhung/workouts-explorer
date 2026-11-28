@@ -573,7 +573,7 @@ func TestCanonicalCoverageDisplayWholeGroupGeometryAndBounds(t *testing.T) {
 	}
 	for _, name := range []string{"map_selection_coverage_entity_detail", "coverage_mvt", "map_selection_coverage_focus"} {
 		body := coverageDisplayFunction(t, source, name)
-		canonicalRequire(t, body, "'driveway', 'parking_aisle'", "IS DISTINCT FROM 'parking'",
+		canonicalRequire(t, body, "app.coverage_match_visible(", "display_class",
 			"path.name IS NOT NULL", "'state_park', 'national_park'", "workouts:education_id", "UNION ALL")
 		canonicalForbid(t, body, "sum(", "min(path.name)", "app.coverage_display_identity(")
 	}

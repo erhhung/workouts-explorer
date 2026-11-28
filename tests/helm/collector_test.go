@@ -21,7 +21,7 @@ func renderCollectorChart(t *testing.T, settings ...string) map[string]workload 
 	args := []string{"template", "collector-test", chartDir}
 	for _, setting := range settings {
 		flag := "--set-string"
-		if strings.HasSuffix(setting, ".enabled=false") {
+		if strings.HasSuffix(setting, ".enabled=false") || strings.HasSuffix(setting, ".enabled=true") {
 			flag = "--set"
 		}
 		args = append(args, flag, setting)
@@ -50,16 +50,43 @@ func TestCollectorSidecars(t *testing.T) {
 		settings []string
 		enabled  bool
 	}{
-		{"defaults", nil, true},
+		{"defaults disabled", nil, false},
+		{"explicitly enabled", []string{"otel.enabled=true"}, true},
 		{"empty endpoint", []string{"otel.endpoint="}, false},
-		{"disabled collector", []string{"otel.collector.enabled=false"}, false},
-		{"gRPC override", []string{"otel.endpoint=grpcs://gateway.example.test:4317"}, true},
-		{"HTTP disabled collector", []string{"otel.endpoint=https://gateway.example.test:4318", "otel.collector.enabled=false"}, false},
-		{"HTTP custom CA", []string{"otel.endpoint=https://gateway.example.test:4318", "otel.trustedCASecret.name=telemetry-ca", "otel.trustedCASecret.key=trust.pem"}, true},
+		{"disabled integration", []string{"otel.enabled=false"}, false},
+		{"gRPC override", []string{"otel.enabled=true", "otel.endpoint=grpcs://gateway.example.test:4317"}, true},
+		{"HTTP disabled integration", []string{"otel.endpoint=https://gateway.example.test:4318", "otel.enabled=false"}, false},
+		{"HTTP custom CA", []string{"otel.enabled=true", "otel.endpoint=https://gateway.example.test:4318", "otel.trustedCASecret.name=telemetry-ca", "otel.trustedCASecret.key=trust.pem"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings, enabled := tc.settings, tc.enabled
 			items := renderCollectorChart(t, settings...)
+			endpoint := "grpcs://otel-gateway-collector.observability.svc.cluster.local:4317"
+			for _, setting := range settings {
+				if strings.HasPrefix(setting, "otel.endpoint=") {
+					endpoint = strings.TrimPrefix(setting, "otel.endpoint=")
+				}
+			}
+			if !enabled {
+				endpoint = ""
+			}
+			if items["ConfigMap/workouts-explorer-api"].Data["OTEL_EXPORTER_OTLP_ENDPOINT"] != endpoint {
+				t.Fatal("API export endpoint did not honor integration flag")
+			}
+			for _, component := range []string{"worker", "coverage-worker"} {
+				found := false
+				for _, env := range items["Deployment/workouts-explorer-"+component].Spec.Template.Spec.Containers[0].Env {
+					if env.Name == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+						found = true
+						if env.Value != endpoint {
+							t.Fatal(component, "export endpoint did not honor integration flag")
+						}
+					}
+				}
+				if !found {
+					t.Fatal("explicit endpoint setting missing", component)
+				}
+			}
 			count := 0
 			for key, item := range items {
 				if item.Kind != "Deployment" {
@@ -140,7 +167,7 @@ func TestCollectorSidecars(t *testing.T) {
 					case "collector-ca":
 						seen[volume.Name] = true
 						name, caKey := "workouts-explorer-database-tls", "ca.crt"
-						if len(settings) == 3 {
+						if strings.Contains(strings.Join(settings, " "), "otel.trustedCASecret.name=telemetry-ca") {
 							name, caKey = "telemetry-ca", "trust.pem"
 						}
 						if volume.Secret.SecretName != name || volume.Secret.DefaultMode != 0444 || len(volume.Secret.Items) != 1 || volume.Secret.Items[0].Key != caKey || volume.Secret.Items[0].Path != "ca.crt" {
@@ -169,7 +196,7 @@ func TestCollectorConfiguration(t *testing.T) {
 	defaultEndpoint := "grpcs://otel-gateway-collector.observability.svc.cluster.local:4317"
 	for _, endpoint := range []string{defaultEndpoint, "grpcs://gateway.example.test:4317", "grpc://gateway.example.test:4317", "https://gateway.example.test:4318", "http://gateway.example.test:4318"} {
 		t.Run(endpoint, func(t *testing.T) {
-			settings := []string{"otel.environment=fixture", "otel.serviceNamespace=fixture-space"}
+			settings := []string{"otel.enabled=true", "otel.environment=fixture", "otel.serviceNamespace=fixture-space"}
 			if endpoint != defaultEndpoint {
 				settings = append(settings, "otel.endpoint="+endpoint)
 			}
@@ -302,8 +329,10 @@ func TestCollectorSchemaRejectsInvalidConfiguration(t *testing.T) {
 		"otel.collector.image=otel/opentelemetry-collector-contrib:0.157.0@sha256:" + strings.Repeat("a", 64),
 		"otel.trustedCASecret.key=",
 		"otel.environment=",
+		"otel.collector.enabled=true",
+		"otel.endpoint=",
 	} {
-		output, err := exec.Command("helm", "template", "invalid-test", chartDir, "--set-string", setting).CombinedOutput()
+		output, err := exec.Command("helm", "template", "invalid-test", chartDir, "--set", "otel.enabled=true", "--set-string", setting).CombinedOutput()
 		if err == nil {
 			t.Errorf("invalid configuration accepted: %s\n%s", setting, output)
 		}

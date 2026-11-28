@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { DateRangeEnum, DateRangePreference } from "./api";
 import { formatDateOnly } from "./date";
+import { useDateFormat } from "./DateFormat";
 import { RecentDateRangeItems } from "./RecentDateRanges";
 
 export const DATE_RANGE_SHORTCUTS: ReadonlyArray<[DateRangeEnum, string]> = [
@@ -33,11 +34,12 @@ export function DateRangePicker({
   onSelect: (range: DateRangePreference) => void;
   onCustom: () => void;
 }) {
+  const dateFormat = useDateFormat();
   const explicit = /^(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/.exec(range);
   const label =
     DATE_RANGE_SHORTCUTS.find(([value]) => value === range)?.[1] ??
     (explicit
-      ? `${formatDateOnly(explicit[1])} to ${formatDateOnly(explicit[2])}`
+      ? `${formatDateOnly(explicit[1], dateFormat)} to ${formatDateOnly(explicit[2], dateFormat)}`
       : "Last 30 days");
   return (
     <DropdownMenu.Root>

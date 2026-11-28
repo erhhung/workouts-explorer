@@ -134,6 +134,13 @@ func expandOSMGraph(ctx context.Context, topology osmTopology, segments map[uuid
 					return fmt.Errorf("OSM incident edge returned an unrequested graph node")
 				}
 				segment := physicalFromEdge(edge)
+				segment.policy = policy
+				if policy.sharedAccessPolicy() {
+					segment.tags, err = options.residentialTags(segment.tags, segment.generation)
+					if err != nil {
+						return err
+					}
+				}
 				if !policy.transitionEligible(segment.highway, segment.tags) {
 					continue
 				}

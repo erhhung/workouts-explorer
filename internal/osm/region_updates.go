@@ -24,7 +24,7 @@ var UpdateTasks = func() []UpdateTaskDefinition {
 	repeated := map[int]bool{8: true, 10: true, 20: true, 21: true, 22: true, 23: true, 25: true, 26: true, 27: true, 28: true, 29: true, 30: true, 31: true, 32: true, 34: true, 35: true, 36: true, 39: true, 40: true, 41: true, 43: true, 44: true, 45: true, 47: true, 49: true, 54: true, 55: true}
 	result := make([]UpdateTaskDefinition, len(names))
 	for i, name := range names {
-		result[i] = UpdateTaskDefinition{i + 1, name, repeated[i+1]}
+		result[i] = UpdateTaskDefinition{i + 1, name, repeated[i+1] || name == "postprocess"}
 	}
 	return result
 }()
@@ -93,20 +93,21 @@ const RegionUpdateJSON = `jsonb_build_object('id',upper(replace(id::text,'-','')
     FROM executions)`
 
 type UpdateProgress struct {
-	Type                string `json:"type"`
-	Task                int    `json:"task,omitempty"`
-	GenerationID        int64  `json:"generationId,omitempty"`
-	Batch               int    `json:"batch,omitempty"`
-	Batches             int    `json:"batches,omitempty"`
-	Completed           bool   `json:"completed,omitempty"`
-	Outcome             string `json:"outcome,omitempty"`
-	Resumable           bool   `json:"resumable,omitempty"`
-	Promoted            bool   `json:"promoted,omitempty"`
-	Error               string `json:"error,omitempty"`
-	ElapsedMilliseconds *int64 `json:"elapsedMilliseconds,omitempty"`
-	ElapsedSequence     int64  `json:"elapsedSequence,omitempty"`
-	ElapsedIncomplete   bool   `json:"elapsedIncomplete,omitempty"`
-	AwaitingMetrics     bool   `json:"awaitingMetrics,omitempty"`
+	StorageMetricsConfigured *bool  `json:"storageMetricsConfigured,omitempty"`
+	Type                     string `json:"type"`
+	Task                     int    `json:"task,omitempty"`
+	GenerationID             int64  `json:"generationId,omitempty"`
+	Batch                    int    `json:"batch,omitempty"`
+	Batches                  int    `json:"batches,omitempty"`
+	Completed                bool   `json:"completed,omitempty"`
+	Outcome                  string `json:"outcome,omitempty"`
+	Resumable                bool   `json:"resumable,omitempty"`
+	Promoted                 bool   `json:"promoted,omitempty"`
+	Error                    string `json:"error,omitempty"`
+	ElapsedMilliseconds      *int64 `json:"elapsedMilliseconds,omitempty"`
+	ElapsedSequence          int64  `json:"elapsedSequence,omitempty"`
+	ElapsedIncomplete        bool   `json:"elapsedIncomplete,omitempty"`
+	AwaitingMetrics          bool   `json:"awaitingMetrics,omitempty"`
 }
 
 type UpdateReporter interface {
@@ -130,6 +131,11 @@ func (u Updater) reportElapsed(ctx context.Context, event UpdateProgress, durati
 }
 
 func logicalTask(stage, phase string) UpdateTaskDefinition {
+	if stage == "residential-context" {
+		task := UpdateTasks[5]
+		task.Repeated = true
+		return task
+	}
 	if phase == "" {
 		phase = map[string]string{"derive": "init", "attribute-slivers": "discover", "identity-edges": "orientation-1", "identity-proximity": "roads", "identity-components": "branch-nodes", "identity-propagate": "compress", "identity-label-overrides": "init", "validate": "init"}[stage]
 	}

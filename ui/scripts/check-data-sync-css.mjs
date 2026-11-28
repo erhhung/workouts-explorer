@@ -15,7 +15,7 @@ const checks = [
   ],
   [
     "immediate pinned tooltip",
-    /\.info-tip\.is-open > \.tooltip-content[^}]+transition-delay: 0s/.test(styles),
+    /\.tooltip-content--portal\.is-open\.is-pinned[^}]+transition-delay: 0s/.test(styles),
   ],
   ["Data Sync overflow", /\.data-sync-page\s*\{[^}]+overflow: visible/.test(styles)],
   [
@@ -38,7 +38,7 @@ const checks = [
   ["narrow schedule layout", styles.includes("@media (max-width: 30rem)")],
   [
     "viewport tooltip width",
-    /\.schedule-details \.tooltip-content\s*\{[^}]+max-width:\s*min\(\d+(?:\.\d+)?rem,\s*calc\(100vw - 4rem\)\)/.test(
+    /\.info-tip-content\s*\{[^}]+max-width:\s*min\(\d+(?:\.\d+)?rem,\s*calc\(100vw - 2rem\)\)/.test(
       styles,
     ),
   ],
@@ -99,9 +99,8 @@ const checks = [
   ],
   [
     "tracked history headers",
-    /\.sync-history-table th\s*\{[^}]+letter-spacing: 0\.06em[^}]+text-transform: uppercase/.test(
-      styles,
-    ),
+    /\.sync-history-table th\s*\{[^}]+height: 2\.75rem/.test(styles) &&
+      /\.sync-history-table th,\s*\.history-action-menu-label\s*\{[^}]+font-size: 0\.68rem[^}]+font-weight: 720[^}]+letter-spacing: 0\.06em[^}]+text-transform: uppercase/.test(styles),
   ],
   [
     "compact orange filter trigger",

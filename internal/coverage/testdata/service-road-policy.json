@@ -1,0 +1,17 @@
+[
+  {"label":"named private neighborhood road","highway":"service","tags":{"name":"Private Court","access":"private","service":"driveway"},"eligible":true},
+  {"label":"normalized private access","highway":"service","tags":{"name":"Mixed Private Court","access":" PRIVATE ","service":"driveway"},"eligible":true},
+  {"label":"unnamed private driveway","highway":"service","tags":{"access":"private","service":"driveway"},"eligible":false},
+  {"label":"blank named private driveway","highway":"service","tags":{"name":"  ","access":"private","service":"driveway"},"eligible":false},
+  {"label":"named public driveway","highway":"service","tags":{"name":"Public Driveway","access":"yes","service":"driveway"},"eligible":false},
+  {"label":"named driveway without access tag","highway":"service","tags":{"name":"Ordinary Driveway","service":"driveway"},"eligible":false},
+  {"label":"named private parking aisle","highway":"service","tags":{"name":"Parking Aisle","access":"private","service":"parking_aisle"},"eligible":true},
+  {"label":"unnamed parking aisle","highway":"service","tags":{"service":"parking_aisle"},"eligible":true},
+  {"label":"forbidden parking aisle","highway":"service","tags":{"service":"parking_aisle","access":"no"},"eligible":false},
+  {"label":"unnamed shared neighborhood street","highway":"service","tags":{"service":"driveway","workouts:residential_context_version":"1","workouts:residential_access":"shared"},"eligible":true},
+  {"label":"named shared court without private tag","highway":"service","tags":{"name":"Shared Court","service":"driveway","workouts:residential_context_version":"1","workouts:residential_access":"shared"},"eligible":true},
+  {"label":"named private single-house driveway","highway":"service","tags":{"name":"Single House Drive","access":"private","service":"driveway","workouts:residential_context_version":"1","workouts:residential_access":"single_house"},"eligible":false},
+  {"label":"ambiguous driveway with context","highway":"service","tags":{"name":"Ambiguous Drive","access":"private","service":"driveway","workouts:residential_context_version":"1","workouts:residential_access":"unclassified"},"eligible":false},
+  {"label":"private service road","highway":"service","tags":{"name":"Service Road","access":"private"},"eligible":true},
+  {"label":"private residential road","highway":"residential","tags":{"name":"Residential Road","access":"private"},"eligible":true}
+]

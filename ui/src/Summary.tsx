@@ -10,6 +10,7 @@ import {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -43,7 +44,7 @@ import {
   ZoneBadge,
 } from "./Tooltip";
 import { CustomDateRangeDialog } from "./CustomDateRangeDialog";
-import { formatDateOnly } from "./date";
+import { formatDateOnly, formatEnglishDate, type DateFormat } from "./date";
 import { useRecentDateRanges } from "./RecentDateRanges";
 import { DateRangePicker, DATE_RANGE_SHORTCUTS } from "./DateRangePicker";
 import { FittedAggregateValue } from "./FittedAggregateValue";
@@ -232,8 +233,8 @@ function resolveZone(workoutZone: string | null, offset: number | null, instant:
   return null;
 }
 
-function rangeDate(value: string) {
-  return formatDateOnly(value);
+function rangeDate(value: string, order?: DateFormat) {
+  return formatDateOnly(value, order);
 }
 
 function currentZone(timeZone: string) {
@@ -269,7 +270,7 @@ function localInstant(
     if (timeZone) {
       const resolvedOffset = zoneOffsetAt(timeZone, instant)!;
       return {
-        dateTime: dateTimeFormatter("en-US", { ...options, timeZone }).format(instant),
+        dateTime: formatEnglishDate(instant, { ...options, timeZone }, preferences.dateFormat),
         weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone }).format(instant),
         zoneLabel: zoneAbbreviation(timeZone, instant),
         zoneTitle: `${offsetLabel(resolvedOffset)} recorded`,
@@ -279,7 +280,11 @@ function localInstant(
     if (offset != null) {
       const shifted = new Date(instant.getTime() + offset * 60_000);
       return {
-        dateTime: dateTimeFormatter("en-US", { ...options, timeZone: "UTC" }).format(shifted),
+        dateTime: formatEnglishDate(
+          shifted,
+          { ...options, timeZone: "UTC" },
+          preferences.dateFormat,
+        ),
         weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone: "UTC" }).format(shifted),
         zoneLabel: offsetLabel(offset, true),
         zoneTitle: `${offsetLabel(offset)} recorded | time zone unavailable`,
@@ -290,7 +295,7 @@ function localInstant(
   if (knownDate && validDate(knownDate)) {
     const date = new Date(`${knownDate}T00:00:00Z`);
     return {
-      dateTime: `${dateTimeFormatter("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(date)} at time unavailable`,
+      dateTime: `${formatEnglishDate(date, { dateStyle: "medium", timeZone: "UTC" }, preferences.dateFormat)} at time unavailable`,
       weekday: dateTimeFormatter("en-US", { weekday: "short", timeZone: "UTC" }).format(date),
       zoneLabel: "TZ unavailable",
       zoneTitle: "Recorded offset/time zone unavailable",
@@ -532,7 +537,7 @@ function isWorkoutMetricColumn(column: WorkoutColumn) {
 function QueryError({ message, retry }: { message: string; retry: () => void }) {
   return (
     <div className="summary-query-error" role="alert">
-      <span>{message}</span>
+      <span className="content-state-message">{message}</span>
       <button className="secondary" onClick={retry}>
         Retry
       </button>
@@ -581,12 +586,13 @@ function WorkoutActions({
         >
           {workout.routePointCount >= 2 && onShowOnMap && (
             <DropdownMenu.Item onSelect={() => onShowOnMap(workout.id)}>
-              Show on map
+              View on map
             </DropdownMenu.Item>
           )}
           <DropdownMenu.Item onSelect={() => onViewProvenance(workout, triggerRef.current)}>
             View provenance
           </DropdownMenu.Item>
+          {(workout.routePointCount >= 2 || workout.routeAvailable) && <DropdownMenu.Separator />}
           {workout.routePointCount >= 2 && (
             <DropdownMenu.Item onSelect={() => onExportGeoJSON(workout)}>
               Export GeoJSON
@@ -623,12 +629,16 @@ function provenanceKindLabel(kind: WorkoutProvenance["items"][number]["kind"]) {
 function provenanceTime(value: string, preferences: Preferences) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Time unavailable";
-  return dateTimeFormatter("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: preferences.timezone,
-    hour12: preferences.clockFormat === "12h",
-  }).format(date);
+  return formatEnglishDate(
+    date,
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: preferences.timezone,
+      hour12: preferences.clockFormat === "12h",
+    },
+    preferences.dateFormat,
+  );
 }
 
 function warningLabel(warning: WorkoutProvenanceWarning) {
@@ -759,21 +769,36 @@ const AggregatePreview = createContext<{
 function AggregateGrid({
   children,
   busy,
+  ready,
+  revision,
   scope,
 }: {
   children: ReactNode;
   busy: boolean;
+  ready: boolean;
+  revision: number;
   scope: string;
 }) {
   const tabActive = useTabActive();
+  const gridRef = useRef<HTMLDivElement>(null);
   const [owner, setOwner] = useState<string>();
   useEffect(() => {
     setOwner(undefined);
   }, [tabActive, scope]);
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || !tabActive || !ready) return;
+    // A ready result can arrive without a painted loading frame. Restart the
+    // reveal explicitly without remounting cards or losing their focus.
+    grid.classList.remove("is-revealing");
+    void grid.offsetWidth;
+    grid.classList.add("is-revealing");
+    return () => grid.classList.remove("is-revealing");
+  }, [tabActive, ready, revision, scope]);
   const change = (label: string, expanded: boolean) =>
     setOwner((current) => (expanded ? label : current === label ? undefined : current));
   return (
-    <div className={`aggregate-grid${busy ? " is-refetching" : ""}`} aria-busy={busy}>
+    <div ref={gridRef} className={`aggregate-grid${busy ? " is-refetching" : ""}`} aria-busy={busy}>
       <AggregatePreview.Provider value={{ owner, change }}>{children}</AggregatePreview.Provider>
     </div>
   );
@@ -1258,7 +1283,7 @@ function WorkoutTable({
               {/* Reuse page cells, but reset action menus when the workout identity changes. */}
               {loading ? (
                 <tr className="workout-loading-row">
-                  <td colSpan={columns.length + 1} role="status">
+                  <td className="content-state-message" colSpan={columns.length + 1} role="status">
                     Loading workouts...
                   </td>
                 </tr>
@@ -2022,7 +2047,7 @@ export function Summary({
         />
       </header>
       {saveNotice && (
-        <div className="summary-notice" role="status">
+        <div className="summary-notice dismissible-notice" role="status">
           <span>{saveNotice}</span>
           <button
             type="button"
@@ -2035,7 +2060,7 @@ export function Summary({
         </div>
       )}
       {exportError && (
-        <div className="summary-notice summary-export-error" role="alert">
+        <div className="summary-notice summary-export-error dismissible-notice" role="alert">
           <span>{exportError}</span>
           <button
             type="button"
@@ -2048,7 +2073,7 @@ export function Summary({
         </div>
       )}
       {deletionNotice && (
-        <div className="summary-notice" role="status">
+        <div className="summary-notice dismissible-notice" role="status">
           <span>{deletionNotice}</span>
           <button
             type="button"
@@ -2097,7 +2122,7 @@ export function Summary({
                 <Dialog.Title>Delete workouts in this range?</Dialog.Title>
                 <Dialog.Description>
                   {explicit
-                    ? `Delete all workouts from ${rangeDate(explicit[1])} to ${rangeDate(explicit[2])}, inclusive?`
+                    ? `Delete all workouts from ${rangeDate(explicit[1], preferences.dateFormat)} to ${rangeDate(explicit[2], preferences.dateFormat)}, inclusive?`
                     : "Delete all workouts in this explicit range?"}
                 </Dialog.Description>
               </div>
@@ -2183,7 +2208,7 @@ export function Summary({
                 <Dialog.Title>Delete workout?</Dialog.Title>
                 <Dialog.Description>
                   {deletionTarget
-                    ? `Delete ${deletionTarget.type.displayName} on ${deletionTarget.localStartDate ? rangeDate(deletionTarget.localStartDate) : "an unknown date"}?`
+                    ? `Delete ${deletionTarget.type.displayName} on ${deletionTarget.localStartDate ? rangeDate(deletionTarget.localStartDate, preferences.dateFormat) : "an unknown date"}?`
                     : "Delete this workout?"}
                 </Dialog.Description>
               </div>
@@ -2253,7 +2278,7 @@ export function Summary({
             </div>
             <div className="provenance-dialog-body">
               {provenanceQuery.isPending && (
-                <p className="provenance-state" role="status">
+                <p className="provenance-state content-state-message" role="status">
                   Loading provenance...
                 </p>
               )}
@@ -2267,7 +2292,9 @@ export function Summary({
                   />
                 )}
               {provenanceQuery.data?.items.length === 0 && (
-                <p className="provenance-state">No import events were recorded.</p>
+                <p className="provenance-state content-state-message">
+                  No import events were recorded.
+                </p>
               )}
               {provenanceQuery.data && provenanceQuery.data.items.length > 0 && (
                 <ol className="provenance-timeline">
@@ -2331,14 +2358,15 @@ export function Summary({
           {summary?.range && rangeZone && (
             <span className="range-metadata">
               <span>
-                {rangeDate(summary.range.startDate)} to {rangeDate(summary.range.endDate)}
+                {rangeDate(summary.range.startDate, preferences.dateFormat)} to{" "}
+                {rangeDate(summary.range.endDate, preferences.dateFormat)}
               </span>
               <ZoneBadge label={rangeZone.label} title={rangeZone.title} />
             </span>
           )}
         </div>
         {summaryQuery.isPending && (
-          <p className="summary-loading" role="status">
+          <p className="summary-loading content-state-message" role="status">
             Loading range {averages ? "averages" : "totals"}...
           </p>
         )}
@@ -2351,6 +2379,8 @@ export function Summary({
         {summary && (
           <AggregateGrid
             busy={summaryQuery.isFetching}
+            ready={summaryQuery.isSuccess && !summaryQuery.isFetching}
+            revision={summaryQuery.dataUpdatedAt}
             scope={`${range}:${preferences.timezone}:${preferences.pageSize}`}
           >
             <AggregateCard

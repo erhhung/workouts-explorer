@@ -124,8 +124,8 @@ func TestCanonicalCoverageDisplayReadinessCatalogContract(t *testing.T) {
 func TestCanonicalCoverageDisplayReadinessBodyFingerprints(t *testing.T) {
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	fingerprints := regexp.MustCompile(`(?s)\('app\.([a-z_]+)\([^']*\)'.*?,'([a-f0-9]{32})'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(functions) != 29 || len(fingerprints) != len(functions) {
-		t.Fatalf("want 29 protected canonical functions including display currentness in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
+	if len(functions) != 30 || len(fingerprints) != len(functions) {
+		t.Fatalf("want 30 protected canonical functions including authoritative display classification in 030; migration=%d readiness=%d", len(functions), len(fingerprints))
 	}
 	for _, function := range functions {
 		t.Run(function[1], func(t *testing.T) {
@@ -211,8 +211,8 @@ func TestCanonicalCoverageDisplayReadinessPhysicalColumns(t *testing.T) {
 
 func TestCanonicalCoverageDisplayReadinessFunctionAttributes(t *testing.T) {
 	tuples := regexp.MustCompile(`(?s)\('app\.(\w+)\(([^']*)\)','(sql|plpgsql)','([isv])',(true|false),(true|false),'([su])',(true|false),(\d+),\s*'([^']*)',\s*ARRAY\[([^]]*)\],(true|false),(true|false),'[a-f0-9]{32}'\)`).FindAllStringSubmatch(runtimeCanonicalCoverageDisplayReadinessSQL, -1)
-	if len(tuples) != 29 {
-		t.Fatalf("want 29 complete function attribute tuples, got %d", len(tuples))
+	if len(tuples) != 30 {
+		t.Fatalf("want 30 complete function attribute tuples, got %d", len(tuples))
 	}
 	functions := canonicalDisplayFunctions(canonicalDisplayMigration(t))
 	tile, err := migrations.Files.ReadFile("031_tile_rendering.sql")

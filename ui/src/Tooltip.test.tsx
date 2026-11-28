@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { Tooltip } from "./Tooltip";
+import { cursorTooltipGap, InfoTip, Tooltip } from "./Tooltip";
 
 const originalElementFromPoint = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
 afterEach(() => {
@@ -57,6 +57,128 @@ function setup(anchor = rect(140, 120, 20, 20), followPointer = false) {
 }
 
 describe("Tooltip", () => {
+  test("default tooltips use both cursor coordinates, independent of a tall element's top edge", () => {
+    render(
+      <Tooltip content="Default help" label="Default target">
+        Target
+      </Tooltip>,
+    );
+    const trigger = screen.getByLabelText("Default target"),
+      bubble = screen.getByRole("tooltip");
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(100, 40, 200, 180));
+    vi.spyOn(bubble, "getBoundingClientRect").mockReturnValue(rect(0, 0, 100, 40));
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 180, clientY: 190 }),
+    );
+    expect(bubble.parentElement).toBe(document.body);
+    expect(bubble).toHaveStyle({ left: "130px", top: "126px" });
+  });
+
+  test("fixed help follows the cursor until reveal, then freezes both coordinates", () => {
+    vi.useFakeTimers();
+    const { trigger, bubble } = setup();
+    let revealed = false;
+    const original = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = original(element);
+      if (element === bubble)
+        Object.defineProperty(style, "visibility", { value: revealed ? "visible" : "hidden" });
+      return style;
+    });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
+    );
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 155, clientY: 135 }),
+    );
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 156, clientY: 136 }),
+    );
+    revealed = true;
+    act(() => vi.advanceTimersByTime(20));
+    expect(bubble).toHaveStyle({ left: "106px", top: "72px" });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 158, clientY: 138 }),
+    );
+    act(() => vi.advanceTimersByTime(20));
+    expect(bubble).toHaveStyle({ left: "106px", top: "72px" });
+    fireEvent.resize(window);
+    expect(bubble).toHaveStyle({ left: "106px", top: "72px" });
+  });
+
+  test("cursor spacing follows the root rem size", () => {
+    const { trigger, bubble } = setup(undefined, true);
+    const original = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = original(element);
+      if (element === document.documentElement)
+        Object.defineProperty(style, "fontSize", { value: "20px" });
+      return style;
+    });
+    fireEvent(
+      trigger,
+      new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
+    );
+    expect(bubble).toHaveStyle({ top: "60px" });
+    expect(cursorTooltipGap("map")).toBe(20);
+  });
+
+  test("pinned info help survives pointer leave and yields to another tooltip owner", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("tooltip-content")
+        ? rect(0, 0, 100, 40)
+        : rect(140, 120, 20, 20);
+    });
+    render(
+      <>
+        <InfoTip content="Daily source schedule" label="About schedule" />
+        <Tooltip portal content="Other help" label="Other target">
+          Other
+        </Tooltip>
+      </>,
+    );
+    const button = screen.getByRole("button", { name: "About schedule" });
+    const bubble = document.getElementById(button.getAttribute("aria-describedby")!)!;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => button,
+    });
+    fireEvent.pointerEnter(button, { clientX: 150, clientY: 125 });
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(bubble).toHaveClass("is-open", "is-pinned");
+    fireEvent.pointerLeave(button);
+    expect(bubble).toHaveClass("is-open");
+    fireEvent.pointerEnter(screen.getByLabelText("Other target"));
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(bubble).not.toHaveClass("is-open");
+  });
+
+  test("info help uses element anchoring for keyboard focus and dismisses on blur", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("tooltip-content")
+        ? rect(0, 0, 100, 40)
+        : rect(140, 120, 20, 20);
+    });
+    render(<InfoTip content="Daily source schedule" label="About schedule" />);
+    const button = screen.getByRole("button", { name: "About schedule" });
+    const bubble = screen.getByRole("tooltip");
+    fireEvent.focus(button);
+    expect(bubble).toHaveClass("is-open");
+    expect(bubble).toHaveStyle({ left: "100px", top: "56px" });
+    fireEvent.blur(button, { relatedTarget: document.body });
+    expect(bubble).not.toHaveClass("is-open");
+  });
+
   test("a swapped focused child cannot keep a live progress tooltip open", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
       this: HTMLElement,
@@ -119,13 +241,13 @@ describe("Tooltip", () => {
       new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
     );
     expect(bubble).toHaveClass("is-open");
-    expect(bubble).toHaveStyle({ left: "100px", top: "79.6px" });
+    expect(bubble).toHaveStyle({ left: "100px", top: "66px" });
     fireEvent(
       trigger,
       new MouseEvent("pointermove", { bubbles: true, clientX: 155, clientY: 135 }),
     );
     act(() => vi.advanceTimersByTime(20));
-    expect(bubble).toHaveStyle({ left: "105px", top: "84.6px" });
+    expect(bubble).toHaveStyle({ left: "105px", top: "71px" });
     act(() => vi.advanceTimersByTime(6000));
     expect(bubble).toHaveClass("is-open");
     fireEvent.pointerLeave(trigger);
@@ -135,7 +257,7 @@ describe("Tooltip", () => {
     vi.useFakeTimers();
     const { trigger, bubble, unmount } = setup(undefined, true);
     fireEvent.focus(trigger);
-    expect(bubble).toHaveStyle({ left: "100px", top: "74px" });
+    expect(bubble).toHaveStyle({ left: "100px", top: "56px" });
     fireEvent(
       trigger,
       new MouseEvent("pointerover", { bubbles: true, clientX: 150, clientY: 130 }),
@@ -158,10 +280,16 @@ describe("Tooltip", () => {
     unmount();
     act(() => vi.advanceTimersByTime(20));
   });
-  test("keeps default markup inline and leaves interaction to CSS", () => {
+  test("retains the explicit legacy inline opt-out", () => {
     const add = vi.spyOn(window, "addEventListener");
     const { container } = render(
-      <Tooltip content="Inline help" className="custom" label="Help" focusable={false}>
+      <Tooltip
+        portal={false}
+        content="Inline help"
+        className="custom"
+        label="Help"
+        focusable={false}
+      >
         Label
       </Tooltip>,
     );
@@ -195,7 +323,7 @@ describe("Tooltip", () => {
     });
     fireEvent.pointerEnter(trigger);
     expect(bubble).toHaveClass("is-open");
-    expect(bubble).toHaveStyle({ top: "74px", left: "100px" });
+    expect(bubble).toHaveStyle({ top: "56px", left: "100px" });
     fireEvent.pointerLeave(trigger);
     expect(bubble).not.toHaveClass("is-open");
     expect(screen.getByText("Route readiness")).toBe(bubble);
@@ -243,7 +371,7 @@ describe("Tooltip", () => {
   test("flips below a trigger near the viewport top", () => {
     const { trigger, bubble } = setup(rect(140, 10, 20, 20));
     fireEvent.focus(trigger);
-    expect(bubble).toHaveStyle({ top: "36px", left: "100px" });
+    expect(bubble).toHaveStyle({ top: "54px", left: "100px" });
   });
 
   test.each([
@@ -267,10 +395,10 @@ describe("Tooltip", () => {
     fireEvent.pointerEnter(trigger);
     move(rect(160, 90, 20, 20));
     fireEvent.scroll(scroller);
-    expect(bubble).toHaveStyle({ top: "44px", left: "120px" });
+    expect(bubble).toHaveStyle({ top: "26px", left: "120px" });
     move(rect(200, 100, 20, 20));
     fireEvent.resize(window);
-    expect(bubble).toHaveStyle({ top: "54px", left: "160px" });
+    expect(bubble).toHaveStyle({ top: "36px", left: "160px" });
     vi.spyOn(window, "innerWidth", "get").mockReturnValue(240);
     fireEvent.resize(window);
     expect(bubble).toHaveStyle({ left: "132px" });

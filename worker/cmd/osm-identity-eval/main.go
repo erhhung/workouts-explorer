@@ -37,11 +37,10 @@ func run(ctx context.Context, arguments []string, getenv func(string) string, st
 		return err
 	}
 	osmURL, root := getenv("OSM_MIGRATION_DATABASE_URL"), getenv("OSM_PIPELINE_ROOT")
-	prometheusURL := envDefault(getenv("OSM_PROMETHEUS_URL"), osm.DefaultPrometheusURL)
-	pvcTemplate := envDefault(getenv("OSM_PROMETHEUS_PVC_TEMPLATE"), osm.DefaultPVCTemplate)
+	metrics, metricsErr := osm.StorageMetricsFromEnv(getenv)
 	maximumSampleAge, ageErr := envDuration(getenv("OSM_PROMETHEUS_MAX_SAMPLE_AGE"), osm.DefaultMaximumAge)
-	if osmURL == "" || root == "" || *region == "" || *maximumSegments < 1 || ageErr != nil || maximumSampleAge <= 0 {
-		return fmt.Errorf("OSM database, pipeline, region, segment limit, and Prometheus storage-preflight configuration are required")
+	if osmURL == "" || root == "" || *region == "" || *maximumSegments < 1 || metricsErr != nil || (metrics.Enabled && (ageErr != nil || maximumSampleAge <= 0)) {
+		return fmt.Errorf("OSM database, pipeline, region, segment limit and enabled storage metrics configuration must be valid")
 	}
 
 	osmPool, err := database.OpenWithMaxConns(ctx, osmURL, "osm-identity-eval", 2)
@@ -49,15 +48,19 @@ func run(ctx context.Context, arguments []string, getenv func(string) string, st
 		return err
 	}
 	defer osmPool.Close()
+	var preflight osm.StoragePreflight = osm.StoragePreflightFunc(func(ctx context.Context) (osm.StorageObservation, error) {
+		return osm.StorageObservation{}, (osm.PostgreSQLUpdateStore{Pool: osmPool}).VerifyWriterPrimary(ctx)
+	})
+	if metrics.Enabled {
+		preflight = osm.PrometheusStoragePreflight{DB: osmPool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: metrics.PrometheusURL,
+			AvailableMetric: metrics.AvailableMetric, CapacityMetric: metrics.CapacityMetric, SelectorLabels: metrics.SelectorLabels, MaximumAge: maximumSampleAge}
+	}
 	var applicationPool interface{ Close() }
 	config := osm.IdentityEvaluationConfig{
 		OSM: osmPool, OSMDatabaseURL: osmURL, PipelineRoot: root, RegionID: *region,
 		Localities: splitLocalities(*localities), FullRegion: *fullRegion, MaximumSegments: *maximumSegments,
 		KeepScratchSchema: *keepSchema, Log: stderr,
-		StoragePreflight: osm.PrometheusStoragePreflight{
-			DB: osmPool, HTTPClient: &http.Client{Timeout: 15 * time.Second}, PrometheusURL: prometheusURL,
-			PVCTemplate: pvcTemplate, MaximumAge: maximumSampleAge,
-		},
+		StoragePreflight: preflight,
 	}
 	if !*withoutProjection {
 		applicationURL := getenv("MIGRATION_DATABASE_URL")

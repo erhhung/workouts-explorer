@@ -56,10 +56,39 @@ DECLARE claimed record;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM app.schema_metadata metadata WHERE metadata.singleton
         AND runtime_version >= 21 AND runtime_version >= metadata.minimum_runtime_version) THEN RETURN; END IF;
+    IF claiming_worker IS NULL OR claiming_worker='' OR new_lease_token IS NULL
+       OR lease_duration IS NULL OR lease_duration NOT BETWEEN interval '1 second' AND interval '15 minutes' THEN
+        RAISE EXCEPTION 'invalid scheduler lease arguments' USING ERRCODE='22023';
+    END IF;
+    INSERT INTO app.account_sync_schedules(account_id,next_run_at)
+        SELECT account.id,clock_timestamp() FROM app.accounts account WHERE account.state='active'
+        ON CONFLICT ON CONSTRAINT account_sync_schedules_pkey DO NOTHING;
+    -- Freeze the due source identities for this lease; later arrivals wait for the next claim.
+    SELECT schedule.account_id INTO claimed FROM app.account_sync_schedules schedule
+        JOIN app.accounts account ON account.id=schedule.account_id
+        WHERE account.state='active' AND (schedule.lease_token IS NULL OR schedule.lease_expires_at<clock_timestamp())
+          AND EXISTS(SELECT 1 FROM app.source_sync_schedules timer JOIN app.sources source
+              ON source.id=timer.source_id AND source.account_id=timer.account_id
+              WHERE timer.account_id=schedule.account_id AND timer.next_run_at<=clock_timestamp()
+                AND source.deleted_at IS NULL AND source.auto_sync_enabled AND source.status='connected')
+        ORDER BY (SELECT min(timer.next_run_at) FROM app.source_sync_schedules timer WHERE timer.account_id=schedule.account_id),schedule.account_id
+        FOR UPDATE OF schedule SKIP LOCKED LIMIT 1;
+    IF FOUND THEN
+        RETURN QUERY UPDATE app.account_sync_schedules schedule SET lease_worker=claiming_worker,lease_token=new_lease_token,
+            lease_expires_at=clock_timestamp()+lease_duration,lease_runtime_version=runtime_version,
+            lease_source_ids=ARRAY(SELECT source.id FROM app.sources source JOIN app.source_sync_schedules timer
+                ON timer.source_id=source.id AND timer.account_id=source.account_id
+                WHERE source.account_id=schedule.account_id AND source.deleted_at IS NULL AND source.auto_sync_enabled
+                  AND source.status='connected' AND timer.next_run_at<=statement_timestamp() ORDER BY source.id),
+            updated_at=transaction_timestamp()
+            WHERE schedule.account_id=claimed.account_id
+            RETURNING schedule.account_id,schedule.lease_token,schedule.next_run_at;
+        RETURN;
+    END IF;
     SELECT * INTO claimed FROM app.claim_due_sync_account_internal(claiming_worker, new_lease_token, lease_duration, runtime_version);
     IF NOT FOUND THEN RETURN; END IF;
     RETURN QUERY
-    UPDATE app.account_sync_schedules schedule SET lease_runtime_version = runtime_version
+    UPDATE app.account_sync_schedules schedule SET lease_runtime_version = runtime_version,lease_source_ids=NULL
       WHERE schedule.account_id = claimed.account_id
         AND schedule.lease_worker = claiming_worker AND schedule.lease_token = new_lease_token
       RETURNING schedule.account_id, schedule.lease_token, schedule.next_run_at;
@@ -80,7 +109,8 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
        AND schedule.lease_runtime_version >= 21
        AND schedule.lease_runtime_version >= (SELECT minimum_runtime_version FROM app.schema_metadata WHERE singleton)
        AND account.state = 'active'
-       AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled
+        AND source.deleted_at IS NULL AND source.status = 'connected' AND source.auto_sync_enabled
+        AND app.sync_source_is_leased(target_account_id,source.id)
      ORDER BY source.id
 $function$;
 -- +goose StatementEnd
@@ -109,14 +139,32 @@ $function$;
 -- +goose StatementBegin
 CREATE FUNCTION app.finish_sync_account(target_account_id uuid, claiming_worker text, current_lease_token uuid, enqueued_job_id uuid)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, app AS $function$
+DECLARE source_ids uuid[];
+DECLARE policy app.auto_sync_policy%ROWTYPE;
+DECLARE source_row record;
 BEGIN
     PERFORM 1 FROM app.account_sync_schedules schedule WHERE schedule.account_id = target_account_id
         AND schedule.lease_worker = claiming_worker AND schedule.lease_token = current_lease_token
         AND schedule.lease_expires_at >= clock_timestamp() AND schedule.lease_runtime_version >= 21
         AND schedule.lease_runtime_version >= (SELECT minimum_runtime_version FROM app.schema_metadata WHERE singleton) FOR UPDATE;
     IF NOT FOUND THEN RETURN false; END IF;
-    IF NOT app.finish_sync_account_internal(target_account_id, claiming_worker, current_lease_token, enqueued_job_id) THEN RETURN false; END IF;
-    UPDATE app.account_sync_schedules schedule SET lease_runtime_version = NULL WHERE schedule.account_id = target_account_id;
+    SELECT schedule.lease_source_ids INTO source_ids FROM app.account_sync_schedules schedule WHERE schedule.account_id=target_account_id;
+    IF source_ids IS NULL THEN
+        IF NOT app.finish_sync_account_internal(target_account_id, claiming_worker, current_lease_token, enqueued_job_id) THEN RETURN false; END IF;
+    ELSE
+        PERFORM set_config('app.account_id',target_account_id::text,true);
+        SELECT * INTO policy FROM app.auto_sync_policy WHERE singleton;
+        FOR source_row IN SELECT source.id FROM app.sources source WHERE source.account_id=target_account_id ORDER BY source.id LOOP
+            PERFORM app.evaluate_source_staleness(source_row.id,policy.stale_days,clock_timestamp());
+        END LOOP;
+        UPDATE app.source_sync_schedules timer SET next_run_at=app.next_daily_sync_run(timer.local_time,timer.timezone,clock_timestamp())
+            WHERE timer.account_id=target_account_id AND timer.source_id=ANY(source_ids) AND timer.next_run_at<=clock_timestamp();
+        UPDATE app.account_sync_schedules schedule SET
+            last_enqueued_at=CASE WHEN enqueued_job_id IS NOT NULL THEN clock_timestamp() ELSE schedule.last_enqueued_at END,
+            last_job_id=COALESCE(enqueued_job_id,schedule.last_job_id),lease_worker=NULL,lease_token=NULL,lease_expires_at=NULL,
+            consecutive_failures=0,updated_at=transaction_timestamp() WHERE schedule.account_id=target_account_id;
+    END IF;
+    UPDATE app.account_sync_schedules schedule SET lease_runtime_version = NULL,lease_source_ids=NULL WHERE schedule.account_id = target_account_id;
     RETURN true;
 END;
 $function$;

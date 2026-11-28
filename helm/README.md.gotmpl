@@ -19,7 +19,7 @@ Install Workouts Explorer on Kubernetes to browse workout routes on a map, synch
 2. Use the administrator Regions UI to refresh provider catalogs and download/process map regions. Every promoted active region becomes eligible for Coverage; there is no static region list in Helm or application bootstrap. Ensure OSM readers can see the required catalog generations and timezone data before relying on matching. The enabled-by-default timezone hook downloads and imports the pinned boundary archive; it needs outbound HTTPS and OSM writer access. If you disable it, supply compatible timezone data yourself.
 3. Publish or select compatible application images and configure `image.registry`, `image.tag`, optional `image.digests`, and any existing image-pull Secrets. Martin and collector images use their own complete references.
 4. Provision the existing Secrets described below in the release namespace before running Helm, including Secrets needed by pre-install hooks. Set your browser URL, SMTP server, and usable base-map styles. The default style families are complete MapTiler Outdoor/Streets examples with attribution links and resource origins; replace `YOUR_MAPTILER_KEY` in all four style URLs with your browser-restricted public key and follow the provider's licensing requirements. The mail and application domains remain placeholders.
-5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. Configure a reachable TLS OTLP endpoint or set `otel.endpoint: ""` to disable export and sidecars. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
+5. Choose browser access and monitoring. Built-in ingress is disabled by default; when enabled, it creates both an Ingress and a Certificate and requires an ingress controller, cert-manager, and the `StepClusterIssuer` named `step-issuer`. Keep `ingress.tlsSecretName` and `ingress.certificateSecretName` aligned. OpenTelemetry is off by default: set `otel.enabled: true` with a reachable TLS OTLP endpoint to enable SDK export and bundled UI/Martin metrics collectors. Dashboard ConfigMaps need an existing Grafana importer; Pyrra resources need its CRD/controller and an existing rule evaluator.
 
 The chart does **not** create application/OSM databases, connection or application credential Secrets, OSM map imports, PostgreSQL high availability, DNS infrastructure, an NFS server, or monitoring backends. Its ingress Certificate can ask the existing certificate controller to populate the selected ingress TLS Secret. Resource names are fixed as `workouts-explorer` rather than derived from the release name; use a separate namespace for each installation.
 
@@ -131,6 +131,13 @@ Keep `api.allowAdminPassword`, `api.localDevelopment`, and `api.smtp.allowInsecu
 
 ## Administrator OSM Job Retention
 
+`osm.regionUpdates.enabled` defaults to **true**, deploying the bundled controller
+and enabling managed region lifecycle commands. Set it to false to omit the
+controller and disable mutations; boundaries and existing progress/history remain
+readable. Catalog refresh is independently controlled. Existing Helm release
+overrides take precedence over chart defaults; the xdev values file explicitly
+records its region-controller choice and environment-specific metrics profile.
+
 `osm.regionUpdates.ttlSecondsAfterFinished` defaults to **21600** (six hours).
 New updater, cancellation-cleanup and region-deletion Jobs retain their terminal
 pods for that Kubernetes TTL so their logs remain readable with `kubectl logs`.
@@ -139,6 +146,54 @@ slots; running/pending pods still block finalization. Jobs created before this
 setting, without a TTL, keep their previous controller-cleanup behavior. See
 [updater pod logs and retention](../docs/osm-region-updates.md#updater-pod-logs-and-job-retention)
 for operator commands and the archived-log fallback.
+
+## Optional OSM Storage Metrics
+
+`osm.regionUpdates.storageMetrics.enabled` defaults to **false**. The global
+**Monitor available database storage** setting is effectively off and disabled
+when this capability is disabled or its Prometheus URL is absent. Existing
+PostgreSQL region/build byte measurements remain available without Prometheus.
+New executions capture the effective policy; running executions keep their
+captured policy until the next start/resume.
+
+Configure `prometheusURL`, `availableMetric`, `capacityMetric` and exact
+`selectorLabels` under `storageMetrics`. Names and selectors are used directly
+for value and source-timestamp queries; each metric must identify one current
+filesystem. No PostgreSQL exporter, pod identity or replica topology is required.
+For example, node-exporter metrics can use:
+
+```yaml
+osm:
+  regionUpdates:
+    storageMetrics:
+      enabled: true
+      prometheusURL: https://metrics.example.com
+      availableMetric: node_filesystem_avail_bytes
+      capacityMetric: node_filesystem_size_bytes
+      selectorLabels:
+        instance: db-server.example.com:9100
+        mountpoint: /srv/postgresql
+```
+
+The default kubelet metric pair with an empty selector map renders the current
+OSM PVC selector: namespace `postgresql`, PVC `data-postgresql-postgresql-0`.
+Custom selector maps replace this fallback without inheriting PVC labels.
+For HA, select primary-aware series or update the explicit target when the writer
+moves. `prometheusServiceIP` remains an optional DNS override for isolated
+clusters, applied to the configured URL hostname; omit it when DNS already works.
+The former top-level `regionUpdates.prometheusURL`/`prometheusServiceIP` keys are
+removed and must be removed from stored release overrides during upgrade.
+
+## Optional OpenTelemetry
+
+`otel.enabled` is the single integration switch and defaults false. Disabled
+deployments receive empty Go SDK exporter endpoints and have no UI/Martin collector
+sidecars, configuration or CA mounts. Setting an endpoint alone does not opt in.
+When enabled, `otel.endpoint` is required; collector image/resources and public CA
+settings remain under `otel.collector`/`otel.trustedCASecret`. The former
+`otel.collector.enabled` key is removed. Standalone Go processes also default to
+no exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The xdev local profile
+explicitly enables its existing gateway integration.
 
 ## OSM Readers And Concurrency
 
